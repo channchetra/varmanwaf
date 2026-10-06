@@ -217,8 +217,12 @@ benign-corpus blocks; benchmarked cost documented.
       `__proto__.`, `__proto__=`, `constructor[prototype]`) block; bare
       `__proto__` / `constructor.prototype` mentions (documentation) stay
       Log. Corpus-covered.
+- [x] LDAP / XPath injection structural detector (`semantic::ldap_xpath`) —
+      LDAP filter-break shapes (`)(|`, `)(cn=`, `*)(`) block, bare filter
+      fragments log; XPath expression shapes (`' or count(`, `descendant-or-self::`,
+      `']|`) block, bare `//*` logs. Two new attack corpus files.
 - [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] LDAP/XPath injection, GraphQL abuse.
+- [ ] GraphQL abuse detector.
 - [ ] Per-detector fuzz targets and performance budgets.
 
 Exit: per-detector acceptance + performance budget; shadow-mode comparison

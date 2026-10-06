@@ -7,6 +7,7 @@
 
 pub mod command;
 pub mod deser;
+pub mod ldap_xpath;
 pub mod nosql;
 pub mod proto;
 pub mod sql;
@@ -17,6 +18,7 @@ pub mod xxe;
 
 pub use command::CommandInjectionDetector;
 pub use deser::DeserializationDetector;
+pub use ldap_xpath::LdapXPathDetector;
 pub use nosql::NosqlInjectionDetector;
 pub use proto::PrototypePollutionDetector;
 pub use sql::SqlStructuralDetector;

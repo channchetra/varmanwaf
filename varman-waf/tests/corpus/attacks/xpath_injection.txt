@@ -1,0 +1,3 @@
+' or count(//*) > 0 or '
+']|//user[1]|//user['
+/descendant-or-self::node()
