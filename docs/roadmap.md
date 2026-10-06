@@ -312,10 +312,15 @@ report against the existing engine.
       `t:hexEncode`, `initcol` collection registry (per-transaction,
       documented), case-insensitive action dispatch. **CRS load: 24/27 files,
       538 rules** (ratcheted in the harness).
-- [ ] Final CRS blockers: byte-preserving value plumbing
-      (`@validateUtf8Encoding`, 920) → full-set (non-per-file) harness mode
-      for cross-file `skipAfter` (950) → host-environment fix for the
-      Defender-quarantined `web-shells-php.data` (955).
+- [x] Sixth CRS slice: **full-set harness mode** (all rule files concatenated
+      in include order — the way CRS actually loads). Result: 693 rule
+      statements, failing only at `@validateUtf8Encoding` (920). 950's
+      standalone failure is confirmed as a harness-mode artifact, not an
+      engine gap.
+- [ ] Last engine gap: byte-preserving value plumbing
+      (`@validateUtf8Encoding`, 920) — after which the full-set pass should go
+      green → host-environment fix for the Defender-quarantined
+      `web-shells-php.data` (955).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

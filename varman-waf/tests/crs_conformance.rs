@@ -90,6 +90,39 @@ fn crs_rulesets_load_and_report() {
         files.len()
     );
 
+    // Full-set pass: CRS is normally loaded as one configuration, so
+    // cross-file `skipAfter` markers (e.g. 950 → 959) can only resolve here.
+    let mut combined = String::new();
+    for path in &files {
+        match fs::read(path) {
+            Ok(bytes) => {
+                combined.push_str(&String::from_utf8_lossy(&bytes));
+                combined.push('\n');
+            },
+            Err(error) => {
+                eprintln!(
+                    "full-set: could not read {}: {error}",
+                    path.display()
+                );
+                return;
+            },
+        }
+    }
+    let combined_rules = count_secrules(&combined);
+    match varman_waf::seclang::ruleset::SecRuleSet::from_source_with_base(
+        &combined,
+        Some(&rules_dir),
+    ) {
+        Ok(_) => eprintln!(
+            "full-set: OK ({combined_rules} rule statements across {} files)",
+            files.len()
+        ),
+        Err(error) => eprintln!(
+            "full-set: FAIL ({combined_rules} rule statements): {}",
+            error.reason
+        ),
+    }
+
     assert!(
         !files.is_empty(),
         "CRS clone at {} has no rule files",
