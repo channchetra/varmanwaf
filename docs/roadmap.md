@@ -296,7 +296,14 @@ report against the existing engine.
       explicit rule actions win **within their category** (phase,
       disposition, audit, capture), other categories fill in. Missing actions
       error observably.
-- [ ] Control flow completes with `ctl` (rule-engine mode switching).
+- [x] `ctl:ruleEngine` (`On` / `DetectionOnly` / `Off`): detection-only
+      strips disruptive dispositions (`block`/`deny`/`drop`) from recorded
+      hits while keeping the match; `Off` stops evaluation after the
+      matching rule; unknown values error observably. With this, **SecLang
+      control flow is feature-complete for CRS-style rules.**
+- [ ] Next milestone: **CRS conformance harness** — load the official OWASP
+      CRS rulesets, run their regression corpus, record results honestly in
+      `docs/compatibility.md`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

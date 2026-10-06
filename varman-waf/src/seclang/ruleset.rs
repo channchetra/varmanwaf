@@ -52,6 +52,7 @@ const ALLOWED_ACTIONS: &[&str] = &[
     "setvar:",
     "capture",
     "auditlog",
+    "ctl:",
 ];
 
 /// `true` when the line is a `SecRuleRemoveById` directive (the exact word,
@@ -148,6 +149,17 @@ pub struct SecRuleSet {
     skip_groups: Vec<Option<u64>>,
     /// `skipAfter:NAME` per group: resolved index to continue at.
     skip_after: Vec<Option<usize>>,
+    /// `ctl:ruleEngine=…` per group.
+    ctl_modes: Vec<Option<CtlMode>>,
+}
+
+/// `ctl:ruleEngine` values: `On` (default), `DetectionOnly` (matches are
+/// recorded but disruptive actions are stripped), `Off` (evaluation stops).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CtlMode {
+    On,
+    DetectionOnly,
+    Off,
 }
 
 impl SecRuleSet {
@@ -319,6 +331,8 @@ impl SecRuleSet {
         }
         let mut skip_groups = Vec::with_capacity(groups.len());
         let mut skip_after = Vec::with_capacity(groups.len());
+        let mut ctl_modes: Vec<Option<CtlMode>> =
+            Vec::with_capacity(groups.len());
         for (index, group) in groups.iter().enumerate() {
             let actions = group
                 .rules
@@ -327,6 +341,7 @@ impl SecRuleSet {
                 .unwrap_or_default();
             let mut skip_count: Option<u64> = None;
             let mut after_name: Option<String> = None;
+            let mut ctl_mode: Option<CtlMode> = None;
             for action in &actions {
                 let action = action.trim();
                 if let Some(rest) = action.strip_prefix("skip:") {
@@ -340,9 +355,26 @@ impl SecRuleSet {
                         })?);
                 } else if let Some(name) = action.strip_prefix("skipAfter:") {
                     after_name = Some(name.trim().to_string());
+                } else if let Some(spec) =
+                    action.strip_prefix("ctl:ruleEngine=")
+                {
+                    ctl_mode =
+                        Some(match spec.trim().to_ascii_lowercase().as_str() {
+                            "on" => CtlMode::On,
+                            "detectiononly" => CtlMode::DetectionOnly,
+                            "off" => CtlMode::Off,
+                            other => {
+                                return Err(SecLangError {
+                                    reason: format!(
+                                    "unsupported ctl:ruleEngine value {other:?}"
+                                ),
+                                });
+                            },
+                        });
                 }
             }
             skip_groups.push(skip_count);
+            ctl_modes.push(ctl_mode);
             let resolved = match after_name {
                 Some(name) => {
                     let Some((_, marker_pos)) =
@@ -376,6 +408,7 @@ impl SecRuleSet {
             setvars,
             skip_groups,
             skip_after,
+            ctl_modes,
         })
     }
 
@@ -389,6 +422,7 @@ impl SecRuleSet {
     pub fn evaluate(&self, txn: &mut SecLangTransaction) -> Vec<RuleHit> {
         let mut hits = Vec::new();
         let mut index = 0usize;
+        let mut mode = CtlMode::On;
         while index < self.groups.len() {
             let group = &self.groups[index];
             let Some(variables_hit) = evaluate_group(group, txn) else {
@@ -398,11 +432,19 @@ impl SecRuleSet {
             for op in &self.setvars[index] {
                 apply_setvar(txn, op);
             }
-            let actions = group
+            let mut actions = group
                 .rules
                 .last()
                 .map(|rule| rule.line.actions.clone())
                 .unwrap_or_default();
+            if let Some(new_mode) = self.ctl_modes[index] {
+                mode = new_mode;
+            }
+            if mode == CtlMode::DetectionOnly {
+                actions
+                    .retain(|a| !matches!(a.trim(), "block" | "deny" | "drop"));
+            }
+            let stop = mode == CtlMode::Off;
             let next = if let Some(skip) = self.skip_groups[index] {
                 index + 1 + skip as usize
             } else if let Some(target) = self.skip_after[index] {
@@ -415,6 +457,9 @@ impl SecRuleSet {
                 variables_hit,
                 actions,
             });
+            if stop {
+                break;
+            }
             index = next;
         }
         hits
@@ -795,9 +840,61 @@ mod tests {
     }
 
     #[test]
+    fn ctl_rule_engine_detection_only_strips_disruptive_actions() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,ctl:ruleEngine=DetectionOnly\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:2,block\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:3,ctl:ruleEngine=On\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:4,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 4, "{hits:?}");
+        assert!(
+            !hits[1].actions.iter().any(|a| a == "block"),
+            "detection-only stays undetected as disruptive: {:?}",
+            hits[1].actions
+        );
+        assert!(
+            hits[3].actions.iter().any(|a| a == "block"),
+            "back on, block is recorded again: {:?}",
+            hits[3].actions
+        );
+    }
+
+    #[test]
+    fn ctl_rule_engine_off_stops_and_validates() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,ctl:ruleEngine=Off\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:2,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].rule_ids, vec![Some(1)]);
+
+        let error = SecRuleSet::from_source(
+            "SecRule ARGS \"@rx x\" \"id:1,ctl:ruleEngine=Maybe\"\n",
+        )
+        .expect_err("must fail");
+        assert!(
+            error.reason.contains("unsupported ctl:ruleEngine"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn unsupported_actions_error_observably() {
         let error = SecRuleSet::from_source(
-            "SecRule ARGS \"@rx x\" \"id:1,ctl:ruleEngine=Off\"",
+            "SecRule ARGS \"@rx x\" \"id:1,expirevar:tx.x=1\"",
         )
         .expect_err("must fail");
         assert!(error.reason.contains("unsupported action"), "{error}");
