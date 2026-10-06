@@ -8,7 +8,7 @@ body:
       value: |
         Thanks for taking the time to report a bug. Please fill in as much detail
         as you can — it makes triage much faster. For security vulnerabilities,
-        do **not** open a public issue; follow [SECURITY.md](https://github.com/shuaiZend/PingWAF/blob/main/SECURITY.md) instead.
+        do **not** open a public issue; follow [SECURITY.md](https://github.com/varmanwaf/varmanwaf/blob/main/SECURITY.md) instead.
   - type: textarea
     id: description
     attributes:
@@ -23,7 +23,7 @@ body:
       label: Steps to reproduce / 复现步骤
       description: Minimal steps, config, or a request that triggers the bug. / 触发该问题的最小步骤、配置或请求。
       placeholder: |
-        1. Run `pingwaf all-in-one --db-url ...`
+        1. Run `varman all-in-one --db-url ...`
         2. Add a site with ...
         3. Send request ...
         4. See error
@@ -32,8 +32,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: PingWAF version / 版本
-      description: Output of `pingwaf --version`. / `pingwaf --version` 的输出。
+      label: VarmanWAF version / 版本
+      description: Output of `varman --version`. / `varman --version` 的输出。
       placeholder: v0.20.0
     validations:
       required: true
@@ -43,11 +43,11 @@ body:
       label: Component / 受影响组件
       multiple: true
       options:
-        - Control plane (pingwaf-server)
-        - Detection engine (pingwaf-waf)
-        - Challenge (pingwaf-challenge)
-        - Agent (pingwaf-agent)
-        - gRPC / proto (pingwaf-proto)
+        - Control plane (varman-control)
+        - Detection engine (varman-waf)
+        - Challenge (varman-challenge)
+        - Agent (varman-agent)
+        - gRPC / proto (varman-protocol)
         - Web dashboard (web/)
         - Reverse proxy (pingap-*)
         - Install / packaging

@@ -12,32 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! PingWAF CLI subcommand definitions.
+//! VarmanWAF CLI subcommand definitions.
 //!
 //! These are additive to the existing pingap CLI and are detected before
 //! the normal argument parsing runs.
 
 use clap::{Parser, Subcommand};
 
-/// PingWAF top-level CLI wrapper.
+/// VarmanWAF top-level CLI wrapper.
 ///
-/// When the first positional argument is one of the PingWAF subcommand
+/// When the first positional argument is one of the VarmanWAF subcommand
 /// names — the three run modes (`server`, `agent`, `all-in-one`) or a
 /// maintenance command (`user`, `mode`, `security`) — the binary switches to
-/// PingWAF mode.
+/// VarmanWAF mode.
 #[derive(Parser, Debug)]
 #[command(
-    name = "pingwaf",
-    about = "PingWAF — Web Application Firewall control plane and data plane",
+    name = "varman",
+    about = "VarmanWAF — Web Application Firewall control plane and data plane",
     version
 )]
-pub struct PingWafCli {
+pub struct VarmanCli {
     #[command(subcommand)]
-    pub command: PingWafCommand,
+    pub command: VarmanCommand,
 }
 
 #[derive(Subcommand, Debug)]
-pub enum PingWafCommand {
+pub enum VarmanCommand {
     /// Run the control plane server only (REST API + gRPC + dashboard)
     Server(ServerOpts),
     /// Run the data plane agent only (connects to a remote control plane)
@@ -61,23 +61,23 @@ pub enum PingWafCommand {
     },
 }
 
-/// Options shared by all PingWAF modes.
+/// Options shared by all VarmanWAF modes.
 #[derive(Parser, Debug, Clone)]
 pub struct CommonOpts {
     /// PostgreSQL connection string
     #[arg(
         long,
-        env = "PINGWAF_DB_URL",
-        default_value = "postgres://pingwaf:pingwaf@localhost:5432/pingwaf"
+        env = "VARMAN_DB_URL",
+        default_value = "postgres://varman:varman@localhost:5432/varman"
     )]
     pub db_url: String,
 
     /// HTTP admin/API listen address
-    #[arg(long, env = "PINGWAF_ADMIN_ADDR", default_value = "0.0.0.0:9080")]
+    #[arg(long, env = "VARMAN_ADMIN_ADDR", default_value = "0.0.0.0:9080")]
     pub admin_addr: String,
 
     /// gRPC listen/connect address
-    #[arg(long, env = "PINGWAF_GRPC_ADDR", default_value = "0.0.0.0:9090")]
+    #[arg(long, env = "VARMAN_GRPC_ADDR", default_value = "0.0.0.0:9090")]
     pub grpc_addr: String,
 
     /// Serve the admin dashboard and REST API over TLS. A self-signed
@@ -86,7 +86,7 @@ pub struct CommonOpts {
     /// that terminates TLS.
     #[arg(
         long,
-        env = "PINGWAF_TLS_ENABLED",
+        env = "VARMAN_TLS_ENABLED",
         default_value = "true",
         num_args = 0..=1,
         default_missing_value = "true",
@@ -96,7 +96,7 @@ pub struct CommonOpts {
 
     /// Subject alternative names of the generated self-signed certificate,
     /// comma separated (DNS names and IP addresses)
-    #[arg(long, env = "PINGWAF_TLS_SANS", value_delimiter = ',')]
+    #[arg(long, env = "VARMAN_TLS_SANS", value_delimiter = ',')]
     pub tls_sans: Vec<String>,
 }
 
@@ -108,15 +108,15 @@ pub struct ServerOpts {
     pub common: CommonOpts,
 
     /// TOML configuration file; its `[server]` and `[agent]` tables hold
-    /// these same settings. Precedence is this file, then the `PINGWAF_*`
+    /// these same settings. Precedence is this file, then the `VARMAN_*`
     /// environment variables, then the command line.
-    #[arg(long, env = "PINGWAF_CONFIG")]
+    #[arg(long, env = "VARMAN_CONFIG")]
     pub config: Option<String>,
 
     /// JWT signing secret (must be at least 16 characters)
     #[arg(
         long,
-        env = "PINGWAF_JWT_SECRET",
+        env = "VARMAN_JWT_SECRET",
         default_value = "change-me-in-production"
     )]
     pub jwt_secret: String,
@@ -124,19 +124,19 @@ pub struct ServerOpts {
     /// Default admin email for initial seeding
     #[arg(
         long,
-        env = "PINGWAF_ADMIN_EMAIL",
-        default_value = "admin@pingwaf.local"
+        env = "VARMAN_ADMIN_EMAIL",
+        default_value = "admin@varman.local"
     )]
     pub admin_email: String,
 
     /// Default admin password for initial seeding
-    #[arg(long, env = "PINGWAF_ADMIN_PASSWORD", default_value = "pingwaf123")]
+    #[arg(long, env = "VARMAN_ADMIN_PASSWORD", default_value = "varman123")]
     pub admin_password: String,
 
     /// Whether to serve the embedded frontend (SPA)
     #[arg(
         long,
-        env = "PINGWAF_SERVE_FRONTEND",
+        env = "VARMAN_SERVE_FRONTEND",
         default_value = "true",
         num_args = 0..=1,
         default_missing_value = "true",
@@ -150,31 +150,31 @@ pub struct ServerOpts {
 #[command(args_override_self = true)]
 pub struct AgentOpts {
     /// TOML configuration file; its `[server]` and `[agent]` tables hold
-    /// these same settings. Precedence is this file, then the `PINGWAF_*`
+    /// these same settings. Precedence is this file, then the `VARMAN_*`
     /// environment variables, then the command line.
-    #[arg(long, env = "PINGWAF_CONFIG")]
+    #[arg(long, env = "VARMAN_CONFIG")]
     pub config: Option<String>,
 
     /// Control plane gRPC URL to connect to
     #[arg(
         long,
-        env = "PINGWAF_SERVER_URL",
+        env = "VARMAN_SERVER_URL",
         default_value = "http://localhost:9090"
     )]
     pub server_url: String,
 
     /// API key for agent authentication
-    #[arg(long, env = "PINGWAF_API_KEY", default_value = "")]
+    #[arg(long, env = "VARMAN_API_KEY", default_value = "")]
     pub api_key: String,
 
     /// Local rule cache directory
-    #[arg(long, env = "PINGWAF_CACHE_DIR", default_value = "./data/cache")]
+    #[arg(long, env = "VARMAN_CACHE_DIR", default_value = "./data/cache")]
     pub cache_dir: String,
 
     /// Allow traffic when disconnected from control plane
     #[arg(
         long,
-        env = "PINGWAF_FAIL_OPEN",
+        env = "VARMAN_FAIL_OPEN",
         default_value = "true",
         num_args = 0..=1,
         default_missing_value = "true",
@@ -183,7 +183,7 @@ pub struct AgentOpts {
     pub fail_open: bool,
 
     /// Heartbeat interval in seconds
-    #[arg(long, env = "PINGWAF_HEARTBEAT_INTERVAL", default_value = "30")]
+    #[arg(long, env = "VARMAN_HEARTBEAT_INTERVAL", default_value = "30")]
     pub heartbeat_interval_secs: u64,
 
     /// Maximum log batch size before flush
@@ -199,7 +199,7 @@ pub struct AgentOpts {
     pub max_body_log_size: usize,
 
     /// Metrics shipping interval in seconds (0 disables metric shipping)
-    #[arg(long, env = "PINGWAF_METRICS_SHIP_INTERVAL", default_value = "30")]
+    #[arg(long, env = "VARMAN_METRICS_SHIP_INTERVAL", default_value = "30")]
     pub metrics_ship_interval_secs: u64,
 }
 
@@ -211,16 +211,16 @@ pub struct AllInOneOpts {
     pub common: CommonOpts,
 
     /// TOML configuration file; its `[server]` and `[agent]` tables hold
-    /// these same settings. Precedence is this file, then the `PINGWAF_*`
+    /// these same settings. Precedence is this file, then the `VARMAN_*`
     /// environment variables, then the command line.
-    #[arg(long, env = "PINGWAF_CONFIG")]
+    #[arg(long, env = "VARMAN_CONFIG")]
     pub config: Option<String>,
 
     // ── Server ────────────────────────────────────────────────────────
     /// JWT signing secret (must be at least 16 characters)
     #[arg(
         long,
-        env = "PINGWAF_JWT_SECRET",
+        env = "VARMAN_JWT_SECRET",
         default_value = "change-me-in-production"
     )]
     pub jwt_secret: String,
@@ -228,19 +228,19 @@ pub struct AllInOneOpts {
     /// Default admin email for initial seeding
     #[arg(
         long,
-        env = "PINGWAF_ADMIN_EMAIL",
-        default_value = "admin@pingwaf.local"
+        env = "VARMAN_ADMIN_EMAIL",
+        default_value = "admin@varman.local"
     )]
     pub admin_email: String,
 
     /// Default admin password for initial seeding
-    #[arg(long, env = "PINGWAF_ADMIN_PASSWORD", default_value = "pingwaf123")]
+    #[arg(long, env = "VARMAN_ADMIN_PASSWORD", default_value = "varman123")]
     pub admin_password: String,
 
     /// Whether to serve the embedded frontend (SPA)
     #[arg(
         long,
-        env = "PINGWAF_SERVE_FRONTEND",
+        env = "VARMAN_SERVE_FRONTEND",
         default_value = "true",
         num_args = 0..=1,
         default_missing_value = "true",
@@ -250,17 +250,17 @@ pub struct AllInOneOpts {
 
     // ── Agent ─────────────────────────────────────────────────────────
     /// API key for agent authentication (empty = auto-register via loopback)
-    #[arg(long, env = "PINGWAF_API_KEY", default_value = "")]
+    #[arg(long, env = "VARMAN_API_KEY", default_value = "")]
     pub api_key: String,
 
     /// Local rule cache directory
-    #[arg(long, env = "PINGWAF_CACHE_DIR", default_value = "./data/cache")]
+    #[arg(long, env = "VARMAN_CACHE_DIR", default_value = "./data/cache")]
     pub cache_dir: String,
 
     /// Allow traffic when disconnected from control plane
     #[arg(
         long,
-        env = "PINGWAF_FAIL_OPEN",
+        env = "VARMAN_FAIL_OPEN",
         default_value = "true",
         num_args = 0..=1,
         default_missing_value = "true",
@@ -269,7 +269,7 @@ pub struct AllInOneOpts {
     pub fail_open: bool,
 
     /// Heartbeat interval in seconds
-    #[arg(long, env = "PINGWAF_HEARTBEAT_INTERVAL", default_value = "30")]
+    #[arg(long, env = "VARMAN_HEARTBEAT_INTERVAL", default_value = "30")]
     pub heartbeat_interval_secs: u64,
 
     /// Maximum log batch size before flush
@@ -285,7 +285,7 @@ pub struct AllInOneOpts {
     pub max_body_log_size: usize,
 
     /// Metrics shipping interval in seconds (0 disables metric shipping)
-    #[arg(long, env = "PINGWAF_METRICS_SHIP_INTERVAL", default_value = "30")]
+    #[arg(long, env = "VARMAN_METRICS_SHIP_INTERVAL", default_value = "30")]
     pub metrics_ship_interval_secs: u64,
 }
 
@@ -300,8 +300,8 @@ pub struct DbOpts {
     /// PostgreSQL connection string
     #[arg(
         long,
-        env = "PINGWAF_DB_URL",
-        default_value = "postgres://pingwaf:pingwaf@localhost:5432/pingwaf"
+        env = "VARMAN_DB_URL",
+        default_value = "postgres://varman:varman@localhost:5432/varman"
     )]
     pub db_url: String,
 }
@@ -393,23 +393,23 @@ pub const RUN_MODES: [&str; 3] = ["server", "agent", "all-in-one"];
 /// The maintenance commands: they run against the database and exit.
 const MAINTENANCE_MODES: [&str; 3] = ["user", "mode", "security"];
 
-/// Whether `value` names a PingWAF subcommand.
+/// Whether `value` names a VarmanWAF subcommand.
 fn is_mode(value: &str) -> bool {
     RUN_MODES.contains(&value) || MAINTENANCE_MODES.contains(&value)
 }
 
-/// The mode named by `PINGWAF_MODE`, when it names one.
+/// The mode named by `VARMAN_MODE`, when it names one.
 fn mode_from_env() -> Option<String> {
-    let mode = std::env::var("PINGWAF_MODE").ok()?;
+    let mode = std::env::var("VARMAN_MODE").ok()?;
     let mode = mode.trim().to_lowercase();
     is_mode(&mode).then_some(mode)
 }
 
-/// Check whether the command line invokes a PingWAF subcommand.
+/// Check whether the command line invokes a VarmanWAF subcommand.
 ///
-/// Returns `true` if the first non-binary argument is one of the PingWAF
-/// subcommand names, or if `PINGWAF_MODE` environment variable is set.
-pub fn is_pingwaf_mode() -> bool {
+/// Returns `true` if the first non-binary argument is one of the VarmanWAF
+/// subcommand names, or if `VARMAN_MODE` environment variable is set.
+pub fn is_varman_mode() -> bool {
     let from_argv = std::env::args().nth(1).is_some_and(|arg| is_mode(&arg));
     from_argv || mode_from_env().is_some()
 }
@@ -426,9 +426,9 @@ fn version_banner() -> &'static str {
 /// subcommand hides, so the flag is answered here instead.
 fn print_version(args: &[String]) -> ! {
     if args.iter().skip(1).any(|arg| arg == "--version") {
-        println!("pingwaf {}", version_banner());
+        println!("varman {}", version_banner());
     } else {
-        println!("pingwaf {}", env!("CARGO_PKG_VERSION"));
+        println!("varman {}", env!("CARGO_PKG_VERSION"));
     }
     std::process::exit(0);
 }
@@ -440,12 +440,12 @@ fn wants_version(args: &[String]) -> bool {
         .any(|arg| arg == "--version" || arg == "-V")
 }
 
-/// Parse the PingWAF CLI from command line arguments.
+/// Parse the VarmanWAF CLI from command line arguments.
 ///
-/// If `PINGWAF_MODE` is set but no subcommand is given on the command line,
+/// If `VARMAN_MODE` is set but no subcommand is given on the command line,
 /// injects the mode as a subcommand so that env-only invocation works. The
 /// settings of a `--config` file are added last, underneath the command line.
-pub fn parse_pingwaf_cli() -> PingWafCli {
+pub fn parse_varman_cli() -> VarmanCli {
     let args: Vec<String> = std::env::args().collect();
 
     if wants_version(&args) {
@@ -458,7 +458,7 @@ pub fn parse_pingwaf_cli() -> PingWafCli {
         .cloned()
         .or_else(mode_from_env);
     let Some(mode) = mode else {
-        eprintln!("error: no PingWAF subcommand or PINGWAF_MODE specified");
+        eprintln!("error: no VarmanWAF subcommand or VARMAN_MODE specified");
         std::process::exit(1);
     };
 
@@ -477,41 +477,41 @@ pub fn parse_pingwaf_cli() -> PingWafCli {
             argv.splice(2..2, extra);
         },
         Err(err) => {
-            eprintln!("pingwaf: {err}");
+            eprintln!("varman: {err}");
             std::process::exit(1);
         },
     }
 
-    PingWafCli::parse_from(argv)
+    VarmanCli::parse_from(argv)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn parse(args: &[&str]) -> PingWafCommand {
-        PingWafCli::try_parse_from(args).unwrap().command
+    fn parse(args: &[&str]) -> VarmanCommand {
+        VarmanCli::try_parse_from(args).unwrap().command
     }
 
     #[test]
     fn flags_that_default_to_true_can_be_turned_off() {
         // Bare flag and no flag both mean the default; only an explicit value
         // (or environment variable) turns it off.
-        let PingWafCommand::Agent(opts) = parse(&["pingwaf", "agent"]) else {
+        let VarmanCommand::Agent(opts) = parse(&["varman", "agent"]) else {
             panic!("expected the agent mode");
         };
         assert!(opts.fail_open);
         assert!(opts.config.is_none());
 
-        let PingWafCommand::Agent(opts) =
-            parse(&["pingwaf", "agent", "--fail-open"])
+        let VarmanCommand::Agent(opts) =
+            parse(&["varman", "agent", "--fail-open"])
         else {
             panic!("expected the agent mode");
         };
         assert!(opts.fail_open);
 
-        let PingWafCommand::Agent(opts) =
-            parse(&["pingwaf", "agent", "--fail-open=false"])
+        let VarmanCommand::Agent(opts) =
+            parse(&["varman", "agent", "--fail-open=false"])
         else {
             panic!("expected the agent mode");
         };
@@ -522,20 +522,20 @@ mod tests {
     fn the_last_spelling_of_an_argument_wins() {
         // The configuration file is layered in as earlier arguments, so an
         // argument repeated on the command line has to override it.
-        let PingWafCommand::Server(opts) = parse(&[
-            "pingwaf",
+        let VarmanCommand::Server(opts) = parse(&[
+            "varman",
             "server",
-            "--config=/etc/pingwaf/pingwaf.toml",
+            "--config=/etc/varman/varman.toml",
             "--jwt-secret=from-file-16-chars",
             "--jwt-secret=from-cli-16-chars",
         ]) else {
             panic!("expected the server mode");
         };
         assert_eq!(opts.jwt_secret, "from-cli-16-chars");
-        assert_eq!(opts.config.as_deref(), Some("/etc/pingwaf/pingwaf.toml"));
+        assert_eq!(opts.config.as_deref(), Some("/etc/varman/varman.toml"));
 
-        let PingWafCommand::AllInOne(opts) = parse(&[
-            "pingwaf",
+        let VarmanCommand::AllInOne(opts) = parse(&[
+            "varman",
             "all-in-one",
             "--serve-frontend=false",
             "--serve-frontend",
@@ -549,12 +549,12 @@ mod tests {
     fn every_run_mode_accepts_a_config_file() {
         for mode in RUN_MODES {
             let path = format!("--config=/{mode}.toml");
-            let args = ["pingwaf", mode, path.as_str()];
-            let cli = PingWafCli::try_parse_from(args).unwrap();
+            let args = ["varman", mode, path.as_str()];
+            let cli = VarmanCli::try_parse_from(args).unwrap();
             let config = match cli.command {
-                PingWafCommand::Server(opts) => opts.config,
-                PingWafCommand::Agent(opts) => opts.config,
-                PingWafCommand::AllInOne(opts) => opts.config,
+                VarmanCommand::Server(opts) => opts.config,
+                VarmanCommand::Agent(opts) => opts.config,
+                VarmanCommand::AllInOne(opts) => opts.config,
                 _ => panic!("{mode} is not a run mode"),
             };
             assert_eq!(
@@ -566,8 +566,8 @@ mod tests {
 
     #[test]
     fn maintenance_commands_parse_with_their_database_options() {
-        let PingWafCommand::User { command } = parse(&[
-            "pingwaf",
+        let VarmanCommand::User { command } = parse(&[
+            "varman",
             "user",
             "add-admin",
             "--email=ops@example.com",
@@ -582,15 +582,15 @@ mod tests {
         assert_eq!(opts.db.db_url, "postgres://other/db");
         assert!(opts.password.is_none());
 
-        let PingWafCommand::Mode { command } =
-            parse(&["pingwaf", "mode", "observe"])
+        let VarmanCommand::Mode { command } =
+            parse(&["varman", "mode", "observe"])
         else {
             panic!("expected the mode command");
         };
         assert!(matches!(command, ModeCommand::Observe(_)));
 
-        let PingWafCommand::Security { command } =
-            parse(&["pingwaf", "security", "allowlist", "off"])
+        let VarmanCommand::Security { command } =
+            parse(&["varman", "security", "allowlist", "off"])
         else {
             panic!("expected the security command");
         };
@@ -602,9 +602,9 @@ mod tests {
     }
 
     #[test]
-    fn maintenance_commands_are_recognised_as_pingwaf_invocations() {
+    fn maintenance_commands_are_recognised_as_varman_invocations() {
         for mode in RUN_MODES.into_iter().chain(MAINTENANCE_MODES) {
-            assert!(is_mode(mode), "{mode} must select PingWAF mode");
+            assert!(is_mode(mode), "{mode} must select VarmanWAF mode");
         }
         assert!(!is_mode("reset-password"));
         assert!(!is_mode(""));
@@ -612,15 +612,15 @@ mod tests {
 
     #[test]
     fn the_version_flag_is_recognised_wherever_it_appears() {
-        // With PINGWAF_MODE the mode is injected, so the flag must be caught
+        // With VARMAN_MODE the mode is injected, so the flag must be caught
         // before the subcommand would reject it as an unknown argument.
         let argv = |args: &[&str]| {
             args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>()
         };
-        assert!(wants_version(&argv(&["pingwaf", "--version"])));
-        assert!(wants_version(&argv(&["pingwaf", "-V"])));
-        assert!(wants_version(&argv(&["pingwaf", "server", "--version"])));
-        assert!(!wants_version(&argv(&["pingwaf", "server", "--config=x"])));
-        assert!(!wants_version(&argv(&["pingwaf"])));
+        assert!(wants_version(&argv(&["varman", "--version"])));
+        assert!(wants_version(&argv(&["varman", "-V"])));
+        assert!(wants_version(&argv(&["varman", "server", "--version"])));
+        assert!(!wants_version(&argv(&["varman", "server", "--config=x"])));
+        assert!(!wants_version(&argv(&["varman"])));
     }
 }

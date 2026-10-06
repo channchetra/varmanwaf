@@ -2,7 +2,7 @@
 
 WAF 拦截效果基准测试：用 [chaitin/blazehttp](https://github.com/chaitin/blazehttp)
 的开源攻击样本（标准原始 HTTP 报文，`.black` 预期拦截 / `.white` 预期放行）回放
-PingWAF 数据面，量化默认规则的真实拦截率与误报率。
+VarmanWAF 数据面，量化默认规则的真实拦截率与误报率。
 
 ## 组成
 
@@ -11,7 +11,7 @@ PingWAF 数据面，量化默认规则的真实拦截率与误报率。
 | `replay.py` | 样本回放器：raw socket 逐字节发送（保真畸形样本），逐样本判定与攻击类别归因，输出 JSONL |
 | `summarize.py` | 汇总 JSONL：总体指标（双口径）、类别交叉表、漏报/误报样本清单（markdown） |
 | `mock_origin.py` | echo 上游：所有方法/路径一律 200，保证非 200/503 响应只可能来自 WAF 或协议层 |
-| `conf/*.toml` | 静态模式（`pingwaf -c`）矩阵配置，监听 `127.0.0.1:6188`，上游 `127.0.0.1:6199` |
+| `conf/*.toml` | 静态模式（`varman -c`）矩阵配置，监听 `127.0.0.1:6188`，上游 `127.0.0.1:6199` |
 
 ## 判定口径
 
@@ -36,7 +36,7 @@ git clone --depth 1 https://github.com/chaitin/blazehttp /tmp/blazehttp
 python3 tools/waf-bench/mock_origin.py --port 6199 &
 
 # 2. 起数据面（每组一份配置，改配置需重启进程）
-./target/debug/pingwaf -c tools/waf-bench/conf/g1-block-default.toml &
+./target/debug/varman -c tools/waf-bench/conf/g1-block-default.toml &
 
 # 3. 烟测
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:6188/                                # 200
@@ -59,7 +59,7 @@ python3 tools/waf-bench/summarize.py /tmp/waf-bench/*.jsonl > /tmp/waf-bench/sum
 | `-g` | 组标签（写入 JSONL，用于汇总分组） |
 | `-o` | 输出 JSONL 路径 |
 | `--concurrency` / `--delay-ms` | 并发线程数（默认 8）与请求间隔（默认 10ms） |
-| `--xff` | 逐样本轮换 `X-Forwarded-For`。agent 模式必开：数据面会把 Block 判决的来源 IP 自动封禁 600s，同源回放会被污染；同时也让 `/admin` 质询规则（PINGWAF-1001，排除内网段）按公网语义生效 |
+| `--xff` | 逐样本轮换 `X-Forwarded-For`。agent 模式必开：数据面会把 Block 判决的来源 IP 自动封禁 600s，同源回放会被污染；同时也让 `/admin` 质询规则（VARMAN-1001，排除内网段）按公网语义生效 |
 | `--xff-base` / `--xff-count` | 轮换池起点（默认 `203.0.113.1`）与大小（默认 254）。**注意**：混跑黑白样本时池必须远大于"样本数 / 期望封禁窗口"的比值，否则黑样本封禁后同 IP 白样本被边缘连带拒绝，表观误报率虚高（实测 254 池 33877 样本混跑误报 26.4%，黑/白分离纯净复测后 1.27%）。纯净复测建议：黑白样本分目录回放 + `--xff-base 10.254.0.1 --xff-count 65534` |
 | `--host-rewrite` | 统一覆写 Host 头。agent 模式按 Host 精确匹配站点规则，样本 Host 各异，需统一成站点域名 |
 | `--limit` | 只回放前 N 个样本（冒烟用） |
@@ -69,9 +69,9 @@ python3 tools/waf-bench/summarize.py /tmp/waf-bench/*.jsonl > /tmp/waf-bench/sum
 静态 TOML 模式只加载引擎托管规则，控制面播种的站点默认规则需用 agent 离线模式：
 
 1. 用临时脚本构造 `cache/sites.json`（规则表达式逐字取自
-   `pingwaf-server/src/defaults.rs`；站点 PL 由控制面按
+   `varman-control/src/defaults.rs`；站点 PL 由控制面按
    `max(规则 severity)` 推导 = 4，站点 `mode = block`）。
-2. `./target/debug/pingwaf agent --server-url http://127.0.0.1:1 --cache-dir <dir> --fail-open`
+2. `./target/debug/varman agent --server-url http://127.0.0.1:1 --cache-dir <dir> --fail-open`
    ——数据面凭磁盘缓存启动（无证书时只绑 80 端口），gRPC 断连重试噪音可忽略。
 3. 回放加 `--xff --host-rewrite <站点域名>`。
 

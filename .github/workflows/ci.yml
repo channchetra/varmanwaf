@@ -1,11 +1,11 @@
 name: CI
 
-# Continuous integration for the PingWAF workspace.
+# Continuous integration for the VarmanWAF workspace.
 #
 #   - push to `main`  -> full gate (rust + web + docker build verification)
 #   - pull_request    -> rust + web gate (docker is skipped, it only runs on main)
 #
-# The rust job builds the `pingwaf` binary with the default OpenSSL backend and
+# The rust job builds the `varman` binary with the default OpenSSL backend and
 # the `full` feature set (the same configuration the release pipeline and the
 # Dockerfile use). `--all-features` is deliberately NOT used: `openssl` and
 # `tls-rustls` are mutually exclusive TLS backends and enabling both fails to
@@ -35,7 +35,7 @@ jobs:
     name: Rust (fmt / clippy / build / test)
     runs-on: ubuntu-latest
     env:
-      # pingwaf-proto/build.rs honours PROTOC; point it at the apt-installed
+      # varman-protocol/build.rs honours PROTOC; point it at the apt-installed
       # protoc so the tonic/prost gRPC stubs are generated instead of the empty
       # placeholder build.rs writes when protoc is missing.
       PROTOC: /usr/bin/protoc
@@ -64,7 +64,7 @@ jobs:
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
 
-      # pingwaf-server embeds ../web/dist/ at compile time via rust-embed. The
+      # varman-control embeds ../web/dist/ at compile time via rust-embed. The
       # folder has to exist for the crate to build; the `web` job below verifies
       # the real bundle, so an empty placeholder is enough here.
       - name: Ensure embedded frontend directory exists
@@ -76,8 +76,8 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --features full -- -D warnings
 
-      - name: Build (release, pingwaf, full)
-        run: cargo build --release --bin pingwaf --features full
+      - name: Build (release, varman, full)
+        run: cargo build --release --bin varman --features full
 
       - name: Test (workspace)
         run: cargo test --workspace --features full --no-fail-fast
@@ -144,6 +144,6 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/shuaizend/pingwaf:latest
+          tags: ghcr.io/varmanwaf/varmanwaf:latest
           cache-from: type=gha,scope=docker
           cache-to: type=gha,scope=docker,mode=max

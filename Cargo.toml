@@ -1,18 +1,19 @@
 [package]
-name = "pingap"
+name = "varman"
 version.workspace = true
-authors = ["Tree Xie <tree.xie@outlook.com>"]
+authors = ["VarmanWAF contributors"]
 edition = "2024"
 categories = ["network-programming", "web-programming::http-server"]
-keywords = ["proxy", "http", "gateway"]
-description = "A reverse proxy like nginx"
+keywords = ["proxy", "http", "gateway", "waf", "firewall"]
+description = "VarmanWAF — a self-hosted distributed Web Application Firewall platform"
 license = "Apache-2.0"
-homepage = "https://github.com/shuaiZend/PingWAF"
-repository = "https://github.com/shuaiZend/PingWAF"
+# TODO(release): confirm the canonical project URL before publishing.
+homepage = "https://github.com/varmanwaf/varmanwaf"
+repository = "https://github.com/varmanwaf/varmanwaf"
 exclude = ["asset/*", "test/*", "Cargo.lock", "web/*", ".github/*", "docs/*"]
 readme = "./README.md"
 rust-version = "1.96"
-default-run = "pingap"
+default-run = "varman"
 build = "build.rs"
 
 [[bin]]
@@ -20,7 +21,7 @@ name = "pingap"
 path = "src/main.rs"
 
 [[bin]]
-name = "pingwaf"
+name = "varman"
 path = "src/main.rs"
 
 [lints.clippy]
@@ -71,9 +72,9 @@ pingap-sentry = { workspace = true, optional = true }
 pingap-upstream = { workspace = true }
 pingap-util = { workspace = true }
 pingap-webhook = { workspace = true }
-pingwaf-server = { path = "pingwaf-server" }
-pingwaf-agent = { path = "pingwaf-agent" }
-pingwaf-pprof = { workspace = true }
+varman-control = { path = "varman-control" }
+varman-agent = { path = "varman-agent" }
+varman-pprof = { workspace = true }
 anyhow = { workspace = true }
 pingora = { workspace = true }
 regex = { workspace = true }
@@ -263,12 +264,12 @@ members = [
     "pingap-upstream",
     "pingap-util",
     "pingap-webhook",
-    "pingwaf-server",
-    "pingwaf-proto",
-    "pingwaf-pprof",
-    "pingwaf-waf",
-    "pingwaf-challenge",
-    "pingwaf-agent",
+    "varman-control",
+    "varman-protocol",
+    "varman-pprof",
+    "varman-waf",
+    "varman-challenge",
+    "varman-agent",
 ]
 [workspace.package]
 version = "0.20.0"
@@ -360,7 +361,7 @@ pingap-sentry = { version = "0.20.0", path = "pingap-sentry" }
 pingap-upstream = { version = "0.20.0", path = "pingap-upstream", default-features = false }
 pingap-util = { version = "0.20.0", path = "pingap-util" }
 pingap-webhook = { version = "0.20.0", path = "pingap-webhook" }
-pingwaf-pprof = { version = "0.1.0", path = "pingwaf-pprof" }
+varman-pprof = { version = "0.1.0", path = "varman-pprof" }
 # Released crates.io versions; all three must stay on the same version so cargo
 # resolves one copy of pingora-core.
 # The TLS backend (`openssl` or `rustls`) is chosen by the top-level

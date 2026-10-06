@@ -6,7 +6,7 @@ extend-ignore-re = [
 # 'BA' is the ISO 3166-1 alpha-2 country code for Bosnia and Herzegovina
 # (web/src/api/geo.ts country table), not a typo for BY/BE.
 # 'COSE' is CBOR Object Signing and Encryption (RFC 9052), the key format
-# WebAuthn authenticators report (pingwaf-server/src/models/passkeys.rs).
+# WebAuthn authenticators report (varman-control/src/models/passkeys.rs).
 [default.extend-words]
 BA = "BA"
 COSE = "COSE"

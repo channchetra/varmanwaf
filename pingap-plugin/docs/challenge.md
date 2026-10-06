@@ -18,7 +18,7 @@ cookie to visitors that solve it.
 | `rate_threshold` | int | `100` | Requests per 60-second window above which a visitor is challenged. |
 | `pow_difficulty` | int | `20` | Proof-of-work difficulty (leading zero bits). Higher = harder for bots, slower for users. |
 | `cookie_secret` | string | `change-me` | HMAC key used to sign clearance cookies. **Change this in production.** |
-| `cookie_name` | string | `__pingwaf_clearance` | Name of the clearance cookie. |
+| `cookie_name` | string | `__varman_clearance` | Name of the clearance cookie. |
 | `exempt_paths` | string[] | `[]` | Paths that bypass the challenge (health checks, APIs). |
 | `exempt_user_agents` | string[] | `[]` | User-agent substrings that bypass the challenge. |
 | `browser_integrity_check` | bool | `true` | Validate browser fingerprint consistency during verification. |
@@ -27,7 +27,7 @@ cookie to visitors that solve it.
 
 ## Request flow
 
-1. **Verify endpoint** — if the path is `/_pingwaf/challenge/verify` and method
+1. **Verify endpoint** — if the path is `/_varman/challenge/verify` and method
    is `POST`, the plugin parses the proof-of-work submission, validates it, and
    either sets the clearance cookie and returns a redirect to the original URL,
    or returns a `403` block page.

@@ -64,7 +64,7 @@ typos.toml
 publish.sh
 install.sh
 pingap.service
-pingwaf.service
+varman.service
 docker-compose.yml
 Dockerfile
 .dockerignore
@@ -92,7 +92,7 @@ dhat*.json
 id_rsa*
 
 # ─── 仓库根可能残留的本地编译二进制 ────────────────────────────────────────
-pingwaf
+varman
 pingap
 
 # ─── Rust 工具链配置（Docker 内不需要）─────────────────────────────────────

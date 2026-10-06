@@ -42,7 +42,7 @@ void i18n
     detection: {
       // browser → localStorage → fallback
       order: ['localStorage', 'navigator'],
-      lookupLocalStorage: 'pingwaf.lang',
+      lookupLocalStorage: 'varman.lang',
       caches: ['localStorage'],
     },
     react: {

@@ -3,7 +3,7 @@ import { create } from 'zustand'
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type ResolvedTheme = 'light' | 'dark'
 
-const STORAGE_KEY = 'pingwaf.theme'
+const STORAGE_KEY = 'varman.theme'
 
 function getSystemTheme(): ResolvedTheme {
   if (typeof window === 'undefined' || !window.matchMedia) return 'light'

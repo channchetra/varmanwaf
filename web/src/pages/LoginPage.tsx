@@ -170,7 +170,7 @@ export function LoginPage() {
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
             <ShieldCheck weight="fill" className="h-6 w-6" />
           </span>
-          <span className="text-xl font-semibold tracking-tight">PingWAF</span>
+          <span className="text-xl font-semibold tracking-tight">VarmanWAF</span>
         </div>
 
         <div className="relative z-10 px-10 text-white">
@@ -185,7 +185,7 @@ export function LoginPage() {
         </div>
 
         <div className="relative z-10 p-10 text-sm text-white/70">
-          © {new Date().getFullYear()} PingWAF
+          © {new Date().getFullYear()} VarmanWAF
         </div>
       </div>
 
@@ -196,7 +196,7 @@ export function LoginPage() {
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-white">
               <ShieldCheck weight="fill" className="h-6 w-6" />
             </span>
-            <span className="text-lg font-semibold text-fg-strong">PingWAF</span>
+            <span className="text-lg font-semibold text-fg-strong">VarmanWAF</span>
           </div>
 
           <h1 className="text-2xl font-semibold tracking-tight text-fg-strong">

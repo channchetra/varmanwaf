@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Site } from '@/api/types'
 
-const SITE_KEY = 'pingwaf.currentSiteId'
+const SITE_KEY = 'varman.currentSiteId'
 
 interface SiteState {
   currentSiteId: string | null

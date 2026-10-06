@@ -301,7 +301,7 @@ export function LogsPage() {
       toast.warning(t('pages.logs.exportEmpty'))
       return
     }
-    const name = `pingwaf-${tab}-${fileTimestamp()}`
+    const name = `varman-${tab}-${fileTimestamp()}`
     downloadJson(name, {
       exported_at: new Date().toISOString(),
       kind: tab,

@@ -26,7 +26,7 @@
 //! * **Response body phase** — literal search/replace or full body replacement.
 //!
 //! Rules come from two sources, resolved per request:
-//! * a [`PingWafAgent`] control-plane instance, when one is running and has
+//! * a [`VarmanAgent`] control-plane instance, when one is running and has
 //!   rules for the request's domain (cached per host, rebuilt when the agent's
 //!   config hash changes);
 //! * otherwise the locally configured `rules` from the plugin's TOML config.
@@ -52,8 +52,8 @@ use pingap_core::{
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
-use pingwaf_agent::PingWafAgent;
-use pingwaf_agent::cache::{
+use varman_agent::VarmanAgent;
+use varman_agent::cache::{
     RewriteDirection as CacheRewriteDirection,
     RewriteOperation as CacheRewriteOperation, RewriteRule as CacheRewriteRule,
 };
@@ -1264,7 +1264,7 @@ impl RewritePlugin {
     /// otherwise the locally configured rules.
     fn active_rules(&self, host: &str) -> Arc<Vec<CompiledRewriteRule>> {
         if !host.is_empty()
-            && let Some(agent) = PingWafAgent::instance()
+            && let Some(agent) = VarmanAgent::instance()
             && let Some(site) = agent.get_rules_for_domain(host)
             && !site.rewrite_rules.is_empty()
         {
@@ -1857,7 +1857,7 @@ rules = '[{"id":"h","direction":"response","operations":[{"type":"set_header","n
     mod agent_mode {
         use super::*;
         use crate::waf::tests::install_test_agent;
-        use pingwaf_proto::control_plane as proto;
+        use varman_protocol::control_plane as proto;
         use pretty_assertions::assert_eq;
 
         fn site_config(

@@ -110,10 +110,10 @@ const langLabels: Record<string, string> = { en: 'English', zh: '中文', ja: '�
 const MIN_PASSWORD = 8
 
 /** Public REST reference shipped with the repository. */
-const API_DOCS_URL = 'https://github.com/shuaiZend/PingWAF/blob/main/docs/api.md'
+const API_DOCS_URL = 'https://github.com/shuaiZend/VarmanWAF/blob/main/docs/api.md'
 
 /** Public project repository shown in the About card. */
-const PROJECT_URL = 'https://github.com/shuaiZend/PingWAF'
+const PROJECT_URL = 'https://github.com/shuaiZend/VarmanWAF'
 
 /**
  * Quick-navigation anchors in page order; each id must match the `id` of the
@@ -1714,8 +1714,8 @@ function ControlPlaneTlsCard({ canWrite }: { canWrite: boolean }) {
     onSuccess: (pem) => {
       downloadCertificateFile(
         certificate?.source === 'self_signed'
-          ? 'pingwaf-control-plane-self-signed.crt'
-          : 'pingwaf-control-plane.crt',
+          ? 'varman-control-plane-self-signed.crt'
+          : 'varman-control-plane.crt',
         pem,
       )
       toast.success(t('pages.settings.tlsDownloaded'))
@@ -1980,7 +1980,7 @@ function ControlPlaneTlsCard({ canWrite }: { canWrite: boolean }) {
 /* ── Defense: observation mode ──────────────────────────────────────── */
 
 /**
- * The global data-plane switch (the console twin of `pingwaf mode observe`):
+ * The global data-plane switch (the console twin of `varman mode observe`):
  * every protection keeps detecting but only records. mTLS, basic auth and
  * suspended sites stay enforced, which is why this is a warning-toned toggle
  * rather than a plain setting.
@@ -2701,7 +2701,7 @@ function McpCard() {
   const configSnippet = JSON.stringify(
     {
       mcpServers: {
-        pingwaf: {
+        varman: {
           url: endpoint,
           headers: { Authorization: 'Bearer pwk_YOUR_KEY' },
         },
@@ -2710,7 +2710,7 @@ function McpCard() {
     null,
     2,
   )
-  const cliSnippet = `claude mcp add --transport http pingwaf ${endpoint} \\\n  --header "Authorization: Bearer pwk_YOUR_KEY"`
+  const cliSnippet = `claude mcp add --transport http varman ${endpoint} \\\n  --header "Authorization: Bearer pwk_YOUR_KEY"`
 
   const copy = async (value: string) => {
     try {
@@ -3208,7 +3208,7 @@ function AboutCard() {
                 <dt className="text-xs font-medium text-fg-subtle">{t('pages.settings.aboutProduct')}</dt>
                 <dd className="mt-1 flex items-center gap-2 text-fg">
                   <ShieldCheck weight="duotone" className="h-4 w-4 text-brand" />
-                  PingWAF
+                  VarmanWAF
                   <Badge tone="brand">{view.version}</Badge>
                 </dd>
               </div>

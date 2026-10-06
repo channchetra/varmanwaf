@@ -1,9 +1,9 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# PingWAF Installation Script
+# VarmanWAF Installation Script
 # ─────────────────────────────────────────────────────────────────────────────
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/shuaiZend/PingWAF/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | bash
 #   ./install.sh [--version X.Y.Z] [--mode all-in-one|server|agent]
 #
 # Options:
@@ -34,26 +34,26 @@ fatal()   { error "$@"; exit 1; }
 has() { command -v "$1" >/dev/null 2>&1; }
 
 # ─── Constants ────────────────────────────────────────────────────────────────
-REPO="shuaiZend/PingWAF"
-BINARY_NAME="pingwaf"
+REPO="varmanwaf/varmanwaf"
+BINARY_NAME="varman"
 INSTALL_DIR="/usr/local/bin"
-CONFIG_DIR="/etc/pingwaf"
-DATA_DIR="/var/lib/pingwaf"
-SERVICE_NAME="pingwaf"
+CONFIG_DIR="/etc/varman"
+DATA_DIR="/var/lib/varman"
+SERVICE_NAME="varman"
 SUPPORTED_PLATFORMS="linux/amd64 linux/arm64"
 
 # ─── Default Configuration ────────────────────────────────────────────────────
 VERSION=""
 MODE="all-in-one"
 SKIP_SYSTEMD=false
-DB_URL="postgres://pingwaf:pingwaf@localhost:5432/pingwaf"
+DB_URL="postgres://varman:varman@localhost:5432/varman"
 SERVER_URL=""
 API_KEY=""
 
 # ─── Argument Parsing ─────────────────────────────────────────────────────────
 show_help() {
     cat <<EOF
-PingWAF Installation Script
+VarmanWAF Installation Script
 
 Usage: $(basename "$0") [OPTIONS]
 
@@ -67,15 +67,15 @@ Options:
   --help                Show this help message
 
 Environment Variables:
-  PINGWAF_VERSION       Same as --version
-  PINGWAF_MODE          Same as --mode
-  PINGWAF_SERVER_URL    Same as --server-url
-  PINGWAF_API_KEY       Same as --api-key
-  PINGWAF_DB_URL        Same as --db-url
+  VARMAN_VERSION       Same as --version
+  VARMAN_MODE          Same as --mode
+  VARMAN_SERVER_URL    Same as --server-url
+  VARMAN_API_KEY       Same as --api-key
+  VARMAN_DB_URL        Same as --db-url
 
 Examples:
   # Install latest, all-in-one mode
-  curl -fsSL https://raw.githubusercontent.com/shuaiZend/PingWAF/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | bash
 
   # Install a node as an agent, pointing at the control plane
   ./install.sh --mode agent --server-url http://10.0.0.1:9090 --api-key pwk_xxx
@@ -84,11 +84,11 @@ Examples:
   ./install.sh --version 0.20.0 --mode agent
 
   # Custom database URL
-  ./install.sh --db-url "postgres://user:pass@db-host:5432/pingwaf"
+  ./install.sh --db-url "postgres://user:pass@db-host:5432/varman"
 
 After installation:
-  Config: /etc/pingwaf/pingwaf.toml   (edit it, then: systemctl restart pingwaf)
-  Data:   /var/lib/pingwaf
+  Config: /etc/varman/varman.toml   (edit it, then: systemctl restart varman)
+  Data:   /var/lib/varman
 EOF
 }
 
@@ -106,13 +106,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Environment variable fallbacks
-VERSION="${VERSION:-${PINGWAF_VERSION:-}}"
-MODE="${MODE:-${PINGWAF_MODE:-all-in-one}}"
-DB_URL="${DB_URL:-${PINGWAF_DB_URL:-$DB_URL}}"
+VERSION="${VERSION:-${VARMAN_VERSION:-}}"
+MODE="${MODE:-${VARMAN_MODE:-all-in-one}}"
+DB_URL="${DB_URL:-${VARMAN_DB_URL:-$DB_URL}}"
 # Agent mode reads its settings from the command line or the environment, so
 # these are what the systemd unit is built from.
-SERVER_URL="${SERVER_URL:-${PINGWAF_SERVER_URL:-}}"
-API_KEY="${API_KEY:-${PINGWAF_API_KEY:-}}"
+SERVER_URL="${SERVER_URL:-${VARMAN_SERVER_URL:-}}"
+API_KEY="${API_KEY:-${VARMAN_API_KEY:-}}"
 
 # Validate mode
 case "$MODE" in
@@ -124,7 +124,7 @@ esac
 if [[ "$MODE" == "agent" ]]; then
     SERVER_URL="${SERVER_URL:-http://127.0.0.1:9090}"
     if [[ -z "$API_KEY" ]]; then
-        warn "No --api-key given: start the agent with PINGWAF_API_KEY set, or it cannot register."
+        warn "No --api-key given: start the agent with VARMAN_API_KEY set, or it cannot register."
     fi
 fi
 
@@ -185,7 +185,7 @@ fi
 
 # Strip leading 'v' if present
 VERSION="${VERSION#v}"
-info "Installing PingWAF v${VERSION}"
+info "Installing VarmanWAF v${VERSION}"
 
 # ─── Download ─────────────────────────────────────────────────────────────────
 resolve_asset_name() {
@@ -193,8 +193,8 @@ resolve_asset_name() {
     case "$os" in
         linux)
             case "$arch" in
-                amd64) echo "pingwaf-linux-amd64.tar.gz" ;;
-                arm64) echo "pingwaf-linux-arm64.tar.gz" ;;
+                amd64) echo "varman-linux-amd64.tar.gz" ;;
+                arm64) echo "varman-linux-arm64.tar.gz" ;;
             esac
             ;;
     esac
@@ -270,13 +270,13 @@ create_dirs() {
 
     $cmd mkdir -p "$CONFIG_DIR" "$DATA_DIR" "${DATA_DIR}/cache" "${DATA_DIR}/certs"
 
-    # Create pingwaf user if on Linux
+    # Create varman user if on Linux
     if [[ "$OS" == "linux" ]]; then
-        if ! id -u pingwaf >/dev/null 2>&1; then
-            $cmd useradd -r -m -d "$DATA_DIR" -s /usr/sbin/nologin pingwaf 2>/dev/null || \
-            $cmd adduser -r -d "$DATA_DIR" -s /sbin/nologin pingwaf 2>/dev/null || true
+        if ! id -u varman >/dev/null 2>&1; then
+            $cmd useradd -r -m -d "$DATA_DIR" -s /usr/sbin/nologin varman 2>/dev/null || \
+            $cmd adduser -r -d "$DATA_DIR" -s /sbin/nologin varman 2>/dev/null || true
         fi
-        $cmd chown -R pingwaf:pingwaf "$CONFIG_DIR" "$DATA_DIR" 2>/dev/null || true
+        $cmd chown -R varman:varman "$CONFIG_DIR" "$DATA_DIR" 2>/dev/null || true
     fi
 }
 
@@ -288,7 +288,7 @@ fi
 
 # ─── Write Default Configuration ─────────────────────────────────────────────
 write_config() {
-    local config_file="${CONFIG_DIR}/pingwaf.toml"
+    local config_file="${CONFIG_DIR}/varman.toml"
     if [[ -f "$config_file" ]]; then
         warn "Config file already exists at ${config_file}, skipping."
         return
@@ -306,12 +306,12 @@ write_config() {
         agent_server_url="server_url = \"${SERVER_URL}\""
     fi
     $cmd tee "$config_file" >/dev/null <<EOF
-# PingWAF Configuration
+# VarmanWAF Configuration
 # Generated by install.sh on $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # Mode: ${MODE}
 #
-# This file is read when PINGWAF_CONFIG points at it (the systemd unit sets
-# that). Precedence: this file, then PINGWAF_* environment variables, then
+# This file is read when VARMAN_CONFIG points at it (the systemd unit sets
+# that). Precedence: this file, then VARMAN_* environment variables, then
 # command-line flags. Unknown keys are reported at startup and ignored.
 
 [server]
@@ -325,8 +325,8 @@ grpc_addr = "0.0.0.0:9090"
 # tls_sans = ["waf.example.com"]
 tls_enabled = true
 jwt_secret = "$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
-admin_email = "admin@pingwaf.local"
-admin_password = "pingwaf123"
+admin_email = "admin@varman.local"
+admin_password = "varman123"
 serve_frontend = true
 
 # Used by the all-in-one mode and by agents; a server ignores this section.
@@ -341,14 +341,14 @@ fail_open = true
 metrics_ship_interval_secs = 30
 
 # Everything else comes from the environment, e.g.
-#   PINGWAF_ALLOW_REGISTRATION=false     PINGWAF_CORS_ORIGINS=https://ui.example.com
-#   PINGWAF_JWT_EXPIRATION_HOURS=12      PINGWAF_DB_MAX_CONNECTIONS=20
-#   PINGWAF_METRIC_RETENTION_DAYS=30     PINGWAF_WEBHOOK_URL=https://hooks.example.com
-#   PINGWAF_PASSKEY_ENABLED=true         PINGWAF_ES_ENABLED=true
+#   VARMAN_ALLOW_REGISTRATION=false     VARMAN_CORS_ORIGINS=https://ui.example.com
+#   VARMAN_JWT_EXPIRATION_HOURS=12      VARMAN_DB_MAX_CONNECTIONS=20
+#   VARMAN_METRIC_RETENTION_DAYS=30     VARMAN_WEBHOOK_URL=https://hooks.example.com
+#   VARMAN_PASSKEY_ENABLED=true         VARMAN_ES_ENABLED=true
 EOF
 
     if [[ -n "$cmd" ]]; then
-        $cmd chown pingwaf:pingwaf "$config_file" 2>/dev/null || true
+        $cmd chown varman:varman "$config_file" 2>/dev/null || true
         $cmd chmod 640 "$config_file"
     fi
 
@@ -384,21 +384,21 @@ install_systemd() {
     # changed unit or config file takes effect with `systemctl restart`.
     local unit_after="After=network.target postgresql.service"
     local unit_wants="Wants=postgresql.service"
-    local agent_env="Environment=PINGWAF_CONFIG=${CONFIG_DIR}/pingwaf.toml"
+    local agent_env="Environment=VARMAN_CONFIG=${CONFIG_DIR}/varman.toml"
     if [[ "$MODE" == "agent" ]]; then
         unit_after="After=network-online.target"
         unit_wants="Wants=network-online.target"
-        agent_env="Environment=PINGWAF_CONFIG=${CONFIG_DIR}/pingwaf.toml
-Environment=PINGWAF_SERVER_URL=${SERVER_URL}
-Environment=PINGWAF_API_KEY=${API_KEY}
-Environment=PINGWAF_CACHE_DIR=${DATA_DIR}/cache"
+        agent_env="Environment=VARMAN_CONFIG=${CONFIG_DIR}/varman.toml
+Environment=VARMAN_SERVER_URL=${SERVER_URL}
+Environment=VARMAN_API_KEY=${API_KEY}
+Environment=VARMAN_CACHE_DIR=${DATA_DIR}/cache"
     else
         # The dashboard is served over HTTPS with a self-signed certificate
         # until a real one is uploaded. Add the hostname it is reached under so
         # the generated certificate covers it:
-        # Environment=PINGWAF_TLS_SANS=waf.example.com
-        agent_env="Environment=PINGWAF_CONFIG=${CONFIG_DIR}/pingwaf.toml
-Environment=PINGWAF_TLS_ENABLED=true"
+        # Environment=VARMAN_TLS_SANS=waf.example.com
+        agent_env="Environment=VARMAN_CONFIG=${CONFIG_DIR}/varman.toml
+Environment=VARMAN_TLS_ENABLED=true"
     fi
 
     info "Creating systemd service..."
@@ -408,15 +408,15 @@ Environment=PINGWAF_TLS_ENABLED=true"
 
     $cmd tee "$service_file" >/dev/null <<EOF
 [Unit]
-Description=PingWAF - High Performance Web Application Firewall
+Description=VarmanWAF - High Performance Web Application Firewall
 Documentation=https://github.com/${REPO}
 ${unit_after}
 ${unit_wants}
 
 [Service]
 Type=simple
-User=pingwaf
-Group=pingwaf
+User=varman
+Group=varman
 ExecStart=${exec_start}
 Restart=always
 RestartSec=5
@@ -454,7 +454,7 @@ EOF
         return
     fi
 
-    info "To start PingWAF:"
+    info "To start VarmanWAF:"
     echo "  sudo systemctl enable --now ${SERVICE_NAME}"
     echo "  sudo systemctl status ${SERVICE_NAME}"
 }
@@ -474,15 +474,15 @@ check_postgres() {
             echo "  To set up PostgreSQL:"
             echo "    1. Install: sudo apt install postgresql-16"
             echo "    2. Create user & database:"
-            echo "       sudo -u postgres createuser pingwaf"
-            echo "       sudo -u postgres createdb -O pingwaf pingwaf"
-            echo "       sudo -u postgres psql -c \"ALTER USER pingwaf PASSWORD 'pingwaf';\""
+            echo "       sudo -u postgres createuser varman"
+            echo "       sudo -u postgres createdb -O varman varman"
+            echo "       sudo -u postgres psql -c \"ALTER USER varman PASSWORD 'varman';\""
             echo ""
         fi
     else
         warn "PostgreSQL client (psql) not found."
         echo ""
-        echo "  PingWAF requires PostgreSQL 14+. Install it with:"
+        echo "  VarmanWAF requires PostgreSQL 14+. Install it with:"
         echo ""
         if [[ "$OS" == "linux" ]]; then
             if has apt-get; then
@@ -499,9 +499,9 @@ check_postgres() {
         fi
         echo ""
         echo "  Then create the database:"
-        echo "    sudo -u postgres createuser pingwaf"
-        echo "    sudo -u postgres createdb -O pingwaf pingwaf"
-        echo "    sudo -u postgres psql -c \"ALTER USER pingwaf PASSWORD 'pingwaf';\""
+        echo "    sudo -u postgres createuser varman"
+        echo "    sudo -u postgres createdb -O varman varman"
+        echo "    sudo -u postgres psql -c \"ALTER USER varman PASSWORD 'varman';\""
         echo ""
     fi
 }
@@ -551,12 +551,12 @@ print_firewall_hints
 # ─── Success ──────────────────────────────────────────────────────────────────
 echo ""
 echo "${BOLD}${GREEN}═══════════════════════════════════════════════════════════════${NO_COLOR}"
-echo "${BOLD}${GREEN}  PingWAF v${VERSION} installed successfully!${NO_COLOR}"
+echo "${BOLD}${GREEN}  VarmanWAF v${VERSION} installed successfully!${NO_COLOR}"
 echo "${BOLD}${GREEN}═══════════════════════════════════════════════════════════════${NO_COLOR}"
 echo ""
 echo "  Binary:    ${INSTALL_DIR}/${BINARY_NAME}"
 if [[ "$OS" == "linux" ]]; then
-    echo "  Config:    ${CONFIG_DIR}/pingwaf.toml"
+    echo "  Config:    ${CONFIG_DIR}/varman.toml"
     echo "  Data:      ${DATA_DIR}/"
     echo "  Service:   systemctl {start|stop|restart|status} ${SERVICE_NAME}"
 fi
@@ -570,7 +570,7 @@ if [[ "$MODE" == "agent" ]]; then
     else
         echo "    2. If it does not, run the agent in the foreground to see the error"
     fi
-    echo "    3. Point another control plane at it by editing ${CONFIG_DIR}/pingwaf.toml"
+    echo "    3. Point another control plane at it by editing ${CONFIG_DIR}/varman.toml"
     echo ""
 else
     echo ""
@@ -579,14 +579,14 @@ else
     echo ""
     echo "  Dashboard: https://localhost:9080  (self-signed certificate)"
     echo "  Default credentials:"
-    echo "    Email:    admin@pingwaf.local"
-    echo "    Password: pingwaf123"
+    echo "    Email:    admin@varman.local"
+    echo "    Password: varman123"
     echo ""
     echo "  ${YELLOW}⚠ Change the default admin password and JWT secret in production!${NO_COLOR}"
     echo ""
     echo "  Next steps:"
     echo "    1. Ensure PostgreSQL is running and accessible"
-    echo "    2. Edit ${CONFIG_DIR}/pingwaf.toml, then: sudo systemctl restart ${SERVICE_NAME}"
+    echo "    2. Edit ${CONFIG_DIR}/varman.toml, then: sudo systemctl restart ${SERVICE_NAME}"
     echo "    3. Start the service: sudo systemctl enable --now ${SERVICE_NAME}"
     echo "    4. Open the dashboard and add your first site"
     echo ""

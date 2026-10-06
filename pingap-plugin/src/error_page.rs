@@ -25,11 +25,11 @@
 //! hot path only pays for a render.
 //!
 //! Page definitions come from two sources, resolved per request:
-//! * a [`PingWafAgent`] control-plane instance, when one is running and has
+//! * a [`VarmanAgent`] control-plane instance, when one is running and has
 //!   error pages for the request's domain (cached per host, rebuilt when the
 //!   agent's config hash changes); these take priority;
 //! * otherwise the locally configured `pages` from the plugin's TOML config,
-//!   optionally merged with the built-in PingWAF defaults.
+//!   optionally merged with the built-in VarmanWAF defaults.
 
 use super::{Error, get_hash_key};
 use arc_swap::ArcSwap;
@@ -48,9 +48,9 @@ use pingap_core::{
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
-use pingwaf_agent::PingWafAgent;
-use pingwaf_agent::cache::CustomErrorPage;
-use pingwaf_challenge::generate_request_id;
+use varman_agent::VarmanAgent;
+use varman_agent::cache::CustomErrorPage;
+use varman_challenge::generate_request_id;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,12 +75,12 @@ fn invalid(message: impl Into<String>) -> Error {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Built-in PingWAF error pages
+// Built-in VarmanWAF error pages
 // ─────────────────────────────────────────────────────────────
 
 /// Shared CSS for the built-in pages. Registered as a partial so the individual
 /// pages stay small and consistent. Supports light/dark via
-/// `prefers-color-scheme` and uses the PingWAF orange accent.
+/// `prefers-color-scheme` and uses the VarmanWAF orange accent.
 const PW_STYLE: &str = r##"<style>
 :root{
   --bg:#f6f7f9;--card:#ffffff;--fg:#141417;--muted:#6b6b73;--border:#e7e7ea;
@@ -141,7 +141,7 @@ const PAGE_403: &str = r##"<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Access Denied · PingWAF</title>
+<title>Access Denied · VarmanWAF</title>
 {% include "_pw_style" %}
 </head>
 <body>
@@ -157,7 +157,7 @@ const PAGE_403: &str = r##"<!DOCTYPE html>
     <div class="row"><span class="k">Path</span><span class="v">{{ method }} {{ path }}</span></div>
     {% if waf_rule %}<div class="row"><span class="k">Rule</span><span class="v">{{ waf_rule }}</span></div>{% endif %}
   </div>
-  <p class="brand">Protected by <b>PingWAF</b></p>
+  <p class="brand">Protected by <b>VarmanWAF</b></p>
 </div>
 </body>
 </html>"##;
@@ -168,7 +168,7 @@ const PAGE_429: &str = r##"<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rate Limit Exceeded · PingWAF</title>
+<title>Rate Limit Exceeded · VarmanWAF</title>
 {% include "_pw_style" %}
 </head>
 <body>
@@ -183,7 +183,7 @@ const PAGE_429: &str = r##"<!DOCTYPE html>
     <div class="row"><span class="k">Your IP</span><span class="v">{{ client_ip }}</span></div>
     {% if retry_after %}<div class="row"><span class="k">Retry after</span><span class="v">{{ retry_after }}s</span></div>{% endif %}
   </div>
-  <p class="brand">Protected by <b>PingWAF</b></p>
+  <p class="brand">Protected by <b>VarmanWAF</b></p>
 </div>
 </body>
 </html>"##;
@@ -194,7 +194,7 @@ const PAGE_5XX: &str = r##"<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Service Unavailable · PingWAF</title>
+<title>Service Unavailable · VarmanWAF</title>
 {% include "_pw_style" %}
 </head>
 <body>
@@ -209,7 +209,7 @@ const PAGE_5XX: &str = r##"<!DOCTYPE html>
     <div class="row"><span class="k">Host</span><span class="v">{{ host }}</span></div>
     <div class="row"><span class="k">Path</span><span class="v">{{ method }} {{ path }}</span></div>
   </div>
-  <p class="brand">Protected by <b>PingWAF</b></p>
+  <p class="brand">Protected by <b>VarmanWAF</b></p>
 </div>
 </body>
 </html>"##;
@@ -290,7 +290,7 @@ pub struct ErrorPagePlugin {
     templates: Arc<ArcSwap<HashMap<u16, CompiledErrorPage>>>,
     /// Tera engine holding the locally configured templates.
     tera: Arc<Tera>,
-    /// Whether the built-in PingWAF pages are used.
+    /// Whether the built-in VarmanWAF pages are used.
     use_defaults: bool,
     /// Agent-supplied pages keyed by host.
     site_pages: DashMap<String, CachedSitePages>,
@@ -325,7 +325,7 @@ impl ErrorPagePlugin {
     /// otherwise the locally configured pages.
     fn resolve(&self, host: &str) -> CompiledSitePages {
         if !host.is_empty()
-            && let Some(agent) = PingWafAgent::instance()
+            && let Some(agent) = VarmanAgent::instance()
             && let Some(site) = agent.get_rules_for_domain(host)
             && !site.error_pages.is_empty()
         {
@@ -581,14 +581,14 @@ impl TryFrom<&PluginConf> for ErrorPagePlugin {
             })?;
         let mut map: HashMap<u16, CompiledErrorPage> = HashMap::new();
 
-        // Built-in PingWAF pages.
+        // Built-in VarmanWAF pages.
         if use_defaults {
             let defaults: [(u16, &str, &str, &str); 5] = [
-                (403, "pw_default_403", PAGE_403, "PingWAF Forbidden"),
-                (429, "pw_default_429", PAGE_429, "PingWAF Rate Limit"),
-                (502, "pw_default_5xx", PAGE_5XX, "PingWAF Bad Gateway"),
-                (503, "pw_default_5xx", PAGE_5XX, "PingWAF Unavailable"),
-                (504, "pw_default_5xx", PAGE_5XX, "PingWAF Gateway Timeout"),
+                (403, "pw_default_403", PAGE_403, "VarmanWAF Forbidden"),
+                (429, "pw_default_429", PAGE_429, "VarmanWAF Rate Limit"),
+                (502, "pw_default_5xx", PAGE_5XX, "VarmanWAF Bad Gateway"),
+                (503, "pw_default_5xx", PAGE_5XX, "VarmanWAF Unavailable"),
+                (504, "pw_default_5xx", PAGE_5XX, "VarmanWAF Gateway Timeout"),
             ];
             let mut registered: HashMap<&str, &str> = HashMap::new();
             for (status, name, body, label) in defaults {
@@ -737,7 +737,7 @@ use_defaults = true
         let out = plugin.tera.render("pw_default_403", &ctx).unwrap();
         assert_eq!(true, out.contains("Access Denied"));
         assert_eq!(true, out.contains("req-123"));
-        assert_eq!(true, out.contains("PingWAF"));
+        assert_eq!(true, out.contains("VarmanWAF"));
     }
 
     #[test]
@@ -827,7 +827,7 @@ template = '{"error":"rate_limit_exceeded","request_id":"{{ request_id }}"}'
     mod agent_mode {
         use super::*;
         use crate::waf::tests::install_test_agent;
-        use pingwaf_proto::control_plane as proto;
+        use varman_protocol::control_plane as proto;
         use pretty_assertions::assert_eq;
 
         /// Agent-supplied pages replace responses for their host, take

@@ -3,7 +3,7 @@
 debug/
 target/
 
-# Cargo.lock IS tracked: PingWAF ships executables (pingwaf / pingap), so the
+# Cargo.lock IS tracked: VarmanWAF ships executables (varman / pingap), so the
 # lock file is committed for reproducible builds. Do NOT ignore it.
 # https://doc.rust-lang.org/cargo/guide/cargo-toml-vs-cargo-lock.html
 
@@ -91,9 +91,9 @@ Thumbs.db
 
 # ─── Local build-output binaries dropped at the repo root ─────────────────────
 # Leading slash anchors these to the repo root only, so a stray compiled binary
-# is ignored while source dirs (pingwaf-server/, pingap-core/, ...) and files
-# like pingwaf.toml / pingwaf.service are untouched.
-/pingwaf
+# is ignored while source dirs (varman-control/, pingap-core/, ...) and files
+# like varman.toml / varman.service are untouched.
+/varman
 /pingap
 
 # Python bytecode from tools/waf-bench scripts

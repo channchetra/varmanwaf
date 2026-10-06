@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Maintenance commands of the `pingwaf` binary.
+//! Maintenance commands of the `varman` binary.
 //!
 //! [`run`] serves the `user`, `mode` and `security` subcommands. They talk
 //! straight to PostgreSQL instead of the REST API, so they keep working when
@@ -33,33 +33,33 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use pingwaf_server::api::defense;
-use pingwaf_server::api::self_protection::{self, effective_allowlist};
-use pingwaf_server::auth::password::{
+use varman_control::api::defense;
+use varman_control::api::self_protection::{self, effective_allowlist};
+use varman_control::auth::password::{
     MAX_PASSWORD_BYTES, hash_password, validate_password,
 };
-use pingwaf_server::models::{
+use varman_control::models::{
     api_protection_setting, defense_settings, ip_groups, role, user,
 };
 
 use crate::cli::{
-    AddAdminOpts, AllowlistOpts, DbOpts, ModeCommand, OnOff, PingWafCli,
-    PingWafCommand, ResetPasswordOpts, SecurityCommand, UserSubcommand,
+    AddAdminOpts, AllowlistOpts, DbOpts, ModeCommand, OnOff, VarmanCli,
+    VarmanCommand, ResetPasswordOpts, SecurityCommand, UserSubcommand,
 };
 
 /// Runs a maintenance subcommand.
 ///
-/// The caller checks `PingWafCommand` first; a run mode reaching this
+/// The caller checks `VarmanCommand` first; a run mode reaching this
 /// function is a programming error, reported rather than panicked so the
 /// message names the mistake.
-pub async fn run(cli: PingWafCli) -> anyhow::Result<()> {
+pub async fn run(cli: VarmanCli) -> anyhow::Result<()> {
     match cli.command {
-        PingWafCommand::User { command } => user_command(command).await,
-        PingWafCommand::Mode { command } => mode_command(command).await,
-        PingWafCommand::Security { command } => security_command(command).await,
-        PingWafCommand::Server(_)
-        | PingWafCommand::Agent(_)
-        | PingWafCommand::AllInOne(_) => {
+        VarmanCommand::User { command } => user_command(command).await,
+        VarmanCommand::Mode { command } => mode_command(command).await,
+        VarmanCommand::Security { command } => security_command(command).await,
+        VarmanCommand::Server(_)
+        | VarmanCommand::Agent(_)
+        | VarmanCommand::AllInOne(_) => {
             bail!("this is not a maintenance command")
         },
     }
@@ -78,7 +78,7 @@ async fn connect(db_url: &str) -> anyhow::Result<DatabaseConnection> {
         .min_connections(1)
         .sqlx_logging(false);
     Database::connect(options).await.context(
-        "cannot connect to PostgreSQL (check --db-url or PINGWAF_DB_URL)",
+        "cannot connect to PostgreSQL (check --db-url or VARMAN_DB_URL)",
     )
 }
 
@@ -186,7 +186,7 @@ async fn add_admin(opts: AddAdminOpts) -> anyhow::Result<()> {
     if existing.is_some() {
         bail!(
             "a user with e-mail {email} already exists; run \
-             `pingwaf user reset-password --email {email}` to set a new password"
+             `varman user reset-password --email {email}` to set a new password"
         );
     }
 

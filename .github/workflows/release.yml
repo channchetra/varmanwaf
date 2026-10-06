@@ -5,9 +5,9 @@ name: Release
 #   trigger: push of a `v*` tag (e.g. v0.14.3)
 #
 # It produces the tarballs install.sh downloads, named EXACTLY:
-#   pingwaf-linux-amd64.tar.gz   pingwaf-linux-arm64.tar.gz
-# install.sh resolves the asset as `pingwaf-${OS}-${ARCH}.tar.gz` from
-#   https://github.com/shuaiZend/PingWAF/releases/download/v${VERSION}/<asset>
+#   varman-linux-amd64.tar.gz   varman-linux-arm64.tar.gz
+# install.sh resolves the asset as `varman-${OS}-${ARCH}.tar.gz` from
+#   https://github.com/varmanwaf/varmanwaf/releases/download/v${VERSION}/<asset>
 # so these names must not drift. Each tarball also ships a `.sha256` checksum.
 #
 # Releases are Linux-only (server deployments). Both matrix legs use the
@@ -100,33 +100,33 @@ jobs:
         shell: bash
         run: echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
 
-      - name: Build pingwaf
+      - name: Build varman
         shell: bash
         run: |
-          cargo build --release --bin pingwaf ${{ matrix.features }} --target ${{ matrix.target }}
-          ls -lh "target/${{ matrix.target }}/release/pingwaf"
+          cargo build --release --bin varman ${{ matrix.features }} --target ${{ matrix.target }}
+          ls -lh "target/${{ matrix.target }}/release/varman"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pingwaf-binary-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/pingwaf
+          name: varman-binary-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/varman
           retention-days: 1
 
       - name: Package
         shell: bash
         run: |
           set -euo pipefail
-          ASSET="pingwaf-${{ matrix.plat }}-${{ matrix.arch }}"
+          ASSET="varman-${{ matrix.plat }}-${{ matrix.arch }}"
           STAGE="$ASSET"
           rm -rf "$STAGE" "$ASSET.tar.gz" "$ASSET.tar.gz.sha256"
           mkdir -p "$STAGE"
-          cp "target/${{ matrix.target }}/release/pingwaf" "$STAGE/pingwaf"
+          cp "target/${{ matrix.target }}/release/varman" "$STAGE/varman"
           cp LICENSE README.md "$STAGE/"
           # Optional extras: shipped when present, never fatal when absent.
-          cp pingwaf.toml "$STAGE/" 2>/dev/null || true
-          cp pingwaf.service "$STAGE/" 2>/dev/null || true
-          chmod +x "$STAGE/pingwaf"
+          cp varman.toml "$STAGE/" 2>/dev/null || true
+          cp varman.service "$STAGE/" 2>/dev/null || true
+          chmod +x "$STAGE/varman"
           tar -czf "$ASSET.tar.gz" "$STAGE"
           shasum -a 256 "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256"
           ls -lh "$ASSET.tar.gz" "$ASSET.tar.gz.sha256"
@@ -137,8 +137,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           generate_release_notes: true
           files: |
-            pingwaf-${{ matrix.plat }}-${{ matrix.arch }}.tar.gz
-            pingwaf-${{ matrix.plat }}-${{ matrix.arch }}.tar.gz.sha256
+            varman-${{ matrix.plat }}-${{ matrix.arch }}.tar.gz
+            varman-${{ matrix.plat }}-${{ matrix.arch }}.tar.gz.sha256
 
   docker:
     name: Docker image (${{ matrix.arch }})
@@ -169,13 +169,13 @@ jobs:
       - name: Download binary artifact
         uses: actions/download-artifact@v4
         with:
-          name: pingwaf-binary-${{ matrix.arch }}
+          name: varman-binary-${{ matrix.arch }}
           path: docker-context/
 
       - name: Prepare build context
         run: |
-          chmod +x docker-context/pingwaf
-          cp pingwaf.toml docker-context/
+          chmod +x docker-context/varman
+          cp varman.toml docker-context/
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -198,7 +198,7 @@ jobs:
           # manifest (not a manifest list), which docker manifest create requires.
           provenance: false
           sbom: false
-          tags: ghcr.io/shuaizend/pingwaf:${{ steps.version.outputs.value }}-${{ matrix.arch }}
+          tags: ghcr.io/varmanwaf/varmanwaf:${{ steps.version.outputs.value }}-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -222,7 +222,7 @@ jobs:
       - name: Create and push manifests
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          IMAGE="ghcr.io/shuaizend/pingwaf"
+          IMAGE="ghcr.io/varmanwaf/varmanwaf"
           # Derive major.minor from version (e.g. 0.14.3 -> 0.14)
           MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
 

@@ -1,0 +1,44 @@
+# VarmanWAF systemd service
+# ─────────────────────────────────────────────────────────────────────────────
+# Install to: /etc/systemd/system/varman.service
+# Enable:     sudo systemctl enable --now varman
+# Status:     sudo systemctl status varman
+# Logs:       sudo journalctl -u varman -f
+# ─────────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=VarmanWAF - High Performance Web Application Firewall
+Documentation=https://github.com/varmanwaf/varmanwaf
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=varman
+Group=varman
+ExecStart=/usr/local/bin/varman all-in-one
+# There is no reload signal: edit the configuration file (or the environment
+# below) and restart the unit.
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+Environment=RUST_LOG=info,sqlx=warn
+# Uncomment to read settings from a file — the environment above wins over it,
+# and a command-line flag wins over both. The path must exist: a named
+# configuration file that cannot be read stops the process at startup.
+#Environment=VARMAN_CONFIG=/etc/varman/varman.toml
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/varman /etc/varman
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

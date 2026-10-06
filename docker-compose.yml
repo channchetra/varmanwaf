@@ -1,58 +1,58 @@
-# PingWAF Docker Compose
+# VarmanWAF Docker Compose
 # ─────────────────────────────────────────────────────────────────────────────
 # Default: all-in-one mode (control plane + data plane in a single container).
-# For distributed deployments, see the `pingwaf-agent` service below.
+# For distributed deployments, see the `varman-agent` service below.
 #
 # Usage:
 #   docker compose up -d
 #   # Dashboard: https://localhost:9080 (self-signed certificate — upload a real
-#   # one under Settings → Control plane HTTPS; set PINGWAF_TLS_ENABLED=false to
+#   # one under Settings → Control plane HTTPS; set VARMAN_TLS_ENABLED=false to
 #   # serve plain HTTP instead)
-#   # Default credentials: admin@pingwaf.local / pingwaf123
+#   # Default credentials: admin@varman.local / varman123
 
 services:
-  # ─── PingWAF All-in-One (control plane + data plane) ───────────────────────
-  pingwaf:
-    image: ghcr.io/shuaizend/pingwaf:latest
+  # ─── VarmanWAF All-in-One (control plane + data plane) ─────────────────────
+  varman:
+    image: ghcr.io/varmanwaf/varmanwaf:latest
     # To build from source instead of pulling the pre-built image, uncomment:
     # build:
     #   context: .
     #   dockerfile: Dockerfile
-    container_name: pingwaf
+    container_name: varman
     # Stable across container recreation: the control plane re-registration
     # matches agents by hostname + API key, so a changing container-ID
     # hostname would register a fresh offline ghost on every redeploy.
-    hostname: pingwaf
+    hostname: varman
     ports:
       - "80:80"       # HTTP traffic (proxied)
       - "443:443"     # HTTPS traffic (proxied)
       - "9080:9080"   # Admin dashboard + REST API
       - "9090:9090"   # gRPC control plane (agents connect here)
     environment:
-      - PINGWAF_DB_URL=postgres://pingwaf:${POSTGRES_PASSWORD:-pingwaf}@postgres:5432/pingwaf
-      - PINGWAF_MODE=all-in-one
-      - PINGWAF_JWT_SECRET=${JWT_SECRET:-change-me-in-production-use-32-chars}
-      - PINGWAF_ADMIN_ADDR=0.0.0.0:9080
-      - PINGWAF_GRPC_ADDR=0.0.0.0:9090
-      - PINGWAF_ADMIN_EMAIL=${ADMIN_EMAIL:-admin@pingwaf.local}
-      - PINGWAF_ADMIN_PASSWORD=${ADMIN_PASSWORD:-pingwaf123}
-      - PINGWAF_ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-false}
+      - VARMAN_DB_URL=postgres://varman:${POSTGRES_PASSWORD:-varman}@postgres:5432/varman
+      - VARMAN_MODE=all-in-one
+      - VARMAN_JWT_SECRET=${JWT_SECRET:-change-me-in-production-use-32-chars}
+      - VARMAN_ADMIN_ADDR=0.0.0.0:9080
+      - VARMAN_GRPC_ADDR=0.0.0.0:9090
+      - VARMAN_ADMIN_EMAIL=${ADMIN_EMAIL:-admin@varman.local}
+      - VARMAN_ADMIN_PASSWORD=${ADMIN_PASSWORD:-varman123}
+      - VARMAN_ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-false}
       # HTTPS for the dashboard (self-signed until a certificate is uploaded).
       # Add the hostname you reach the dashboard on so the generated pair covers
-      # it: PINGWAF_TLS_SANS=waf.example.com
-      - PINGWAF_TLS_ENABLED=${TLS_ENABLED:-true}
-      - PINGWAF_HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL:-15}
+      # it: VARMAN_TLS_SANS=waf.example.com
+      - VARMAN_TLS_ENABLED=${TLS_ENABLED:-true}
+      - VARMAN_HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL:-15}
       - RUST_LOG=${RUST_LOG:-info,sqlx=warn}
       # Elasticsearch (optional — uncomment to enable log shipping)
-      # - PINGWAF_ES_ENABLED=true
-      # - PINGWAF_ES_URLS=http://elasticsearch:9200
-      # - PINGWAF_ES_INDEX_PREFIX=pingwaf
+      # - VARMAN_ES_ENABLED=true
+      # - VARMAN_ES_URLS=http://elasticsearch:9200
+      # - VARMAN_ES_INDEX_PREFIX=varman
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
-      - pingwaf-data:/var/lib/pingwaf
-      - pingwaf-certs:/etc/pingwaf/certs
+      - varman-data:/var/lib/varman
+      - varman-certs:/etc/varman/certs
     cap_add:
       - NET_BIND_SERVICE
     restart: unless-stopped
@@ -63,46 +63,46 @@ services:
       retries: 3
       start_period: 20s
     networks:
-      - pingwaf-net
+      - varman-net
 
   # ─── PostgreSQL ────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
-    container_name: pingwaf-postgres
+    container_name: varman-postgres
     environment:
-      - POSTGRES_USER=pingwaf
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pingwaf}
-      - POSTGRES_DB=pingwaf
+      - POSTGRES_USER=varman
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-varman}
+      - POSTGRES_DB=varman
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pingwaf -d pingwaf"]
+      test: ["CMD-SHELL", "pg_isready -U varman -d varman"]
       interval: 5s
       timeout: 5s
       retries: 5
       start_period: 10s
     restart: unless-stopped
     networks:
-      - pingwaf-net
+      - varman-net
 
-  # ─── PingWAF Agent (distributed mode example) ──────────────────────────────
+  # ─── VarmanWAF Agent (distributed mode example) ────────────────────────────
   # Uncomment this service to run a separate data-plane agent that connects
-  # to the control plane above. In this setup, change the pingwaf service's
-  # PINGWAF_MODE to "server" (control plane only).
+  # to the control plane above. In this setup, change the varman service's
+  # VARMAN_MODE to "server" (control plane only).
   #
-  # pingwaf-agent:
-  #   image: ghcr.io/shuaizend/pingwaf:latest
+  # varman-agent:
+  #   image: ghcr.io/varmanwaf/varmanwaf:latest
   #   # build:
   #   #   context: .
   #   #   dockerfile: Dockerfile
-  #   container_name: pingwaf-agent
-  #   entrypoint: ["pingwaf", "agent"]
+  #   container_name: varman-agent
+  #   entrypoint: ["varman", "agent"]
   #   command:
-  #     - "--server-url=http://pingwaf:9090"
+  #     - "--server-url=http://varman:9090"
   #     - "--api-key=${AGENT_API_KEY:-}"
-  #     - "--cache-dir=/var/lib/pingwaf/cache"
+  #     - "--cache-dir=/var/lib/varman/cache"
   #     - "--heartbeat-interval-secs=30"
   #     - "--fail-open=true"
   #   ports:
@@ -111,24 +111,24 @@ services:
   #   environment:
   #     - RUST_LOG=${RUST_LOG:-info,sqlx=warn}
   #   depends_on:
-  #     pingwaf:
+  #     varman:
   #       condition: service_healthy
   #   volumes:
-  #     - agent-data:/var/lib/pingwaf
+  #     - agent-data:/var/lib/varman
   #   restart: unless-stopped
   #   networks:
-  #     - pingwaf-net
+  #     - varman-net
 
 volumes:
   postgres-data:
     driver: local
-  pingwaf-data:
+  varman-data:
     driver: local
-  pingwaf-certs:
+  varman-certs:
     driver: local
   # agent-data:
   #   driver: local
 
 networks:
-  pingwaf-net:
+  varman-net:
     driver: bridge

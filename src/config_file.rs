@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Optional TOML configuration file for the PingWAF modes.
+//! Optional TOML configuration file for the VarmanWAF modes.
 //!
-//! `--config <path>` (or `PINGWAF_CONFIG`) names a file whose `[server]` and
+//! `--config <path>` (or `VARMAN_CONFIG`) names a file whose `[server]` and
 //! `[agent]` tables hold the same settings as the command-line flags, so a
 //! deployment can be described in one place instead of a wall of environment
 //! variables. Keys are the flag names with dashes replaced by underscores
@@ -31,7 +31,7 @@ use std::path::Path;
 use clap::CommandFactory;
 use clap::parser::ValueSource;
 
-use crate::cli::PingWafCli;
+use crate::cli::VarmanCli;
 
 /// The subcommand tables of the file, per mode.
 ///
@@ -50,7 +50,7 @@ fn sections(mode: &str) -> &'static [&'static str] {
 /// arguments are meant to be inserted right after it, where the real command
 /// line still overrides them.
 pub fn injections(mode: &str, argv: &[String]) -> anyhow::Result<Vec<String>> {
-    let Some(sub) = PingWafCli::command().find_subcommand(mode).cloned() else {
+    let Some(sub) = VarmanCli::command().find_subcommand(mode).cloned() else {
         return Ok(Vec::new());
     };
     // Only the run modes carry `--config`; the maintenance commands have no
@@ -81,7 +81,7 @@ pub fn injections(mode: &str, argv: &[String]) -> anyhow::Result<Vec<String>> {
         Err(err) => err.exit(),
     };
 
-    // clap resolves `--config` against `PINGWAF_CONFIG` for us.
+    // clap resolves `--config` against `VARMAN_CONFIG` for us.
     let Some(path) = matches.get_one::<String>("config") else {
         return Ok(Vec::new());
     };
@@ -139,7 +139,7 @@ pub fn injections(mode: &str, argv: &[String]) -> anyhow::Result<Vec<String>> {
 
     if !injections.is_empty() {
         eprintln!(
-            "pingwaf: loaded {} setting(s) from {}",
+            "varman: loaded {} setting(s) from {}",
             injections.len(),
             Path::new(path).display()
         );

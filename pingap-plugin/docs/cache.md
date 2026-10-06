@@ -104,7 +104,7 @@ in a multi-instance deployment, issue the request on every node.
 
 ## Control plane rules (agent mode)
 
-When the data plane runs under a PingWAF agent, the control plane can attach
+When the data plane runs under a VarmanWAF agent, the control plane can attach
 per-site cache rules. Each rule carries a Cloudflare-style
 `match_expression` (same syntax as the [waf](waf.md) plugin's expressions)
 and the first matching rule redefines the request's cache behaviour:

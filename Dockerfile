@@ -1,4 +1,4 @@
-# PingWAF Multi-stage Dockerfile (optimized)
+# VarmanWAF Multi-stage Dockerfile (optimized)
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 1: Build the React frontend (npm cache mount)
 # Stage 2: Build the Rust binary (warm-up layer for dependency precompilation)
@@ -39,10 +39,10 @@ WORKDIR /app
 
 # 2b.【关键修复】预热前必须拷入：
 #     - build.rs（根 Cargo.toml 声明 build = "build.rs"，缺失会导致预热 cargo build 立即失败）
-#     - pingwaf-proto/proto/（pingwaf-proto/build.rs 需要 control_plane.proto 生成 gRPC stub）
+#     - varman-protocol/proto/（varman-protocol/build.rs 需要 control_plane.proto 生成 gRPC stub）
 #     - 根 Cargo.toml/lock + 全部 25 个成员的 Cargo.toml
 COPY Cargo.toml Cargo.lock build.rs ./
-COPY pingwaf-proto/proto/ pingwaf-proto/proto/
+COPY varman-protocol/proto/ varman-protocol/proto/
 
 # Copy all workspace member Cargo.toml files for dependency resolution
 COPY pingap-core/Cargo.toml pingap-core/
@@ -64,12 +64,12 @@ COPY pingap-sentry/Cargo.toml pingap-sentry/
 COPY pingap-pyroscope/Cargo.toml pingap-pyroscope/
 COPY pingap-imageoptim/Cargo.toml pingap-imageoptim/
 COPY pingap-webhook/Cargo.toml pingap-webhook/
-COPY pingwaf-proto/Cargo.toml pingwaf-proto/
-COPY pingwaf-pprof/Cargo.toml pingwaf-pprof/
-COPY pingwaf-server/Cargo.toml pingwaf-server/
-COPY pingwaf-agent/Cargo.toml pingwaf-agent/
-COPY pingwaf-waf/Cargo.toml pingwaf-waf/
-COPY pingwaf-challenge/Cargo.toml pingwaf-challenge/
+COPY varman-protocol/Cargo.toml varman-protocol/
+COPY varman-pprof/Cargo.toml varman-pprof/
+COPY varman-control/Cargo.toml varman-control/
+COPY varman-agent/Cargo.toml varman-agent/
+COPY varman-waf/Cargo.toml varman-waf/
+COPY varman-challenge/Cargo.toml varman-challenge/
 
 # 2c. 创建 dummy 源文件，让 cargo 能通过 manifest 解析并编译第三方依赖
 #     benches/bench.rs 是根 Cargo.toml 的 [[bench]] target，manifest 解析期必须存在；
@@ -82,16 +82,16 @@ RUN mkdir -p src && echo "fn main() {}" > src/main.rs \
        pingap-certificate pingap-discovery pingap-health pingap-location \
        pingap-logger pingap-plugin pingap-proxy pingap-upstream pingap-acme \
        pingap-performance pingap-otel pingap-sentry pingap-pyroscope \
-       pingap-imageoptim pingap-webhook pingwaf-pprof pingwaf-server \
-       pingwaf-agent \
-       pingwaf-waf pingwaf-challenge; do \
+       pingap-imageoptim pingap-webhook varman-pprof varman-control \
+       varman-agent \
+       varman-waf varman-challenge; do \
        mkdir -p "$dir/src" && echo "" > "$dir/src/lib.rs"; \
     done \
     && for bench_dir in pingap-core pingap-cache pingap-util pingap-location \
        pingap-logger pingap-proxy pingap-upstream; do \
        mkdir -p "$bench_dir/benches" && echo "fn main() {}" > "$bench_dir/benches/bench.rs"; \
     done \
-    && mkdir -p pingwaf-proto/src && echo "" > pingwaf-proto/src/lib.rs
+    && mkdir -p varman-protocol/src && echo "" > varman-protocol/src/lib.rs
 
 # 2d. 依赖预热构建（修复：build.rs 与 proto/ 已前置 COPY，预热现在真正生效）
 #     编译产物留在镜像层中，供 CI type=gha/type=registry 缓存后端正确导出和恢复
@@ -125,21 +125,21 @@ COPY pingap-sentry/ pingap-sentry/
 COPY pingap-pyroscope/ pingap-pyroscope/
 COPY pingap-imageoptim/ pingap-imageoptim/
 COPY pingap-webhook/ pingap-webhook/
-COPY pingwaf-proto/ pingwaf-proto/
-COPY pingwaf-pprof/ pingwaf-pprof/
-COPY pingwaf-server/ pingwaf-server/
-COPY pingwaf-agent/ pingwaf-agent/
-COPY pingwaf-waf/ pingwaf-waf/
-COPY pingwaf-challenge/ pingwaf-challenge/
+COPY varman-protocol/ varman-protocol/
+COPY varman-pprof/ varman-pprof/
+COPY varman-control/ varman-control/
+COPY varman-agent/ varman-agent/
+COPY varman-waf/ varman-waf/
+COPY varman-challenge/ varman-challenge/
 
-# 2f. 前端产物（供 pingwaf-server/src/frontend.rs 的 rust-embed #[folder = "../web/dist/"]）
+# 2f. 前端产物（供 varman-control/src/frontend.rs 的 rust-embed #[folder = "../web/dist/"]）
 COPY --from=frontend-builder /app/web/dist/ web/dist/
 
 # 2g. 最终构建：touch 使 workspace crate 的 mtime 指纹失效（排除 target/ 避免污染生成代码），
 #     触发 25 个 workspace crate 重编，而第三方 .rlib 从预热层继承、不受影响
 #     （Docker 层叠加：target/ 存在于 2d 预热层的文件系统中，后续 COPY 源码层不会覆盖它）
 RUN find . -path ./target -prune -o -name '*.rs' -print0 | xargs -0 --no-run-if-empty touch \
-    && cargo build --release --bin pingwaf --features full
+    && cargo build --release --bin varman --features full
 
 # ─── Stage 3: Runtime（行为契约保持不变）─────────────────────────────────────
 # Must use trixie (glibc 2.40) to match the builder's glibc.
@@ -149,25 +149,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd -r -m -s /usr/sbin/nologin pingwaf \
-    && mkdir -p /etc/pingwaf /var/lib/pingwaf \
-    && chown -R pingwaf:pingwaf /var/lib/pingwaf /etc/pingwaf
+    && useradd -r -m -s /usr/sbin/nologin varman \
+    && mkdir -p /etc/varman /var/lib/varman \
+    && chown -R varman:varman /var/lib/varman /etc/varman
 
-COPY --from=builder /app/target/release/pingwaf /usr/local/bin/pingwaf
-COPY pingwaf.toml /etc/pingwaf/pingwaf.toml
+COPY --from=builder /app/target/release/varman /usr/local/bin/varman
+COPY varman.toml /etc/varman/varman.toml
 
 EXPOSE 80 443 9080 9090
 
-VOLUME ["/var/lib/pingwaf"]
+VOLUME ["/var/lib/varman"]
 
-# ./data/cache (PINGWAF_CACHE_DIR default) and the ACME state file are
+# ./data/cache (VARMAN_CACHE_DIR default) and the ACME state file are
 # relative paths; anchor them in the writable, volume-backed directory.
-WORKDIR /var/lib/pingwaf
+WORKDIR /var/lib/varman
 
-USER pingwaf
+USER varman
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -sf http://localhost:9080/healthz || exit 1
 
-ENTRYPOINT ["pingwaf"]
+ENTRYPOINT ["varman"]
 CMD ["all-in-one"]

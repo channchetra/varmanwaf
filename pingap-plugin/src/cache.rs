@@ -38,11 +38,11 @@ use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
-use pingwaf_agent::PingWafAgent;
-use pingwaf_agent::cache::{
+use varman_agent::VarmanAgent;
+use varman_agent::cache::{
     CacheRule as AgentCacheRule, SiteRules as AgentSiteRules,
 };
-use pingwaf_waf::rules::{
+use varman_waf::rules::{
     EvalContext, Expression, FieldKind, evaluate, parse_expression,
 };
 use std::borrow::Cow;
@@ -570,7 +570,7 @@ impl Cache {
     /// fingerprint changes. `None` (no agent, unknown host, or no rules)
     /// leaves the plugin's static behaviour in charge.
     fn resolve_site_rules(&self, host: &str) -> Option<Arc<SiteCacheRules>> {
-        let agent = PingWafAgent::instance()?;
+        let agent = VarmanAgent::instance()?;
         if host.is_empty() {
             return None;
         }

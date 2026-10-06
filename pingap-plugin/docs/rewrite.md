@@ -131,7 +131,7 @@ when the string contains no `${`, so static values incur no allocation.
 
 Rules are resolved per request:
 
-- When a **PingWafAgent** control-plane instance is running, the server-pushed
+- When a **VarmanAgent** control-plane instance is running, the server-pushed
   rewrite rules for the request's `Host` are used. Per-domain rules are cached
   and rebuilt automatically when the agent's config hash changes.
 - Otherwise (**standalone pingap**) the locally configured `rules` above are
@@ -211,7 +211,7 @@ rules = '''[
     "direction": "response",
     "condition": "http.request.uri.path starts_with \"/docs/\"",
     "operations": [
-      {"type": "replace_body", "search": "Acme Corp", "replacement": "PingWAF"}
+      {"type": "replace_body", "search": "Acme Corp", "replacement": "VarmanWAF"}
     ]
   },
   {

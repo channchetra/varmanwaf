@@ -1,4 +1,4 @@
-# Dependabot configuration for the PingWAF workspace.
+# Dependabot configuration for the VarmanWAF workspace.
 #
 # Four ecosystems are tracked weekly. Cargo updates are grouped to keep the PR
 # count manageable, but note that Dependabot resolves without regard to the

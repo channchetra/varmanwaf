@@ -84,7 +84,7 @@ mod cli;
 mod config_file;
 mod config_manager;
 mod locations;
-mod pingwaf;
+mod varman;
 mod plugin;
 mod process;
 mod quick_start;
@@ -140,7 +140,7 @@ static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
 });
 
 /// The version banner: crate version, build commit and TLS backend. Shared
-/// by `--version` and the PingWAF-mode CLI, which answers the flag itself.
+/// by `--version` and the VarmanWAF-mode CLI, which answers the flag itself.
 pub(crate) fn version_banner() -> &'static str {
     &LONG_VERSION
 }
@@ -1139,9 +1139,9 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn main() {
-    // Check if PingWAF mode is requested (via subcommand or PINGWAF_MODE env)
-    if cli::is_pingwaf_mode() {
-        pingwaf::main();
+    // Check if VarmanWAF mode is requested (via subcommand or VARMAN_MODE env)
+    if cli::is_varman_mode() {
+        varman::main();
         return;
     }
 

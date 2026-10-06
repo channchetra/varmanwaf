@@ -1231,7 +1231,7 @@ mod tests {
     #[test]
     fn untracked_domains_cost_nothing() {
         let manager =
-            DiskQuotaManager::new(PathBuf::from("/tmp/pingwaf-quota-test"));
+            DiskQuotaManager::new(PathBuf::from("/tmp/varman-quota-test"));
         // No quota was ever set, so writes are not accounted for and never
         // ask for an eviction.
         assert_eq!(false, manager.record_write("example.com", "k", 1024));

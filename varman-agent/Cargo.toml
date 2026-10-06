@@ -1,0 +1,34 @@
+[package]
+name = "varman-agent"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "VarmanWAF data-plane agent: connects to the control plane over gRPC, caches WAF rules locally with disk persistence, and ships logs and metrics back."
+
+[features]
+# Exposes `set_agent_instance` and `ControlPlaneClient::pop_log` so
+# downstream crates can install a never-connecting agent in tests.
+test-util = []
+
+[dependencies]
+varman-protocol = { path = "../varman-protocol" }
+pingap-cache = { workspace = true }
+tonic = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs"] }
+tokio-stream = { workspace = true, features = ["sync"] }
+# "rc" adds serde impls for Arc, so the rule cache can store sites as
+# `Arc<SiteRules>` and still persist the same JSON shape.
+serde = { workspace = true, features = ["rc"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+prost-types = { workspace = true }
+dashmap = { workspace = true }
+arc-swap = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

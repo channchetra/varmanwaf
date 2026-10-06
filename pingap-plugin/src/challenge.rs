@@ -15,7 +15,7 @@
 //! Challenge plugin — CC protection / "5-second shield".
 //!
 //! Runs at [`PluginStep::EarlyRequest`]. For every request it either:
-//! * serves the `/_pingwaf/challenge/verify` endpoint (solution submission), or
+//! * serves the `/_varman/challenge/verify` endpoint (solution submission), or
 //! * asks the [`ChallengeEngine`] whether the visitor should be challenged and,
 //!   if so, returns the JS challenge page (503) or a hard block (403).
 //!
@@ -39,16 +39,16 @@ use pingap_core::{
     get_req_header_value,
 };
 use pingora::proxy::Session;
-use pingwaf_agent::PingWafAgent;
-use pingwaf_agent::cache::{
+use varman_agent::VarmanAgent;
+use varman_agent::cache::{
     ChallengeConfig as CacheChallengeConfig,
     ChallengeLevel as CacheChallengeLevel,
 };
-use pingwaf_challenge::js_challenge::page::{
+use varman_challenge::js_challenge::page::{
     ChallengePageParams, generate_interactive_challenge_html,
     generate_js_challenge_html, generate_managed_challenge_html,
 };
-use pingwaf_challenge::{
+use varman_challenge::{
     ChallengeConfig, ChallengeDecision, ChallengeEngine, ChallengeRequest,
     ChallengeSubmission, ClearanceLevel, VerifyResult, generate_request_id,
 };
@@ -61,7 +61,7 @@ use tracing::{debug, warn};
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Endpoint the challenge page POSTs its proof-of-work solution to.
-pub(crate) const VERIFY_ENDPOINT: &str = "/_pingwaf/challenge/verify";
+pub(crate) const VERIFY_ENDPOINT: &str = "/_varman/challenge/verify";
 
 /// Maximum request-body size accepted on the verify endpoint (64 KiB).
 const MAX_VERIFY_BODY: usize = 64 * 1024;
@@ -165,7 +165,7 @@ pub(crate) fn build_challenge_response(
         difficulty,
         verify_endpoint: VERIFY_ENDPOINT.to_string(),
         original_url: original_url.to_string(),
-        brand_name: "PingWAF".to_string(),
+        brand_name: "VarmanWAF".to_string(),
     };
     let body = match kind {
         ChallengeKind::Js => generate_js_challenge_html(&params),
@@ -184,7 +184,7 @@ pub(crate) fn build_challenge_response(
 /// A simple 403 HTML block page.
 pub(crate) fn block_page(request_id: &str, reason: &str) -> HttpResponse {
     let body = format!(
-        "<html><body><h1>403 Forbidden</h1><p>Request blocked by PingWAF.</p>\
+        "<html><body><h1>403 Forbidden</h1><p>Request blocked by VarmanWAF.</p>\
 <p>Reason: {reason}</p><p>Event ID: {request_id}</p></body></html>"
     );
     HttpResponse::builder(StatusCode::FORBIDDEN)
@@ -339,7 +339,7 @@ fn build_site_engine(
 
 /// Resolves the clearance-cookie signing secret.
 ///
-/// Standalone deployments take it from the plugin config. Under the PingWaf
+/// Standalone deployments take it from the plugin config. Under the Varman
 /// agent the generated config carries no secret: one is generated on first
 /// boot and persisted in the agent cache dir so clearance cookies survive
 /// config reloads and process restarts.
@@ -347,7 +347,7 @@ pub(crate) fn resolve_cookie_secret(configured: &str) -> String {
     if !configured.is_empty() && configured != "change-me" {
         return configured.to_string();
     }
-    let Some(agent) = PingWafAgent::instance() else {
+    let Some(agent) = VarmanAgent::instance() else {
         return configured.to_string();
     };
     let dir = Path::new(&agent.config.cache_dir);
@@ -429,13 +429,13 @@ impl ChallengePlugin {
     /// from agent rules in control-plane mode, the statically configured
     /// engine in standalone mode. `None` means pass everything through.
     fn decision_engine(&self, host: &str) -> Option<Arc<ChallengeEngine>> {
-        if PingWafAgent::instance().is_none() {
+        if VarmanAgent::instance().is_none() {
             return Some(Arc::clone(&self.engine));
         }
         if host.is_empty() {
             return None;
         }
-        let agent = PingWafAgent::instance()?;
+        let agent = VarmanAgent::instance()?;
         let site_rules = agent.get_rules_for_domain(host)?;
         let cfg = site_rules
             .challenge_config
@@ -591,7 +591,7 @@ impl TryFrom<&PluginConf> for ChallengePlugin {
         }
         let mut cookie_name = get_str_conf(value, "cookie_name");
         if cookie_name.is_empty() {
-            cookie_name = "__pingwaf_clearance".to_string();
+            cookie_name = "__varman_clearance".to_string();
         }
         let exempt_paths = get_str_slice_conf(value, "exempt_paths");
         let exempt_user_agents =
@@ -806,7 +806,7 @@ exempt_paths = ["/health"]
         // Standalone behaviour requires the agent paths to stay off, and a
         // sibling test may otherwise hold an installed agent.
         let _agent_lock = lock_agent().await;
-        PingWafAgent::set_agent_instance(None);
+        VarmanAgent::set_agent_instance(None);
         let plugin = ChallengePlugin::new(
             &toml::from_str::<PluginConf>(
                 r###"
@@ -842,7 +842,7 @@ cookie_secret = "test-secret"
     #[tokio::test]
     async fn test_exempt_path_passes() {
         let _agent_lock = lock_agent().await;
-        PingWafAgent::set_agent_instance(None);
+        VarmanAgent::set_agent_instance(None);
         let plugin = ChallengePlugin::new(
             &toml::from_str::<PluginConf>(
                 r###"
@@ -871,17 +871,17 @@ cookie_secret = "test-secret"
         assert!(result == RequestPluginResult::Continue);
     }
 
-    // ── Control-plane mode (PingWafAgent installed) ──────────────
+    // ── Control-plane mode (VarmanAgent installed) ──────────────
 
     use pingap_core::PluginStep as TestPluginStep;
     use pingora::proxy::Session as TestSession;
 
     use crate::waf::tests::lock_agent;
-    use pingwaf_agent::cache::RuleCache;
-    use pingwaf_agent::client::ControlPlaneClient;
-    use pingwaf_agent::config::AgentConfig;
-    use pingwaf_agent::heartbeat::MetricsCollector;
-    use pingwaf_proto::control_plane as proto;
+    use varman_agent::cache::RuleCache;
+    use varman_agent::client::ControlPlaneClient;
+    use varman_agent::config::AgentConfig;
+    use varman_agent::heartbeat::MetricsCollector;
+    use varman_protocol::control_plane as proto;
 
     /// Installs an agent whose site carries the given challenge config, plus
     /// a second site with none, to exercise per-site resolution.
@@ -889,7 +889,7 @@ cookie_secret = "test-secret"
         challenge: Option<proto::ChallengeConfig>,
     ) -> (
         tokio::sync::MutexGuard<'static, ()>,
-        Arc<PingWafAgent>,
+        Arc<VarmanAgent>,
         tempfile::TempDir,
     ) {
         let lock = lock_agent().await;
@@ -907,13 +907,13 @@ cookie_secret = "test-secret"
             Arc::clone(&rule_cache),
             Arc::clone(&metrics),
         ));
-        let agent = Arc::new(PingWafAgent {
+        let agent = Arc::new(VarmanAgent {
             config,
             client,
             rule_cache,
             metrics,
         });
-        PingWafAgent::set_agent_instance(Some(Arc::clone(&agent)));
+        VarmanAgent::set_agent_instance(Some(Arc::clone(&agent)));
 
         agent
             .rule_cache
@@ -1037,7 +1037,7 @@ cookie_secret = "test-secret"
 
         // The verify endpoint answers (403 for a malformed body) instead of
         // falling through to the upstream.
-        let input_header = "POST /_pingwaf/challenge/verify HTTP/1.1\r\nHost: example.com\r\nContent-Length: 4\r\n\r\nbody";
+        let input_header = "POST /_varman/challenge/verify HTTP/1.1\r\nHost: example.com\r\nContent-Length: 4\r\n\r\nbody";
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = TestSession::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();

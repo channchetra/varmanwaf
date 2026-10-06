@@ -1,4 +1,4 @@
-# PingWAF Runtime-only Dockerfile
+# VarmanWAF Runtime-only Dockerfile
 # 用于 release workflow：从预编译二进制构建最小运行时镜像
 # 完整源码构建请使用 Dockerfile
 # Must use trixie (glibc 2.40) because binaries job compiles on
@@ -10,25 +10,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd -r -m -s /usr/sbin/nologin pingwaf \
-    && mkdir -p /etc/pingwaf /var/lib/pingwaf \
-    && chown -R pingwaf:pingwaf /var/lib/pingwaf /etc/pingwaf
+    && useradd -r -m -s /usr/sbin/nologin varman \
+    && mkdir -p /etc/varman /var/lib/varman \
+    && chown -R varman:varman /var/lib/varman /etc/varman
 
-COPY pingwaf /usr/local/bin/pingwaf
-COPY pingwaf.toml /etc/pingwaf/pingwaf.toml
+COPY varman /usr/local/bin/varman
+COPY varman.toml /etc/varman/varman.toml
 
 EXPOSE 80 443 9080 9090
 
-VOLUME ["/var/lib/pingwaf"]
+VOLUME ["/var/lib/varman"]
 
-# ./data/cache (PINGWAF_CACHE_DIR default) and the ACME state file are
+# ./data/cache (VARMAN_CACHE_DIR default) and the ACME state file are
 # relative paths; anchor them in the writable, volume-backed directory.
-WORKDIR /var/lib/pingwaf
+WORKDIR /var/lib/varman
 
-USER pingwaf
+USER varman
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -sf http://localhost:9080/healthz || exit 1
 
-ENTRYPOINT ["pingwaf"]
+ENTRYPOINT ["varman"]
 CMD ["all-in-one"]

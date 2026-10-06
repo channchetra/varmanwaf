@@ -1,9 +1,9 @@
 import { create } from 'zustand'
 import type { User } from '@/api/types'
 
-const TOKEN_KEY = 'pingwaf.token'
-const REFRESH_KEY = 'pingwaf.refreshToken'
-const USER_KEY = 'pingwaf.user'
+const TOKEN_KEY = 'varman.token'
+const REFRESH_KEY = 'varman.refreshToken'
+const USER_KEY = 'varman.user'
 
 function read<T>(key: string, parse: (raw: string) => T): T | null {
   if (typeof localStorage === 'undefined') return null

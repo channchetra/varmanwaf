@@ -299,7 +299,7 @@ function SidebarHeader({ collapsed }: { collapsed: boolean }) {
       </span>
       {!collapsed && (
         <span className="text-[15px] font-semibold tracking-tight text-fg-strong">
-          PingWAF
+          VarmanWAF
         </span>
       )}
     </Link>

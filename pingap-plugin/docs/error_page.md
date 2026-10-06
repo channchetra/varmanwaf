@@ -17,7 +17,7 @@ only pays for a render.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `error_page`. |
-| `use_defaults` | bool | `true` | Serve the built-in PingWAF pages for `403`, `429`, `502`, `503`, `504`. Custom `[[pages]]` entries override the defaults for the same status code. |
+| `use_defaults` | bool | `true` | Serve the built-in VarmanWAF pages for `403`, `429`, `502`, `503`, `504`. Custom `[[pages]]` entries override the defaults for the same status code. |
 | `pages` | array | `[]` | List of custom error pages (see below). |
 
 Each `[[pages]]` entry:
@@ -72,7 +72,7 @@ registered into the template engine. Custom templates may include it too.
 | `429` | **Rate Limit Exceeded** — with an optional `retry_after` hint. |
 | `502` / `503` / `504` | **Service Temporarily Unavailable** — asks the visitor to try again later. |
 
-All built-in pages are responsive, PingWAF-branded (orange accent) and support
+All built-in pages are responsive, VarmanWAF-branded (orange accent) and support
 light/dark mode via the `prefers-color-scheme` media query.
 
 ## Examples
@@ -120,7 +120,7 @@ plugins = ["error_page"]
 
 ## Control-plane integration
 
-Like the other PingWAF plugins, when a `PingWafAgent` control-plane instance is
+Like the other VarmanWAF plugins, when a `VarmanAgent` control-plane instance is
 running and has error pages for the request's domain, those pages take priority
 over the local configuration. Agent-supplied pages are compiled per host and
 cached, then rebuilt automatically when the agent's config hash changes.

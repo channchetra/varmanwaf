@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "PingWAF",
+    "name": "VarmanWAF",
     "tagline": "Web 应用防火墙控制平面"
   },
   "nav": {
@@ -176,7 +176,7 @@
     "unknownHint": "发生意外错误，请重试。"
   },
   "auth": {
-    "loginTitle": "登录 PingWAF",
+    "loginTitle": "登录 VarmanWAF",
     "loginSubtitle": "在统一的控制平面中管理防火墙、节点与流量。",
     "passkeyDivider": "或",
     "passkeyFailed": "无法验证该通行密钥",
@@ -259,7 +259,7 @@
     },
     "sites": {
       "title": "站点",
-      "description": "所有受 PingWAF 保护的网站。",
+      "description": "所有受 VarmanWAF 保护的网站。",
       "addSite": "添加站点",
       "editSite": "编辑站点",
       "createDescription": "添加新站点以使用 WAF 保护。",
@@ -894,7 +894,7 @@
       "noCertificateWarning": "未选择证书——在选定证书或启用自签名之前，HTTPS 将无法正常工作。",
       "certSource": "证书来源",
       "selfSigned": "自签名",
-      "selfSignedHint": "PingWAF 会自动签发并续期证书。由于不受公共信任，浏览器会告警，仅建议用于测试或内部流量。",
+      "selfSignedHint": "VarmanWAF 会自动签发并续期证书。由于不受公共信任，浏览器会告警，仅建议用于测试或内部流量。",
       "useCertificate": "使用证书",
       "certificateSelectHint": "只能选择已安装到该站点的证书。",
       "selectCertificate": "选择证书",
@@ -923,7 +923,7 @@
       "clientCaPending": "已粘贴，未保存",
       "clientCaRequired": "请先粘贴客户端 CA 证书链再启用 mTLS。",
       "caTitle": "证书颁发机构（CA）",
-      "caHint": "该站点信任的根证书。由 PingWAF 生成的 CA 还可以签发客户端证书。",
+      "caHint": "该站点信任的根证书。由 VarmanWAF 生成的 CA 还可以签发客户端证书。",
       "addCa": "添加 CA",
       "addCaHint": "生成一个用于签发证书的 CA，或导入已有 CA 作为信任根。",
       "caName": "名称",
@@ -945,7 +945,7 @@
       "clientCertsHint": "由本站点 CA 签发的证书。吊销后边缘将立即拒绝。",
       "issueCert": "签发证书",
       "issueCertHint": "私钥由客户端保管；边缘只接受能链到上方 CA 的证书。",
-      "issueNeedsGeneratedCa": "只有 PingWAF 生成的 CA 才能签发证书，请先添加一个。",
+      "issueNeedsGeneratedCa": "只有 VarmanWAF 生成的 CA 才能签发证书，请先添加一个。",
       "selectCa": "证书颁发机构",
       "certName": "标签",
       "certCommonName": "通用名称（CN）",
@@ -1158,7 +1158,7 @@
     },
     "agents": {
       "title": "节点",
-      "description": "部署在边缘的 PingWAF 节点及其健康状态。",
+      "description": "部署在边缘的 VarmanWAF 节点及其健康状态。",
       "empty": "暂无已连接节点",
       "emptyDescription": "部署节点程序以开始保护您的站点。",
       "noResults": "没有匹配的节点",
@@ -1206,7 +1206,7 @@
       "nodeNamePlaceholder": "例如 edge-hk-01",
       "nodeNameHint": "可选 — 便于识别该节点的名称。",
       "generateCommand": "生成安装命令",
-      "enrollIntro": "在目标服务器上以 sudo 运行这一条命令：自动安装 PingWAF、写入节点配置并启动服务，节点首次连接后即出现在列表中。",
+      "enrollIntro": "在目标服务器上以 sudo 运行这一条命令：自动安装 VarmanWAF、写入节点配置并启动服务，节点首次连接后即出现在列表中。",
       "installDeploy": "安装并启动服务",
       "copy": "复制",
       "copied": "已复制到剪贴板",
@@ -1317,7 +1317,7 @@
       "renamePasskey": "重命名",
       "renamePasskeyDescription": "为该通行密钥设置一个便于识别的名称。",
       "title": "设置",
-      "description": "PingWAF 控制平面的全局偏好设置。",
+      "description": "VarmanWAF 控制平面的全局偏好设置。",
       "quickNav": "快速导航",
       "appearance": "外观",
       "appearanceDescription": "自定义控制台的外观与风格。",
@@ -1362,7 +1362,7 @@
       "bytes": "字节",
       "esRequestTimeout": "超时时间（秒）",
       "esBufferDir": "缓冲目录",
-      "esBufferDirPlaceholder": "/var/lib/pingwaf/buffer",
+      "esBufferDirPlaceholder": "/var/lib/varman/buffer",
       "esBufferMaxMb": "缓冲上限（MB）",
       "esChannelCapacity": "通道容量",
       "esTestOk": "连接成功",
@@ -1454,7 +1454,7 @@
       "observationModeToggle": "进入观察模式",
       "observationModeToggleHint": "约 15 秒内下发到所有节点。",
       "observationModeBanner": "观察模式已开启：WAF、IP/地域规则、Bot 防护与限流只记录本应拦截的请求，不做拦截。mTLS、基本认证和已暂停的站点仍然强制执行。",
-      "observationModeHint": "等同于命令行 `pingwaf mode observe`；控制面不可用时仍可用该命令恢复。",
+      "observationModeHint": "等同于命令行 `varman mode observe`；控制面不可用时仍可用该命令恢复。",
       "observationModeSaved": "观察模式已更新",
       "apiProtection": "API 防护（9080 端口）",
       "apiProtectionDescription": "控制面监听器自身的防护：访问日志、IP 白名单与 WAF。",
@@ -1462,14 +1462,14 @@
       "apiProtectionAccessLogHint": "记录 API 的每一次请求，可在「日志 → 控制面」中查看。",
       "apiProtectionRetention": "访问日志保留天数",
       "apiProtectionAllowlist": "IP 白名单",
-      "apiProtectionAllowlistHint": "开启后仅白名单中的地址可调用 API。健康探针豁免；被锁定时可在服务器执行 `pingwaf security allowlist off` 恢复。",
+      "apiProtectionAllowlistHint": "开启后仅白名单中的地址可调用 API。健康探针豁免；被锁定时可在服务器执行 `varman security allowlist off` 恢复。",
       "apiProtectionRanges": "允许的地址与 CIDR",
       "apiProtectionRangesHint": "每行一条，例如 203.0.113.4 或 10.0.0.0/8。",
       "apiProtectionGroup": "引用 IP 组",
       "apiProtectionGroupNone": "不引用",
       "apiProtectionGroupHint": "所选 IP 组的全部范围并入白名单；已停用的组不贡献任何条目。",
       "apiProtectionEffective": "白名单当前共 {{count}} 条",
-      "apiProtectionEmptyWarning": "白名单为空——开启后将拒绝所有 API 调用。可在服务器执行 `pingwaf security allowlist off` 恢复。",
+      "apiProtectionEmptyWarning": "白名单为空——开启后将拒绝所有 API 调用。可在服务器执行 `varman security allowlist off` 恢复。",
       "apiProtectionWaf": "WAF",
       "apiProtectionWafHint": "使用内置 WAF 引擎检查 API 请求。",
       "apiProtectionWafMode": "模式",
@@ -1477,7 +1477,7 @@
       "apiProtectionWafModeMonitor": "仅监控",
       "apiProtectionSaved": "API 防护设置已保存",
       "apiProtectionLockoutTitle": "确认应用可能将你锁定的变更？",
-      "apiProtectionLockoutDescription": "新的白名单不包含你当前的地址，保存后本控制台将无法访问。可在服务器执行 `pingwaf security allowlist off` 恢复。",
+      "apiProtectionLockoutDescription": "新的白名单不包含你当前的地址，保存后本控制台将无法访问。可在服务器执行 `varman security allowlist off` 恢复。",
       "apiProtectionForceApply": "仍然应用",
       "aiAssistant": "AI 助手",
       "aiAssistantDescription": "内置 AI 助手，借助 MCP 工具完成故障排查与报表输出；在「AI 助手」页面中对话。",
@@ -1502,7 +1502,7 @@
       "aiAllowWriteToolsWarning": "开启后助手可通过工具修改站点（创建规则、下发节点命令等），请仅在需要时启用。",
       "aiSystemPrompt": "系统提示词",
       "aiSystemPromptHint": "当前生效的提示词：已保存的自定义内容，未保存时为内置默认值。可直接编辑；清空保存后恢复内置默认。",
-      "aiSystemPromptPlaceholder": "你是 PingWAF 运维助手……",
+      "aiSystemPromptPlaceholder": "你是 VarmanWAF 运维助手……",
       "aiSaved": "AI 助手设置已保存",
       "aiTestOk": "连接成功",
       "aiTestFailed": "连接失败",
@@ -1523,7 +1523,7 @@
       "mcpNote": "MCP 与控制台共用凭据，并受「API 防护」（IP 白名单、WAF）约束；写入工具需要带 write 权限且所有者为管理员的密钥。",
       "mcpManageKeys": "管理 API 密钥",
       "about": "关于",
-      "aboutDescription": "当前 PingWAF 安装的版本与项目信息。",
+      "aboutDescription": "当前 VarmanWAF 安装的版本与项目信息。",
       "aboutProduct": "产品",
       "aboutUpstream": "上游项目",
       "aboutUpstreamValue": "基于 Tree Xie 的 pingap（Apache-2.0 许可证）。",
@@ -1683,7 +1683,7 @@
     },
     "lifecycle": {
       "title": "请求生命周期",
-      "description": "PingWAF 各项功能在代理流水线中的执行阶段。在这里查看 WAF、IP、Bot、限流与缓存规则分别在哪一步生效，并据此调试请求为什么被放行、拦截或质询。",
+      "description": "VarmanWAF 各项功能在代理流水线中的执行阶段。在这里查看 WAF、IP、Bot、限流与缓存规则分别在哪一步生效，并据此调试请求为什么被放行、拦截或质询。",
       "docLink": "完整文档",
       "quickNav": "快速导航",
       "stages": {
@@ -1693,7 +1693,7 @@
         },
         "earlyRequest": {
           "title": "早期请求",
-          "desc": "匹配 location（host + path）并创建请求上下文后，运行全部 early_request 插件：WAF 插件的完整检查链（见下方）与质询校验端点 /_pingwaf/challenge/verify。任一插件在此应答都会短路后续所有阶段。"
+          "desc": "匹配 location（host + path）并创建请求上下文后，运行全部 early_request 插件：WAF 插件的完整检查链（见下方）与质询校验端点 /_varman/challenge/verify。任一插件在此应答都会短路后续所有阶段。"
         },
         "request": {
           "title": "请求",
@@ -1725,7 +1725,7 @@
         },
         "logging": {
           "title": "日志",
-          "desc": "pingap 最后写入自己的访问日志。PingWAF 的日志条目在做出决定的阶段就已发出：生成式响应（拦截、质询、暂停页）在请求阶段记录，正常响应在响应体结束时记录。"
+          "desc": "pingap 最后写入自己的访问日志。VarmanWAF 的日志条目在做出决定的阶段就已发出：生成式响应（拦截、质询、暂停页）在请求阶段记录，正常响应在响应体结束时记录。"
         }
       },
       "features": {

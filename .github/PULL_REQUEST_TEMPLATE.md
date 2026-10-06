@@ -1,5 +1,5 @@
 <!--
-PingWAF pull request template. Fill in every section; delete the guidance
+VarmanWAF pull request template. Fill in every section; delete the guidance
 comments but keep the headings. For the checklist, replace [ ] with [x].
 -->
 

@@ -61,7 +61,7 @@ export function stripMaskedSecrets(config: EsConfig): EsConfigDraft {
 export function defaultEsConfig(): EsConfigDraft {
   return {
     urls: [],
-    index_prefix: 'pingwaf',
+    index_prefix: 'varman',
     username: null,
     password: null,
     api_key: null,

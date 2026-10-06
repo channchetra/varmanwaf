@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "PingWAF",
+    "name": "VarmanWAF",
     "tagline": "Web アプリケーションファイアウォール コントロールプレーン"
   },
   "nav": {
@@ -176,7 +176,7 @@
     "unknownHint": "予期しないエラーが発生しました。もう一度お試しください。"
   },
   "auth": {
-    "loginTitle": "PingWAF にサインイン",
+    "loginTitle": "VarmanWAF にサインイン",
     "loginSubtitle": "単一のコントロールプレーンからファイアウォール、エージェント、トラフィックを管理します。",
     "passkeyDivider": "または",
     "passkeyFailed": "パスキーを検証できませんでした",
@@ -259,7 +259,7 @@
     },
     "sites": {
       "title": "サイト",
-      "description": "PingWAF に保護されているすべてのウェブサイト。",
+      "description": "VarmanWAF に保護されているすべてのウェブサイト。",
       "addSite": "サイトを追加",
       "editSite": "サイトを編集",
       "createDescription": "WAF で保護する新しいサイトを追加します。",
@@ -894,7 +894,7 @@
       "noCertificateWarning": "証明書が未選択です。証明書を選ぶか自己署名を有効にするまで HTTPS は動作しません。",
       "certSource": "証明書のソース",
       "selfSigned": "自己署名",
-      "selfSignedHint": "PingWAF が証明書を自動で発行・更新します。公的に信頼されないためブラウザ警告が出ます。テストや内部用途にのみ推奨します。",
+      "selfSignedHint": "VarmanWAF が証明書を自動で発行・更新します。公的に信頼されないためブラウザ警告が出ます。テストや内部用途にのみ推奨します。",
       "useCertificate": "証明書を使用",
       "certificateSelectHint": "このサイトにインストール済みの証明書のみ選択できます。",
       "selectCertificate": "証明書を選択",
@@ -923,7 +923,7 @@
       "clientCaPending": "貼り付け済み・未保存",
       "clientCaRequired": "mTLS を有効にする前にクライアント CA バンドルを貼り付けてください。",
       "caTitle": "認証局（CA）",
-      "caHint": "このサイトが信頼するトラストアンカー。PingWAF が生成した CA はクライアント証明書も発行できます。",
+      "caHint": "このサイトが信頼するトラストアンカー。VarmanWAF が生成した CA はクライアント証明書も発行できます。",
       "addCa": "CA を追加",
       "addCaHint": "証明書を発行する CA を生成するか、既存の CA をインポートして信頼します。",
       "caName": "名前",
@@ -945,7 +945,7 @@
       "clientCertsHint": "このサイトの CA が発行した証明書。失効するとエッジで即座に拒否されます。",
       "issueCert": "証明書を発行",
       "issueCertHint": "秘密鍵はクライアントが保持します。エッジは上記 CA に連鎖する証明書のみ受け付けます。",
-      "issueNeedsGeneratedCa": "証明書を発行できるのは PingWAF が生成した CA のみです。追加してください。",
+      "issueNeedsGeneratedCa": "証明書を発行できるのは VarmanWAF が生成した CA のみです。追加してください。",
       "selectCa": "認証局",
       "certName": "ラベル",
       "certCommonName": "コモンネーム（CN）",
@@ -1158,7 +1158,7 @@
     },
     "agents": {
       "title": "エージェント",
-      "description": "エッジにデプロイされた PingWAF エージェントとその状態。",
+      "description": "エッジにデプロイされた VarmanWAF エージェントとその状態。",
       "empty": "接続中のエージェントがありません",
       "emptyDescription": "エージェントバイナリをデプロイしてサイトの保護を開始しましょう。",
       "noResults": "一致するエージェントがありません",
@@ -1206,7 +1206,7 @@
       "nodeNamePlaceholder": "例：edge-hk-01",
       "nodeNameHint": "任意 — ノードを識別しやすい名前。",
       "generateCommand": "インストールコマンドを生成",
-      "enrollIntro": "対象サーバーで sudo を付けてこのコマンドを実行してください。PingWAF のインストール、エージェント設定の書き込み、サービスの起動まで自動で行い、初回接続後にこの一覧に表示されます。",
+      "enrollIntro": "対象サーバーで sudo を付けてこのコマンドを実行してください。VarmanWAF のインストール、エージェント設定の書き込み、サービスの起動まで自動で行い、初回接続後にこの一覧に表示されます。",
       "installDeploy": "インストールしてサービスを起動",
       "copy": "コピー",
       "copied": "クリップボードにコピーしました",
@@ -1317,7 +1317,7 @@
       "renamePasskey": "名前を変更",
       "renamePasskeyDescription": "後で識別できる名前を付けます。",
       "title": "設定",
-      "description": "PingWAF コントロールプレーンのグローバル設定。",
+      "description": "VarmanWAF コントロールプレーンのグローバル設定。",
       "quickNav": "ページ内ナビ",
       "appearance": "外観",
       "appearanceDescription": "ダッシュボードの見た目をカスタマイズします。",
@@ -1362,7 +1362,7 @@
       "bytes": "バイト",
       "esRequestTimeout": "タイムアウト（秒）",
       "esBufferDir": "バッファディレクトリ",
-      "esBufferDirPlaceholder": "/var/lib/pingwaf/buffer",
+      "esBufferDirPlaceholder": "/var/lib/varman/buffer",
       "esBufferMaxMb": "バッファ上限（MB）",
       "esChannelCapacity": "チャネル容量",
       "esTestOk": "接続成功",
@@ -1454,7 +1454,7 @@
       "observationModeToggle": "観察モードに入る",
       "observationModeToggleHint": "約 15 秒以内にすべてのエージェントへ反映されます。",
       "observationModeBanner": "観察モードが有効です。WAF・IP/地域ルール・Bot 対策・レート制限は遮断せず記録のみ行います。mTLS・Basic 認証・停止中のサイトは引き続き適用されます。",
-      "observationModeHint": "CLI の `pingwaf mode observe` と同じ切り替えです。コントロールプレーンに到達できない場合は CLI が復旧手段になります。",
+      "observationModeHint": "CLI の `varman mode observe` と同じ切り替えです。コントロールプレーンに到達できない場合は CLI が復旧手段になります。",
       "observationModeSaved": "観察モードを更新しました",
       "apiProtection": "API 保護（ポート 9080）",
       "apiProtectionDescription": "コントロールプレーン自身の保護：アクセスログ、IP 許可リスト、WAF。",
@@ -1462,14 +1462,14 @@
       "apiProtectionAccessLogHint": "API への全リクエストを記録します。「ログ → コントロールプレーン」で確認できます。",
       "apiProtectionRetention": "アクセスログの保持日数",
       "apiProtectionAllowlist": "IP 許可リスト",
-      "apiProtectionAllowlistHint": "有効にすると、リスト内のアドレスだけが API を呼び出せます。ヘルスチェックは除外され、ロックアウト時はサーバーで `pingwaf security allowlist off` を実行して復旧できます。",
+      "apiProtectionAllowlistHint": "有効にすると、リスト内のアドレスだけが API を呼び出せます。ヘルスチェックは除外され、ロックアウト時はサーバーで `varman security allowlist off` を実行して復旧できます。",
       "apiProtectionRanges": "許可するアドレスと CIDR",
       "apiProtectionRangesHint": "1 行に 1 件、例：203.0.113.4 または 10.0.0.0/8。",
       "apiProtectionGroup": "IP グループを参照",
       "apiProtectionGroupNone": "参照しない",
       "apiProtectionGroupHint": "選択したグループの全範囲が許可リストに加わります。無効なグループは何も追加しません。",
       "apiProtectionEffective": "許可リストは現在 {{count}} 件",
-      "apiProtectionEmptyWarning": "許可リストが空です。有効にするとすべての API 呼び出しが拒否されます。サーバーで `pingwaf security allowlist off` を実行して復旧してください。",
+      "apiProtectionEmptyWarning": "許可リストが空です。有効にするとすべての API 呼び出しが拒否されます。サーバーで `varman security allowlist off` を実行して復旧してください。",
       "apiProtectionWaf": "WAF",
       "apiProtectionWafHint": "内蔵 WAF エンジンで API リクエストを検査します。",
       "apiProtectionWafMode": "モード",
@@ -1477,7 +1477,7 @@
       "apiProtectionWafModeMonitor": "監視のみ",
       "apiProtectionSaved": "API 保護の設定を保存しました",
       "apiProtectionLockoutTitle": "ロックアウトされる変更を適用しますか？",
-      "apiProtectionLockoutDescription": "新しい許可リストに現在のアドレスが含まれていないため、保存するとこのコンソールにアクセスできなくなります。サーバーで `pingwaf security allowlist off` を実行して復旧してください。",
+      "apiProtectionLockoutDescription": "新しい許可リストに現在のアドレスが含まれていないため、保存するとこのコンソールにアクセスできなくなります。サーバーで `varman security allowlist off` を実行して復旧してください。",
       "apiProtectionForceApply": "それでも適用",
       "aiAssistant": "AI アシスタント",
       "aiAssistantDescription": "MCP ツールでトラブルシューティングとレポート作成を行う組み込みアシスタント。「AI アシスタント」ページで対話できます。",
@@ -1502,7 +1502,7 @@
       "aiAllowWriteToolsWarning": "アシスタントがツール経由でサイトを変更できるようになります（ルール作成・エージェントへのコマンド送信など）。必要なときだけ有効にしてください。",
       "aiSystemPrompt": "システムプロンプト",
       "aiSystemPromptHint": "現在有効なプロンプト（保存済みの上書き、未保存の場合は組み込みの既定値）。編集可能で、空にして保存すると既定値に戻ります。",
-      "aiSystemPromptPlaceholder": "あなたは PingWAF の運用アシスタントです…",
+      "aiSystemPromptPlaceholder": "あなたは VarmanWAF の運用アシスタントです…",
       "aiSaved": "AI アシスタントの設定を保存しました",
       "aiTestOk": "接続に成功しました",
       "aiTestFailed": "接続に失敗しました",
@@ -1523,7 +1523,7 @@
       "mcpNote": "MCP はコンソールの認証情報を共用し、API 保護（IP 許可リスト・WAF）の対象です。書き込みツールには write 権限を持ち、所有者が管理者のキーが必要です。",
       "mcpManageKeys": "API キーを管理",
       "about": "概要",
-      "aboutDescription": "この PingWAF インストールのバージョンとプロジェクト情報。",
+      "aboutDescription": "この VarmanWAF インストールのバージョンとプロジェクト情報。",
       "aboutProduct": "製品",
       "aboutUpstream": "アップストリーム",
       "aboutUpstreamValue": "Tree Xie による pingap をベース（Apache-2.0 ライセンス）。",
@@ -1683,7 +1683,7 @@
     },
     "lifecycle": {
       "title": "リクエストライフサイクル",
-      "description": "PingWAF の各機能がプロキシパイプラインのどの段階で動作するかの対応表です。WAF、IP、Bot、レート制限、キャッシュの各ルールがどこで実行されるかを確認し、リクエストが許可・ブロック・チャレンジされた理由のデバッグに役立ててください。",
+      "description": "VarmanWAF の各機能がプロキシパイプラインのどの段階で動作するかの対応表です。WAF、IP、Bot、レート制限、キャッシュの各ルールがどこで実行されるかを確認し、リクエストが許可・ブロック・チャレンジされた理由のデバッグに役立ててください。",
       "docLink": "ドキュメント",
       "quickNav": "ページ内ナビ",
       "stages": {
@@ -1693,7 +1693,7 @@
         },
         "earlyRequest": {
           "title": "アーリーリクエスト",
-          "desc": "location（host + path）のマッチとリクエストコンテキストの作成後、すべての early_request プラグインが実行されます：WAF プラグインの完全なチェックチェーン（下記）とチャレンジ検証エンドポイント /_pingwaf/challenge/verify。ここで応答したプラグインは以降の全段階を短絡します。"
+          "desc": "location（host + path）のマッチとリクエストコンテキストの作成後、すべての early_request プラグインが実行されます：WAF プラグインの完全なチェックチェーン（下記）とチャレンジ検証エンドポイント /_varman/challenge/verify。ここで応答したプラグインは以降の全段階を短絡します。"
         },
         "request": {
           "title": "リクエスト",
@@ -1725,7 +1725,7 @@
         },
         "logging": {
           "title": "ログ",
-          "desc": "pingap が最後に自身のアクセスログを書き込みます。PingWAF のエントリは判断が下された段階ですでに送出済みです：生成レスポンス（ブロック、チャレンジ、一時停止ページ）はリクエスト時に、通常のレスポンスはボディ完了時に記録されます。"
+          "desc": "pingap が最後に自身のアクセスログを書き込みます。VarmanWAF のエントリは判断が下された段階ですでに送出済みです：生成レスポンス（ブロック、チャレンジ、一時停止ページ）はリクエスト時に、通常のレスポンスはボディ完了時に記録されます。"
         }
       },
       "features": {

@@ -1,7 +1,7 @@
 /**
- * Wire types for the PingWAF control-plane REST API (`/api/v1`).
+ * Wire types for the VarmanWAF control-plane REST API (`/api/v1`).
  *
- * Everything mirrors the Rust `serde` structs in `pingwaf-server/src/api/*`
+ * Everything mirrors the Rust `serde` structs in `varman-control/src/api/*`
  * exactly — field names are `snake_case` and enum-ish values are the short
  * lowercase strings persisted in PostgreSQL (`block`, `active`, `online`, …).
  */
@@ -380,7 +380,7 @@ export interface DerivedWafConfig {
   total_rules: number
 }
 
-/** Attack families a site can downgrade to monitor-only (`pingwaf-waf::CategorySet`). */
+/** Attack families a site can downgrade to monitor-only (`varman-waf::CategorySet`). */
 export type WafCategory =
   | 'sqli'
   | 'xss'
@@ -392,7 +392,7 @@ export type WafCategory =
   | 'xxe'
   | 'ssti'
 
-/** Backend stacks a site can downgrade to monitor-only (`pingwaf-waf::StackSet`). */
+/** Backend stacks a site can downgrade to monitor-only (`varman-waf::StackSet`). */
 export type WafStack = 'java' | 'php' | 'python' | 'node'
 
 export const WAF_CATEGORIES: WafCategory[] = [

@@ -1,7 +1,7 @@
 # waf
 
 Web Application Firewall request inspection. Every request is scored against the
-PingWAF detection engine (managed signature rules plus optional per-site custom
+VarmanWAF detection engine (managed signature rules plus optional per-site custom
 rules), and the resulting verdict is mapped onto the proxy pipeline.
 
 - **Step:** `early_request` (default) or `request` — configurable
@@ -35,7 +35,7 @@ rules), and the resulting verdict is mapped onto the proxy pipeline.
 The block page body is:
 
 ```html
-<html><body><h1>403 Forbidden</h1><p>Request blocked by PingWAF.</p>
+<html><body><h1>403 Forbidden</h1><p>Request blocked by VarmanWAF.</p>
 <p>Reason: {reason}</p><p>Event ID: {request_id}</p></body></html>
 ```
 
@@ -43,7 +43,7 @@ The block page body is:
 
 Rules are resolved per request:
 
-- When a **PingWafAgent** control-plane instance is running, the site rules for
+- When a **VarmanAgent** control-plane instance is running, the site rules for
   the request's `Host` are used. Per-domain engines are cached and rebuilt
   automatically when the agent's config hash changes. If the control plane marks
   WAF disabled for a site, inspection is skipped for that host.

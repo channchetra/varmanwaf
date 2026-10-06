@@ -11,7 +11,7 @@ import {
  */
 export const BASE_URL = '/api/v1'
 
-/** Error codes emitted by `pingwaf-server::api::error::ApiError::code`. */
+/** Error codes emitted by `varman-control::api::error::ApiError::code`. */
 export type ApiErrorCode =
   | 'bad_request'
   | 'unauthorized'

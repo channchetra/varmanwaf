@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! WAF plugin — inspects every request against the PingWAF detection engine.
+//! WAF plugin — inspects every request against the VarmanWAF detection engine.
 //!
 //! Runs at [`PluginStep::EarlyRequest`], ahead of most other plugins. Rules are
 //! resolved per request:
-//! * When a [`PingWafAgent`] control-plane instance is running, site rules for
+//! * When a [`VarmanAgent`] control-plane instance is running, site rules for
 //!   the request's domain are used (cached per-domain and rebuilt when the
 //!   agent's config hash changes).
 //! * Otherwise (standalone pingap) the locally configured engine is used.
@@ -45,7 +45,7 @@ use pingap_core::{
 use pingap_util::{IpRules, base64_decode};
 use pingora::http::{ResponseHeader, Version};
 use pingora::proxy::Session;
-use pingwaf_agent::cache::{
+use varman_agent::cache::{
     BasicAuthConfig as CacheBasicAuthConfig,
     BotProtectionConfig as CacheBotProtection, GeoConfig as CacheGeoConfig,
     IpAccessAction as CacheIpAccessAction, RateLimitRule as CacheRateLimitRule,
@@ -53,14 +53,14 @@ use pingwaf_agent::cache::{
     WafAction as CacheWafAction, WafConfig as CacheWafConfig,
     WafMode as CacheWafMode,
 };
-use pingwaf_agent::{AccessLogEntry, PingWafAgent, SecurityEvent};
-use pingwaf_challenge::{
+use varman_agent::{AccessLogEntry, VarmanAgent, SecurityEvent};
+use varman_challenge::{
     CLEARANCE_COOKIE_NAME, CookieManager, generate_request_id,
 };
-use pingwaf_waf::rules::{
+use varman_waf::rules::{
     EvalContext, Expression, evaluate as evaluate_expression, parse_expression,
 };
-use pingwaf_waf::{
+use varman_waf::{
     CategorySet, CompiledRule, RequestData, RuleAction, ScoreBreakdown,
     StackSet, WafAction, WafEngine, WafEngineConfig, WafLevel, WafMode,
     WafVerdict,
@@ -1219,7 +1219,7 @@ fn clearance_valid(value: Option<String>) -> bool {
     let Some(value) = value else {
         return false;
     };
-    let Some(agent) = PingWafAgent::instance() else {
+    let Some(agent) = VarmanAgent::instance() else {
         return false;
     };
     let secret_path =
@@ -1470,7 +1470,7 @@ pub fn sweep_stale_access(ttl: Duration) -> usize {
         .filter(|entry| entry.value().start.elapsed() >= ttl)
         .map(|entry| entry.key().clone())
         .collect();
-    let agent = PingWafAgent::instance();
+    let agent = VarmanAgent::instance();
     let mut swept = 0;
     for request_id in expired {
         let Some((_, mut pending)) = PENDING_ACCESS.remove(&request_id) else {
@@ -1492,7 +1492,7 @@ pub fn sweep_stale_access(ttl: Duration) -> usize {
 /// immediately for plugin-generated responses (which never reach
 /// `handle_response`).
 fn emit_access(
-    agent: &PingWafAgent,
+    agent: &VarmanAgent,
     request_id: &str,
     pending: PendingAccess,
     response: ResponseFacts,
@@ -1535,7 +1535,7 @@ fn emit_access(
 /// truncated body — so a blocked or challenged request is as replayable in
 /// the log as a proxied one.
 fn emit_generated_access(
-    agent: Option<&Arc<PingWafAgent>>,
+    agent: Option<&Arc<VarmanAgent>>,
     request_id: &str,
     response: &HttpResponse,
 ) {
@@ -1629,7 +1629,7 @@ fn announced_body_size(response: &pingora::http::ResponseHeader) -> u64 {
 /// Body bytes kept per access log entry per direction, resolved from the
 /// agent config; capped so a misconfiguration cannot bloat the log store.
 fn log_body_limit() -> usize {
-    PingWafAgent::instance()
+    VarmanAgent::instance()
         .map(|agent| agent.config.max_body_log_size.min(MAX_LOG_BODY_LIMIT))
         .unwrap_or(0)
 }
@@ -1797,7 +1797,7 @@ impl WafPlugin {
             site_id,
             context: None,
         };
-        let Some(agent) = PingWafAgent::instance() else {
+        let Some(agent) = VarmanAgent::instance() else {
             return fallback(host.to_string());
         };
         if host.is_empty() {
@@ -1847,7 +1847,7 @@ impl WafPlugin {
         verdict: &WafVerdict,
         rule_name: &str,
     ) {
-        let Some(agent) = PingWafAgent::instance() else {
+        let Some(agent) = VarmanAgent::instance() else {
             return;
         };
         let blocked =
@@ -1932,7 +1932,7 @@ impl WafPlugin {
     /// access log with the real status, then the block page or the challenge.
     #[allow(clippy::too_many_arguments)]
     fn deny_request(
-        agent: Option<&Arc<PingWafAgent>>,
+        agent: Option<&Arc<VarmanAgent>>,
         site_id: &str,
         request_id: &str,
         host: &str,
@@ -2152,7 +2152,7 @@ impl Plugin for WafPlugin {
         // Country of the client: it feeds geo restrictions, the
         // `ip.src.country` rule variable and the flag shown with the access
         // log, so it is only resolved when an agent consumes those facts.
-        let agent = PingWafAgent::instance();
+        let agent = VarmanAgent::instance();
         let country = if agent.is_some() {
             client_addr.and_then(lookup_country_addr)
         } else {
@@ -2710,7 +2710,7 @@ impl Plugin for WafPlugin {
             return Ok(ResponsePluginResult::Unchanged);
         };
         // Without an agent nothing was registered at request time.
-        let Some(agent) = PingWafAgent::instance() else {
+        let Some(agent) = VarmanAgent::instance() else {
             return Ok(ResponsePluginResult::Unchanged);
         };
         let status = upstream_response.status.as_u16();
@@ -2786,7 +2786,7 @@ impl Plugin for WafPlugin {
             else {
                 return Ok(ResponseBodyPluginResult::Unchanged);
             };
-            let Some(agent) = PingWafAgent::instance() else {
+            let Some(agent) = VarmanAgent::instance() else {
                 return Ok(ResponseBodyPluginResult::Unchanged);
             };
             let Some(mut facts) = pending.response.take() else {
@@ -2821,12 +2821,12 @@ pub(crate) mod tests {
     use pingap_core::PluginStep;
     use pingap_util::base64_encode;
     use pingora::proxy::Session;
-    use pingwaf_agent::cache::RuleCache;
-    use pingwaf_agent::client::ControlPlaneClient;
-    use pingwaf_agent::config::AgentConfig;
-    use pingwaf_agent::heartbeat::MetricsCollector;
-    use pingwaf_challenge::ClearanceLevel;
-    use pingwaf_proto::control_plane as proto;
+    use varman_agent::cache::RuleCache;
+    use varman_agent::client::ControlPlaneClient;
+    use varman_agent::config::AgentConfig;
+    use varman_agent::heartbeat::MetricsCollector;
+    use varman_challenge::ClearanceLevel;
+    use varman_protocol::control_plane as proto;
     use tokio_test::io::Builder;
 
     #[test]
@@ -2980,7 +2980,7 @@ advanced_mode = true
         let _agent_lock = lock_agent().await;
         // Start from no instance: a leftover agent from a sibling test
         // would otherwise observe (and count) this request.
-        PingWafAgent::set_agent_instance(None);
+        VarmanAgent::set_agent_instance(None);
         let plugin = WafPlugin::new(
             &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
         )
@@ -3008,7 +3008,7 @@ advanced_mode = true
     #[tokio::test]
     async fn test_passes_clean_request() {
         let _agent_lock = lock_agent().await;
-        PingWafAgent::set_agent_instance(None);
+        VarmanAgent::set_agent_instance(None);
         let plugin = WafPlugin::new(
             &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
         )
@@ -3034,7 +3034,7 @@ advanced_mode = true
     #[tokio::test]
     async fn test_monitor_mode_does_not_block() {
         let _agent_lock = lock_agent().await;
-        PingWafAgent::set_agent_instance(None);
+        VarmanAgent::set_agent_instance(None);
         let plugin = WafPlugin::new(
             &toml::from_str::<PluginConf>(r###"mode = "monitor""###).unwrap(),
         )
@@ -3059,7 +3059,7 @@ advanced_mode = true
     #[tokio::test]
     async fn test_off_mode_skips() {
         let _agent_lock = lock_agent().await;
-        PingWafAgent::set_agent_instance(None);
+        VarmanAgent::set_agent_instance(None);
         let plugin = WafPlugin::new(
             &toml::from_str::<PluginConf>(r###"mode = "off""###).unwrap(),
         )
@@ -3097,7 +3097,7 @@ advanced_mode = true
     /// holding the agent lock so sibling tests stay off the global.
     pub(crate) async fn install_test_agent() -> (
         tokio::sync::MutexGuard<'static, ()>,
-        Arc<PingWafAgent>,
+        Arc<VarmanAgent>,
         tempfile::TempDir,
     ) {
         let lock = lock_agent().await;
@@ -3115,13 +3115,13 @@ advanced_mode = true
             Arc::clone(&rule_cache),
             Arc::clone(&metrics),
         ));
-        let agent = Arc::new(PingWafAgent {
+        let agent = Arc::new(VarmanAgent {
             config,
             client,
             rule_cache,
             metrics,
         });
-        PingWafAgent::set_agent_instance(Some(Arc::clone(&agent)));
+        VarmanAgent::set_agent_instance(Some(Arc::clone(&agent)));
         (lock, agent, dir)
     }
 
@@ -3129,7 +3129,7 @@ advanced_mode = true
     /// catch-all block rule for `example.com`.
     async fn install_whitelist_agent() -> (
         tokio::sync::MutexGuard<'static, ()>,
-        Arc<PingWafAgent>,
+        Arc<VarmanAgent>,
         tempfile::TempDir,
     ) {
         let installed = install_test_agent().await;
@@ -3180,7 +3180,7 @@ advanced_mode = true
     /// block rule, so the pause must win over the restriction.
     async fn install_paused_agent() -> (
         tokio::sync::MutexGuard<'static, ()>,
-        Arc<PingWafAgent>,
+        Arc<VarmanAgent>,
         tempfile::TempDir,
     ) {
         let installed = install_test_agent().await;
@@ -3325,7 +3325,7 @@ advanced_mode = true
         revoked: &[&str],
     ) -> (
         tokio::sync::MutexGuard<'static, ()>,
-        Arc<PingWafAgent>,
+        Arc<VarmanAgent>,
         tempfile::TempDir,
     ) {
         let installed = install_test_agent().await;
@@ -3480,7 +3480,7 @@ advanced_mode = true
         posture: BasicAuthPosture,
     ) -> (
         tokio::sync::MutexGuard<'static, ()>,
-        Arc<PingWafAgent>,
+        Arc<VarmanAgent>,
         tempfile::TempDir,
     ) {
         let installed = install_test_agent().await;
@@ -4229,7 +4229,7 @@ advanced_mode = true
         action: proto::WafAction,
     ) -> (
         tokio::sync::MutexGuard<'static, ()>,
-        Arc<PingWafAgent>,
+        Arc<VarmanAgent>,
         tempfile::TempDir,
     ) {
         let installed = install_test_agent().await;
@@ -4418,7 +4418,7 @@ advanced_mode = true
         rules: Vec<proto::RateLimitRule>,
     ) -> (
         tokio::sync::MutexGuard<'static, ()>,
-        Arc<PingWafAgent>,
+        Arc<VarmanAgent>,
         tempfile::TempDir,
     ) {
         let installed = install_test_agent().await;

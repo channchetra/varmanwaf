@@ -4498,76 +4498,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "pingap"
-version = "0.20.0"
-dependencies = [
- "ahash",
- "anyhow",
- "arc-swap",
- "async-trait",
- "bytes",
- "cfg-if",
- "chrono",
- "clap",
- "criterion",
- "crossbeam-channel",
- "ctor",
- "flate2",
- "glob",
- "hex",
- "http",
- "humantime",
- "humantime-serde",
- "kdl",
- "mimalloc",
- "nanoid",
- "nix 0.31.3",
- "pingap-acme",
- "pingap-cache",
- "pingap-certificate",
- "pingap-config",
- "pingap-core",
- "pingap-imageoptim",
- "pingap-location",
- "pingap-logger",
- "pingap-otel",
- "pingap-performance",
- "pingap-plugin",
- "pingap-proxy",
- "pingap-pyroscope",
- "pingap-sentry",
- "pingap-upstream",
- "pingap-util",
- "pingap-webhook",
- "pingora",
- "pingwaf-agent",
- "pingwaf-pprof",
- "pingwaf-server",
- "pretty_assertions",
- "regex",
- "rust-embed",
- "sea-orm",
- "serde",
- "serde_json",
- "serde_qs",
- "sha2 0.11.0",
- "snafu",
- "substring",
- "sysinfo",
- "tempfile",
- "tokio",
- "tokio-test",
- "toml",
- "tracing",
- "tracing-subscriber",
- "url",
- "urlencoding",
- "uuid",
- "vergen",
- "vergen-git2",
-]
-
-[[package]]
 name = "pingap-acme"
 version = "0.20.0"
 dependencies = [
@@ -4926,10 +4856,6 @@ dependencies = [
  "pingap-core",
  "pingap-util",
  "pingora",
- "pingwaf-agent",
- "pingwaf-challenge",
- "pingwaf-proto",
- "pingwaf-waf",
  "pretty_assertions",
  "rand 0.10.3",
  "regex",
@@ -4950,6 +4876,10 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "varman-agent",
+ "varman-challenge",
+ "varman-protocol",
+ "varman-waf",
 ]
 
 [[package]]
@@ -5364,129 +5294,6 @@ dependencies = [
  "pin-project-lite",
  "thread_local",
  "tokio",
-]
-
-[[package]]
-name = "pingwaf-agent"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "chrono",
- "dashmap 6.2.1",
- "futures",
- "pingap-cache",
- "pingwaf-proto",
- "prost-types 0.14.4",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-stream",
- "tonic",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "pingwaf-challenge"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "chrono",
- "hex",
- "hmac 0.13.0",
- "rand 0.10.3",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tracing",
-]
-
-[[package]]
-name = "pingwaf-pprof"
-version = "0.1.0"
-dependencies = [
- "bytesize",
- "flate2",
- "memory-stats",
- "pprof",
- "pretty_assertions",
- "serde",
- "sysinfo",
-]
-
-[[package]]
-name = "pingwaf-proto"
-version = "0.1.0"
-dependencies = [
- "prost 0.14.4",
- "prost-types 0.14.4",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
-]
-
-[[package]]
-name = "pingwaf-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "async-trait",
- "axum",
- "base64 0.23.1",
- "bcrypt",
- "chrono",
- "futures-util",
- "hex",
- "ipnet",
- "jsonwebtoken",
- "passkey-server",
- "pingwaf-pprof",
- "pingwaf-proto",
- "pingwaf-waf",
- "prost 0.14.4",
- "prost-types 0.14.4",
- "rcgen",
- "regex",
- "reqwest 0.13.5",
- "rust-embed",
- "rustls",
- "rustls-pemfile",
- "sea-orm",
- "sea-orm-migration",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
- "time",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tonic",
- "tower-http 0.7.1",
- "tracing",
- "uuid",
- "x509-parser 0.18.1",
-]
-
-[[package]]
-name = "pingwaf-waf"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "aho-corasick",
- "anyhow",
- "base64 0.23.1",
- "ipnet",
- "once_cell",
- "regex",
- "serde",
- "serde_json",
- "tracing",
 ]
 
 [[package]]
@@ -8642,6 +8449,199 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "varman"
+version = "0.20.0"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "bytes",
+ "cfg-if",
+ "chrono",
+ "clap",
+ "criterion",
+ "crossbeam-channel",
+ "ctor",
+ "flate2",
+ "glob",
+ "hex",
+ "http",
+ "humantime",
+ "humantime-serde",
+ "kdl",
+ "mimalloc",
+ "nanoid",
+ "nix 0.31.3",
+ "pingap-acme",
+ "pingap-cache",
+ "pingap-certificate",
+ "pingap-config",
+ "pingap-core",
+ "pingap-imageoptim",
+ "pingap-location",
+ "pingap-logger",
+ "pingap-otel",
+ "pingap-performance",
+ "pingap-plugin",
+ "pingap-proxy",
+ "pingap-pyroscope",
+ "pingap-sentry",
+ "pingap-upstream",
+ "pingap-util",
+ "pingap-webhook",
+ "pingora",
+ "pretty_assertions",
+ "regex",
+ "rust-embed",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "serde_qs",
+ "sha2 0.11.0",
+ "snafu",
+ "substring",
+ "sysinfo",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "urlencoding",
+ "uuid",
+ "varman-agent",
+ "varman-control",
+ "varman-pprof",
+ "vergen",
+ "vergen-git2",
+]
+
+[[package]]
+name = "varman-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "chrono",
+ "dashmap 6.2.1",
+ "futures",
+ "pingap-cache",
+ "prost-types 0.14.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "varman-protocol",
+]
+
+[[package]]
+name = "varman-challenge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "chrono",
+ "hex",
+ "hmac 0.13.0",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tracing",
+]
+
+[[package]]
+name = "varman-control"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "bcrypt",
+ "chrono",
+ "futures-util",
+ "hex",
+ "ipnet",
+ "jsonwebtoken",
+ "passkey-server",
+ "prost 0.14.4",
+ "prost-types 0.14.4",
+ "rcgen",
+ "regex",
+ "reqwest 0.13.5",
+ "rust-embed",
+ "rustls",
+ "rustls-pemfile",
+ "sea-orm",
+ "sea-orm-migration",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+ "tonic",
+ "tower-http 0.7.1",
+ "tracing",
+ "uuid",
+ "varman-pprof",
+ "varman-protocol",
+ "varman-waf",
+ "x509-parser 0.18.1",
+]
+
+[[package]]
+name = "varman-pprof"
+version = "0.1.0"
+dependencies = [
+ "bytesize",
+ "flate2",
+ "memory-stats",
+ "pprof",
+ "pretty_assertions",
+ "serde",
+ "sysinfo",
+]
+
+[[package]]
+name = "varman-protocol"
+version = "0.1.0"
+dependencies = [
+ "prost 0.14.4",
+ "prost-types 0.14.4",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+]
+
+[[package]]
+name = "varman-waf"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "aho-corasick",
+ "anyhow",
+ "base64 0.23.1",
+ "ipnet",
+ "once_cell",
+ "regex",
+ "serde",
+ "serde_json",
+ "tracing",
+]
 
 [[package]]
 name = "vcpkg"

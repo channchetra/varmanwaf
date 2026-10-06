@@ -53,7 +53,7 @@ check-target:
 	fi
 
 # Removes the build cache and the copied root `dist/`; `web/dist` is kept
-# because pingwaf-server embeds it at compile time.
+# because varman-control embeds it at compile time.
 clean:
 	cargo clean
 	rm -rf dist

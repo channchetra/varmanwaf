@@ -566,11 +566,11 @@ fn pprof_query(session: &Session) -> PprofQuery {
 /// Renders a profiling failure like the control plane does: 409 while
 /// another capture is running, 501 where sampling cannot run at all, 500
 /// otherwise.
-fn pprof_error_response(err: pingwaf_pprof::ProfileError) -> HttpResponse {
+fn pprof_error_response(err: varman_pprof::ProfileError) -> HttpResponse {
     error!(target: LOG_TARGET, error = %err, "pprof request fail");
     let status = match err {
-        pingwaf_pprof::ProfileError::AlreadyActive => StatusCode::CONFLICT,
-        pingwaf_pprof::ProfileError::UnsupportedPlatform => {
+        varman_pprof::ProfileError::AlreadyActive => StatusCode::CONFLICT,
+        varman_pprof::ProfileError::UnsupportedPlatform => {
             StatusCode::NOT_IMPLEMENTED
         },
         _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -597,7 +597,7 @@ async fn handle_pprof_request(
     }
     let endpoint = path.substring("/pprof/".len(), path.len());
     if endpoint == "memory" {
-        return HttpResponse::try_from_json(&pingwaf_pprof::memory_snapshot())
+        return HttpResponse::try_from_json(&varman_pprof::memory_snapshot())
             .unwrap_or(HttpResponse::unknown_error("Json serde fail"));
     }
     if endpoint != "profile" && endpoint != "flamegraph" {
@@ -606,15 +606,15 @@ async fn handle_pprof_request(
 
     let query = pprof_query(session);
     let profiling =
-        match pingwaf_pprof::start_session(query.frequency.unwrap_or_default())
+        match varman_pprof::start_session(query.frequency.unwrap_or_default())
         {
             Ok(profiling) => profiling,
             Err(err) => return pprof_error_response(err),
         };
     let seconds = query
         .seconds
-        .unwrap_or(pingwaf_pprof::DEFAULT_SECONDS)
-        .clamp(1, pingwaf_pprof::MAX_SECONDS);
+        .unwrap_or(varman_pprof::DEFAULT_SECONDS)
+        .clamp(1, varman_pprof::MAX_SECONDS);
     tokio::time::sleep(Duration::from_secs(seconds)).await;
 
     // Symbolising and encoding the report is CPU-bound work that must not
@@ -637,7 +637,7 @@ async fn handle_pprof_request(
                 .header((
                     header::CONTENT_DISPOSITION,
                     HeaderValue::from_static(
-                        "attachment; filename=\"pingwaf-cpu.pb.gz\"",
+                        "attachment; filename=\"varman-cpu.pb.gz\"",
                     ),
                 ))
                 .no_store()
@@ -645,7 +645,7 @@ async fn handle_pprof_request(
                 .finish(),
             Ok(Err(err)) => pprof_error_response(err),
             Err(err) => pprof_error_response(
-                pingwaf_pprof::ProfileError::Report(err.to_string()),
+                varman_pprof::ProfileError::Report(err.to_string()),
             ),
         }
     } else {
@@ -662,7 +662,7 @@ async fn handle_pprof_request(
                 .finish(),
             Ok(Err(err)) => pprof_error_response(err),
             Err(err) => pprof_error_response(
-                pingwaf_pprof::ProfileError::Report(err.to_string()),
+                varman_pprof::ProfileError::Report(err.to_string()),
             ),
         }
     }

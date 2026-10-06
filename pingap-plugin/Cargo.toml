@@ -47,9 +47,9 @@ pingap-cache = { workspace = true }
 pingap-config = { workspace = true }
 pingap-core = { workspace = true }
 pingap-util = { workspace = true }
-pingwaf-waf = { path = "../pingwaf-waf" }
-pingwaf-challenge = { path = "../pingwaf-challenge" }
-pingwaf-agent = { path = "../pingwaf-agent" }
+varman-waf = { path = "../varman-waf" }
+varman-challenge = { path = "../varman-challenge" }
+varman-agent = { path = "../varman-agent" }
 pingora = { workspace = true }
 rand = { workspace = true }
 regex = { workspace = true }
@@ -74,10 +74,10 @@ pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }
 # Rule bundles are pushed to the test agent through the proto types.
-pingwaf-proto = { path = "../pingwaf-proto" }
+varman-protocol = { path = "../varman-protocol" }
 # Enables the test-util feature (agent instance installer + log introspection)
 # for the waf plugin access-log tests.
-pingwaf-agent = { path = "../pingwaf-agent", features = ["test-util"] }
+varman-agent = { path = "../varman-agent", features = ["test-util"] }
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny
