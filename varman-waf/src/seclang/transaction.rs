@@ -258,6 +258,9 @@ pub struct CompiledSecRule {
     regex: Option<Regex>,
     ips: Vec<ipnet::IpNet>,
     transforms: Vec<Transform>,
+    /// `multiMatch`: record every matching value, not just the first per
+    /// variable.
+    multi_match: bool,
 }
 
 /// ModSecurity transformation applied to a value before the operator runs.
@@ -277,6 +280,9 @@ pub enum Transform {
     NormalizePath,
     NormalizePathWin,
     Utf8ToUnicode,
+    RemoveCommentsChar,
+    EscapeSeqDecode,
+    CssDecode,
 }
 
 impl Transform {
@@ -298,6 +304,9 @@ impl Transform {
             "replacecomments" => Some(Self::ReplaceComments),
             "normalizepath" => Some(Self::NormalizePath),
             "normalizepathwin" => Some(Self::NormalizePathWin),
+            "removecommentschar" => Some(Self::RemoveCommentsChar),
+            "escapeseqdecode" => Some(Self::EscapeSeqDecode),
+            "cssdecode" => Some(Self::CssDecode),
             "utf8tounicode" => Some(Self::Utf8ToUnicode),
             _ => None,
         }
@@ -332,6 +341,9 @@ impl Transform {
             Self::ReplaceComments => replace_comments(value),
             Self::NormalizePath => normalize_path(value, false),
             Self::NormalizePathWin => normalize_path(value, true),
+            Self::RemoveCommentsChar => remove_comments_char(value),
+            Self::EscapeSeqDecode => escape_seq_decode(value),
+            Self::CssDecode => css_decode(value),
             Self::Utf8ToUnicode => utf8_to_unicode(value),
         }
     }
@@ -682,6 +694,197 @@ fn push_unicode_escape(out: &mut Vec<u8>, code: u32) {
     out.extend_from_slice(escape.as_bytes());
 }
 
+/// ModSecurity `removeCommentsChar`: strips comment *delimiters* only
+/// (`/*`, `*/`, `<!--`, `-->`, `--`, `#`), keeping the contents.
+fn remove_comments_char(value: &str) -> String {
+    let input = value.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(input.len());
+    let mut s = 0usize;
+    while s < input.len() {
+        let opens =
+            input[s] == b'/' && s + 1 < input.len() && input[s + 1] == b'*';
+        let closes =
+            input[s] == b'*' && s + 1 < input.len() && input[s + 1] == b'/';
+        if opens || closes {
+            s += 2;
+        } else if input[s] == b'<'
+            && s + 3 < input.len()
+            && input[s + 1] == b'!'
+            && input[s + 2] == b'-'
+            && input[s + 3] == b'-'
+        {
+            s += 4;
+        } else if input[s] == b'-'
+            && s + 2 < input.len()
+            && input[s + 1] == b'-'
+            && input[s + 2] == b'>'
+        {
+            s += 3;
+        } else if input[s] == b'-'
+            && s + 1 < input.len()
+            && input[s + 1] == b'-'
+        {
+            s += 2;
+        } else if input[s] == b'#' {
+            s += 1;
+        } else {
+            out.push(input[s]);
+            s += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// ModSecurity `escapeSeqDecode`: ANSI C escapes (`\a \b \f \n \r \t \v \\
+/// \? \' \"`), `\xHH`, and octal `\OOO`. An invalid `\x` keeps the `x` raw.
+fn escape_seq_decode(value: &str) -> String {
+    let input = value.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(input.len());
+    let mut i = 0usize;
+    while i < input.len() {
+        if input[i] != b'\\' || i + 1 >= input.len() {
+            out.push(input[i]);
+            i += 1;
+            continue;
+        }
+        let mut decoded: Option<u8> = None;
+        match input[i + 1] {
+            b'a' => decoded = Some(0x07),
+            b'b' => decoded = Some(0x08),
+            b'f' => decoded = Some(0x0c),
+            b'n' => decoded = Some(b'\n'),
+            b'r' => decoded = Some(b'\r'),
+            b't' => decoded = Some(b'\t'),
+            b'v' => decoded = Some(0x0b),
+            b'\\' => decoded = Some(b'\\'),
+            b'?' => decoded = Some(b'?'),
+            b'\'' => decoded = Some(b'\''),
+            b'"' => decoded = Some(b'"'),
+            _ => {},
+        }
+        if decoded.is_some() {
+            i += 2;
+        } else if input[i + 1] == b'x' || input[i + 1] == b'X' {
+            if i + 3 < input.len()
+                && input[i + 2].is_ascii_hexdigit()
+                && input[i + 3].is_ascii_hexdigit()
+            {
+                decoded = Some(hex_byte(input[i + 2], input[i + 3]));
+                i += 4;
+            }
+        } else if (b'0'..=b'7').contains(&input[i + 1]) {
+            let mut j = 0usize;
+            let mut buf = [0u8; 3];
+            while i + 1 + j < input.len() && j < 3 {
+                buf[j] = input[i + 1 + j];
+                j += 1;
+                if i + 1 + j >= input.len()
+                    || !(b'0'..=b'7').contains(&input[i + 1 + j])
+                {
+                    break;
+                }
+            }
+            let text = std::str::from_utf8(&buf[..j]).unwrap_or("");
+            // Up to three octal digits (values above 255 truncate as in C).
+            decoded = Some(u32::from_str_radix(text, 8).unwrap_or(0) as u8);
+            i += 1 + j;
+        }
+        match decoded {
+            Some(byte) => out.push(byte),
+            None => {
+                // Unrecognised escape: copy the byte after the backslash.
+                out.push(input[i + 1]);
+                i += 2;
+            },
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn single_hex(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        _ => byte - b'A' + 10,
+    }
+}
+
+/// ModSecurity `cssDecode`: CSS hex escapes of one to six digits, using the
+/// last two digits with a full-width (`ff01`–`ff5e`) adjustment; one
+/// whitespace after an escape is consumed; backslash-newline is swallowed.
+fn css_decode(value: &str) -> String {
+    let input = value.as_bytes();
+    let len = input.len();
+    let mut out: Vec<u8> = Vec::with_capacity(len);
+    let mut i = 0usize;
+    while i < len {
+        if input[i] != b'\\' {
+            out.push(input[i]);
+            i += 1;
+            continue;
+        }
+        if i + 1 >= len {
+            // Backslash at the very end: dropped.
+            i += 1;
+            continue;
+        }
+        i += 1; // Skip the backslash.
+        let mut j = 0usize;
+        while j < 6 && i + j < len && input[i + j].is_ascii_hexdigit() {
+            j += 1;
+        }
+        if j > 0 {
+            let mut fullcheck = false;
+            let byte = match j {
+                1 => single_hex(input[i]),
+                2 | 3 => hex_byte(input[i + j - 2], input[i + j - 1]),
+                4 => {
+                    fullcheck = true;
+                    hex_byte(input[i + j - 2], input[i + j - 1])
+                },
+                5 => {
+                    if input[i] == b'0' {
+                        fullcheck = true;
+                    }
+                    hex_byte(input[i + j - 2], input[i + j - 1])
+                },
+                _ => {
+                    if input[i] == b'0' && input[i + 1] == b'0' {
+                        fullcheck = true;
+                    }
+                    hex_byte(input[i + j - 2], input[i + j - 1])
+                },
+            };
+            out.push(byte);
+            if fullcheck {
+                if let Some(last) = out.last_mut() {
+                    if *last > 0
+                        && *last < 0x5f
+                        && (input[i + j - 3] == b'f'
+                            || input[i + j - 3] == b'F')
+                        && (input[i + j - 4] == b'f'
+                            || input[i + j - 4] == b'F')
+                    {
+                        *last += 0x20;
+                    }
+                }
+            }
+            if i + j < len && input[i + j].is_ascii_whitespace() {
+                j += 1;
+            }
+            i += j;
+        } else if input[i] == b'\n' {
+            // Backslash-newline: both swallowed.
+            i += 1;
+        } else {
+            // No hex digits: the character after the backslash is used as-is.
+            out.push(input[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
 /// Collect `t:` actions in order; an unknown transformation is an observable
 /// error (mandate §37: unsupported SecLang must never be silently ignored).
 fn parse_transforms(
@@ -823,11 +1026,16 @@ impl CompiledSecRule {
             _ => {},
         }
         let transforms = parse_transforms(&line.actions)?;
+        let multi_match = line
+            .actions
+            .iter()
+            .any(|a| a.trim().eq_ignore_ascii_case("multimatch"));
         Ok(Self {
             line,
             regex,
             ips,
             transforms,
+            multi_match,
         })
     }
 
@@ -856,7 +1064,9 @@ impl CompiledSecRule {
                 if self.operator_matches(&value.value, txn) != self.line.negated
                 {
                     hits.push(value);
-                    break;
+                    if !self.multi_match {
+                        break;
+                    }
                 }
             }
         }
@@ -1290,6 +1500,29 @@ mod tests {
         assert_eq!(utf8.apply("é"), "%u00e9");
         assert_eq!(utf8.apply("€"), "%u20ac");
         assert_eq!(utf8.apply("😀"), "%u1f600");
+    }
+
+    #[test]
+    fn remove_comments_char_escapeseqdecode_and_css_transforms() {
+        let strip = Transform::parse("removeCommentsChar").expect("parse");
+        assert_eq!(strip.apply("a/*x*/b"), "axb");
+        assert_eq!(strip.apply("<!--x-->"), "x");
+        assert_eq!(strip.apply("a-->b"), "ab");
+        assert_eq!(strip.apply("#hash"), "hash");
+
+        let escape = Transform::parse("escapeSeqDecode").expect("parse");
+        assert_eq!(escape.apply("\\n\\x41\\101\\777"), "\nAA\u{fffd}");
+        assert_eq!(escape.apply("\\xzz"), "xzz");
+        assert_eq!(escape.apply("\\q"), "q");
+
+        let css = Transform::parse("cssDecode").expect("parse");
+        assert_eq!(css.apply("\\41"), "A");
+        assert_eq!(css.apply("\\000041"), "A");
+        assert_eq!(css.apply("\\ff41"), "a");
+        assert_eq!(css.apply("\\41 rest"), "Arest");
+        assert_eq!(css.apply("\\z"), "z");
+        assert_eq!(css.apply("\\"), "");
+        assert_eq!(css.apply("\\\n"), "");
     }
 
     #[test]

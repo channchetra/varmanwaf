@@ -308,15 +308,15 @@ report against the existing engine.
       First measurement: **1/27 files load, 0 rules**; blockers are tracked
       honestly in `docs/compatibility.md`. Every slice from here ratchets the
       load count up.
-- [x] Third CRS slice: `t:replaceComments`, `t:normalizePath`,
-      `t:normalizePathWin`, `t:utf8ToUnicode` (faithful ports, including
-      malformed-sequence behaviour). **CRS load: 18/27 files, 283 rules**
-      (ratcheted in the harness).
-- [ ] Next CRS blockers: `multiMatch` action (930, 934) →
-      `t:escapeSeqDecode` (932), `t:cssDecode` (941), `t:removeCommentsChar`
-      (942) → `t:sha1`/`t:hexEncode` + `initcol` (901) → byte-preserving value
-      plumbing (`@validateUtf8Encoding`) → cross-file `skipAfter` resolution
-      and a full-set (non-per-file) conformance run.
+- [x] Fourth CRS slice: `t:removeCommentsChar`, `t:escapeSeqDecode`,
+      `t:cssDecode` (faithful ports), `multiMatch` action (records every
+      matching value), case-insensitive action validation. **CRS load: 23/27
+      files, 503 rules** (ratcheted in the harness).
+- [ ] Final CRS blockers: `t:sha1`/`t:hexEncode` + `initcol` collections
+      (901) → byte-preserving value plumbing (`@validateUtf8Encoding`) →
+      full-set (non-per-file) harness mode for cross-file `skipAfter` (950) →
+      host-environment fix for the Defender-quarantined `web-shells-php.data`
+      (955).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

@@ -50,13 +50,14 @@ const ALLOWED_ACTIONS: &[&str] = &[
     "accuracy:",
     "chain",
     "skip:",
-    "skipAfter:",
+    "skipafter:",
     "t:",
     "setvar:",
     "capture",
     "auditlog",
     "ctl:",
     "noauditlog",
+    "multimatch",
 ];
 
 /// `true` when the line is a `SecRuleRemoveById` directive (the exact word,
@@ -138,9 +139,10 @@ fn validate_actions(group: &SecRuleGroup) -> Result<(), SecLangError> {
     for rule in &group.rules {
         for action in &rule.line.actions {
             let trimmed = action.trim();
+            let lowered = trimmed.to_ascii_lowercase();
             let known = ALLOWED_ACTIONS
                 .iter()
-                .any(|allowed| trimmed.starts_with(allowed));
+                .any(|allowed| lowered.starts_with(allowed));
             if !known {
                 return Err(SecLangError {
                     reason: format!("unsupported action {trimmed:?}"),
@@ -1111,6 +1113,37 @@ mod tests {
         )
         .expect_err("must fail");
         assert!(error.reason.contains("base directory"), "{error}");
+    }
+
+    #[test]
+    fn multi_match_records_every_value() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@rx ^[0-9]$\" \"id:1,multiMatch\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1&a=2"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            hits[0].variables_hit.len(),
+            2,
+            "{:?}",
+            hits[0].variables_hit
+        );
+
+        let single = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@rx ^[0-9]$\" \"id:2\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1&a=2"),
+            );
+        let hits = single.evaluate(&mut txn);
+        assert_eq!(hits[0].variables_hit.len(), 1);
     }
 
     #[test]
