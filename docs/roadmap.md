@@ -149,9 +149,11 @@ independently.
       findings each) with enforcement unchanged. The only `PipelineWeaker`
       outcome was in-tree `/a/../b` (Log-tier traversal evidence — policy
       tuning backlog, not a detection gap).
-- [ ] HTTP protocol checks: smuggling indicators, CL/TE ambiguity, header
-      sanity, duplicate framing (applied where the parser still surfaces
-      them), structured `ProtocolViolation` findings.
+- [x] HTTP protocol checks (`pipeline::fast::protocol`): conflicting/duplicate
+      `Content-Length`, CL+TE conflicts, unsupported transfer codings,
+      invalid content lengths, CR/LF and NUL in header values, NUL in the
+      target, invalid header-name/method token bytes, header-count ceiling.
+      Structured `HttpSmuggling`/`CrlfInjection`/`ProtocolViolation` findings.
 - [ ] Expand signatures with per-pattern bypass cases and FP tuning.
 - [ ] Fast-lane benchmarks vs the legacy engine (lane-cost report).
 

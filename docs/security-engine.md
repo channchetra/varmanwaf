@@ -13,7 +13,7 @@
 | Canonical model (`varman-waf/src/canonical`) | Canonicalizer landed (Phase 3 first slice): bounded decode layers, path collapse, query/cookie/header policy + bypass tests | No |
 | Pipeline (`varman-waf/src/pipeline`) | Skeleton landed: detector contract, findings, monotonic actions, bounded context, shadow comparison; first fast detector (raw-path traversal evidence) | No |
 | Shadow wiring (`pingap-plugin/src/waf_shadow.rs`) | Landed: opt-in with `VARMAN_WAF_SHADOW=1`; compares pipeline vs legacy per request, records counters, never changes enforcement | Observational only |
-| Lane 1 fast detectors | Started: Aho-Corasick signature scanner (starter table, tiered) + raw-path traversal evidence; corpora in `varman-waf/tests/corpus` | No (shadow only) |
+| Lane 1 fast detectors | Started: protocol checks + Aho-Corasick signature scanner (starter table, tiered) + raw-path traversal evidence; corpora in `varman-waf/tests/corpus` | No (shadow only) |
 | Streaming body engine | Pending (Phase 5) | No |
 | Lane 2 semantic detectors | Pending (Phase 6) | No |
 | SecLang / OWASP CRS (Lane 3) | Pending (Phase 7); tracked in `docs/compatibility.md` | No |
@@ -59,6 +59,14 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   on the percent-decoded bytes, and an entity-decoded path would route
   differently from the wire. Canonical output is idempotent under
   re-canonicalization (tested).
+- **`pipeline::fast::ProtocolDetector`** (Phase 4) — framing and header
+  sanity: conflicting duplicate `Content-Length`, `Content-Length` +
+  `Transfer-Encoding` together, unsupported transfer codings (RFC 9112
+  rejection), duplicate TE headers, invalid/absurd content lengths, CR/LF or
+  NUL bytes in header values, NUL in the target, invalid token bytes in
+  header names/method, and a header-count ceiling. Smuggling/injection shapes
+  are `Block`-tier `HttpSmuggling`/`CrlfInjection` findings; malformed but
+  non-exploitable shapes are `Monitor`/`Log` `ProtocolViolation` findings.
 - **`pipeline::fast::SignatureDetector`** (Phase 4) — Aho-Corasick scan
   (ASCII case-insensitive, **overlapping** matches so `../` cannot hide
   `/etc/passwd` behind it) over canonical path, query names/values, cookies

@@ -5,13 +5,16 @@
 //! their findings carry weak actions (never `Block` until policy says so).
 //!
 //! Detectors:
+//! - [`protocol::ProtocolDetector`] — framing/header/smuggling sanity checks.
 //! - [`signatures::SignatureDetector`] — Aho-Corasick signature scanning of
 //!   the canonical request (starter table, tiered Block/Log).
 //! - [`RawPathTraversalDetector`] — dot-segment evidence in the raw path,
 //!   resolved by the canonicalizer.
 
+pub mod protocol;
 pub mod signatures;
 
+pub use protocol::ProtocolDetector;
 pub use signatures::SignatureDetector;
 
 use super::{

@@ -20,7 +20,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use varman_waf::canonical::{Canonicalizer, ClientIdentity, RequestParts};
 use varman_waf::pipeline::SecurityPipeline;
-use varman_waf::pipeline::fast::{RawPathTraversalDetector, SignatureDetector};
+use varman_waf::pipeline::fast::{
+    ProtocolDetector, RawPathTraversalDetector, SignatureDetector,
+};
 use varman_waf::pipeline::shadow::{self, Agreement, ShadowComparison};
 use varman_waf::{RequestData, WafVerdict};
 
@@ -66,8 +68,10 @@ struct ShadowRuntime {
 
 static SHADOW: LazyLock<ShadowRuntime> = LazyLock::new(|| ShadowRuntime {
     enabled: shadow_enabled_from_env(),
-    // Lane ordering is detector list order; the fast lane comes first.
+    // Lane ordering is detector list order; the fast lane comes first —
+    // protocol checks are the cheapest, then signature scanning.
     pipeline: SecurityPipeline::new(vec![
+        Box::new(ProtocolDetector::new()),
         Box::new(SignatureDetector::new()),
         Box::new(RawPathTraversalDetector::new()),
     ]),
