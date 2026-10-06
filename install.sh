@@ -3,7 +3,7 @@
 # VarmanWAF Installation Script
 # ─────────────────────────────────────────────────────────────────────────────
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/channchetra/varmanwaf/main/install.sh | bash
 #   ./install.sh [--version X.Y.Z] [--mode all-in-one|server|agent]
 #
 # Options:
@@ -34,7 +34,7 @@ fatal()   { error "$@"; exit 1; }
 has() { command -v "$1" >/dev/null 2>&1; }
 
 # ─── Constants ────────────────────────────────────────────────────────────────
-REPO="varmanwaf/varmanwaf"
+REPO="channchetra/varmanwaf"
 BINARY_NAME="varman"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/varman"
@@ -75,7 +75,7 @@ Environment Variables:
 
 Examples:
   # Install latest, all-in-one mode
-  curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/channchetra/varmanwaf/main/install.sh | bash
 
   # Install a node as an agent, pointing at the control plane
   ./install.sh --mode agent --server-url http://10.0.0.1:9090 --api-key pwk_xxx

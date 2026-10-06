@@ -405,9 +405,9 @@ Renames must be incremental and keep the tree buildable (mandate §2, §41).
 > Execution status (2026-10-06): items 1–6 executed in commits `a31d7cd`
 > (runtime identity, crates, deployment, dashboard) and its follow-ups; the
 > fresh VarmanWAF `CHANGELOG.md` references the preserved upstream history in
-> `CHANGELOG-upstream-pingwaf.md`. The `ghcr.io/varmanwaf/varmanwaf` image
-> namespace and the `https://github.com/varmanwaf/varmanwaf` URL are
-> placeholders until the canonical registry/project location is confirmed.
+> `CHANGELOG-upstream-pingwaf.md`. The canonical project location is
+> `https://github.com/channchetra/varmanwaf`; images are published under
+> `ghcr.io/channchetra/varmanwaf`.
 
 Acceptance for Phase 1: `cargo build --release` passes and
 `docker compose up -d` yields a usable VarmanWAF install (dashboard, sites,

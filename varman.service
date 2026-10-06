@@ -8,7 +8,7 @@
 
 [Unit]
 Description=VarmanWAF - High Performance Web Application Firewall
-Documentation=https://github.com/varmanwaf/varmanwaf
+Documentation=https://github.com/channchetra/varmanwaf
 After=network.target postgresql.service
 Wants=postgresql.service
 

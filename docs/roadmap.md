@@ -55,9 +55,9 @@ Task list:
       `VARMAN_*`, default admin email (`admin@varman.local`) / DB defaults,
       path defaults (`/etc/varman`, `/var/lib/varman`).
 - [x] Deployment: `Dockerfile`, `docker-compose.yml`, `varman.toml`,
-      `varman.service`, `install.sh`, `.github` workflows (image namespace
-      `ghcr.io/varmanwaf/varmanwaf` is a placeholder until the registry is
-      confirmed).
+      `varman.service`, `install.sh`, `.github` workflows (canonical location
+      `github.com/channchetra/varmanwaf`, images
+      `ghcr.io/channchetra/varmanwaf`).
 - [x] Dashboard: titles, i18n (en/zh), favicon.
 - [x] Internal rename commit: `pingwaf-*` → `varman-*` crates
       (`varman-control`, `varman-agent`, `varman-waf`, `varman-protocol`,

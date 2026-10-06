@@ -7,9 +7,8 @@ categories = ["network-programming", "web-programming::http-server"]
 keywords = ["proxy", "http", "gateway", "waf", "firewall"]
 description = "VarmanWAF — a self-hosted distributed Web Application Firewall platform"
 license = "Apache-2.0"
-# TODO(release): confirm the canonical project URL before publishing.
-homepage = "https://github.com/varmanwaf/varmanwaf"
-repository = "https://github.com/varmanwaf/varmanwaf"
+homepage = "https://github.com/channchetra/varmanwaf"
+repository = "https://github.com/channchetra/varmanwaf"
 exclude = ["asset/*", "test/*", "Cargo.lock", "web/*", ".github/*", "docs/*"]
 readme = "./README.md"
 rust-version = "1.96"

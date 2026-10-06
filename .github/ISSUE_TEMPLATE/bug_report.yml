@@ -8,7 +8,7 @@ body:
       value: |
         Thanks for taking the time to report a bug. Please fill in as much detail
         as you can — it makes triage much faster. For security vulnerabilities,
-        do **not** open a public issue; follow [SECURITY.md](https://github.com/varmanwaf/varmanwaf/blob/main/SECURITY.md) instead.
+        do **not** open a public issue; follow [SECURITY.md](https://github.com/channchetra/varmanwaf/blob/main/SECURITY.md) instead.
   - type: textarea
     id: description
     attributes:

@@ -41,7 +41,7 @@ document.
 
 ## Reporting Bugs and Requesting Features
 
-Use [GitHub Issues](https://github.com/varmanwaf/varmanwaf/issues).
+Use [GitHub Issues](https://github.com/channchetra/varmanwaf/issues).
 
 **Before opening an issue**, search existing issues and read
 [`docs/quick-start.md` → Troubleshooting](./docs/quick-start.md#troubleshooting)
@@ -123,7 +123,7 @@ cargo install cargo-msrv --version 0.18.4
 ### Get the code
 
 ```bash
-git clone https://github.com/varmanwaf/varmanwaf.git
+git clone https://github.com/channchetra/varmanwaf.git
 cd VarmanWAF
 
 # Install the pre-commit hook (runs `make lint`)

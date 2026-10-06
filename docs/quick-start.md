@@ -20,7 +20,7 @@ protect your first website.
 > | [3. Binary + systemd](#path-3-binary--systemd-production) | Production Linux servers | ~10 min | Prebuilt binary (see note) |
 >
 > `install.sh` works on **Linux** (amd64/arm64) with prebuilt binaries from
-> [GitHub Releases](https://github.com/varmanwaf/varmanwaf/releases). There are no
+> [GitHub Releases](https://github.com/channchetra/varmanwaf/releases). There are no
 > macOS release binaries — macOS users must
 > [build from source](#path-2-build-from-source). **Docker Compose** pulls a
 > pre-built image, so it works wherever Docker does.
@@ -143,7 +143,7 @@ services: `varman` (all-in-one) and `postgres` (`postgres:16-alpine`).
 ### Step 1 — Clone the repository
 
 ```bash
-git clone https://github.com/varmanwaf/varmanwaf.git
+git clone https://github.com/channchetra/varmanwaf.git
 cd VarmanWAF
 ```
 
@@ -197,7 +197,7 @@ docker compose up -d
 ```
 
 By default Compose pulls the pre-built image
-`ghcr.io/varmanwaf/varmanwaf:latest`. To build from source instead, uncomment the
+`ghcr.io/channchetra/varmanwaf:latest`. To build from source instead, uncomment the
 `build:` section in [`docker-compose.yml`](../docker-compose.yml) and run
 `docker compose up -d --build` — the multi-stage [`Dockerfile`](../Dockerfile)
 (Node 22 frontend build → Rust 1.98 builder with protoc/cmake/nasm → minimal
@@ -322,7 +322,7 @@ cmake --version
 ### Step 2 — Clone the repository
 
 ```bash
-git clone https://github.com/varmanwaf/varmanwaf.git
+git clone https://github.com/channchetra/varmanwaf.git
 cd VarmanWAF
 ```
 
@@ -464,9 +464,9 @@ Full details live in [`docs/deployment.md`](./deployment.md); the repository
 also ships a hardened unit file, [`varman.service`](../varman.service).
 
 > **Note:** the one-command installer (`install.sh` /
-> `curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | bash`) downloads a prebuilt
+> `curl -fsSL https://raw.githubusercontent.com/channchetra/varmanwaf/main/install.sh | bash`) downloads a prebuilt
 > `varman-linux-{amd64,arm64}.tar.gz` asset from
-> [GitHub Releases](https://github.com/varmanwaf/varmanwaf/releases) and works on
+> [GitHub Releases](https://github.com/channchetra/varmanwaf/releases) and works on
 > Linux. On macOS there are no release binaries — build via
 > [Path 2](#path-2-build-from-source), then follow the steps below.
 
@@ -871,7 +871,7 @@ Check, in order:
 ### The install script does not work
 
 `install.sh` downloads prebuilt `varman-linux-{amd64,arm64}.tar.gz` assets
-from [GitHub Releases](https://github.com/varmanwaf/varmanwaf/releases), so it
+from [GitHub Releases](https://github.com/channchetra/varmanwaf/releases), so it
 works on Linux (amd64/arm64) only — on macOS,
 [build from source](#path-2-build-from-source) instead. If the script cannot
 determine the latest version, pass one explicitly:

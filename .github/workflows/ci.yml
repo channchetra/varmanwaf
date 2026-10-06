@@ -144,6 +144,6 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/varmanwaf/varmanwaf:latest
+          tags: ghcr.io/channchetra/varmanwaf:latest
           cache-from: type=gha,scope=docker
           cache-to: type=gha,scope=docker,mode=max

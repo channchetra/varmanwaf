@@ -8,7 +8,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
-[![Build](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml/badge.svg)](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml)
+[![Build](https://github.com/channchetra/varmanwaf/actions/workflows/test.yml/badge.svg)](https://github.com/channchetra/varmanwaf/actions/workflows/test.yml)
 [![Docker](https://img.shields.io/badge/docker-compose%20ready-2496ED?logo=docker&logoColor=white)](./docker-compose.yml)
 
 **[English](./README.md) | [简体中文](./README_zh.md) | [Español](./README_es.md) | [Français](./README_fr.md)**
@@ -156,14 +156,14 @@ graph TB
 
 ## 🚀 快速开始
 
-> **注意：** 预编译二进制目前仅提供 **Linux（amd64 / arm64）** 版本——见 [Releases 页面](https://github.com/varmanwaf/varmanwaf/releases)。macOS 请使用源码编译（方式 B）。Docker 镜像支持两种架构。
+> **注意：** 预编译二进制目前仅提供 **Linux（amd64 / arm64）** 版本——见 [Releases 页面](https://github.com/channchetra/varmanwaf/releases)。macOS 请使用源码编译（方式 B）。Docker 镜像支持两种架构。
 
 ### 方式 A —— Docker Compose（推荐）
 
-仓库内置的 [`docker-compose.yml`](./docker-compose.yml) 会以 `all-in-one` 模式连同 PostgreSQL 一起启动 VarmanWAF，默认拉取 GHCR 预构建镜像（`ghcr.io/varmanwaf/varmanwaf:latest`）：
+仓库内置的 [`docker-compose.yml`](./docker-compose.yml) 会以 `all-in-one` 模式连同 PostgreSQL 一起启动 VarmanWAF，默认拉取 GHCR 预构建镜像（`ghcr.io/channchetra/varmanwaf:latest`）：
 
 ```bash
-git clone https://github.com/varmanwaf/varmanwaf.git
+git clone https://github.com/channchetra/varmanwaf.git
 cd VarmanWAF
 
 # 启动控制面 + 数据面 + PostgreSQL
@@ -206,7 +206,7 @@ docker compose up -d
 **编译与运行**
 
 ```bash
-git clone https://github.com/varmanwaf/varmanwaf.git
+git clone https://github.com/channchetra/varmanwaf.git
 cd VarmanWAF
 
 # 1. 构建内嵌控制台
@@ -227,7 +227,7 @@ cargo build --release --bin varman --features full
 在 Linux 服务器上，一键脚本会下载预编译二进制并安装，可选配置 systemd 服务：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | sudo bash -s -- --mode all-in-one
+curl -fsSL https://raw.githubusercontent.com/channchetra/varmanwaf/main/install.sh | sudo bash -s -- --mode all-in-one
 ```
 
 ---

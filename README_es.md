@@ -8,7 +8,7 @@ Detección semántica de ataques · Reglas al estilo Cloudflare · Defensa CC y 
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
-[![Build](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml/badge.svg)](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml)
+[![Build](https://github.com/channchetra/varmanwaf/actions/workflows/test.yml/badge.svg)](https://github.com/channchetra/varmanwaf/actions/workflows/test.yml)
 
 **[English](./README.md) | [简体中文](./README_zh.md) | [Español](./README_es.md) | [Français](./README_fr.md)**
 
@@ -53,7 +53,7 @@ Un único **plano de control** define sitios, reglas y políticas; uno o varios 
 ### Opción A — Docker Compose (recomendada)
 
 ```bash
-git clone https://github.com/varmanwaf/varmanwaf.git
+git clone https://github.com/channchetra/varmanwaf.git
 cd VarmanWAF
 
 # Inicia el plano de control + plano de datos + PostgreSQL (imagen preconstruida de GHCR)
@@ -70,10 +70,10 @@ Abre el panel:
 
 ### Opción B — Script de instalación (Linux)
 
-Los binarios precompilados para **Linux (amd64 / arm64)** están disponibles en [Releases](https://github.com/varmanwaf/varmanwaf/releases):
+Los binarios precompilados para **Linux (amd64 / arm64)** están disponibles en [Releases](https://github.com/channchetra/varmanwaf/releases):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | sudo bash -s -- --mode all-in-one
+curl -fsSL https://raw.githubusercontent.com/channchetra/varmanwaf/main/install.sh | sudo bash -s -- --mode all-in-one
 ```
 
 ### Opción C — Compilar desde el código fuente
@@ -81,7 +81,7 @@ curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh
 En macOS (o si prefieres compilar) se requieren **Rust 1.96+**, **Node.js 22**, `protoc` y `cmake`:
 
 ```bash
-git clone https://github.com/varmanwaf/varmanwaf.git
+git clone https://github.com/channchetra/varmanwaf.git
 cd VarmanWAF
 cd web && npm ci && npm run build && cd ..
 cargo build --release --bin varman --features full

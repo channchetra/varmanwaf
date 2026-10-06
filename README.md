@@ -8,7 +8,7 @@ Semantic-grade attack detection · Cloudflare-style rules · CC & Bot defense ·
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
-[![Build](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml/badge.svg)](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml)
+[![Build](https://github.com/channchetra/varmanwaf/actions/workflows/test.yml/badge.svg)](https://github.com/channchetra/varmanwaf/actions/workflows/test.yml)
 [![Docker](https://img.shields.io/badge/docker-compose%20ready-2496ED?logo=docker&logoColor=white)](./docker-compose.yml)
 
 **[English](./README.md) | [简体中文](./README_zh.md) | [Español](./README_es.md) | [Français](./README_fr.md)**
@@ -156,14 +156,14 @@ The control plane and the data plane talk over the `ControlPlane` gRPC service (
 
 ## 🚀 Quick Start
 
-> **Note:** Prebuilt binaries are currently published for **Linux (amd64 / arm64)** only — see the [releases page](https://github.com/varmanwaf/varmanwaf/releases). On macOS, build from source (Option B). The Docker image supports both architectures.
+> **Note:** Prebuilt binaries are currently published for **Linux (amd64 / arm64)** only — see the [releases page](https://github.com/channchetra/varmanwaf/releases). On macOS, build from source (Option B). The Docker image supports both architectures.
 
 ### Option A — Docker Compose (recommended)
 
-The bundled [`docker-compose.yml`](./docker-compose.yml) starts VarmanWAF in `all-in-one` mode together with PostgreSQL, pulling the pre-built image from GHCR (`ghcr.io/varmanwaf/varmanwaf:latest`):
+The bundled [`docker-compose.yml`](./docker-compose.yml) starts VarmanWAF in `all-in-one` mode together with PostgreSQL, pulling the pre-built image from GHCR (`ghcr.io/channchetra/varmanwaf:latest`):
 
 ```bash
-git clone https://github.com/varmanwaf/varmanwaf.git
+git clone https://github.com/channchetra/varmanwaf.git
 cd VarmanWAF
 
 # Start the control plane + data plane + PostgreSQL
@@ -208,7 +208,7 @@ everything else redirects to `https://`).
 **Build & run**
 
 ```bash
-git clone https://github.com/varmanwaf/varmanwaf.git
+git clone https://github.com/channchetra/varmanwaf.git
 cd VarmanWAF
 
 # 1. Build the embedded dashboard
@@ -227,7 +227,7 @@ cargo build --release --bin varman --features full
 On a Linux server, the one-line script downloads the prebuilt binary, installs it and (optionally) sets up a systemd service:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | sudo bash -s -- --mode all-in-one
+curl -fsSL https://raw.githubusercontent.com/channchetra/varmanwaf/main/install.sh | sudo bash -s -- --mode all-in-one
 ```
 
 👉 For a full walkthrough (database setup, first site, distributed agents, systemd), see **[docs/quick-start.md](./docs/quick-start.md)**.

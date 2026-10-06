@@ -13,7 +13,7 @@
 services:
   # ─── VarmanWAF All-in-One (control plane + data plane) ─────────────────────
   varman:
-    image: ghcr.io/varmanwaf/varmanwaf:latest
+    image: ghcr.io/channchetra/varmanwaf:latest
     # To build from source instead of pulling the pre-built image, uncomment:
     # build:
     #   context: .
@@ -93,7 +93,7 @@ services:
   # VARMAN_MODE to "server" (control plane only).
   #
   # varman-agent:
-  #   image: ghcr.io/varmanwaf/varmanwaf:latest
+  #   image: ghcr.io/channchetra/varmanwaf:latest
   #   # build:
   #   #   context: .
   #   #   dockerfile: Dockerfile

@@ -16,7 +16,7 @@ The fastest way to get VarmanWAF running:
 
 ```bash
 # Clone the repository
-git clone https://github.com/varmanwaf/varmanwaf.git
+git clone https://github.com/channchetra/varmanwaf.git
 cd VarmanWAF
 
 # Set secrets (recommended)
@@ -55,7 +55,7 @@ Default credentials: `admin@varman.local` / value of `$ADMIN_PASSWORD`
 
 ```bash
 # Automatic (downloads latest release)
-curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/channchetra/varmanwaf/main/install.sh | bash
 
 # Or specify version and mode
 ./install.sh --version 0.20.0 --mode all-in-one

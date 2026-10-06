@@ -7,7 +7,7 @@ name: Release
 # It produces the tarballs install.sh downloads, named EXACTLY:
 #   varman-linux-amd64.tar.gz   varman-linux-arm64.tar.gz
 # install.sh resolves the asset as `varman-${OS}-${ARCH}.tar.gz` from
-#   https://github.com/varmanwaf/varmanwaf/releases/download/v${VERSION}/<asset>
+#   https://github.com/channchetra/varmanwaf/releases/download/v${VERSION}/<asset>
 # so these names must not drift. Each tarball also ships a `.sha256` checksum.
 #
 # Releases are Linux-only (server deployments). Both matrix legs use the
@@ -198,7 +198,7 @@ jobs:
           # manifest (not a manifest list), which docker manifest create requires.
           provenance: false
           sbom: false
-          tags: ghcr.io/varmanwaf/varmanwaf:${{ steps.version.outputs.value }}-${{ matrix.arch }}
+          tags: ghcr.io/channchetra/varmanwaf:${{ steps.version.outputs.value }}-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -222,7 +222,7 @@ jobs:
       - name: Create and push manifests
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          IMAGE="ghcr.io/varmanwaf/varmanwaf"
+          IMAGE="ghcr.io/channchetra/varmanwaf"
           # Derive major.minor from version (e.g. 0.14.3 -> 0.14)
           MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
 

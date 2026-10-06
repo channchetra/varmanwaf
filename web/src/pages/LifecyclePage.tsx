@@ -18,7 +18,7 @@ const GLOBAL_TO: Record<string, string> = {
 const resolve = (feature: string) => GLOBAL_TO[feature] ?? '/sites'
 
 const DOC_URL = (lang: string) =>
-  `https://github.com/varmanwaf/varmanwaf/blob/main/docs/${
+  `https://github.com/channchetra/varmanwaf/blob/main/docs/${
     lang.startsWith('zh') ? 'zh/' : ''
   }http-lifecycle.md`
 

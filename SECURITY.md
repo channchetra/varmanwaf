@@ -78,7 +78,7 @@ run an older version, please upgrade — see
 [`docs/deployment.md` → Upgrade Procedure](./docs/deployment.md#upgrade-procedure).
 
 > **Note:** prebuilt Linux (amd64/arm64) binaries are published on
-> [GitHub Releases](https://github.com/varmanwaf/varmanwaf/releases); on macOS,
+> [GitHub Releases](https://github.com/channchetra/varmanwaf/releases); on macOS,
 > build from source. Either way, pin the exact version or commit you deploy so
 > you can tell us what you are running.
 
