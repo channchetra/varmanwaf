@@ -20,10 +20,10 @@ use uuid::Uuid;
 use crate::models::{cache_rules, ip_groups, mode, rule, rule_groups};
 
 /// Name of the group that holds the built-in WAF rules.
-pub const WAF_DEFAULT_GROUP_NAME: &str = "VarmanWAF 内置防护";
+pub const WAF_DEFAULT_GROUP_NAME: &str = "VarmanWAF built-in";
 /// Description shown next to the group in the dashboard.
 pub const WAF_DEFAULT_GROUP_DESCRIPTION: &str =
-    "开箱即用的基础防护规则，按需调整";
+    "Built-in managed rules seeded in monitor mode; enable per family as you tune.";
 
 /// Official Cloudflare IP list — the default subscription every install gets.
 pub const CLOUDFLARE_IPS_URL: &str = "https://api.cloudflare.com/client/v4/ips";
@@ -111,88 +111,88 @@ pub struct DefaultCacheRule {
 pub fn waf_rules() -> Vec<DefaultWafRule> {
     vec![
         DefaultWafRule {
-            name: "SQL 注入检测",
-            description: "命中 SQL 注入特征或异常评分时告警",
+            name: "SQL injection (anomaly)",
+            description: "SQL injection family score at or above the anomaly threshold.",
             expression: "cf.waf.score.sqli ge 40",
             action: "block",
             severity: 5,
             tags: &["sqli", "anomaly"],
         },
         DefaultWafRule {
-            name: "XSS 跨站脚本检测",
-            description: "命中跨站脚本特征或异常评分时告警",
+            name: "Cross-site scripting (anomaly)",
+            description: "XSS family score at or above the anomaly threshold.",
             expression: "cf.waf.score.xss ge 40",
             action: "block",
             severity: 5,
             tags: &["xss", "anomaly"],
         },
         DefaultWafRule {
-            name: "命令注入检测",
-            description: "URI 或请求头中出现 shell 命令执行特征",
+            name: "Command injection",
+            description: "Shell metacharacter followed by a Unix command in the URI.",
             expression: r#"http.request.uri.full matches "(?i)(?:;|%3b|\||%7c|\$\(|`)\s*(?:cat|curl|wget|bash|sh|nc|ncat|python|perl|chmod|id)\b""#,
             action: "block",
             severity: 5,
             tags: &["rce", "command-injection"],
         },
         DefaultWafRule {
-            name: "Log4Shell 检测",
-            description: "请求头中出现 JNDI 注入特征",
+            name: "Log4Shell (JNDI)",
+            description: "JNDI lookup in the User-Agent header.",
             expression: r#"http.request.headers["user-agent"] contains "${jndi:""#,
             action: "block",
             severity: 5,
             tags: &["rce", "log4shell"],
         },
         DefaultWafRule {
-            name: "路径穿越 / 文件包含检测",
-            description: "URI 中出现目录穿越或敏感文件读取特征",
+            name: "Path traversal / file inclusion",
+            description: "Dot segments or well-known sensitive file paths in the URI.",
             expression: r#"http.request.uri.full matches "(?i)(?:\.\./|%2e%2e%2f|%252e%252e|/etc/(?:passwd|shadow|hosts)|/proc/self|win\.ini)""#,
             action: "block",
             severity: 5,
             tags: &["lfi", "file-inclusion"],
         },
         DefaultWafRule {
-            name: "SSRF 检测",
-            description: "参数中引用了回环 / 内网 / 云元数据地址",
+            name: "SSRF",
+            description: "Internal, loopback or cloud-metadata targets in the URI.",
             expression: r#"http.request.uri.full matches "(?i)(?:gopher|dict|ftp|file)://|(?:https?://)?(?:127\.0\.0\.1|0\.0\.0\.0|localhost|\[::1\]|169\.254\.169\.254|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)""#,
             action: "block",
             severity: 4,
             tags: &["ssrf"],
         },
         DefaultWafRule {
-            name: "恶意扫描器识别",
-            description: "User-Agent 命中常见扫描 / 爆破工具",
+            name: "Scanner user agent",
+            description: "Known scanner tools in the User-Agent header.",
             expression: r#"user_agent matches "(?i)(?:nikto|sqlmap|nmap|masscan|acunetix|nessus|openvas|wpscan|dirbuster|gobuster|zgrab|hydra|xray|goby)""#,
             action: "block",
             severity: 4,
             tags: &["bot", "scanner", "user-agent"],
         },
         DefaultWafRule {
-            name: "敏感文件探测",
-            description: "探测 .git/.env 等版本控制与配置残留",
+            name: "Dotfile reconnaissance",
+            description: "Requests for .git/.env and similar dotfiles.",
             expression: r#"http.request.uri.path matches "(?i)/\.(?:git|env|svn|hg|aws|kube|ssh|docker|ds_store)""#,
             action: "block",
             severity: 4,
             tags: &["recon", "dotfile"],
         },
         DefaultWafRule {
-            name: "备份文件探测",
-            description: "探测 .bak/.sql/.zip 等备份文件",
+            name: "Backup file reconnaissance",
+            description: "Requests for .bak/.sql/.zip and similar archive files.",
             expression: r#"http.request.uri.path matches "(?i)\.(?:bak|backup|old|orig|swp|sql|tar|tgz|zip|gz|rar|7z)$""#,
             action: "block",
             severity: 3,
             tags: &["recon", "backup"],
         },
         DefaultWafRule {
-            name: "危险 HTTP 方法",
-            description: "拦截 TRACE / TRACK 请求",
+            name: "Unsafe HTTP method",
+            description: "TRACE / TRACK methods are refused.",
             expression: r#"http.request.method in {"TRACE" "TRACK"}"#,
             action: "block",
             severity: 3,
             tags: &["method"],
         },
         DefaultWafRule {
-            name: "超长 URI",
-            description: "URI 超过 4096 字节，通常是扫描或缓冲区探测",
+            name: "Excessive URI length",
+            description: "URIs of 4096 bytes or more.",
             expression: r#"http.request.uri.full matches "^.{4096,}$""#,
             action: "block",
             severity: 3,
@@ -206,7 +206,7 @@ pub fn waf_rules() -> Vec<DefaultWafRule> {
 pub fn cache_rules_defaults() -> Vec<DefaultCacheRule> {
     vec![
         DefaultCacheRule {
-            name: "静态资源缓存",
+            name: "Static assets",
             match_expression: r#"http.request.uri.path matches "(?i)\.(?:css|js|mjs|map|woff2?|ttf|otf|eot|ico|png|jpe?g|gif|svg|webp|avif|mp4|webm)$""#,
             edge_ttl_seconds: 7 * 24 * 3600,
             browser_ttl_seconds: 3600,
@@ -214,7 +214,7 @@ pub fn cache_rules_defaults() -> Vec<DefaultCacheRule> {
             respect_origin: false,
         },
         DefaultCacheRule {
-            name: "页面缓存",
+            name: "HTML pages",
             match_expression: r#"http.request.uri.path matches "(?i)(?:/|\.html?|\.txt)$""#,
             edge_ttl_seconds: 600,
             browser_ttl_seconds: 60,
@@ -222,7 +222,7 @@ pub fn cache_rules_defaults() -> Vec<DefaultCacheRule> {
             respect_origin: true,
         },
         DefaultCacheRule {
-            name: "API 不缓存",
+            name: "API bypass",
             match_expression: r#"http.request.uri.path starts_with "/api/""#,
             edge_ttl_seconds: 0,
             browser_ttl_seconds: 0,
