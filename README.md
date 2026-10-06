@@ -139,6 +139,7 @@ cargo fmt --all -- --check
 
 | Document | Contents |
 | --- | --- |
+| [`docs/usage.md`](./docs/usage.md) | How to use the console: sites, Web Protection, logs, API examples — with screenshots |
 | [`docs/architecture.md`](./docs/architecture.md) | The actual current architecture and its invariants |
 | [`docs/security-engine.md`](./docs/security-engine.md) | Pipeline, canonicalization, detectors, scoring, limits |
 | [`docs/upstream-pingwaf-map.md`](./docs/upstream-pingwaf-map.md) | Phase 0 map of the imported platform and the rename decisions |
