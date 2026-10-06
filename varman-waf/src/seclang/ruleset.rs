@@ -44,6 +44,8 @@ const ALLOWED_ACTIONS: &[&str] = &[
     "maturity:",
     "accuracy:",
     "chain",
+    "skip:",
+    "skipAfter:",
     "t:",
     "setvar:",
     "capture",
@@ -140,6 +142,10 @@ pub struct RuleHit {
 pub struct SecRuleSet {
     groups: Vec<SecRuleGroup>,
     setvars: Vec<Vec<SetVar>>,
+    /// `skip:N` per group: skip the next N groups after a match.
+    skip_groups: Vec<Option<u64>>,
+    /// `skipAfter:NAME` per group: resolved index to continue at.
+    skip_after: Vec<Option<usize>>,
 }
 
 impl SecRuleSet {
@@ -150,9 +156,24 @@ impl SecRuleSet {
     pub fn from_source(source: &str) -> Result<Self, SecLangError> {
         let mut removals: Vec<u64> = Vec::new();
         let mut retargets: Vec<(u64, Vec<String>)> = Vec::new();
+        // `SecMarker` positions in the rule stream: `(name, rules_seen)`.
+        let mut markers: Vec<(String, usize)> = Vec::new();
         let mut rules = Vec::new();
         for line in source.lines() {
             let trimmed = line.trim();
+            if trimmed == "SecMarker" || trimmed.starts_with("SecMarker ") {
+                let name = trimmed
+                    .trim_start_matches("SecMarker")
+                    .trim()
+                    .trim_matches('"');
+                if name.is_empty() {
+                    return Err(SecLangError {
+                        reason: "SecMarker without a name".to_string(),
+                    });
+                }
+                markers.push((name.to_string(), rules.len()));
+                continue;
+            }
             if parsed_removal_directive(trimmed) {
                 let rest = trimmed.trim_start_matches("SecRuleRemoveById");
                 let ids: Vec<u64> = rest
@@ -252,19 +273,89 @@ impl SecRuleSet {
             }
             setvars.push(ops);
         }
-        Ok(Self { groups, setvars })
+        // Group start positions in the rule stream, for marker resolution.
+        let mut starts = Vec::with_capacity(groups.len());
+        let mut cursor = 0usize;
+        for group in &groups {
+            starts.push(cursor);
+            cursor += group.rules.len();
+        }
+        let mut skip_groups = Vec::with_capacity(groups.len());
+        let mut skip_after = Vec::with_capacity(groups.len());
+        for (index, group) in groups.iter().enumerate() {
+            let actions = group
+                .rules
+                .last()
+                .map(|rule| rule.line.actions.clone())
+                .unwrap_or_default();
+            let mut skip_count: Option<u64> = None;
+            let mut after_name: Option<String> = None;
+            for action in &actions {
+                let action = action.trim();
+                if let Some(rest) = action.strip_prefix("skip:") {
+                    skip_count =
+                        Some(rest.trim().parse::<u64>().map_err(|_| {
+                            SecLangError {
+                                reason: format!(
+                                    "skip count {rest:?} is not a number"
+                                ),
+                            }
+                        })?);
+                } else if let Some(name) = action.strip_prefix("skipAfter:") {
+                    after_name = Some(name.trim().to_string());
+                }
+            }
+            skip_groups.push(skip_count);
+            let resolved = match after_name {
+                Some(name) => {
+                    let Some((_, marker_pos)) =
+                        markers.iter().find(|(n, _)| *n == name)
+                    else {
+                        return Err(SecLangError {
+                            reason: format!(
+                                "skipAfter target {name:?} not found"
+                            ),
+                        });
+                    };
+                    let position = starts
+                        .iter()
+                        .position(|start| start >= marker_pos)
+                        .unwrap_or(groups.len());
+                    if position <= index {
+                        return Err(SecLangError {
+                            reason: format!(
+                                "skipAfter target {name:?} must follow the rule"
+                            ),
+                        });
+                    }
+                    Some(position)
+                },
+                None => None,
+            };
+            skip_after.push(resolved);
+        }
+        Ok(Self {
+            groups,
+            setvars,
+            skip_groups,
+            skip_after,
+        })
     }
 
     pub fn group_count(&self) -> usize {
         self.groups.len()
     }
 
-    /// Evaluate every group in order; `setvar` effects are visible to later
+    /// Evaluate every group in order, honouring `skip:N` and
+    /// `skipAfter:NAME` control flow; `setvar` effects are visible to later
     /// groups through `TX`.
     pub fn evaluate(&self, txn: &mut SecLangTransaction) -> Vec<RuleHit> {
         let mut hits = Vec::new();
-        for (index, group) in self.groups.iter().enumerate() {
+        let mut index = 0usize;
+        while index < self.groups.len() {
+            let group = &self.groups[index];
             let Some(variables_hit) = group.matches(txn) else {
+                index += 1;
                 continue;
             };
             for op in &self.setvars[index] {
@@ -275,11 +366,19 @@ impl SecRuleSet {
                 .last()
                 .map(|rule| rule.line.actions.clone())
                 .unwrap_or_default();
+            let next = if let Some(skip) = self.skip_groups[index] {
+                index + 1 + skip as usize
+            } else if let Some(target) = self.skip_after[index] {
+                target
+            } else {
+                index + 1
+            };
             hits.push(RuleHit {
                 rule_ids: group.rule_ids(),
                 variables_hit,
                 actions,
             });
+            index = next;
         }
         hits
     }
@@ -471,9 +570,73 @@ mod tests {
     }
 
     #[test]
+    fn skip_jumps_over_rules() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,skip:1\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:2,block\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:3,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert_eq!(hits[0].rule_ids, vec![Some(1)]);
+        assert_eq!(hits[1].rule_ids, vec![Some(3)]);
+    }
+
+    #[test]
+    fn skip_after_jumps_to_the_marker() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,skipAfter:END\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:2,block\"\n\
+             SecMarker END\n\
+             SecRule ARGS:a \"@streq 1\" \"id:3,block\"\n",
+        )
+        .expect("compile");
+        assert_eq!(ruleset.group_count(), 3);
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert_eq!(hits[0].rule_ids, vec![Some(1)]);
+        assert_eq!(hits[1].rule_ids, vec![Some(3)]);
+    }
+
+    #[test]
+    fn skip_errors_are_observable() {
+        let error = SecRuleSet::from_source(
+            "SecRule ARGS \"@rx x\" \"id:1,skipAfter:NOPE\"\n",
+        )
+        .expect_err("must fail");
+        assert!(error.reason.contains("not found"), "{error}");
+
+        let error =
+            SecRuleSet::from_source("SecRule ARGS \"@rx x\" \"id:1,skip:x\"\n")
+                .expect_err("must fail");
+        assert!(error.reason.contains("not a number"), "{error}");
+
+        let error =
+            SecRuleSet::from_source("SecMarker\n").expect_err("must fail");
+        assert!(error.reason.contains("without a name"), "{error}");
+
+        // A skipAfter pointing at a marker *behind* the rule would loop.
+        let error = SecRuleSet::from_source(
+            "SecMarker TOP\n\
+             SecRule ARGS \"@rx x\" \"id:1,skipAfter:TOP\"\n",
+        )
+        .expect_err("must fail");
+        assert!(error.reason.contains("must follow the rule"), "{error}");
+    }
+
+    #[test]
     fn unsupported_actions_error_observably() {
         let error = SecRuleSet::from_source(
-            "SecRule ARGS \"@rx x\" \"id:1,skipAfter:MARK\"",
+            "SecRule ARGS \"@rx x\" \"id:1,ctl:ruleEngine=Off\"",
         )
         .expect_err("must fail");
         assert!(error.reason.contains("unsupported action"), "{error}");

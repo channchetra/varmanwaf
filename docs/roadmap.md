@@ -281,8 +281,14 @@ report against the existing engine.
       list before compilation; unknown ids are a no-op; missing/non-numeric
       ids and `!VAR` exclusions error observably (exclusions are a later
       slice). Covered by tests against header-targeted retargeting.
-- [ ] Control flow continues: `skip`, `skipAfter`, `ctl`, `SecDefaultAction`,
-      `SecMarker`, per-chain variable capture (`TX:0…9`).
+- [x] `skip:N` and `skipAfter:NAME` with `SecMarker`: markers are recorded
+      in the rule stream and resolved to group positions at compile time —
+      unknown targets, non-numeric counts, empty marker names and
+      backward-pointing skips are **observable compile errors** (a backward
+      jump would loop). Runner verified by tests to jump over rules and to
+      land after the marker.
+- [ ] Control flow continues: `ctl`, `SecDefaultAction`, per-chain variable
+      capture (`TX:0…9`).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
