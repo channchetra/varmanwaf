@@ -11,7 +11,8 @@
 |---|---|---|
 | Legacy engine (`varman-waf/src/{engine,normalize,rules,score}`) | Imported baseline; signature + expression rules + anomaly scoring | **Yes** |
 | Canonical model (`varman-waf/src/canonical`) | Canonicalizer landed (Phase 3 first slice): bounded decode layers, path collapse, query/cookie/header policy + bypass tests | No |
-| Pipeline (`varman-waf/src/pipeline`) | Skeleton landed: detector contract, findings, monotonic actions, bounded context, shadow comparison | No |
+| Pipeline (`varman-waf/src/pipeline`) | Skeleton landed: detector contract, findings, monotonic actions, bounded context, shadow comparison; first fast detector (raw-path traversal evidence) | No |
+| Shadow wiring (`pingap-plugin/src/waf_shadow.rs`) | Landed: opt-in with `VARMAN_WAF_SHADOW=1`; compares pipeline vs legacy per request, records counters, never changes enforcement | Observational only |
 | Lane 1 fast detectors | Pending (Phase 4) | No |
 | Streaming body engine | Pending (Phase 5) | No |
 | Lane 2 semantic detectors | Pending (Phase 6) | No |
@@ -108,9 +109,17 @@ During the transition both engines can process the same request:
 ```text
 pingap-plugin/src/waf.rs
   ├─ legacy WafEngine::inspect  → enforced verdict (unchanged)
-  └─ SecurityPipeline::inspect  → shadow PipelineVerdict (recorded)
-       └─ shadow::compare(legacy, pipeline) → agreement / downgrade metric
+  └─ waf_shadow::observe        → runs only when VARMAN_WAF_SHADOW=1
+       ├─ Canonicalizer          (the one decoding policy)
+       ├─ SecurityPipeline       (fast lane first; detectors appended over time)
+       └─ shadow::compare(legacy, pipeline)
+            → Agree / PipelineStricter / PipelineWeaker counters
 ```
+
+`VARMAN_WAF_SHADOW=1` (or `=true`) enables shadow execution; unset means the
+only cost is one cached boolean read. `waf_shadow::stats()` exposes
+checked/agree/stricter/weaker counters for metrics, and every comparison is
+logged at `debug` with the canonical path. No response is ever influenced.
 
 Replacement requires corpus evidence: zero `PipelineWeaker` results on the
 attack corpus and zero new blocks on the benign corpus, with performance

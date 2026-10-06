@@ -76,6 +76,10 @@ Task list:
 - [x] Known behaviour recorded: in all-in-one the embedded agent registers
       before the first site exists, so one restart after creating the first
       site is needed to bind it (upstream-inherited; documented).
+- [x] Published the production image to Docker Hub:
+      `sovichetra/varmanwaf:latest` and `:0.20.0` (built with the official
+      multi-stage `Dockerfile`; GitHub Actions is blocked on account billing,
+      so publication is manual for now).
 - [ ] First VarmanWAF release notes + version marker.
 
 Exit criteria: `cargo build --release` passes and `docker compose up -d` serves
@@ -96,8 +100,8 @@ a working VarmanWAF with unchanged behaviour.
       sum, optional stop-on-block.
 - [x] `shadow::compare` — agree / stricter / **weaker** classification against
       the legacy `WafVerdict` (downgrades are the alertable class).
-- [ ] Wire shadow execution into `pingap-plugin/src/waf.rs` (feature-flagged,
-      metrics + structured logs; no enforcement change).
+- [x] Wire shadow execution into `pingap-plugin/src/waf.rs`: opt-in with
+      `VARMAN_WAF_SHADOW=1`, counters + debug logs, no enforcement change.
 - [ ] Immutable per-site `SecuritySnapshot` behind ArcSwap; config version ack.
 - [ ] Benchmarks: pipeline overhead vs legacy on the request corpus.
 
