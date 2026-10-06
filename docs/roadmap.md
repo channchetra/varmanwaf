@@ -277,9 +277,12 @@ report against the existing engine.
       unknown ids are a documented no-op (CRS removes rules that may not exist
       at the current paranoia level); a chain member removal degrades the
       remaining head to a singleton; missing/non-numeric ids error observably.
+- [x] `SecRuleUpdateTargetById <id> <vars>`: replaces a rule's variable
+      list before compilation; unknown ids are a no-op; missing/non-numeric
+      ids and `!VAR` exclusions error observably (exclusions are a later
+      slice). Covered by tests against header-targeted retargeting.
 - [ ] Control flow continues: `skip`, `skipAfter`, `ctl`, `SecDefaultAction`,
-      `SecMarker`, `SecRuleUpdateTargetById`, per-chain variable capture
-      (`TX:0…9`).
+      `SecMarker`, per-chain variable capture (`TX:0…9`).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

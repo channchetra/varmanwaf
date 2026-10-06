@@ -149,6 +149,7 @@ impl SecRuleSet {
     /// before compilation (the mechanism OWASP CRS uses to tune itself).
     pub fn from_source(source: &str) -> Result<Self, SecLangError> {
         let mut removals: Vec<u64> = Vec::new();
+        let mut retargets: Vec<(u64, Vec<String>)> = Vec::new();
         let mut rules = Vec::new();
         for line in source.lines() {
             let trimmed = line.trim();
@@ -172,9 +173,61 @@ impl SecRuleSet {
                 removals.extend(ids);
                 continue;
             }
+            if let Some(rest) = trimmed.strip_prefix("SecRuleUpdateTargetById ")
+            {
+                let (id_raw, variables_raw) =
+                    rest.split_once(' ').ok_or_else(|| SecLangError {
+                        reason:
+                            "SecRuleUpdateTargetById without target variables"
+                                .to_string(),
+                    })?;
+                let id = id_raw.parse::<u64>().map_err(|_| SecLangError {
+                    reason: format!(
+                        "SecRuleUpdateTargetById id {id_raw:?} is not a number"
+                    ),
+                })?;
+                let variables: Vec<String> = variables_raw
+                    .split('|')
+                    .map(str::trim)
+                    .filter(|entry| !entry.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                if variables.is_empty() {
+                    return Err(SecLangError {
+                        reason:
+                            "SecRuleUpdateTargetById without target variables"
+                                .to_string(),
+                    });
+                }
+                if variables.iter().any(|v| v.starts_with('!')) {
+                    return Err(SecLangError {
+                        reason:
+                            "SecRuleUpdateTargetById exclusions (!VAR) are not supported"
+                                .to_string(),
+                    });
+                }
+                retargets.push((id, variables));
+                continue;
+            }
             match parse_line(line)? {
                 SecLangLine::Ignored => {},
                 SecLangLine::Rule(rule) => rules.push(rule),
+            }
+        }
+        if !retargets.is_empty() {
+            for rule in &mut rules {
+                let rule_id = rule.actions.iter().find_map(|action| {
+                    action
+                        .strip_prefix("id:")
+                        .and_then(|id| id.trim().parse::<u64>().ok())
+                });
+                if let Some(id) = rule_id {
+                    if let Some((_, variables)) =
+                        retargets.iter().find(|(target, _)| *target == id)
+                    {
+                        rule.variables = variables.clone();
+                    }
+                }
             }
         }
         let mut groups = group_rules(rules)?;
@@ -362,6 +415,59 @@ mod tests {
         let hits = ruleset.evaluate(&mut txn);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].rule_ids, vec![Some(1)]);
+    }
+
+    #[test]
+    fn update_target_by_id_replaces_variables() {
+        let source = "SecRule ARGS:a \"@streq secret\" \"id:2001,block\"\n\
+                      SecRuleUpdateTargetById 2001 REQUEST_HEADERS:X-Api-Key\n";
+        let ruleset = SecRuleSet::from_source(source).expect("compile");
+        let request = Canonicalizer::default().canonicalize(
+            RequestParts::new("GET", "example.com", "/")
+                .with_header("X-Api-Key", "secret"),
+        );
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request,
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].rule_ids, vec![Some(2001)]);
+        assert_eq!(hits[0].variables_hit[0].name, "REQUEST_HEADERS:x-api-key");
+
+        // Without the update the same request does not match.
+        let plain = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq secret\" \"id:2001,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request,
+            );
+        assert!(plain.evaluate(&mut txn).is_empty());
+
+        // Unknown ids are a no-op.
+        let noop = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1\"\n\
+             SecRuleUpdateTargetById 9999 REQUEST_HEADERS:X\n",
+        )
+        .expect("compile");
+        assert_eq!(noop.group_count(), 1);
+    }
+
+    #[test]
+    fn update_target_by_id_validates_arguments() {
+        let error = SecRuleSet::from_source("SecRuleUpdateTargetById 2001\n")
+            .expect_err("must fail");
+        assert!(error.reason.contains("without target variables"), "{error}");
+        let error =
+            SecRuleSet::from_source("SecRuleUpdateTargetById abc ARGS\n")
+                .expect_err("must fail");
+        assert!(error.reason.contains("not a number"), "{error}");
+        let error =
+            SecRuleSet::from_source("SecRuleUpdateTargetById 2001 !ARGS:id\n")
+                .expect_err("must fail");
+        assert!(error.reason.contains("not supported"), "{error}");
     }
 
     #[test]
