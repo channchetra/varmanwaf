@@ -96,14 +96,14 @@ fn crs_rulesets_load_and_report() {
         rules_dir.display()
     );
     // Ratchet: never regress below the recorded baseline
-    // (`docs/compatibility.md`, 2026-10-07: 17 files / 253 rules).
+    // (`docs/compatibility.md`, 2026-10-07: 18 files / 283 rules).
     assert!(
-        ok_files.len() >= 17,
-        "CRS load regressed: {} files (baseline 17)",
+        ok_files.len() >= 18,
+        "CRS load regressed: {} files (baseline 18)",
         ok_files.len()
     );
     assert!(
-        rules_loaded >= 253,
-        "CRS load regressed: {rules_loaded} rules (baseline 253)"
+        rules_loaded >= 283,
+        "CRS load regressed: {rules_loaded} rules (baseline 283)"
     );
 }

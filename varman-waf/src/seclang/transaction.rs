@@ -273,6 +273,10 @@ pub enum Transform {
     RemoveWhitespace,
     CmdLine,
     JsDecode,
+    ReplaceComments,
+    NormalizePath,
+    NormalizePathWin,
+    Utf8ToUnicode,
 }
 
 impl Transform {
@@ -291,6 +295,10 @@ impl Transform {
             "removewhitespace" => Some(Self::RemoveWhitespace),
             "cmdline" => Some(Self::CmdLine),
             "jsdecode" => Some(Self::JsDecode),
+            "replacecomments" => Some(Self::ReplaceComments),
+            "normalizepath" => Some(Self::NormalizePath),
+            "normalizepathwin" => Some(Self::NormalizePathWin),
+            "utf8tounicode" => Some(Self::Utf8ToUnicode),
             _ => None,
         }
     }
@@ -321,6 +329,10 @@ impl Transform {
             },
             Self::CmdLine => cmd_line(value),
             Self::JsDecode => js_decode(value),
+            Self::ReplaceComments => replace_comments(value),
+            Self::NormalizePath => normalize_path(value, false),
+            Self::NormalizePathWin => normalize_path(value, true),
+            Self::Utf8ToUnicode => utf8_to_unicode(value),
         }
     }
 }
@@ -449,6 +461,225 @@ fn hex_byte(high: u8, low: u8) -> u8 {
         }
     }
     (nibble(high) << 4) | nibble(low)
+}
+
+/// ModSecurity `replaceComments`: `/* … */` spans collapse to one space; an
+/// unterminated comment also ends with one space.
+fn replace_comments(value: &str) -> String {
+    let input = value.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(input.len());
+    let mut in_comment = false;
+    let mut i = 0;
+    while i < input.len() {
+        if !in_comment {
+            if input[i] == b'/' && i + 1 < input.len() && input[i + 1] == b'*' {
+                in_comment = true;
+                i += 2;
+            } else {
+                out.push(input[i]);
+                i += 1;
+            }
+        } else if input[i] == b'*'
+            && i + 1 < input.len()
+            && input[i + 1] == b'/'
+        {
+            in_comment = false;
+            i += 2;
+            out.push(b' ');
+        } else {
+            i += 1;
+        }
+    }
+    if in_comment {
+        out.push(b' ');
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// ModSecurity `normalizePath`, a faithful port of `normalize_path_inplace`:
+/// collapses duplicate slashes, resolves `.` and `..` segments, never rises
+/// above the root, and preserves an absent/present trailing slash.
+fn normalize_path(value: &str, win: bool) -> String {
+    let mut buf = value.as_bytes().to_vec();
+    if buf.is_empty() {
+        return String::new();
+    }
+    let end = buf.len() - 1;
+    // `relative` mirrors ModSecurity's variable: 1 when the path does NOT
+    // start with a slash.
+    let relative = usize::from(!(buf[0] == b'/' || (win && buf[0] == b'\\')));
+    let trailing = usize::from(buf[end] == b'/' || (win && buf[end] == b'\\'));
+    let mut hitroot = 0usize;
+    let mut src = 0usize;
+    let mut dst = 0usize;
+    let mut done = false;
+    while !done && src <= end && dst <= end {
+        if win {
+            if buf[src] == b'\\' {
+                buf[src] = b'/';
+            }
+            if src < end && buf[src + 1] == b'\\' {
+                buf[src + 1] = b'/';
+            }
+        }
+        let mut skip_copy = false;
+        if src == end {
+            done = true;
+        } else if buf[src + 1] != b'/' {
+            // Not the end of a path segment: copy below.
+        } else if buf[src] == b'/' {
+            // Empty path segment: the copy step collapses it.
+        } else if buf[src] == b'.' {
+            if dst > 0 && buf[dst - 1] == b'.' {
+                if relative == 1 && (hitroot == 1 || dst <= 2) {
+                    // Backref at the root of a relative path: keep as-is.
+                    hitroot = 1;
+                } else {
+                    dst = dst.saturating_sub(3);
+                    while dst > 0 && buf[dst] != b'/' {
+                        dst -= 1;
+                    }
+                    if dst == 0 {
+                        hitroot = 1;
+                        if relative == 0 && src == end {
+                            dst += 1;
+                        }
+                    }
+                    if done {
+                        skip_copy = true;
+                    } else {
+                        src += 1;
+                    }
+                }
+            } else if dst == 0 {
+                // Relative self-reference at the start: ignore.
+                if done {
+                    skip_copy = true;
+                } else {
+                    src += 1;
+                }
+            } else if buf[dst - 1] == b'/' {
+                // Self-reference: drop the dot.
+                if done {
+                    skip_copy = true;
+                } else {
+                    dst -= 1;
+                    src += 1;
+                }
+            }
+        } else if dst > 0 {
+            hitroot = 0;
+        }
+        if !skip_copy {
+            if buf[src] == b'/' {
+                while src < end && buf[src + 1] == b'/' {
+                    src += 1;
+                }
+                if relative == 1 && dst == 0 {
+                    src += 1;
+                    continue;
+                }
+            }
+            buf[dst] = buf[src];
+            dst += 1;
+            src += 1;
+        }
+    }
+    if trailing == 0 && dst > 0 && buf[dst - 1] == b'/' {
+        dst -= 1;
+    }
+    String::from_utf8_lossy(&buf[..dst]).to_string()
+}
+
+/// ModSecurity `utf8ToUnicode`: multi-byte UTF-8 sequences become `%uXXXX`
+/// text (lowercase hex). Malformed sequences reproduce upstream behaviour
+/// byte for byte: overlong/surrogate encodings emit the escape *and* the raw
+/// lead byte, truncated leads are dropped, stray continuation bytes are kept.
+fn utf8_to_unicode(value: &str) -> String {
+    let input = value.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(input.len() * 2);
+    let mut i = 0usize;
+    while i < input.len() {
+        let c = input[i];
+        let left = input.len() - i;
+        let mut unicode_len = 0usize;
+        let mut code: u32 = 0;
+        if c & 0x80 == 0 {
+            out.push(c);
+        } else if c & 0xE0 == 0xC0 {
+            if left < 2 || input[i + 1] & 0xC0 != 0x80 {
+                // Missing/invalid continuation: the lead byte is dropped.
+                i += 1;
+                continue;
+            }
+            unicode_len = 2;
+            code = ((c as u32 & 0x1F) << 6) | (input[i + 1] as u32 & 0x3F);
+            push_unicode_escape(&mut out, code);
+        } else if c & 0xF0 == 0xE0 {
+            if left < 3
+                || input[i + 1] & 0xC0 != 0x80
+                || input[i + 2] & 0xC0 != 0x80
+            {
+                i += 1;
+                continue;
+            }
+            unicode_len = 3;
+            code = ((c as u32 & 0x0F) << 12)
+                | ((input[i + 1] as u32 & 0x3F) << 6)
+                | (input[i + 2] as u32 & 0x3F);
+            push_unicode_escape(&mut out, code);
+        } else if c & 0xF8 == 0xF0 {
+            if c >= 0xF5 {
+                // Outside the UTF-8 range: the byte survives raw.
+                out.push(c);
+            }
+            if left < 4
+                || input[i + 1] & 0xC0 != 0x80
+                || input[i + 2] & 0xC0 != 0x80
+                || input[i + 3] & 0xC0 != 0x80
+            {
+                i += 1;
+                continue;
+            }
+            unicode_len = 4;
+            code = ((c as u32 & 0x07) << 18)
+                | ((input[i + 1] as u32 & 0x3F) << 12)
+                | ((input[i + 2] as u32 & 0x3F) << 6)
+                | (input[i + 3] as u32 & 0x3F);
+            push_unicode_escape(&mut out, code);
+        } else {
+            // Any other lead byte is invalid (RFC 3629).
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        // Surrogates and overlong encodings keep the raw lead byte too,
+        // mirroring ModSecurity.
+        let surrogate = (0xD800..=0xDFFF).contains(&code);
+        let overlong = (unicode_len == 4 && code < 0x010000)
+            || (unicode_len == 3 && code < 0x0800)
+            || (unicode_len == 2 && code < 0x80);
+        if surrogate || overlong {
+            out.push(c);
+        }
+        if unicode_len > 0 {
+            i += unicode_len;
+        } else {
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn push_unicode_escape(out: &mut Vec<u8>, code: u32) {
+    let escape = if code < 0x10000 {
+        format!("%u{code:04x}")
+    } else {
+        // Four-byte characters can exceed four hex digits; ModSecurity pads
+        // only up to four.
+        format!("%u{code:x}")
+    };
+    out.extend_from_slice(escape.as_bytes());
 }
 
 /// Collect `t:` actions in order; an unknown transformation is an observable
@@ -1034,6 +1265,31 @@ mod tests {
         assert_eq!(js.apply("\\uFF21"), "A");
         let whitespace = Transform::parse("removeWhitespace").expect("remove");
         assert_eq!(whitespace.apply(" a\tb\u{a0}c\nd "), "abcd");
+    }
+
+    #[test]
+    fn replace_normalize_path_and_utf8_transforms() {
+        let comments = Transform::parse("replaceComments").expect("parse");
+        assert_eq!(comments.apply("a/*x*/b"), "a b");
+        assert_eq!(comments.apply("a/*unterminated"), "a ");
+        assert_eq!(comments.apply("a/*/b"), "a ");
+        assert_eq!(comments.apply("plain"), "plain");
+
+        let path = Transform::parse("normalizePath").expect("parse");
+        assert_eq!(path.apply("/a/b/../c"), "/a/c");
+        assert_eq!(path.apply("a/./b"), "a/b");
+        assert_eq!(path.apply("//a//b"), "/a/b");
+        assert_eq!(path.apply("/a/../../b"), "/b");
+        assert_eq!(path.apply("/a/b/"), "/a/b/");
+        assert_eq!(path.apply("/a/b"), "/a/b");
+        let win = Transform::parse("normalizePathWin").expect("parse");
+        assert_eq!(win.apply("C:\\temp\\..\\windows"), "C:/windows");
+
+        let utf8 = Transform::parse("utf8ToUnicode").expect("parse");
+        assert_eq!(utf8.apply("abc"), "abc");
+        assert_eq!(utf8.apply("é"), "%u00e9");
+        assert_eq!(utf8.apply("€"), "%u20ac");
+        assert_eq!(utf8.apply("😀"), "%u1f600");
     }
 
     #[test]
