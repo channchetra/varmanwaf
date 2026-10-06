@@ -9,7 +9,7 @@
 |---|---|---|
 | 0 | Repository understanding | ✅ Complete (2026-10-06) |
 | 1 | VarmanWAF bootstrap (rename, keep behaviour) | 🚧 In progress |
-| 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | 🚧 In progress — types + pipeline landed, shadow wiring pending |
+| 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | 🚧 In progress — types, pipeline and shadow wiring landed and verified E2E; snapshot/benchmarks pending |
 | 3 | Canonicalization (stable normalization + bypass tests) | 🚧 In progress — canonicalizer core landed (authority, profiles, idempotence); plugin wiring pending |
 | 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | ⏳ Planned |
 | 5 | Streaming body engine (bounded windows, limits) | ⏳ Planned |
@@ -102,6 +102,12 @@ a working VarmanWAF with unchanged behaviour.
       the legacy `WafVerdict` (downgrades are the alertable class).
 - [x] Wire shadow execution into `pingap-plugin/src/waf.rs`: opt-in with
       `VARMAN_WAF_SHADOW=1`, counters + debug logs, no enforcement change.
+      Verified end-to-end (2026-10-06): the stack was recreated with the flag
+      and raw/encoded traversal probes produced `[shadow]` comparisons
+      (`legacy=monitor`, `pipeline=log`, `PipelineWeaker`, `score_delta=1`,
+      one finding each) while response behaviour stayed with the legacy
+      engine. The 307 responses on literal `..` paths came from the test
+      origin (Go `ServeMux` path cleaning), not from VarmanWAF.
 - [ ] Immutable per-site `SecuritySnapshot` behind ArcSwap; config version ack.
 - [ ] Benchmarks: pipeline overhead vs legacy on the request corpus.
 
