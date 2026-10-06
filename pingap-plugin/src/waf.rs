@@ -631,6 +631,8 @@ struct BotPolicy {
     action: BotAction,
     /// Browser-like UAs must also present browser request headers.
     js_detection: bool,
+    /// Browser-like UAs must arrive over a TLS session.
+    tls_fingerprint: bool,
 }
 
 /// Outcome of classifying one request's user agent.
@@ -641,6 +643,15 @@ enum BotDecision {
     Deny(Denial),
     /// Record a security event but let the request through.
     LogOnly(Denial),
+}
+
+/// Connection-level signals for bot classification.
+#[derive(Debug, Clone, Copy)]
+struct ClientSignals {
+    /// `Accept` + `Accept-Language` present.
+    browser_hints: bool,
+    /// The connection presented a TLS session.
+    tls_verified: bool,
 }
 
 impl BotPolicy {
@@ -661,6 +672,7 @@ impl BotPolicy {
                 .collect(),
             action,
             js_detection: cfg.js_detection,
+            tls_fingerprint: cfg.tls_fingerprint,
         }
     }
 
@@ -679,10 +691,28 @@ impl BotPolicy {
     /// as a scripted client pretending to be a browser. Matching is ASCII
     /// case-insensitive without lowercasing, so the common pass-through path
     /// allocates nothing.
+    /// Classifies one request assuming a TLS session and, when
+    /// `browser_hints` is false, no browser request headers; used by tests.
+    #[cfg(test)]
     fn evaluate_with_hints(
         &self,
         user_agent: &str,
         browser_hints: bool,
+    ) -> BotDecision {
+        self.evaluate_with_signals(
+            user_agent,
+            ClientSignals {
+                browser_hints,
+                tls_verified: true,
+            },
+        )
+    }
+
+    /// [`Self::evaluate_with_hints`] with the full connection context.
+    fn evaluate_with_signals(
+        &self,
+        user_agent: &str,
+        signals: ClientSignals,
     ) -> BotDecision {
         if self
             .whitelist
@@ -692,12 +722,27 @@ impl BotPolicy {
             return BotDecision::Pass;
         }
         if is_browser_ua(user_agent) {
-            if self.js_detection && !browser_hints {
+            if self.js_detection && !signals.browser_hints {
                 let denial = Denial {
                     rule_id: "bot_protection".to_string(),
                     rule_name: "Bot protection".to_string(),
                     detail: format!(
                         "browser-like user agent '{user_agent}' without browser request headers (JS detection)"
+                    ),
+                    challenge: self.action == BotAction::Challenge,
+                    basic_auth: false,
+                };
+                return match self.action {
+                    BotAction::Log => BotDecision::LogOnly(denial),
+                    _ => BotDecision::Deny(denial),
+                };
+            }
+            if self.tls_fingerprint && !signals.tls_verified {
+                let denial = Denial {
+                    rule_id: "bot_protection".to_string(),
+                    rule_name: "Bot protection".to_string(),
+                    detail: format!(
+                        "browser-like user agent '{user_agent}' without a TLS session (TLS fingerprinting)"
                     ),
                     challenge: self.action == BotAction::Challenge,
                     basic_auth: false,
@@ -2446,9 +2491,14 @@ impl Plugin for WafPlugin {
         // ── Bot protection: UA classification runs after IP/geo and before
         // the engine, applying whether or not the WAF engine is enabled ──
         if let Some(bot) = context.as_ref().and_then(|ctx| ctx.bot.as_ref()) {
-            match bot.evaluate_with_hints(
+            match bot.evaluate_with_signals(
                 &user_agent,
-                browser_header_hints(&request_data.headers),
+                ClientSignals {
+                    browser_hints: browser_header_hints(&request_data.headers),
+                    tls_verified: session
+                        .digest()
+                        .is_some_and(|d| d.ssl_digest.is_some()),
+                },
             ) {
                 BotDecision::Pass => {},
                 BotDecision::Deny(denial) => {
@@ -4315,6 +4365,7 @@ advanced_mode = true
                             action: action as i32,
                             known_bots_whitelist: vec!["Googlebot".to_string()],
                             js_detection: false,
+                            tls_fingerprint: false,
                         }),
                         ..Default::default()
                     }),
@@ -4333,6 +4384,7 @@ advanced_mode = true
             action: CacheWafAction::Block,
             known_bots_whitelist: vec!["Googlebot".to_string()],
             js_detection: true,
+            tls_fingerprint: false,
         });
         let browser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
@@ -4357,12 +4409,60 @@ advanced_mode = true
     }
 
     #[test]
+    fn bot_tls_fingerprint_requires_a_tls_session() {
+        let policy = BotPolicy::build(&CacheBotProtection {
+            enabled: true,
+            action: CacheWafAction::Block,
+            known_bots_whitelist: vec!["Googlebot".to_string()],
+            js_detection: false,
+            tls_fingerprint: true,
+        });
+        let browser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+
+        // Browser over TLS: passes even without browser header hints when JS
+        // detection is off.
+        assert!(matches!(
+            policy.evaluate_with_signals(
+                browser,
+                ClientSignals {
+                    browser_hints: false,
+                    tls_verified: true,
+                },
+            ),
+            BotDecision::Pass
+        ));
+        // Browser on a plaintext connection: scripted client.
+        assert!(matches!(
+            policy.evaluate_with_signals(
+                browser,
+                ClientSignals {
+                    browser_hints: true,
+                    tls_verified: false,
+                },
+            ),
+            BotDecision::Deny(_)
+        ));
+        // Non-browser clients are unaffected by the TLS requirement.
+        assert!(matches!(
+            policy.evaluate_with_signals(
+                "curl/8.4.0",
+                ClientSignals {
+                    browser_hints: false,
+                    tls_verified: false,
+                },
+            ),
+            BotDecision::Deny(_)
+        ));
+    }
+
+    #[test]
     fn bot_ua_classification() {
         let policy = BotPolicy::build(&CacheBotProtection {
             enabled: true,
             action: CacheWafAction::Block,
             known_bots_whitelist: vec!["Googlebot".to_string()],
             js_detection: false,
+            tls_fingerprint: false,
         });
 
         assert!(matches!(

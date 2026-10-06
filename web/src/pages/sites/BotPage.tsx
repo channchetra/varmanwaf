@@ -181,8 +181,8 @@ export function BotPage() {
                 <MethodToggle
                   icon={<Brain weight="duotone" className="h-4 w-4" />}
                   checked={config.tls_fingerprint}
-                  disabled
-                  comingSoon
+                  disabled={!canWrite || !config.enabled}
+                  onChange={(tls_fingerprint) => patch({ tls_fingerprint })}
                   label={t('pages.bot.tlsFingerprinting')}
                   description={t('pages.bot.tlsFingerprintingHint')}
                 />

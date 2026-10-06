@@ -888,6 +888,7 @@ fn bot_protection_to_proto(
             action: 0,
             known_bots_whitelist: Vec::new(),
             js_detection: false,
+            tls_fingerprint: false,
         };
     };
 
@@ -907,6 +908,7 @@ fn bot_protection_to_proto(
         action: action::to_proto(&row.action),
         known_bots_whitelist,
         js_detection: row.js_detection,
+        tls_fingerprint: row.tls_fingerprint,
     }
 }
 

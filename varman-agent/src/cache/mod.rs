@@ -363,6 +363,8 @@ pub struct BotProtectionConfig {
     pub known_bots_whitelist: Vec<String>,
     /// Browser-like UAs must also present browser request headers.
     pub js_detection: bool,
+    /// Browser-like UAs must arrive over a TLS session.
+    pub tls_fingerprint: bool,
 }
 
 // ─── Basic Auth ─────────────────────────────────────────────
@@ -1345,6 +1347,7 @@ impl RuleCache {
             action: WafAction::from(b.action),
             known_bots_whitelist: b.known_bots_whitelist.clone(),
             js_detection: b.js_detection,
+            tls_fingerprint: b.tls_fingerprint,
         }
     }
 
