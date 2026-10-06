@@ -153,7 +153,7 @@ pub struct EnrollResponse {
 /// Installer published with the repository root, fetched over HTTPS so a bare
 /// host needs nothing but `curl`.
 const INSTALL_SCRIPT_URL: &str =
-    "https://raw.githubusercontent.com/shuaiZend/VarmanWAF/main/install.sh";
+    "https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh";
 
 /// Routes contributed to `/api/v1`.
 pub fn routes() -> Router<AppState> {

@@ -50,21 +50,24 @@ working.
 Task list:
 
 - [x] Import PingWAF, keep pristine reference, baseline build environment.
-- [x] Build `web/dist` (console embedding prerequisite) — verify workspace check.
-- [ ] User-facing identity: binary `varman`, clap name/version, env prefix
-      `VARMAN_*`, default admin email/DB defaults, path defaults
-      (`/etc/varman`, `/var/lib/varman`).
-- [ ] Deployment: `Dockerfile`, `docker-compose.yml`, `varman.toml`,
-      `varman.service`, `entrypoint.sh`, `install.sh`, `.github` workflows.
-- [ ] Dashboard: titles, i18n (en/zh), favicon/logo.
-- [ ] Internal rename commit: `pingwaf-*` → `varman-*` crates
+- [x] Build `web/dist` (console embedding prerequisite) — workspace check green.
+- [x] User-facing identity: binary `varman`, clap name/version, env prefix
+      `VARMAN_*`, default admin email (`admin@varman.local`) / DB defaults,
+      path defaults (`/etc/varman`, `/var/lib/varman`).
+- [x] Deployment: `Dockerfile`, `docker-compose.yml`, `varman.toml`,
+      `varman.service`, `install.sh`, `.github` workflows (image namespace
+      `ghcr.io/varmanwaf/varmanwaf` is a placeholder until the registry is
+      confirmed).
+- [x] Dashboard: titles, i18n (en/zh), favicon.
+- [x] Internal rename commit: `pingwaf-*` → `varman-*` crates
       (`varman-control`, `varman-agent`, `varman-waf`, `varman-protocol`,
       `varman-challenge`, `varman-pprof`). `pingap-*` names stay for now
       (documented in the map).
-- [ ] Docs branding sweep; keep provenance notes.
-- [ ] Verification: `cargo check --workspace --features full` green;
-      `docker compose up -d` yields a usable install (dashboard, site, proxy,
-      TLS); upstream test suite green.
+- [x] Docs branding sweep; provenance kept in the map/references docs and the
+      upstream changelog file.
+- [ ] Verification: `cargo check --workspace --features full --all-targets`
+      green ✅; workspace test suite pending; `cargo build --release` pending;
+      `docker compose up -d` end-to-end pending.
 - [ ] First VarmanWAF release notes + version marker.
 
 Exit criteria: `cargo build --release` passes and `docker compose up -d` serves

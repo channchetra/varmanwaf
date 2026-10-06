@@ -91,11 +91,11 @@ upstream (per-site pools; round-robin / hash / least-conn / random)
 ```
 
 - Runtime configuration is generated from the agent rule cache
-  (`src/pingwaf.rs::cached_rules_to_pingap_config`): sites → locations, origin
+  (`src/varman.rs::cached_rules_to_pingap_config`): sites → locations, origin
   pools → upstreams, SSL config → certificates, security plugins. Pingap applies
   it through `--autoreload` (hot) or `--autorestart` (fresh listeners) semantics.
 
-## 4. Current detection engine (`pingwaf-waf`)
+## 4. Current detection engine (`varman-waf`)
 
 A single-crate, signature-first engine with anomaly scoring:
 
@@ -193,20 +193,20 @@ Dashboard/API edit ──► PostgreSQL (authoritative)
 
 ```text
 VarmanWAF/
-├── Cargo.toml                  # workspace, dual root binary (pingap + pingwaf)
-├── src/                        # root binary: cli, pingwaf assembly, admin plugin
-├── pingap-*/                   # proxy foundation crates
-├── pingwaf-server/             # control plane  (→ varman-control)
-├── pingwaf-agent/              # edge agent      (→ varman-agent)
-├── pingwaf-waf/                # current engine  (→ varman-waf)
-├── pingwaf-proto/              # gRPC protocol   (→ varman-protocol)
-├── pingwaf-challenge/          # challenges      (→ varman-challenge)
-├── pingwaf-pprof/              # profiling       (→ varman-pprof)
+├── Cargo.toml                  # workspace, dual root binary (pingap + varman)
+├── src/                        # root binary: cli, varman mode assembly, admin plugin
+├── pingap-*/                   # proxy foundation crates (names retained for now)
+├── varman-control/             # control plane (renamed from pingwaf-server)
+├── varman-agent/               # edge agent (renamed from pingwaf-agent)
+├── varman-waf/                 # current engine (renamed from pingwaf-waf)
+├── varman-protocol/            # gRPC protocol (renamed from pingwaf-proto)
+├── varman-challenge/           # challenges (renamed from pingwaf-challenge)
+├── varman-pprof/               # profiling (renamed from pingwaf-pprof)
 ├── web/                        # console (Vite/React), embedded at build time
-├── migrations/                 # (SeaORM migrations live in pingwaf-server/src/migration)
+├── migrations/                 # (SeaORM migrations live in varman-control/src/migration)
 ├── tests/                      # (added by Varman phases; see roadmap)
 ├── docs/                       # this documentation set
-└── docker-compose.yml, Dockerfile, pingwaf.toml, ...
+└── docker-compose.yml, Dockerfile, varman.toml, varman.service, ...
 ```
 
 ## 10. Build and run

@@ -110,10 +110,10 @@ const langLabels: Record<string, string> = { en: 'English', zh: '中文', ja: '�
 const MIN_PASSWORD = 8
 
 /** Public REST reference shipped with the repository. */
-const API_DOCS_URL = 'https://github.com/shuaiZend/VarmanWAF/blob/main/docs/api.md'
+const API_DOCS_URL = 'https://github.com/varmanwaf/varmanwaf/blob/main/docs/api.md'
 
 /** Public project repository shown in the About card. */
-const PROJECT_URL = 'https://github.com/shuaiZend/VarmanWAF'
+const PROJECT_URL = 'https://github.com/varmanwaf/varmanwaf'
 
 /**
  * Quick-navigation anchors in page order; each id must match the `id` of the
