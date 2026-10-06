@@ -7,8 +7,10 @@
 
 pub mod command;
 pub mod sql;
+pub mod ssrf;
 pub mod xss;
 
 pub use command::CommandInjectionDetector;
 pub use sql::SqlStructuralDetector;
+pub use ssrf::SsrfStructuralDetector;
 pub use xss::HtmlXssDetector;

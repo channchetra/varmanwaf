@@ -25,6 +25,7 @@ use varman_waf::pipeline::fast::{
 };
 use varman_waf::pipeline::semantic::{
     CommandInjectionDetector, HtmlXssDetector, SqlStructuralDetector,
+    SsrfStructuralDetector,
 };
 use varman_waf::pipeline::shadow::{self, Agreement, ShadowComparison};
 use varman_waf::{RequestData, WafVerdict};
@@ -80,6 +81,7 @@ static SHADOW: LazyLock<ShadowRuntime> = LazyLock::new(|| ShadowRuntime {
         Box::new(SqlStructuralDetector::new()),
         Box::new(HtmlXssDetector::new()),
         Box::new(CommandInjectionDetector::new()),
+        Box::new(SsrfStructuralDetector::new()),
     ]),
     counters: ShadowCounters::default(),
 });

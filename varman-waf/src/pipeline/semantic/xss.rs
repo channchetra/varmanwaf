@@ -378,14 +378,8 @@ mod tests {
             "Use element.addEventListener('click', handler) for events.",
         ];
         for case in cases {
-            match tier(case) {
-                Some((_, action)) => {
-                    assert!(
-                        action < Action::Monitor,
-                        "{case:?} reached {action}"
-                    );
-                },
-                None => {},
+            if let Some((_, action)) = tier(case) {
+                assert!(action < Action::Monitor, "{case:?} reached {action}");
             }
         }
     }

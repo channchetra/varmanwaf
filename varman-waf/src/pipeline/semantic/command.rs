@@ -368,14 +368,8 @@ mod tests {
             "The kill command sends a signal to a process.",
         ];
         for case in cases {
-            match tier(case) {
-                Some((_, action)) => {
-                    assert!(
-                        action < Action::Monitor,
-                        "{case:?} reached {action}"
-                    );
-                },
-                None => {},
+            if let Some((_, action)) = tier(case) {
+                assert!(action < Action::Monitor, "{case:?} reached {action}");
             }
         }
     }

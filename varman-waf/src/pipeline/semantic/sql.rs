@@ -539,14 +539,8 @@ mod tests {
             "How do I SELECT multiple columns in SQL?",
         ];
         for case in cases {
-            match tier(case) {
-                Some((_, action)) => {
-                    assert!(
-                        action < Action::Monitor,
-                        "{case:?} reached {action}"
-                    );
-                },
-                None => {},
+            if let Some((_, action)) = tier(case) {
+                assert!(action < Action::Monitor, "{case:?} reached {action}");
             }
         }
     }

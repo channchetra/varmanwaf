@@ -18,6 +18,7 @@ use varman_waf::canonical::{Canonicalizer, RequestParts};
 use varman_waf::pipeline::fast::{RawPathTraversalDetector, SignatureDetector};
 use varman_waf::pipeline::semantic::{
     CommandInjectionDetector, HtmlXssDetector, SqlStructuralDetector,
+    SsrfStructuralDetector,
 };
 use varman_waf::pipeline::{
     Action, AttackCategory, PipelineVerdict, SecurityPipeline,
@@ -53,6 +54,7 @@ fn pipeline() -> SecurityPipeline {
         Box::new(SqlStructuralDetector::new()),
         Box::new(HtmlXssDetector::new()),
         Box::new(CommandInjectionDetector::new()),
+        Box::new(SsrfStructuralDetector::new()),
     ])
 }
 

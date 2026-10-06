@@ -188,8 +188,12 @@ benign-corpus blocks; benchmarked cost documented.
 - [x] Shell/command structural detector (`semantic::command`) — literal
       shapes, sub-shells, metachar-before-command, `${IFS}` evasion; strong vs
       weak command tiers keep markdown tables and query parameters clean.
+- [x] SSRF structural detector (`semantic::ssrf`) — dangerous schemes
+      (gopher/dict/file/tftp/smb/jar/netdoc), URLs targeting loopback/private
+      hosts (127/10/172.16-31/192.168/169.254), decimal/hex-obfuscated IPv4,
+      and a weak Log tier for prose mentions. Corpus-covered.
 - [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] SSRF, XXE, SSTI, NoSQL, LDAP/XPath, deserialization, prototype
+- [ ] XXE, SSTI, NoSQL, LDAP/XPath, deserialization, prototype
       pollution, GraphQL abuse.
 - [ ] Per-detector fuzz targets and performance budgets.
 
