@@ -45,13 +45,16 @@ pub enum SecOperator {
     DetectXss,
     IpMatch(Vec<String>),
     /// Numeric comparison operators (`@eq`, `@ne`, `@lt`, `@le`, `@gt`,
-    /// `@ge`); the argument is the number to compare against.
-    Eq(i64),
-    Ne(i64),
-    Lt(i64),
-    Le(i64),
-    Gt(i64),
-    Ge(i64),
+    /// `@ge`); the argument is kept raw so `%{tx.*}` macros can resolve at
+    /// evaluation time.
+    Eq(String),
+    Ne(String),
+    Lt(String),
+    Le(String),
+    Gt(String),
+    Ge(String),
+    /// `@validateByteRange`: inclusive byte ranges, e.g. `8,10,13,32-126`.
+    ValidateByteRange(Vec<(u8, u8)>),
     /// `SecAction` / `@unconditionalMatch`: matches unconditionally.
     AlwaysMatch,
     /// `@within`: argument list is scanned for the value (substring search,
@@ -78,6 +81,7 @@ impl SecOperator {
             Self::Le(_) => "@le",
             Self::Gt(_) => "@gt",
             Self::Ge(_) => "@ge",
+            Self::ValidateByteRange(_) => "@validateByteRange",
             Self::AlwaysMatch => "@alwaysMatch",
             Self::Within(_) => "@within",
         }
@@ -191,7 +195,7 @@ fn parse_operator(raw: &str) -> Result<SecOperator, SecLangError> {
     };
     let operator = match name {
         "@rx" => SecOperator::Rx(argument.to_string()),
-        "@pm" | "@pmFromFile" => SecOperator::Pm(
+        "@pm" => SecOperator::Pm(
             argument.split_whitespace().map(str::to_string).collect(),
         ),
         "@contains" => SecOperator::Contains(argument.to_string()),
@@ -209,12 +213,15 @@ fn parse_operator(raw: &str) -> Result<SecOperator, SecLangError> {
         ),
         "@within" => SecOperator::Within(argument.to_string()),
         "@unconditionalMatch" => SecOperator::AlwaysMatch,
-        "@eq" => SecOperator::Eq(parse_number(name, argument)?),
-        "@ne" => SecOperator::Ne(parse_number(name, argument)?),
-        "@lt" => SecOperator::Lt(parse_number(name, argument)?),
-        "@le" => SecOperator::Le(parse_number(name, argument)?),
-        "@gt" => SecOperator::Gt(parse_number(name, argument)?),
-        "@ge" => SecOperator::Ge(parse_number(name, argument)?),
+        "@eq" => SecOperator::Eq(numeric_argument(name, argument)?),
+        "@ne" => SecOperator::Ne(numeric_argument(name, argument)?),
+        "@lt" => SecOperator::Lt(numeric_argument(name, argument)?),
+        "@le" => SecOperator::Le(numeric_argument(name, argument)?),
+        "@gt" => SecOperator::Gt(numeric_argument(name, argument)?),
+        "@ge" => SecOperator::Ge(numeric_argument(name, argument)?),
+        "@validateByteRange" => {
+            SecOperator::ValidateByteRange(parse_byte_ranges(argument)?)
+        },
         other => {
             return Err(err(format!("unsupported operator {other}")));
         },
@@ -222,10 +229,79 @@ fn parse_operator(raw: &str) -> Result<SecOperator, SecLangError> {
     Ok(operator)
 }
 
-fn parse_number(operator: &str, argument: &str) -> Result<i64, SecLangError> {
-    argument.trim().parse::<i64>().map_err(|_| {
-        err(format!("{operator} argument {argument:?} is not a number"))
-    })
+/// Numeric operator argument: kept raw when it contains `%{tx.*}` macros
+/// (resolved per evaluation), otherwise validated as a number now.
+fn numeric_argument(
+    operator: &str,
+    argument: &str,
+) -> Result<String, SecLangError> {
+    let argument = argument.trim();
+    validate_macros(argument)?;
+    if !argument.contains("%{") && argument.parse::<i64>().is_err() {
+        return Err(err(format!(
+            "{operator} argument {argument:?} is not a number"
+        )));
+    }
+    Ok(argument.to_string())
+}
+
+/// `@validateByteRange` argument: comma-separated bytes and inclusive
+/// ranges (`8,10,13,32-126`).
+fn parse_byte_ranges(argument: &str) -> Result<Vec<(u8, u8)>, SecLangError> {
+    let mut ranges = Vec::new();
+    for entry in argument.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let range = match entry.split_once('-') {
+            Some((start, end)) => {
+                let start = start.trim().parse::<u8>().map_err(|_| {
+                    err(format!("invalid @validateByteRange entry {entry:?}"))
+                })?;
+                let end = end.trim().parse::<u8>().map_err(|_| {
+                    err(format!("invalid @validateByteRange entry {entry:?}"))
+                })?;
+                (start, end)
+            },
+            None => {
+                let byte = entry.parse::<u8>().map_err(|_| {
+                    err(format!("invalid @validateByteRange entry {entry:?}"))
+                })?;
+                (byte, byte)
+            },
+        };
+        if range.0 > range.1 {
+            return Err(err(format!(
+                "invalid @validateByteRange entry {entry:?}: start > end"
+            )));
+        }
+        ranges.push(range);
+    }
+    if ranges.is_empty() {
+        return Err(err("@validateByteRange without ranges"));
+    }
+    Ok(ranges)
+}
+
+/// Every `%{…}` macro must belong to the `tx` collection; anything else is
+/// an observable unsupported-macro error.
+pub(crate) fn validate_macros(raw: &str) -> Result<(), SecLangError> {
+    let mut rest = raw;
+    while let Some(start) = rest.find("%{") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find('}') else {
+            return Err(err(format!("unterminated macro in {raw:?}")));
+        };
+        let token = &after[..end];
+        if !token.starts_with("tx.") {
+            return Err(err(format!(
+                "macro collection %{{{token}}} is not supported yet (only tx.*)"
+            )));
+        }
+        rest = &after[end + 1..];
+    }
+    Ok(())
 }
 
 /// Parse one line of a SecLang configuration.
@@ -266,11 +342,7 @@ pub fn parse_line(input: &str) -> Result<SecLangLine, SecLangError> {
         Some(stripped) => (true, stripped.to_string()),
         None => (false, operator_raw),
     };
-    if operator_raw.contains("%{") {
-        return Err(err(
-            "macro (%{…}) expansion in operator arguments is not supported yet",
-        ));
-    }
+    validate_macros(&operator_raw)?;
     let operator = parse_operator(&operator_raw)?;
 
     let actions_tail = rest[after_operator..].trim_start();
@@ -389,18 +461,45 @@ mod tests {
     #[test]
     fn parses_numeric_comparison_operators() {
         for (op, expected) in [
-            ("@eq 7", SecOperator::Eq(7)),
-            ("@ne 7", SecOperator::Ne(7)),
-            ("@lt 7", SecOperator::Lt(7)),
-            ("@le 7", SecOperator::Le(7)),
-            ("@gt 7", SecOperator::Gt(7)),
-            ("@ge 7", SecOperator::Ge(7)),
+            ("@eq 7", SecOperator::Eq("7".into())),
+            ("@ne 7", SecOperator::Ne("7".into())),
+            ("@lt 7", SecOperator::Lt("7".into())),
+            ("@le 7", SecOperator::Le("7".into())),
+            ("@gt 7", SecOperator::Gt("7".into())),
+            ("@ge 7", SecOperator::Ge("7".into())),
         ] {
             let parsed = rule(&format!("SecRule TX:score \"{op}\" \"id:1\""));
             assert_eq!(parsed.operator, expected, "{op}");
         }
+        // Macro arguments parse and resolve at evaluation time.
+        let parsed = rule("SecRule TX:score \"@ge %{tx.threshold}\" \"id:1\"");
+        assert_eq!(parsed.operator, SecOperator::Ge("%{tx.threshold}".into()));
         let e = error("SecRule TX:score \"@eq many\" \"id:1\"");
         assert!(e.reason.contains("not a number"), "{e}");
+        let e = error("SecRule ARGS \"@rx %{REQUEST_URI}\" \"id:1\"");
+        assert!(e.reason.contains("only tx.*"), "{e}");
+        let e =
+            error("SecRule ARGS \"@pmFromFile lfi-os-files.data\" \"id:1\"");
+        assert!(e.reason.contains("unsupported operator"), "{e}");
+    }
+
+    #[test]
+    fn parses_validate_byte_range() {
+        let parsed =
+            rule("SecRule ARGS \"@validateByteRange 8,10,13,32-126\" \"id:1\"");
+        assert_eq!(
+            parsed.operator,
+            SecOperator::ValidateByteRange(vec![
+                (8, 8),
+                (10, 10),
+                (13, 13),
+                (32, 126)
+            ])
+        );
+        let e = error("SecRule ARGS \"@validateByteRange 999\" \"id:1\"");
+        assert!(e.reason.contains("validateByteRange"), "{e}");
+        let e = error("SecRule ARGS \"@validateByteRange 9-2\" \"id:1\"");
+        assert!(e.reason.contains("start > end"), "{e}");
     }
 
     #[test]
@@ -415,8 +514,8 @@ mod tests {
         let unconditional =
             rule("SecRule ARGS \"@unconditionalMatch\" \"id:2\"");
         assert_eq!(unconditional.operator, SecOperator::AlwaysMatch);
-        let e = error("SecRule ARGS \"@rx %{tx.foo}\" \"id:3\"");
-        assert!(e.reason.contains("macro"), "{e}");
+        let macro_pattern = rule("SecRule ARGS \"@rx %{tx.foo}\" \"id:3\"");
+        assert_eq!(macro_pattern.operator, SecOperator::Rx("%{tx.foo}".into()));
     }
 
     #[test]

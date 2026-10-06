@@ -240,6 +240,9 @@ pub enum Transform {
     UrlDecode,
     HtmlEntityDecode,
     Base64Decode,
+    RemoveWhitespace,
+    CmdLine,
+    JsDecode,
 }
 
 impl Transform {
@@ -255,6 +258,9 @@ impl Transform {
             "urldecode" | "urldecodeuni" => Some(Self::UrlDecode),
             "htmlentitydecode" => Some(Self::HtmlEntityDecode),
             "base64decode" => Some(Self::Base64Decode),
+            "removewhitespace" => Some(Self::RemoveWhitespace),
+            "cmdline" => Some(Self::CmdLine),
+            "jsdecode" => Some(Self::JsDecode),
             _ => None,
         }
     }
@@ -280,8 +286,139 @@ impl Transform {
                     // decoding fails; mirror that instead of erroring.
                     .unwrap_or_else(|_| value.to_string())
             },
+            Self::RemoveWhitespace => {
+                value.chars().filter(|c| !c.is_whitespace()).collect()
+            },
+            Self::CmdLine => cmd_line(value),
+            Self::JsDecode => js_decode(value),
         }
     }
+}
+
+/// ModSecurity `cmdLine`: drops quotes/backslashes/carets, collapses
+/// separators to one space, removes the space before `/` or `(`, lowercases.
+fn cmd_line(value: &str) -> String {
+    let mut out: Vec<char> = Vec::with_capacity(value.len());
+    let mut space = false;
+    for c in value.chars() {
+        match c {
+            '"' | '\'' | '\\' | '^' => {},
+            ' ' | ',' | ';' | '\t' | '\r' | '\n' => {
+                if !space {
+                    out.push(' ');
+                    space = true;
+                }
+            },
+            '/' | '(' => {
+                if space {
+                    out.pop();
+                }
+                space = false;
+                out.push(c);
+            },
+            c => {
+                for lower in c.to_lowercase() {
+                    out.push(lower);
+                }
+                space = false;
+            },
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// ModSecurity `jsDecode`: `\uHHHH`, `\xHH`, octal `\OOO`, and single-char
+/// escapes; any other escape drops the backslash.
+fn js_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        // \uHHHH (full-width ASCII U+FF01–U+FF5E shifts down by 0x20).
+        if i + 5 < bytes.len()
+            && bytes[i + 1] == b'u'
+            && bytes[i + 2..i + 6].iter().all(u8::is_ascii_hexdigit)
+        {
+            let mut byte = hex_byte(bytes[i + 4], bytes[i + 5]);
+            if (1..0x5f).contains(&byte)
+                && (bytes[i + 2] == b'f' || bytes[i + 2] == b'F')
+                && (bytes[i + 3] == b'f' || bytes[i + 3] == b'F')
+            {
+                byte += 0x20;
+            }
+            out.push(byte);
+            i += 6;
+            continue;
+        }
+        // \xHH
+        if i + 3 < bytes.len()
+            && bytes[i + 1] == b'x'
+            && bytes[i + 2].is_ascii_hexdigit()
+            && bytes[i + 3].is_ascii_hexdigit()
+        {
+            out.push(hex_byte(bytes[i + 2], bytes[i + 3]));
+            i += 4;
+            continue;
+        }
+        // Octal \OOO (at most three digits; two when the first exceeds '3').
+        if i + 1 < bytes.len() && (b'0'..=b'7').contains(&bytes[i + 1]) {
+            let mut j = 0usize;
+            let mut buf = [0u8; 3];
+            while i + 1 + j < bytes.len() && j < 3 {
+                buf[j] = bytes[i + 1 + j];
+                j += 1;
+                if i + 1 + j >= bytes.len()
+                    || !(b'0'..=b'7').contains(&bytes[i + 1 + j])
+                {
+                    break;
+                }
+            }
+            let mut digits = j;
+            if digits == 3 && buf[0] > b'3' {
+                digits = 2;
+            }
+            let text = std::str::from_utf8(&buf[..digits]).unwrap_or("");
+            out.push(u8::from_str_radix(text, 8).unwrap_or(0));
+            i += 1 + digits;
+            continue;
+        }
+        if i + 1 < bytes.len() {
+            let byte = match bytes[i + 1] {
+                b'a' => 0x07,
+                b'b' => 0x08,
+                b'f' => 0x0c,
+                b'n' => b'\n',
+                b'r' => b'\r',
+                b't' => b'\t',
+                b'v' => 0x0b,
+                // Remaining escapes (\?", \\, \', \") just drop the
+                // backslash.
+                other => other,
+            };
+            out.push(byte);
+            i += 2;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn hex_byte(high: u8, low: u8) -> u8 {
+    fn nibble(byte: u8) -> u8 {
+        match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            _ => byte - b'A' + 10,
+        }
+    }
+    (nibble(high) << 4) | nibble(low)
 }
 
 /// Collect `t:` actions in order; an unknown transformation is an observable
@@ -309,6 +446,48 @@ fn parse_transforms(
     Ok(transforms)
 }
 
+/// Expand `%{tx.<name>}` macros against the transaction; unset variables
+/// expand to the empty string (ModSecurity behaviour).
+pub(crate) fn expand_macros(input: &str, txn: &SecLangTransaction) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(start) = rest.find("%{") {
+        output.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find('}') else {
+            output.push_str(&rest[start..]);
+            return output;
+        };
+        let token = &after[..end];
+        let name = token
+            .strip_prefix("tx.")
+            .unwrap_or_else(|| token.rsplit('.').next().unwrap_or(token));
+        let value = txn.tx_get(name).unwrap_or_default();
+        output.push_str(value);
+        rest = &after[end + 1..];
+    }
+    output.push_str(rest);
+    output
+}
+
+/// Numeric comparison shared by `@eq`/`@ne`/`@lt`/`@le`/`@gt`/`@ge`:
+/// both sides must resolve to numbers (after macro expansion).
+fn compare_numbers(
+    value: &str,
+    argument: &str,
+    txn: &SecLangTransaction,
+    compare: impl FnOnce(i64, i64) -> bool,
+) -> bool {
+    let Some(value) = number(value) else {
+        return false;
+    };
+    let expanded = expand_macros(argument, txn);
+    let Some(expected) = number(&expanded) else {
+        return false;
+    };
+    compare(value, expected)
+}
+
 /// Numeric value of a resolved string, for the numeric comparison operators.
 /// Non-numeric values never match (documented in `docs/compatibility.md`).
 fn number(value: &str) -> Option<i64> {
@@ -321,20 +500,33 @@ impl CompiledSecRule {
         let mut ips = Vec::new();
         match &line.operator {
             SecOperator::Rx(pattern) => {
-                regex =
-                    Some(Regex::new(pattern).map_err(|e| SecLangError {
-                        reason: format!("invalid @rx pattern {pattern:?}: {e}"),
+                // Patterns with `%{tx.*}` macros are compiled per evaluation
+                // after expansion.
+                if !pattern.contains("%{") {
+                    regex = Some(Regex::new(pattern).map_err(|e| {
+                        SecLangError {
+                            reason: format!(
+                                "invalid @rx pattern {pattern:?}: {e}"
+                            ),
+                        }
                     })?);
+                }
             },
             SecOperator::IpMatch(entries) => {
                 for entry in entries {
-                    let net = entry.parse::<ipnet::IpNet>().map_err(|e| {
-                        SecLangError {
-                            reason: format!(
-                                "invalid @ipMatch entry {entry:?}: {e}"
-                            ),
-                        }
-                    })?;
+                    // CIDR blocks and single IPv4/IPv6 addresses (a bare
+                    // address means a host route).
+                    let net =
+                        entry.parse::<ipnet::IpNet>().ok().or_else(|| {
+                            let ip = entry.parse::<std::net::IpAddr>().ok()?;
+                            let prefix = if ip.is_ipv4() { 32 } else { 128 };
+                            ipnet::IpNet::new(ip, prefix).ok()
+                        });
+                    let Some(net) = net else {
+                        return Err(SecLangError {
+                            reason: format!("invalid @ipMatch entry {entry:?}"),
+                        });
+                    };
                     ips.push(net);
                 }
             },
@@ -371,7 +563,8 @@ impl CompiledSecRule {
         let mut hits = Vec::new();
         for reference in &self.line.variables {
             for value in txn.resolve(reference) {
-                if self.operator_matches(&value.value) != self.line.negated {
+                if self.operator_matches(&value.value, txn) != self.line.negated
+                {
                     hits.push(value);
                     break;
                 }
@@ -380,14 +573,20 @@ impl CompiledSecRule {
         hits
     }
 
-    fn operator_matches(&self, value: &str) -> bool {
+    fn operator_matches(&self, value: &str, txn: &SecLangTransaction) -> bool {
         let transformed = self.apply_transforms(value);
         let value = transformed.as_str();
         match &self.line.operator {
-            SecOperator::Rx(_) => self
-                .regex
-                .as_ref()
-                .is_some_and(|regex| regex.is_match(value)),
+            SecOperator::Rx(pattern) => match &self.regex {
+                Some(regex) => regex.is_match(value),
+                None => {
+                    // Macro pattern: expand against the transaction and
+                    // compile per evaluation.
+                    let expanded = expand_macros(pattern, txn);
+                    Regex::new(&expanded)
+                        .is_ok_and(|regex| regex.is_match(value))
+                },
+            },
             SecOperator::Pm(needles) => {
                 needles.iter().any(|needle| value.contains(needle))
             },
@@ -402,25 +601,32 @@ impl CompiledSecRule {
                 .ok()
                 .is_some_and(|ip| self.ips.iter().any(|net| net.contains(&ip))),
             SecOperator::Eq(expected) => {
-                number(value).is_some_and(|v| v == *expected)
+                compare_numbers(value, expected, txn, |a, b| a == b)
             },
             SecOperator::Ne(expected) => {
-                number(value).is_some_and(|v| v != *expected)
+                compare_numbers(value, expected, txn, |a, b| a != b)
             },
             SecOperator::Lt(expected) => {
-                number(value).is_some_and(|v| v < *expected)
+                compare_numbers(value, expected, txn, |a, b| a < b)
             },
             SecOperator::Le(expected) => {
-                number(value).is_some_and(|v| v <= *expected)
+                compare_numbers(value, expected, txn, |a, b| a <= b)
             },
             SecOperator::Gt(expected) => {
-                number(value).is_some_and(|v| v > *expected)
+                compare_numbers(value, expected, txn, |a, b| a > b)
             },
             SecOperator::Ge(expected) => {
-                number(value).is_some_and(|v| v >= *expected)
+                compare_numbers(value, expected, txn, |a, b| a >= b)
             },
             SecOperator::Within(list) => {
-                value.is_empty() || list.contains(value)
+                value.is_empty() || expand_macros(list, txn).contains(value)
+            },
+            SecOperator::ValidateByteRange(ranges) => {
+                value.bytes().all(|byte| {
+                    ranges
+                        .iter()
+                        .any(|(start, end)| byte >= *start && byte <= *end)
+                })
             },
             SecOperator::AlwaysMatch => true,
         }
@@ -524,7 +730,7 @@ pub fn group_rules(
 
 #[cfg(test)]
 mod tests {
-    use super::{CompiledSecRule, SecLangTransaction};
+    use super::{CompiledSecRule, SecLangTransaction, Transform};
     use crate::canonical::{Canonicalizer, ClientIdentity, RequestParts};
     use crate::seclang::parser::{parse_line, SecLangLine};
 
@@ -694,6 +900,55 @@ mod tests {
             error.reason.contains("unsupported transformation"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn macros_expand_from_transaction_variables() {
+        let mut txn = SecLangTransaction::from_request(&request());
+        txn.tx_set("threshold", "40");
+        let ge = rule("SecRule ARGS:id \"@ge %{tx.threshold}\" \"id:1\"");
+        assert_eq!(ge.matches(&txn).len(), 1);
+        txn.tx_set("pattern", "^4[0-9]$");
+        let rx = rule("SecRule ARGS:id \"@rx %{tx.pattern}\" \"id:2\"");
+        assert_eq!(rx.matches(&txn).len(), 1);
+        // Unset macros expand to the empty string.
+        let missing = rule("SecRule ARGS:id \"@streq %{tx.not_set}\" \"id:3\"");
+        assert!(missing.matches(&txn).is_empty());
+        // Non-numeric expansions never satisfy numeric operators.
+        txn.tx_set("threshold", "many");
+        let bad = rule("SecRule ARGS:id \"@ge %{tx.threshold}\" \"id:4\"");
+        assert!(bad.matches(&txn).is_empty());
+    }
+
+    #[test]
+    fn ip_match_accepts_single_addresses() {
+        let matcher =
+            rule("SecRule REMOTE_ADDR \"@ipMatch 203.0.113.9,::1\" \"id:1\"");
+        let txn = SecLangTransaction::from_request(&request());
+        assert_eq!(matcher.matches(&txn).len(), 1);
+    }
+
+    #[test]
+    fn cmdline_jsdecode_and_removewhitespace_transforms() {
+        let cmdline = Transform::parse("cmdLine").expect("cmdLine");
+        assert_eq!(
+            cmdline.apply("cmd.exe /c \"dir\" C:\\temp"),
+            "cmd.exe/c dir c:temp"
+        );
+        let js = Transform::parse("jsDecode").expect("jsDecode");
+        assert_eq!(js.apply("\\u0041\\x42\\103\\n"), "ABC\n");
+        assert_eq!(js.apply("\\uFF21"), "A");
+        let whitespace = Transform::parse("removeWhitespace").expect("remove");
+        assert_eq!(whitespace.apply(" a\tb\u{a0}c\nd "), "abcd");
+    }
+
+    #[test]
+    fn validate_byte_range_operator() {
+        let txn = SecLangTransaction::from_request(&request());
+        let ok = rule("SecRule ARGS:q \"@validateByteRange 97-122\" \"id:1\"");
+        assert_eq!(ok.matches(&txn).len(), 1);
+        let bad = rule("SecRule ARGS:q \"@validateByteRange 97-104\" \"id:2\"");
+        assert!(bad.matches(&txn).is_empty());
     }
 
     #[test]

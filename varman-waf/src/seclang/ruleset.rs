@@ -15,11 +15,11 @@
 //! `+n`, `-n`).
 
 use crate::seclang::parser::{
-    parse_line, parse_quoted, split_actions, SecLangError, SecLangLine,
-    SecOperator, SecRuleLine,
+    parse_line, parse_quoted, split_actions, validate_macros, SecLangError,
+    SecLangLine, SecOperator, SecRuleLine,
 };
 use crate::seclang::transaction::{
-    group_rules, ResolvedValue, SecLangTransaction, SecRuleGroup,
+    expand_macros, group_rules, ResolvedValue, SecLangTransaction, SecRuleGroup,
 };
 
 /// Actions the engine accepts (and what they mean): `t:` and `setvar:` are
@@ -155,7 +155,8 @@ fn validate_actions(group: &SecRuleGroup) -> Result<(), SecLangError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SetVar {
     Assign(String, String),
-    Increment(String, i64),
+    /// Increment target; the raw value is expanded and parsed when applied.
+    Increment(String, String),
 }
 
 fn parse_setvar(spec: &str) -> Result<SetVar, SecLangError> {
@@ -172,33 +173,40 @@ fn parse_setvar(spec: &str) -> Result<SetVar, SecLangError> {
         });
     };
     let value = value.trim();
-    if value.contains("%{") {
-        return Err(SecLangError {
-            reason: format!(
-                "macro (%{{…}}) expansion in setvar values is not supported yet: {value:?}"
-            ),
-        });
-    }
+    validate_macros(value)?;
     if let Some(delta) =
         value.strip_prefix('+').or_else(|| value.strip_prefix('-'))
     {
-        let sign = if value.starts_with('-') { -1 } else { 1 };
-        let magnitude = delta.parse::<i64>().map_err(|_| SecLangError {
-            reason: format!("setvar offset {value:?} is not a number"),
-        })?;
-        return Ok(SetVar::Increment(name.to_string(), sign * magnitude));
+        // The offset may reference macros; its final shape is checked when
+        // applied. A literal must parse now to stay observable.
+        if !delta.contains("%{") && delta.parse::<i64>().is_err() {
+            return Err(SecLangError {
+                reason: format!("setvar offset {value:?} is not a number"),
+            });
+        }
+        let sign = if value.starts_with('-') { "-" } else { "" };
+        return Ok(SetVar::Increment(
+            name.to_string(),
+            format!("{sign}{}", delta.trim()),
+        ));
     }
     Ok(SetVar::Assign(name.to_string(), value.to_string()))
 }
 
 fn apply_setvar(txn: &mut SecLangTransaction, op: &SetVar) {
     match op {
-        SetVar::Assign(name, value) => txn.tx_set(name, value.clone()),
+        SetVar::Assign(name, value) => {
+            txn.tx_set(name, expand_macros(value, txn))
+        },
         SetVar::Increment(name, delta) => {
             let current: i64 = txn
                 .tx_get(name)
                 .and_then(|v| v.trim().parse().ok())
                 .unwrap_or(0);
+            // Unresolvable macros expand to empty and contribute zero,
+            // mirroring ModSecurity's numeric coercion.
+            let expanded = expand_macros(delta, txn);
+            let delta: i64 = expanded.trim().parse().unwrap_or(0);
             txn.tx_set(name, (current + delta).to_string());
         },
     }
@@ -978,6 +986,23 @@ mod tests {
     }
 
     #[test]
+    fn setvar_expands_macros() {
+        let ruleset = SecRuleSet::from_source(
+            "SecAction \"phase:1,pass,setvar:tx.base=5\"\n\
+             SecAction \"phase:1,pass,setvar:tx.total=+%{tx.base}\"\n\
+             SecRule TX:total \"@eq 5\" \"id:1,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 3, "{hits:?}");
+        assert_eq!(hits[2].rule_ids, vec![Some(1)]);
+    }
+
+    #[test]
     fn ctl_rule_engine_detection_only_strips_disruptive_actions() {
         let ruleset = SecRuleSet::from_source(
             "SecRule ARGS:a \"@streq 1\" \"id:1,ctl:ruleEngine=DetectionOnly\"\n\
@@ -1052,8 +1077,8 @@ mod tests {
         for (spec, expected) in [
             ("tx.a=1", SetVar::Assign("a".into(), "1".into())),
             ("'tx.b=hello'", SetVar::Assign("b".into(), "hello".into())),
-            ("tx.c=+2", SetVar::Increment("c".into(), 2)),
-            ("tx.c=-3", SetVar::Increment("c".into(), -3)),
+            ("tx.c=+2", SetVar::Increment("c".into(), "2".into())),
+            ("tx.c=-3", SetVar::Increment("c".into(), "-3".into())),
         ] {
             assert_eq!(super::parse_setvar(spec).expect("parses"), expected);
         }

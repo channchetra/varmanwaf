@@ -92,4 +92,15 @@ fn crs_rulesets_load_and_report() {
         "CRS clone at {} has no rule files",
         rules_dir.display()
     );
+    // Ratchet: never regress below the recorded baseline
+    // (`docs/compatibility.md`, 2026-10-07: 6 files / 77 rules).
+    assert!(
+        ok_files.len() >= 6,
+        "CRS load regressed: {} files (baseline 6)",
+        ok_files.len()
+    );
+    assert!(
+        rules_loaded >= 77,
+        "CRS load regressed: {rules_loaded} rules (baseline 77)"
+    );
 }

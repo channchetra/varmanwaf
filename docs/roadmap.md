@@ -308,9 +308,14 @@ report against the existing engine.
       First measurement: **1/27 files load, 0 rules**; blockers are tracked
       honestly in `docs/compatibility.md`. Every slice from here ratchets the
       load count up.
-- [ ] CRS blocker slices in progress: `%{tx.*}` macro expansion (13 files) →
-      missing transforms (`utf8toUnicode`, `cmdLine`, `removeWhitespace`,
-      `jsDecode`) → `@pmFromFile` data-file loading → `@validateByteRange`.
+- [x] `%{tx.*}` macro expansion in operator arguments and `setvar` values
+      (assign + increment); `t:cmdLine`, `t:jsDecode`, `t:removeWhitespace`;
+      `@validateByteRange`; single-address `@ipMatch`. CRS load ratcheted in
+      the harness: **6/27 files, 77 rules**.
+- [ ] Next CRS blockers: `@pmFromFile` data-file loading (9 files) → macro
+      collections `MATCHED_VAR`/`MATCHED_VAR_NAME`/`request_headers.*` and
+      `TX.*` casing → `@validateUtf8Encoding` → `t:utf8toUnicode`, `t:sha1` →
+      `noauditlog`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
