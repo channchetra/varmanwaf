@@ -1,28 +1,31 @@
 //! The canonical request model.
 //!
-//! **Status: provisional (Phase 2 skeleton).** The *types* are stable; the
-//! normalization algorithm that fills them lands in Phase 3. Until then the
-//! constructor stores values exactly as received (except header-name casing)
-//! so that no consumer can rely on an accidental normalization behaviour.
+//! **Status: canonicalization landed (Phase 3).** Wire input goes through
+//! [`Canonicalizer::canonicalize`], which produces the decoded path, query
+//! pairs, cookies and normalized headers defined in
+//! [`canonicalizer`]'s policy. Hand-built [`CanonicalRequest`]s (tests,
+//! non-wire callers) use [`CanonicalRequest::new`] and the `with_*` builders.
 //!
 //! Security invariant (mandate §10): normalization is a security boundary.
 //! Every subsystem — router, WAF, cache, upstream forwarding — must consume
 //! *one* canonical representation, so `/open/../admin` cannot mean different
 //! paths to different components. Detectors must never re-decode input on
-//! their own; they read this model.
-//!
-//! Phase 3 will extend this module with the decode/normalize pipeline
-//! (percent decoding layers, HTML entities, path collapse, query/cookie
-//! parsing) and its bypass corpus. Field semantics below note what is
-//! *provisional copy* versus what is final.
+//! their own; they read this model, and additional inspection decoding
+//! (HTML entities, deeper layers) is applied uniformly by the pipeline from
+//! the canonical form.
 
 use std::net::IpAddr;
 
+pub mod canonicalizer;
+
+pub use canonicalizer::{Canonicalizer, RequestParts, DEFAULT_DECODE_LAYERS};
+
 /// One query-string parameter.
 ///
-/// Provisional: names and values are stored exactly as they appear in the
-/// request (still percent-encoded). Phase 3 defines the decoding layers and
-/// guarantees each detector sees the same decoded views.
+/// Produced by [`Canonicalizer`]: names and values are decoded (bounded
+/// percent decoding, `+` as space) in wire order with duplicates preserved.
+/// Hand-built requests via [`CanonicalRequest::with_query_param`] store the
+/// values exactly as given.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryParam {
     pub name: String,
@@ -47,6 +50,8 @@ pub struct ClientIdentity {
 pub struct CanonicalRequest {
     method: String,
     authority: String,
+    raw_path: String,
+    raw_query: String,
     path: String,
     query: Vec<QueryParam>,
     headers: Vec<(String, String)>,
@@ -58,22 +63,56 @@ pub struct CanonicalRequest {
 impl CanonicalRequest {
     /// Start a request with the transport-level essentials.
     ///
-    /// `path` is stored as given for now (see module docs); `authority` is the
-    /// validated host, no scheme or port handling yet.
+    /// Hand-built requests (tests, non-wire callers) use `path` for both the
+    /// raw and the canonical path and start with an empty query. Wire input
+    /// goes through [`Canonicalizer::canonicalize`].
     pub fn new(
         method: impl Into<String>,
         authority: impl Into<String>,
         path: impl Into<String>,
     ) -> Self {
+        let path = path.into();
         Self {
             method: method.into(),
             authority: authority.into(),
-            path: path.into(),
+            raw_path: path.clone(),
+            raw_query: String::new(),
+            path,
             query: Vec::new(),
             headers: Vec::new(),
             cookies: Vec::new(),
             body: None,
             client: ClientIdentity::default(),
+        }
+    }
+
+    /// Assemble a fully canonicalized request. Only the canonicalizer should
+    /// call this: it is the one place allowed to set divergent raw/canonical
+    /// forms.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_canonical_parts(
+        method: String,
+        authority: String,
+        raw_path: String,
+        raw_query: String,
+        path: String,
+        query: Vec<QueryParam>,
+        headers: Vec<(String, String)>,
+        cookies: Vec<(String, String)>,
+        body: Option<Vec<u8>>,
+        client: ClientIdentity,
+    ) -> Self {
+        Self {
+            method,
+            authority,
+            raw_path,
+            raw_query,
+            path,
+            query,
+            headers,
+            cookies,
+            body,
+            client,
         }
     }
 
@@ -87,6 +126,17 @@ impl CanonicalRequest {
 
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// Path exactly as received (before decoding and dot-segment
+    /// resolution); kept for logging and forwarding decisions.
+    pub fn raw_path(&self) -> &str {
+        &self.raw_path
+    }
+
+    /// Query exactly as received.
+    pub fn raw_query(&self) -> &str {
+        &self.raw_query
     }
 
     pub fn query(&self) -> &[QueryParam] {

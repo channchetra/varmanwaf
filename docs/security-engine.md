@@ -10,7 +10,7 @@
 | Component | Status | Serves traffic? |
 |---|---|---|
 | Legacy engine (`varman-waf/src/{engine,normalize,rules,score}`) | Imported baseline; signature + expression rules + anomaly scoring | **Yes** |
-| Canonical model (`varman-waf/src/canonical`) | Provisional types landed; normalization algorithm pending (Phase 3) | No |
+| Canonical model (`varman-waf/src/canonical`) | Canonicalizer landed (Phase 3 first slice): bounded decode layers, path collapse, query/cookie/header policy + bypass tests | No |
 | Pipeline (`varman-waf/src/pipeline`) | Skeleton landed: detector contract, findings, monotonic actions, bounded context, shadow comparison | No |
 | Lane 1 fast detectors | Pending (Phase 4) | No |
 | Streaming body engine | Pending (Phase 5) | No |
@@ -44,10 +44,18 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
 
 ## 3. Pipeline types (implemented skeleton)
 
-- **`canonical::CanonicalRequest`** — method, authority, path, query pairs,
-  headers (wire order, duplicates preserved), cookies, body, verified
-  `ClientIdentity`. Everything downstream reads this; detectors must not
-  re-decode or re-parse raw input (normalization lands in Phase 3).
+- **`canonical::CanonicalRequest`** — method, authority, raw + canonical path,
+  raw query, decoded query pairs, headers (wire order, duplicates preserved),
+  cookies, body, verified `ClientIdentity`. Everything downstream reads this;
+  detectors must not re-decode or re-parse raw input.
+- **`canonical::Canonicalizer`** (Phase 3) — the one component allowed to
+  decode: bounded percent layers (`DEFAULT_DECODE_LAYERS = 2`, byte-wise with
+  overlong-UTF-8 restoration), fragment drop, dot-segment resolution,
+  `+`-as-space query decoding, cookie parsing/unquoting, header lowercasing.
+  HTML entities and deeper layers are *inspection* transformations applied
+  uniformly from the canonical form, not canonicalization: the origin routes
+  on the percent-decoded bytes, and an entity-decoded path would route
+  differently from the wire.
 - **`pipeline::Detector`** — `id()` + `inspect(&CanonicalRequest, &mut
   DetectionContext) -> DetectorResult`. `Send + Sync`, no I/O, no panics on
   attacker input.
