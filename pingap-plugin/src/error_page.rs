@@ -48,14 +48,14 @@ use pingap_core::{
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
-use varman_agent::VarmanAgent;
-use varman_agent::cache::CustomErrorPage;
-use varman_challenge::generate_request_id;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tera::{Context, Tera};
 use tracing::{debug, warn};
+use varman_agent::VarmanAgent;
+use varman_agent::cache::CustomErrorPage;
+use varman_challenge::generate_request_id;
 
 /// Key under which the response-body replacer is stashed in [`Ctx`].
 const PLUGIN_ID: &str = "_error_page_";
@@ -827,8 +827,8 @@ template = '{"error":"rate_limit_exceeded","request_id":"{{ request_id }}"}'
     mod agent_mode {
         use super::*;
         use crate::waf::tests::install_test_agent;
-        use varman_protocol::control_plane as proto;
         use pretty_assertions::assert_eq;
+        use varman_protocol::control_plane as proto;
 
         /// Agent-supplied pages replace responses for their host, take
         /// precedence over the built-in defaults and expose the variables the

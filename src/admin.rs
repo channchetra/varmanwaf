@@ -43,8 +43,8 @@ use varman_control::models::{
 };
 
 use crate::cli::{
-    AddAdminOpts, AllowlistOpts, DbOpts, ModeCommand, OnOff, VarmanCli,
-    VarmanCommand, ResetPasswordOpts, SecurityCommand, UserSubcommand,
+    AddAdminOpts, AllowlistOpts, DbOpts, ModeCommand, OnOff, ResetPasswordOpts,
+    SecurityCommand, UserSubcommand, VarmanCli, VarmanCommand,
 };
 
 /// Runs a maintenance subcommand.

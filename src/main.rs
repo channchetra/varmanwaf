@@ -84,12 +84,12 @@ mod cli;
 mod config_file;
 mod config_manager;
 mod locations;
-mod varman;
 mod plugin;
 mod process;
 mod quick_start;
 mod server_locations;
 mod upstreams;
+mod varman;
 mod webhook;
 
 // Avoid musl's default allocator due to lackluster performance

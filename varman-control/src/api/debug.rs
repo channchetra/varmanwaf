@@ -24,11 +24,11 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Json;
 use axum::Router;
+use serde::Deserialize;
+use std::time::Duration;
 use varman_pprof::{
     start_session, ProfileError, ProfilingSession, DEFAULT_SECONDS, MAX_SECONDS,
 };
-use serde::Deserialize;
-use std::time::Duration;
 
 /// Query parameters accepted by both capture endpoints.
 #[derive(Debug, Default, Deserialize)]

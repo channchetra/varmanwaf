@@ -324,8 +324,7 @@ impl ServerConfig {
         if let Ok(value) = std::env::var("VARMAN_PASSKEY_ORIGIN") {
             config.passkey_origin = non_empty_env(&value);
         }
-        if let Ok(value) =
-            std::env::var("VARMAN_PASSKEY_TRUST_FORWARDED_PROTO")
+        if let Ok(value) = std::env::var("VARMAN_PASSKEY_TRUST_FORWARDED_PROTO")
         {
             config.passkey_trust_forwarded_proto = parse_bool(&value);
         }

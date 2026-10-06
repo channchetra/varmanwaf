@@ -38,13 +38,6 @@ use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
-use varman_agent::VarmanAgent;
-use varman_agent::cache::{
-    CacheRule as AgentCacheRule, SiteRules as AgentSiteRules,
-};
-use varman_waf::rules::{
-    EvalContext, Expression, FieldKind, evaluate, parse_expression,
-};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -55,6 +48,13 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{debug, error, info};
+use varman_agent::VarmanAgent;
+use varman_agent::cache::{
+    CacheRule as AgentCacheRule, SiteRules as AgentSiteRules,
+};
+use varman_waf::rules::{
+    EvalContext, Expression, FieldKind, evaluate, parse_expression,
+};
 
 type Result<T> = std::result::Result<T, Error>;
 

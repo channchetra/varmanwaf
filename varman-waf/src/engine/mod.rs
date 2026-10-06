@@ -1598,8 +1598,10 @@ mod tests {
 
         // With sqli monitored the same request is still detected —
         // aggregate score, [monitored] details — but only Monitor.
-        let mut cfg = WafEngineConfig::default();
-        cfg.monitor_categories = CategorySet::from_names(["sqli"]);
+        let cfg = WafEngineConfig {
+            monitor_categories: CategorySet::from_names(["sqli"]),
+            ..WafEngineConfig::default()
+        };
         let v = WafEngine::new(&cfg).inspect(&r);
         assert_eq!(v.action, WafAction::Monitor);
         assert_eq!(v.breakdown.block_total, 0);
@@ -1610,8 +1612,10 @@ mod tests {
     #[test]
     fn monitored_category_keeps_other_families_blocking() {
         // RCE shapes stay blocking while sqli is downgraded.
-        let mut cfg = WafEngineConfig::default();
-        cfg.monitor_categories = CategorySet::from_names(["sqli"]);
+        let cfg = WafEngineConfig {
+            monitor_categories: CategorySet::from_names(["sqli"]),
+            ..WafEngineConfig::default()
+        };
         let m = WafEngine::new(&cfg);
         let v = m.inspect(&req("GET", "/ax--exec=`id`--remote", ""));
         assert_eq!(v.action, WafAction::Block);
@@ -1619,8 +1623,10 @@ mod tests {
 
     #[test]
     fn monitored_stack_downgrades_scoped_hits_only() {
-        let mut cfg = WafEngineConfig::default();
-        cfg.monitor_stacks = StackSet::from_names_exact(["java"]);
+        let cfg = WafEngineConfig {
+            monitor_stacks: StackSet::from_names_exact(["java"]),
+            ..WafEngineConfig::default()
+        };
         let m = WafEngine::new(&cfg);
         // The Java-scoped Log4Shell needle is downgraded…
         let mut r = req("GET", "/", "");
@@ -1637,9 +1643,11 @@ mod tests {
 
     #[test]
     fn monitored_ssti_downgrades_expr_hits_at_strict() {
-        let mut cfg = WafEngineConfig::default();
-        cfg.level = WafLevel::Strict;
-        cfg.monitor_categories = CategorySet::from_names(["ssti"]);
+        let cfg = WafEngineConfig {
+            level: WafLevel::Strict,
+            monitor_categories: CategorySet::from_names(["ssti"]),
+            ..WafEngineConfig::default()
+        };
         let m = WafEngine::new(&cfg);
         let v = m.inspect(&req(
             "GET",

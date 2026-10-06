@@ -14,9 +14,9 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use varman_protocol::control_plane::ServerCommand;
 use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
+use varman_protocol::control_plane::ServerCommand;
 
 /// Buffer depth of the per-agent command channel.
 pub const COMMAND_CHANNEL_CAPACITY: usize = 64;

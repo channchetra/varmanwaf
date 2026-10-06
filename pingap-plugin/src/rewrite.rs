@@ -52,17 +52,17 @@ use pingap_core::{
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
-use varman_agent::VarmanAgent;
-use varman_agent::cache::{
-    RewriteDirection as CacheRewriteDirection,
-    RewriteOperation as CacheRewriteOperation, RewriteRule as CacheRewriteRule,
-};
 use regex::Regex;
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::{debug, warn};
+use varman_agent::VarmanAgent;
+use varman_agent::cache::{
+    RewriteDirection as CacheRewriteDirection,
+    RewriteOperation as CacheRewriteOperation, RewriteRule as CacheRewriteRule,
+};
 
 /// Key under which the response-body modifier is stashed in [`Ctx`].
 const PLUGIN_ID: &str = "_rewrite_";
@@ -1857,8 +1857,8 @@ rules = '[{"id":"h","direction":"response","operations":[{"type":"set_header","n
     mod agent_mode {
         use super::*;
         use crate::waf::tests::install_test_agent;
-        use varman_protocol::control_plane as proto;
         use pretty_assertions::assert_eq;
+        use varman_protocol::control_plane as proto;
 
         fn site_config(
             rewrite_rules: Vec<proto::RewriteRule>,

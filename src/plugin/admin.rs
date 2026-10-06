@@ -605,12 +605,12 @@ async fn handle_pprof_request(
     }
 
     let query = pprof_query(session);
-    let profiling =
-        match varman_pprof::start_session(query.frequency.unwrap_or_default())
-        {
-            Ok(profiling) => profiling,
-            Err(err) => return pprof_error_response(err),
-        };
+    let profiling = match varman_pprof::start_session(
+        query.frequency.unwrap_or_default(),
+    ) {
+        Ok(profiling) => profiling,
+        Err(err) => return pprof_error_response(err),
+    };
     let seconds = query
         .seconds
         .unwrap_or(varman_pprof::DEFAULT_SECONDS)

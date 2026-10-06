@@ -29,11 +29,11 @@ pub use config::ServerConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use varman_protocol::control_plane::control_plane_server::ControlPlaneServer;
 use sea_orm::{ConnectOptions, Database};
 use sea_orm_migration::MigratorTrait;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
+use varman_protocol::control_plane::control_plane_server::ControlPlaneServer;
 
 use crate::api::state::AppState;
 use crate::es::{ensure_index_template, ElasticsearchClient};

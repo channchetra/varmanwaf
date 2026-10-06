@@ -10,13 +10,6 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use chrono::{DateTime, Utc};
-use varman_protocol::control_plane::{
-    control_plane_server::ControlPlane as ControlPlaneTrait, AgentHeartbeat,
-    BlockedIp, CertEventAck, CertEventEntry, GetSiteConfigRequest, HostSample,
-    LogAck, LogEntry, Metric, MetricAck, MetricBatch, RegisterAgentRequest,
-    RegisterAgentResponse, RuleBundle, ServerCommand, SiteConfig, SiteStatus,
-    SyncRulesRequest,
-};
 use sea_orm::sea_query::Expr;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait,
@@ -26,6 +19,13 @@ use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Request, Response, Status, Streaming};
 use uuid::Uuid;
+use varman_protocol::control_plane::{
+    control_plane_server::ControlPlane as ControlPlaneTrait, AgentHeartbeat,
+    BlockedIp, CertEventAck, CertEventEntry, GetSiteConfigRequest, HostSample,
+    LogAck, LogEntry, Metric, MetricAck, MetricBatch, RegisterAgentRequest,
+    RegisterAgentResponse, RuleBundle, ServerCommand, SiteConfig, SiteStatus,
+    SyncRulesRequest,
+};
 
 use crate::api::keys::{authenticate_api_key, key_allows_agent};
 use crate::api::ssl::cert_status;

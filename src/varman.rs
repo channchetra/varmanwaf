@@ -24,7 +24,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::certificates::{new_certificate_provider, try_update_certificates};
 use crate::cli::{
-    AgentOpts, AllInOneOpts, CommonOpts, VarmanCli, VarmanCommand, ServerOpts,
+    AgentOpts, AllInOneOpts, CommonOpts, ServerOpts, VarmanCli, VarmanCommand,
 };
 use crate::config_manager::try_init_memory_config_manager;
 use crate::locations::{new_location_provider, try_init_locations};
@@ -47,10 +47,10 @@ use pingap_upstream::new_upstream_health_check_task;
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
+use tracing::{error, info, warn};
 use varman_agent::cache::{CachedRules, RuleCache, SslConfig};
 use varman_agent::config::AgentConfig;
 use varman_control::ServerConfig;
-use tracing::{error, info, warn};
 
 /// The operating mode for VarmanWAF.
 pub enum RunMode {

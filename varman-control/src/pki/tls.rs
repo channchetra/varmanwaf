@@ -244,7 +244,8 @@ mod tests {
     #[test]
     fn generated_pair_roundtrips_through_rustls() {
         let material =
-            generate_self_signed("VarmanWAF", &sans(&["localhost"]), 30).unwrap();
+            generate_self_signed("VarmanWAF", &sans(&["localhost"]), 30)
+                .unwrap();
         let chain = parse_chain(&material.cert_pem).unwrap();
         assert_eq!(chain.len(), 1);
         assert!(parse_private_key(material.key_pem.as_deref().unwrap()).is_ok());
@@ -280,7 +281,8 @@ mod tests {
         ));
         // A private key is not a certificate.
         let material =
-            generate_self_signed("VarmanWAF", &sans(&["localhost"]), 30).unwrap();
+            generate_self_signed("VarmanWAF", &sans(&["localhost"]), 30)
+                .unwrap();
         assert!(matches!(
             parse_chain(material.key_pem.as_deref().unwrap()),
             Err(MtlsError::Certificate(_))

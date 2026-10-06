@@ -45,6 +45,14 @@ use pingap_core::{
 use pingap_util::{IpRules, base64_decode};
 use pingora::http::{ResponseHeader, Version};
 use pingora::proxy::Session;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tor_geoip::GeoipDb;
+use tracing::{debug, warn};
 use varman_agent::cache::{
     BasicAuthConfig as CacheBasicAuthConfig,
     BotProtectionConfig as CacheBotProtection, GeoConfig as CacheGeoConfig,
@@ -53,7 +61,7 @@ use varman_agent::cache::{
     WafAction as CacheWafAction, WafConfig as CacheWafConfig,
     WafMode as CacheWafMode,
 };
-use varman_agent::{AccessLogEntry, VarmanAgent, SecurityEvent};
+use varman_agent::{AccessLogEntry, SecurityEvent, VarmanAgent};
 use varman_challenge::{
     CLEARANCE_COOKIE_NAME, CookieManager, generate_request_id,
 };
@@ -65,14 +73,6 @@ use varman_waf::{
     StackSet, WafAction, WafEngine, WafEngineConfig, WafLevel, WafMode,
     WafVerdict,
 };
-use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
-use std::net::IpAddr;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tor_geoip::GeoipDb;
-use tracing::{debug, warn};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -2821,13 +2821,13 @@ pub(crate) mod tests {
     use pingap_core::PluginStep;
     use pingap_util::base64_encode;
     use pingora::proxy::Session;
+    use tokio_test::io::Builder;
     use varman_agent::cache::RuleCache;
     use varman_agent::client::ControlPlaneClient;
     use varman_agent::config::AgentConfig;
     use varman_agent::heartbeat::MetricsCollector;
     use varman_challenge::ClearanceLevel;
     use varman_protocol::control_plane as proto;
-    use tokio_test::io::Builder;
 
     #[test]
     fn test_waf_params() {

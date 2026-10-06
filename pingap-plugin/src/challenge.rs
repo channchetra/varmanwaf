@@ -39,6 +39,11 @@ use pingap_core::{
     get_req_header_value,
 };
 use pingora::proxy::Session;
+use std::borrow::Cow;
+use std::path::Path;
+use std::sync::{Arc, LazyLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{debug, warn};
 use varman_agent::VarmanAgent;
 use varman_agent::cache::{
     ChallengeConfig as CacheChallengeConfig,
@@ -52,11 +57,6 @@ use varman_challenge::{
     ChallengeConfig, ChallengeDecision, ChallengeEngine, ChallengeRequest,
     ChallengeSubmission, ClearanceLevel, VerifyResult, generate_request_id,
 };
-use std::borrow::Cow;
-use std::path::Path;
-use std::sync::{Arc, LazyLock};
-use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{debug, warn};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
