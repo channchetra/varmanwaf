@@ -629,6 +629,8 @@ enum BotAction {
 struct BotPolicy {
     whitelist: Vec<String>,
     action: BotAction,
+    /// Browser-like UAs must also present browser request headers.
+    js_detection: bool,
 }
 
 /// Outcome of classifying one request's user agent.
@@ -658,14 +660,30 @@ impl BotPolicy {
                 .filter(|ua| !ua.is_empty())
                 .collect(),
             action,
+            js_detection: cfg.js_detection,
         }
     }
 
-    /// Classifies one request. Whitelisted verified bots pass first, then real
-    /// browsers; everything else receives the configured action. Matching is
-    /// ASCII case-insensitive without lowercasing, so the common
-    /// pass-through path allocates nothing.
+    /// Classifies one request, assuming real browser request headers were
+    /// present (the historical behaviour; callers with request context should
+    /// use [`Self::evaluate_with_hints`]).
+    #[cfg(test)]
     fn evaluate(&self, user_agent: &str) -> BotDecision {
+        self.evaluate_with_hints(user_agent, true)
+    }
+
+    /// Classifies one request. Whitelisted verified bots pass first, then real
+    /// browsers; everything else receives the configured action. When JS
+    /// detection is enabled, a browser-like UA must also present browser
+    /// request headers (`Accept` + `Accept-Language`), otherwise it is treated
+    /// as a scripted client pretending to be a browser. Matching is ASCII
+    /// case-insensitive without lowercasing, so the common pass-through path
+    /// allocates nothing.
+    fn evaluate_with_hints(
+        &self,
+        user_agent: &str,
+        browser_hints: bool,
+    ) -> BotDecision {
         if self
             .whitelist
             .iter()
@@ -674,6 +692,21 @@ impl BotPolicy {
             return BotDecision::Pass;
         }
         if is_browser_ua(user_agent) {
+            if self.js_detection && !browser_hints {
+                let denial = Denial {
+                    rule_id: "bot_protection".to_string(),
+                    rule_name: "Bot protection".to_string(),
+                    detail: format!(
+                        "browser-like user agent '{user_agent}' without browser request headers (JS detection)"
+                    ),
+                    challenge: self.action == BotAction::Challenge,
+                    basic_auth: false,
+                };
+                return match self.action {
+                    BotAction::Log => BotDecision::LogOnly(denial),
+                    _ => BotDecision::Deny(denial),
+                };
+            }
             return BotDecision::Pass;
         }
         let denial = Denial {
@@ -694,6 +727,24 @@ impl BotPolicy {
             _ => BotDecision::Deny(denial),
         }
     }
+}
+
+/// `true` when the request carries the two headers every real browser sends:
+/// a non-empty `Accept` and `Accept-Language`. Used by JS detection.
+fn browser_header_hints(headers: &[(String, String)]) -> bool {
+    let mut accept = false;
+    let mut language = false;
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("accept") && !value.trim().is_empty() {
+            accept = true;
+        }
+        if name.eq_ignore_ascii_case("accept-language")
+            && !value.trim().is_empty()
+        {
+            language = true;
+        }
+    }
+    accept && language
 }
 
 /// Loose fingerprint of a real browser user agent: browsers declare
@@ -2395,7 +2446,10 @@ impl Plugin for WafPlugin {
         // ── Bot protection: UA classification runs after IP/geo and before
         // the engine, applying whether or not the WAF engine is enabled ──
         if let Some(bot) = context.as_ref().and_then(|ctx| ctx.bot.as_ref()) {
-            match bot.evaluate(&user_agent) {
+            match bot.evaluate_with_hints(
+                &user_agent,
+                browser_header_hints(&request_data.headers),
+            ) {
                 BotDecision::Pass => {},
                 BotDecision::Deny(denial) => {
                     if observe {
@@ -4260,6 +4314,7 @@ advanced_mode = true
                             enabled: true,
                             action: action as i32,
                             known_bots_whitelist: vec!["Googlebot".to_string()],
+                            js_detection: false,
                         }),
                         ..Default::default()
                     }),
@@ -4272,11 +4327,42 @@ advanced_mode = true
     }
 
     #[test]
+    fn bot_js_detection_requires_browser_headers() {
+        let policy = BotPolicy::build(&CacheBotProtection {
+            enabled: true,
+            action: CacheWafAction::Block,
+            known_bots_whitelist: vec!["Googlebot".to_string()],
+            js_detection: true,
+        });
+        let browser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+
+        // Browser headers present: a real browser passes.
+        assert!(matches!(
+            policy.evaluate_with_hints(browser, true),
+            BotDecision::Pass
+        ));
+        // Browser-like UA without browser headers: scripted client.
+        assert!(matches!(
+            policy.evaluate_with_hints(browser, false),
+            BotDecision::Deny(_)
+        ));
+        // Verified-bot whitelist entries pass regardless of the hints.
+        assert!(matches!(
+            policy.evaluate_with_hints(
+                "Mozilla/5.0 (compatible; Googlebot/2.1)",
+                false
+            ),
+            BotDecision::Pass
+        ));
+    }
+
+    #[test]
     fn bot_ua_classification() {
         let policy = BotPolicy::build(&CacheBotProtection {
             enabled: true,
             action: CacheWafAction::Block,
             known_bots_whitelist: vec!["Googlebot".to_string()],
+            js_detection: false,
         });
 
         assert!(matches!(

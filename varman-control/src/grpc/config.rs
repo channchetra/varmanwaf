@@ -887,6 +887,7 @@ fn bot_protection_to_proto(
             enabled: false,
             action: 0,
             known_bots_whitelist: Vec::new(),
+            js_detection: false,
         };
     };
 
@@ -905,6 +906,7 @@ fn bot_protection_to_proto(
         enabled: row.enabled && row.ua_analysis,
         action: action::to_proto(&row.action),
         known_bots_whitelist,
+        js_detection: row.js_detection,
     }
 }
 

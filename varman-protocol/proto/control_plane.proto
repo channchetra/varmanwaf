@@ -450,6 +450,10 @@ message BotProtectionConfig {
   bool enabled = 1;
   WafAction action = 2;                      // Applied to non-browser user agents
   repeated string known_bots_whitelist = 3;  // Case-insensitive UA substrings of verified bots
+  // When set, browser-like user agents must also present browser request
+  // headers (Accept / Accept-Language); a browser UA without them is treated
+  // as a scripted client and receives the configured action.
+  bool js_detection = 4;
 }
 
 message RewriteRule {

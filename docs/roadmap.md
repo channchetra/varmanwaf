@@ -272,6 +272,13 @@ Investigation results (2026-10-06):
 Each item lands only when the whole chain above is complete — no
 half-wired toggles that pretend to work.
 
+Status (2026-10-06): **`js_detection` is implemented end-to-end** — proto
+field (`BotProtectionConfig.js_detection = 4`), control-plane conversion,
+agent cache, plugin enforcement (browser-like UA without `Accept` +
+`Accept-Language` receives the configured action; whitelisted verified bots
+pass), dashboard toggle enabled, plugin tests added. `tls_fingerprint` and
+`behavioral_analysis` are next; `ja3` waits for TLS ClientHello capture.
+
 ## Working agreements
 
 - Keep the repository buildable at every step (`cargo check` gate in the dev

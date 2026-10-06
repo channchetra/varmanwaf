@@ -173,8 +173,8 @@ export function BotPage() {
                 <MethodToggle
                   icon={<Fingerprint weight="duotone" className="h-4 w-4" />}
                   checked={config.js_detection}
-                  disabled
-                  comingSoon
+                  disabled={!canWrite || !config.enabled}
+                  onChange={(js_detection) => patch({ js_detection })}
                   label={t('pages.bot.jsDetection')}
                   description={t('pages.bot.jsDetectionHint')}
                 />
