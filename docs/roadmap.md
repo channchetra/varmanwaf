@@ -269,6 +269,28 @@ Investigation results (2026-10-06):
   4. dashboard: remove `comingSoon`/`disabled` on the toggle
   5. tests + benign/attack corpus updates, live shadow verification
 
+4. **`ja3` rate-limit characteristic — TLS-subsystem feature (recon done
+   2026-10-06).** The repository has **no existing ClientHello/TLS hook**
+   (grep for `client_hello|TlsAccept|SslDigestExtension` in `pingap-*` /
+   `varman-*` / `src` is empty). The building blocks that do exist:
+   - `pingora-core` `listeners/mod.rs` `trait TlsAccept` — the per-connection
+     accept hook;
+   - `pingora-core` `protocols/tls/digest.rs` `SslDigestExtension` with a
+     typed `get<T>()`/`set<T>()` slot — the correct place to stash a computed
+     fingerprint for later reads from `session.digest()`;
+   - the raw ClientHello itself is only accessible per TLS backend:
+     *rustls* passes a `ClientHello` (cipher suites, extensions, curves) to
+     the certificate resolver, which is the clean JA3/JA4 extraction point —
+     meaning this feature pairs naturally with the `tls-rustls` build;
+     *OpenSSL* needs an FFI `SSL_CTX_set_client_hello_cb` callback (not in the
+     safe `openssl` crate API) to see the same bytes.
+   Implementation order when picked up: pin the TLS backend path (rustls
+   resolver preferred), parse ClientHello → JA3, store in
+   `SslDigestExtension`, read in the plugin, add the `RateChar::Ja3` key
+   extraction (enum + `counter_key` + `build`), remove `ja3` from
+   `RATE_LIMIT_CHARACTERISTICS_PENDING`, tests + a TLS handshake test fixture.
+   This is a deliberate multi-session subsystem; do not half-wire it.
+
 Each item lands only when the whole chain above is complete — no
 half-wired toggles that pretend to work.
 
