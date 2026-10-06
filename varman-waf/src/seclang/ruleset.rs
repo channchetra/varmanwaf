@@ -14,7 +14,9 @@
 //! `accuracy`, `chain`, `t:<name>`, `setvar:tx.<name>=<value>` (assignment,
 //! `+n`, `-n`).
 
-use crate::seclang::parser::{parse_line, SecLangError, SecLangLine};
+use crate::seclang::parser::{
+    parse_line, parse_quoted, split_actions, SecLangError, SecLangLine,
+};
 use crate::seclang::transaction::{
     group_rules, ResolvedValue, SecLangTransaction, SecRuleGroup,
 };
@@ -158,9 +160,30 @@ impl SecRuleSet {
         let mut retargets: Vec<(u64, Vec<String>)> = Vec::new();
         // `SecMarker` positions in the rule stream: `(name, rules_seen)`.
         let mut markers: Vec<(String, usize)> = Vec::new();
+        // `SecDefaultAction` applies to every rule that follows it.
+        let mut defaults: Vec<String> = Vec::new();
         let mut rules = Vec::new();
         for line in source.lines() {
             let trimmed = line.trim();
+            if trimmed == "SecDefaultAction"
+                || trimmed.starts_with("SecDefaultAction ")
+            {
+                let rest =
+                    trimmed.trim_start_matches("SecDefaultAction").trim();
+                let actions_raw = if rest.starts_with('"') {
+                    parse_quoted(rest, 0)?.0
+                } else {
+                    rest.to_string()
+                };
+                let parsed_defaults = split_actions(&actions_raw);
+                if parsed_defaults.is_empty() {
+                    return Err(SecLangError {
+                        reason: "SecDefaultAction without actions".to_string(),
+                    });
+                }
+                defaults = parsed_defaults;
+                continue;
+            }
             if trimmed == "SecMarker" || trimmed.starts_with("SecMarker ") {
                 let name = trimmed
                     .trim_start_matches("SecMarker")
@@ -232,7 +255,21 @@ impl SecRuleSet {
             }
             match parse_line(line)? {
                 SecLangLine::Ignored => {},
-                SecLangLine::Rule(rule) => rules.push(rule),
+                SecLangLine::Rule(mut rule) => {
+                    if !defaults.is_empty() {
+                        for default in &defaults {
+                            let key = action_key(default);
+                            let present = rule
+                                .actions
+                                .iter()
+                                .any(|a| action_key(a) == key);
+                            if !present {
+                                rule.actions.push(default.clone());
+                            }
+                        }
+                    }
+                    rules.push(rule);
+                },
             }
         }
         if !retargets.is_empty() {
@@ -405,6 +442,23 @@ fn evaluate_group(
         all.extend(hits);
     }
     Some(all)
+}
+
+/// Merge key for action deduplication: a rule's explicit action wins over a
+/// `SecDefaultAction` entry of the same category.
+fn action_key(action: &str) -> String {
+    let action = action.trim();
+    if action.starts_with("phase:") {
+        return "phase".to_string();
+    }
+    match action {
+        "block" | "deny" | "drop" | "pass" | "allow" => {
+            "disposition".to_string()
+        },
+        "log" | "nolog" | "auditlog" => "audit".to_string(),
+        "capture" => "capture".to_string(),
+        other => other.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -690,6 +744,54 @@ mod tests {
             );
         assert!(ruleset.evaluate(&mut txn).is_empty());
         assert!(txn.tx_get("2").is_none());
+    }
+
+    #[test]
+    fn default_actions_fill_in_missing_categories() {
+        let ruleset = SecRuleSet::from_source(
+            "SecDefaultAction \"phase:1,log,pass\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:1\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1);
+        let actions = &hits[0].actions;
+        assert!(actions.iter().any(|a| a == "phase:1"), "{actions:?}");
+        assert!(actions.iter().any(|a| a == "log"), "{actions:?}");
+        assert!(actions.iter().any(|a| a == "pass"), "{actions:?}");
+
+        // A rule's explicit action wins within its category; other categories
+        // still fill in.
+        let explicit = SecRuleSet::from_source(
+            "SecDefaultAction \"phase:1,log,pass\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:2,phase:2,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        let hits = explicit.evaluate(&mut txn);
+        let actions = &hits[0].actions;
+        assert!(actions.iter().any(|a| a == "phase:2"), "{actions:?}");
+        assert!(!actions.iter().any(|a| a == "phase:1"), "{actions:?}");
+        assert!(actions.iter().any(|a| a == "block"), "{actions:?}");
+        assert!(
+            !actions.iter().any(|a| a == "pass"),
+            "explicit disposition wins: {actions:?}"
+        );
+        assert!(actions.iter().any(|a| a == "log"), "{actions:?}");
+    }
+
+    #[test]
+    fn default_action_requires_actions() {
+        let error = SecRuleSet::from_source("SecDefaultAction\n")
+            .expect_err("must fail");
+        assert!(error.reason.contains("without actions"), "{error}");
     }
 
     #[test]

@@ -83,7 +83,7 @@ fn err(reason: impl Into<String>) -> SecLangError {
 
 /// Split a quoted field starting at `input[start] == '"'`; returns the inner
 /// text and the index just past the closing quote. Backslash escapes `\"`.
-fn parse_quoted(
+pub(crate) fn parse_quoted(
     input: &str,
     start: usize,
 ) -> Result<(String, usize), SecLangError> {
@@ -114,7 +114,7 @@ fn parse_quoted(
 }
 
 /// Split an actions string on commas that are outside quotes.
-fn split_actions(input: &str) -> Vec<String> {
+pub(crate) fn split_actions(input: &str) -> Vec<String> {
     let mut actions = Vec::new();
     let mut current = String::new();
     let mut in_double = false;

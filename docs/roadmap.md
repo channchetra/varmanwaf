@@ -292,7 +292,11 @@ report against the existing engine.
       before the next member resolves variables; non-regex operators capture
       nothing (ModSecurity behaviour). Tests prove a chain where the second
       member matches on `TX:2`, and that without `capture` the chain fails.
-- [ ] Control flow continues: `ctl`, `SecDefaultAction`.
+- [x] `SecDefaultAction "…"`: defaults apply to every rule that follows;
+      explicit rule actions win **within their category** (phase,
+      disposition, audit, capture), other categories fill in. Missing actions
+      error observably.
+- [ ] Control flow completes with `ctl` (rule-engine mode switching).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
