@@ -5,7 +5,7 @@ centrally-controlled Web Application Firewall built on
 [`pingap`](https://github.com/vicanso/pingap) and Cloudflare
 [`Pingora`](https://github.com/cloudflare/pingora).
 
-> Project home: [`README.md`](../README.md) · [中文](../README_zh.md)
+> Project home: [`README.md`](../README.md)
 
 ## 🚀 Getting started
 

@@ -169,7 +169,7 @@ cargo build --bin varman --no-default-features --features tls-rustls,full
 | `varman-pprof/` | pprof-style profiling endpoints: CPU profile and SVG flamegraph (CPU sampling is Linux-only), memory snapshot |
 | `pingap-*` | The inherited proxy stack: cache, certificates, ACME, config, plugins, proxy, upstream, logging, observability |
 | `web/` | React 19 + TypeScript + Vite dashboard (Tailwind v4, Zustand, TanStack Query, i18next) |
-| `docs/` | English documentation; `docs/zh/` holds the Chinese mirror |
+| `docs/` | English documentation (architecture, security engine, roadmap, deployment, references) |
 | `conf/`, `examples/` | Sample proxy configurations |
 
 Shared dependencies are pinned once in the root `Cargo.toml` under

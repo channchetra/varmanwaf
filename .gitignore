@@ -25,23 +25,6 @@ report.*
 Secrets*.toml
 .claude/settings.local.json
 
-# VitePress docs site
-website/node_modules/
-website/.vitepress/dist/
-website/.vitepress/cache/
-# Generated markdown (from scripts/build-website.sh)
-website/index.md
-website/plugins/
-website/crates/
-website/guide/
-website/zh/
-# Legacy docsify leftovers
-website/en/
-website/assets/docsify-app.js
-website/assets/style.css
-website/README.md
-website/_sidebar.md
-website/_navbar.md
 .gstack/
 
 # tsc -b incremental caches, rewritten by every web build

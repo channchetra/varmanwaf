@@ -36,7 +36,6 @@ dist/*
 
 # ─── 文档 / 资源 / 示例（构建不需要）───────────────────────────────────────
 docs/
-website/
 asset/
 icons/
 examples/
@@ -55,7 +54,6 @@ CODE_OF_CONDUCT.md
 CONTRIBUTING.md
 SECURITY.md
 README.md
-README_zh.md
 Makefile
 bacon.toml
 cliff.toml
