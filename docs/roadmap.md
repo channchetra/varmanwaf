@@ -207,8 +207,13 @@ benign-corpus blocks; benchmarked cost documented.
       external `SYSTEM` (or `PUBLIC` alongside an entity), entity-expansion
       bombs (3+ declarations) block; a lone `<!ENTITY` stays Log; plain HTML5
       and HTML4 `PUBLIC` doctypes stay clean. Corpus-covered.
+- [x] Deserialization structural detector (`semantic::deser`) — PHP
+      serialized shapes (`O:8:"…"`, `a:2:{…`) and .NET
+      ViewState/LosFormatter base64 prefixes block; PHP magic-method
+      mentions (`__wakeup`, `__destruct`) stay Log. Java markers remain
+      owned by the signature table. Corpus-covered.
 - [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] LDAP/XPath, deserialization, prototype pollution, GraphQL abuse.
+- [ ] LDAP/XPath injection, prototype pollution, GraphQL abuse.
 - [ ] Per-detector fuzz targets and performance budgets.
 
 Exit: per-detector acceptance + performance budget; shadow-mode comparison

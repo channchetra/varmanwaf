@@ -1,3 +1,6 @@
 rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAAAAAAAAAAM
 aced0005737200116a617661
 java org.apache.commons.collections.functors.InvokerTransformer
+O:8:"stdClass":1:{s:4:"test";s:4:"evil";}
+a:2:{i:0;s:3:"foo";i:1;s:3:"bar";}
+AAEAAAD/////AQAAAAAAAAAMAgAAAE5TeXN0ZW0u
