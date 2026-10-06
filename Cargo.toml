@@ -487,6 +487,6 @@ pyroscope = { version = "2.1.1", features = ["backend-pprof-rs"] }
 rgb = { version = "0.8.52", features = ["bytemuck"] }
 syslog = "7.0.0"
 tokio-test = "0.4.5"
-tor-geoip = { version = "0.46.0", default-features = false, features = [
+tor-geoip = { version = "0.47.0", default-features = false, features = [
     "embedded-db",
 ] }
