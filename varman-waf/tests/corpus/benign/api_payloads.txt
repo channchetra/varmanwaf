@@ -1,3 +1,4 @@
 {"name":"Ada Lovelace","email":"ada@example.com","roles":["admin","user"]}
 {"items":[{"sku":"A-100","qty":3}],"total":42.5}
 {"title":"Q3 report","body":"Revenue grew 12% quarter over quarter."}
+{"price":{"$gt":10},"stock":{"$ne":0}}

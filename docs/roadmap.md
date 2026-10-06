@@ -192,9 +192,15 @@ benign-corpus blocks; benchmarked cost documented.
       (gopher/dict/file/tftp/smb/jar/netdoc), URLs targeting loopback/private
       hosts (127/10/172.16-31/192.168/169.254), decimal/hex-obfuscated IPv4,
       and a weak Log tier for prose mentions. Corpus-covered.
+- [x] NoSQL injection structural detector (`semantic::nosql`) — `$where`
+      with JavaScript (`this.`/`return`/`sleep(`) and server-side JS operators
+      (`$func`/`$accumulator`) block; bracket operator injection in parameter
+      names (`user[$ne]`) and driver syntax (`db.users.find(`) monitor;
+      legitimate operator payloads (`{"price":{"$gt":10}}`) stay at Log.
+      Corpus-covered (attacks + a benign Mongo-style API payload).
 - [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] XXE, SSTI, NoSQL, LDAP/XPath, deserialization, prototype
-      pollution, GraphQL abuse.
+- [ ] XXE, SSTI, LDAP/XPath, deserialization, prototype pollution,
+      GraphQL abuse.
 - [ ] Per-detector fuzz targets and performance budgets.
 
 Exit: per-detector acceptance + performance budget; shadow-mode comparison

