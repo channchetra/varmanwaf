@@ -10,6 +10,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
+# Immutable runtime snapshots behind an atomic swap (mandate §13).
+arc-swap = { workspace = true }
 # The workspace declares regex with default-features = false; the detection
 # engine needs the std backend plus Unicode-aware case folding for `(?i)`.
 regex = { workspace = true, features = ["std", "unicode-case", "unicode-perl"] }

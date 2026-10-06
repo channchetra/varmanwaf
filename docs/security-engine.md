@@ -59,6 +59,13 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   on the percent-decoded bytes, and an entity-decoded path would route
   differently from the wire. Canonical output is idempotent under
   re-canonicalization (tested).
+- **`pipeline::snapshot`** (Phase 2) — immutable `SecuritySnapshot`
+  (revision + per-domain `SiteRuntime` holding the compiled pipeline) behind
+  an `arc_swap::ArcSwap` in `SecurityRuntime`. `replace()` is atomic and
+  returns the previous snapshot; requests keep the snapshot they started
+  with, so no request ever sees a half-applied configuration (mandate §13).
+  The desired/active/last-good version handshake with the agent builds on
+  this.
 - **`pipeline::fast::ProtocolDetector`** (Phase 4) — framing and header
   sanity: conflicting duplicate `Content-Length`, `Content-Length` +
   `Transfer-Encoding` together, unsupported transfer codings (RFC 9112

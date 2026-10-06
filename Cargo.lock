@@ -8634,6 +8634,7 @@ dependencies = [
  "ahash",
  "aho-corasick",
  "anyhow",
+ "arc-swap",
  "base64 0.23.1",
  "ipnet",
  "once_cell",

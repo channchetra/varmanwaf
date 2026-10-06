@@ -108,7 +108,11 @@ a working VarmanWAF with unchanged behaviour.
       one finding each) while response behaviour stayed with the legacy
       engine. The 307 responses on literal `..` paths came from the test
       origin (Go `ServeMux` path cleaning), not from VarmanWAF.
-- [ ] Immutable per-site `SecuritySnapshot` behind ArcSwap; config version ack.
+- [x] Immutable per-site `SecuritySnapshot` behind ArcSwap
+      (`pipeline::snapshot`): atomic replace, in-flight pinning, revision
+      tracking. Wiring per-site compiled pipelines from the agent rule cache
+      is the next step, together with the desired/active/last-good version
+      handshake.
 - [ ] Benchmarks: pipeline overhead vs legacy on the request corpus.
 
 Exit: both engines run side by side; shadow results measurable; no behaviour
