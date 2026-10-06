@@ -246,36 +246,31 @@ API discovery, enterprise clustering (mandate §35).
 
 ## Dashboard "Coming soon" backlog (implement these next)
 
-The dashboard labels these as "Coming soon" / pending; each needs backend
-enforcement work, not just UI:
+Investigation results (2026-10-06):
+- `asn` / `country` rate-limit characteristics are **already implemented and
+  enforced** by the edge (`RateChar::Asn` / `RateChar::Country` in
+  `pingap-plugin/src/waf.rs`, geo resolution included) — they are not in the
+  pending list.
+- `ja3` **is** legitimately pending: Pingora 0.9's `SslDigest`
+  (`pingora-core/src/protocols/tls/digest.rs`) exposes only
+  cipher/version/peer-certificate data — **no JA3**. Keying on JA3 therefore
+  requires capturing the TLS ClientHello (custom accept callback / rustls
+  extension) and plumbing the fingerprint into the plugin context; it is a
+  deliberate TLS-layer feature, not a lookup.
+- The three bot-protection flags (`js_detection`, `tls_fingerprint`,
+  `behavioral_analysis`) exist in the database model and REST API but **do not
+  reach the edge yet**: `BotProtectionConfig` in
+  `varman-protocol/proto/control_plane.proto` carries only
+  `enabled`/`action`/`known_bots_whitelist`, and the agent cache mirrors the
+  proto. Full implementation order per flag:
+  1. proto fields + `varman-control/src/grpc/config.rs` conversion
+  2. `varman-agent/src/cache` conversion + `pingap-plugin` config struct
+  3. detection logic in the plugin's bot check (`pingap-plugin/src/waf.rs`)
+  4. dashboard: remove `comingSoon`/`disabled` on the toggle
+  5. tests + benign/attack corpus updates, live shadow verification
 
-1. **Bot Protection — JS detection** (`web/src/pages/sites/BotPage.tsx`,
-   `js_detection` flag). Model/API fields already exist
-   (`varman-control/src/models/bot_protection.rs`); the plugin's bot check in
-   `pingap-plugin/src/waf.rs` must apply it: browser-like UA + failed
-   browser-integrity signals (missing `Accept`/`Accept-Language`/
-   `sec-fetch-*`) → configured bot action. Tests + benign corpus updates
-   required.
-2. **Bot Protection — TLS fingerprinting** (`tls_fingerprint` flag). Expose
-   the verified JA3 from the connection digest (never a client header) and
-   apply it in the bot check: browser-like UA without a TLS fingerprint over
-   an HTTPS listener → configured action. Needs a plugin test double for the
-   digest.
-3. **Bot Protection — behavioral analysis** (`behavioral_analysis` flag).
-   Add a bounded per-IP behavioral counter (path diversity / burst pattern)
-   reusing the existing rate-limit counter infrastructure; degrade-local,
-   never synchronize per request.
-4. **Rate limiting — pending characteristics**
-   (`RATE_LIMIT_CHARACTERISTICS_PENDING` in `web/src/api/rateLimiting.ts`).
-   The plugin currently invalidates rules that key on characteristics the
-   edge cannot resolve (see the guard around `pingap-plugin/src/waf.rs`'s
-   `CompiledRateRule::build`). Implement key extraction for the pending set
-   (country / ASN via the embedded GeoIP database, JA3 via the connection
-   digest), then remove them from the pending list and add tests.
-
-Each item lands with: plugin implementation, unit tests, dashboard toggle
-enablement (remove `comingSoon` / `disabled`), benign+attack corpus updates
-where relevant, and a live shadow-mode verification.
+Each item lands only when the whole chain above is complete — no
+half-wired toggles that pretend to work.
 
 ## Working agreements
 
