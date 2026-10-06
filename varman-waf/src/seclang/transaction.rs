@@ -393,6 +393,34 @@ impl CompiledSecRule {
         }
         current
     }
+
+    /// `true` when the rule's actions include `capture`.
+    pub(crate) fn has_capture(&self) -> bool {
+        self.line.actions.iter().any(|a| a.trim() == "capture")
+    }
+
+    /// Apply the `capture` action: `TX:0` = whole match, `TX:1..9` = regex
+    /// groups of the matched value. Non-regex operators capture nothing,
+    /// mirroring ModSecurity.
+    pub(crate) fn captures_into(
+        &self,
+        value: &str,
+        txn: &mut SecLangTransaction,
+    ) {
+        let (Some(regex), SecOperator::Rx(_)) =
+            (&self.regex, &self.line.operator)
+        else {
+            return;
+        };
+        let Some(captures) = regex.captures(value) else {
+            return;
+        };
+        txn.tx_set("0", captures.get(0).map(|m| m.as_str()).unwrap_or(""));
+        for index in 1..=9 {
+            let text = captures.get(index).map(|m| m.as_str()).unwrap_or("");
+            txn.tx_set(&index.to_string(), text);
+        }
+    }
 }
 
 /// One rule, or a `chain` group: every member must match for the group to

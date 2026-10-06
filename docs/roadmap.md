@@ -287,8 +287,12 @@ report against the existing engine.
       backward-pointing skips are **observable compile errors** (a backward
       jump would loop). Runner verified by tests to jump over rules and to
       land after the marker.
-- [ ] Control flow continues: `ctl`, `SecDefaultAction`, per-chain variable
-      capture (`TX:0…9`).
+- [x] `capture` + `TX:0…9`: a chained member carrying `capture` writes its
+      regex groups (TX:0 whole match, TX:1..9 groups) into the transaction
+      before the next member resolves variables; non-regex operators capture
+      nothing (ModSecurity behaviour). Tests prove a chain where the second
+      member matches on `TX:2`, and that without `capture` the chain fails.
+- [ ] Control flow continues: `ctl`, `SecDefaultAction`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

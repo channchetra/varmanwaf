@@ -354,7 +354,7 @@ impl SecRuleSet {
         let mut index = 0usize;
         while index < self.groups.len() {
             let group = &self.groups[index];
-            let Some(variables_hit) = group.matches(txn) else {
+            let Some(variables_hit) = evaluate_group(group, txn) else {
                 index += 1;
                 continue;
             };
@@ -382,6 +382,29 @@ impl SecRuleSet {
         }
         hits
     }
+}
+
+/// Match a group, honouring `capture`: when a member carries the `capture`
+/// action its regex groups are written to `TX:0…9` before the next member
+/// resolves its variables.
+fn evaluate_group(
+    group: &SecRuleGroup,
+    txn: &mut SecLangTransaction,
+) -> Option<Vec<ResolvedValue>> {
+    let mut all = Vec::new();
+    for rule in &group.rules {
+        let hits = rule.matches(txn);
+        if hits.is_empty() {
+            return None;
+        }
+        if rule.has_capture() {
+            if let Some(first) = hits.first() {
+                rule.captures_into(&first.value, txn);
+            }
+        }
+        all.extend(hits);
+    }
+    Some(all)
 }
 
 #[cfg(test)]
@@ -631,6 +654,42 @@ mod tests {
         )
         .expect_err("must fail");
         assert!(error.reason.contains("must follow the rule"), "{error}");
+    }
+
+    #[test]
+    fn capture_writes_regex_groups_to_tx() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:credential \"@rx ^(\\w+):(\\w+)$\" \"id:1,chain,capture\"\n\
+             SecRule TX:2 \"@streq secret\" \"id:2,block\"\n\
+             SecRule TX:1 \"@streq user\" \"id:3,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?credential=user:secret"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert_eq!(hits[0].rule_ids, vec![Some(1), Some(2)]);
+        assert_eq!(hits[1].rule_ids, vec![Some(3)]);
+        assert_eq!(txn.tx_get("0"), Some("user:secret"));
+        assert_eq!(txn.tx_get("1"), Some("user"));
+        assert_eq!(txn.tx_get("2"), Some("secret"));
+    }
+
+    #[test]
+    fn without_capture_the_chain_cannot_see_groups() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:credential \"@rx ^(\\w+):(\\w+)$\" \"id:1,chain\"\n\
+             SecRule TX:2 \"@streq secret\" \"id:2,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?credential=user:secret"),
+            );
+        assert!(ruleset.evaluate(&mut txn).is_empty());
+        assert!(txn.tx_get("2").is_none());
     }
 
     #[test]
