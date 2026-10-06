@@ -25,7 +25,7 @@ scorer. Therefore:
 |---|---|---|
 | SecLang parser (`SecRule` lines → AST) | Partial | Variables list, 9 operators, quoted action lists, comments; unsupported directives/operators error observably |
 | SecLang execution (variables, operators) | Partial | `ARGS`, `ARGS_NAMES`, `REQUEST_HEADERS[:name]`, `REQUEST_METHOD`, `REQUEST_URI`, `QUERY_STRING`, `REQUEST_BODY`, `REMOTE_ADDR`, `TX`; `@rx` pre-compiled, `@ipMatch` CIDR; bounded resolution |
-| Transformations (`urlDecode`, `htmlEntityDecode`, …) | Planned | Phase 7 |
+| Transformations (`urlDecode`, `htmlEntityDecode`, …) | Partial | 7 transforms implemented and applied in order; unknown transforms error observably |
 | Control flow (chain, skip, skipAfter, ctl, setvar) | Planned | Phase 7 |
 | OWASP CRS stock ruleset execution | Planned | Phase 7 + CRS regression harness |
 | Anomaly scoring compatible with CRS PL1–4 | Planned | Phase 7 |

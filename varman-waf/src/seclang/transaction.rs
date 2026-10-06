@@ -201,6 +201,81 @@ pub struct CompiledSecRule {
     pub line: SecRuleLine,
     regex: Option<Regex>,
     ips: Vec<ipnet::IpNet>,
+    transforms: Vec<Transform>,
+}
+
+/// ModSecurity transformation applied to a value before the operator runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transform {
+    Lowercase,
+    Trim,
+    CompressWhitespace,
+    RemoveNulls,
+    UrlDecode,
+    HtmlEntityDecode,
+    Base64Decode,
+}
+
+impl Transform {
+    fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "lowercase" => Some(Self::Lowercase),
+            "trim" => Some(Self::Trim),
+            "compresswhitespace" => Some(Self::CompressWhitespace),
+            "removenulls" => Some(Self::RemoveNulls),
+            // `urlDecodeUni` decodes one percent layer here; the canonical
+            // request already applied the shared bounded decoding, and a
+            // second layer is intentionally left to the rule author.
+            "urldecode" | "urldecodeuni" => Some(Self::UrlDecode),
+            "htmlentitydecode" => Some(Self::HtmlEntityDecode),
+            "base64decode" => Some(Self::Base64Decode),
+            _ => None,
+        }
+    }
+
+    fn apply(self, value: &str) -> String {
+        match self {
+            Self::Lowercase => value.to_lowercase(),
+            Self::Trim => value.trim().to_string(),
+            Self::CompressWhitespace => {
+                value.split_whitespace().collect::<Vec<_>>().join(" ")
+            },
+            Self::RemoveNulls => value.replace('\0', ""),
+            Self::UrlDecode => crate::normalize::url::multi_decode(value, 1),
+            Self::HtmlEntityDecode => {
+                crate::normalize::html::decode_entities(value)
+            },
+            Self::Base64Decode => {
+                use base64::Engine as _;
+                base64::engine::general_purpose::STANDARD
+                    .decode(value.trim())
+                    .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+                    // ModSecurity leaves a value unchanged when base64
+                    // decoding fails; mirror that instead of erroring.
+                    .unwrap_or_else(|_| value.to_string())
+            },
+        }
+    }
+}
+
+/// Collect `t:` actions in order; an unknown transformation is an observable
+/// error (mandate §37: unsupported SecLang must never be silently ignored).
+fn parse_transforms(
+    actions: &[String],
+) -> Result<Vec<Transform>, SecLangError> {
+    let mut transforms = Vec::new();
+    for action in actions {
+        let Some(name) = action.trim().strip_prefix("t:") else {
+            continue;
+        };
+        let Some(transform) = Transform::parse(name) else {
+            return Err(SecLangError {
+                reason: format!("unsupported transformation {name:?}"),
+            });
+        };
+        transforms.push(transform);
+    }
+    Ok(transforms)
 }
 
 impl CompiledSecRule {
@@ -228,7 +303,13 @@ impl CompiledSecRule {
             },
             _ => {},
         }
-        Ok(Self { line, regex, ips })
+        let transforms = parse_transforms(&line.actions)?;
+        Ok(Self {
+            line,
+            regex,
+            ips,
+            transforms,
+        })
     }
 
     pub fn rule_id(&self) -> Option<u64> {
@@ -256,6 +337,8 @@ impl CompiledSecRule {
     }
 
     fn operator_matches(&self, value: &str) -> bool {
+        let transformed = self.apply_transforms(value);
+        let value = transformed.as_str();
         match &self.line.operator {
             SecOperator::Rx(_) => self
                 .regex
@@ -275,6 +358,14 @@ impl CompiledSecRule {
                 .ok()
                 .is_some_and(|ip| self.ips.iter().any(|net| net.contains(&ip))),
         }
+    }
+
+    fn apply_transforms(&self, value: &str) -> String {
+        let mut current = value.to_string();
+        for transform in &self.transforms {
+            current = transform.apply(&current);
+        }
+        current
     }
 }
 
@@ -426,6 +517,62 @@ mod tests {
         let txn = SecLangTransaction::from_request(&request());
         assert!(txn.resolve("FILES").is_empty());
         assert!(txn.resolve("TX_WITHOUT_SELECTOR").is_empty());
+    }
+
+    #[test]
+    fn transforms_apply_in_order() {
+        // The canonical value arrives already decoded ("A  B"); lowercase
+        // then compressWhitespace turn it into "a b".
+        let matcher = rule(
+            "SecRule ARGS:q \"@streq a b\" \"id:1,t:urlDecode,t:lowercase,t:compressWhitespace\"",
+        );
+        let request = Canonicalizer::default().canonicalize(RequestParts::new(
+            "GET",
+            "example.com",
+            "/?q=A%20%20B",
+        ));
+        let txn = SecLangTransaction::from_request(&request);
+        assert!(!matcher.matches(&txn).is_empty());
+    }
+
+    #[test]
+    fn entity_and_null_transforms() {
+        let entity = rule(
+            "SecRule ARGS:q \"@contains <script>\" \"id:2,t:htmlEntityDecode\"",
+        );
+        let request = Canonicalizer::default().canonicalize(RequestParts::new(
+            "GET",
+            "example.com",
+            "/?q=%26lt%3Bscript%26gt%3B",
+        ));
+        let txn = SecLangTransaction::from_request(&request);
+        assert!(!entity.matches(&txn).is_empty());
+
+        let nulls = rule("SecRule ARGS:q \"@streq ab\" \"id:3,t:removeNulls\"");
+        let request = Canonicalizer::default().canonicalize(RequestParts::new(
+            "GET",
+            "example.com",
+            "/?q=a%00b",
+        ));
+        let txn = SecLangTransaction::from_request(&request);
+        assert!(!nulls.matches(&txn).is_empty());
+    }
+
+    #[test]
+    fn unknown_transformations_error_observably() {
+        let parsed = match parse_line(
+            "SecRule ARGS \"@rx x\" \"id:1,t:noSuchTransform\"",
+        )
+        .expect("parse")
+        {
+            SecLangLine::Rule(parsed) => parsed,
+            SecLangLine::Ignored => panic!("expected rule"),
+        };
+        let error = CompiledSecRule::compile(parsed).expect_err("must fail");
+        assert!(
+            error.reason.contains("unsupported transformation"),
+            "{error}"
+        );
     }
 
     #[test]

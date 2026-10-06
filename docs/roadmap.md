@@ -257,9 +257,14 @@ report against the existing engine.
       regex, `@ipMatch` CIDR) and evaluated with bounded resolution
       (≤256 values, ≤8 KiB per value); `@detectSQLi`/`@detectXSS` reuse the
       existing detectors.
-- [ ] Operators/transformations execution continuation: `t:` transforms,
-      `chain`, `skip`, `skipAfter`, `setvar`, `ctl`, `SecDefaultAction`,
-      `SecMarker`, `SecRuleRemoveById`.
+- [x] Transformation execution (`t:` actions, applied in order before the
+      operator): `lowercase`, `trim`, `compressWhitespace`, `removeNulls`,
+      `urlDecode`/`urlDecodeUni` (one bounded layer), `htmlEntityDecode`,
+      `base64Decode` (failed decoding leaves the value unchanged, mirroring
+      ModSecurity). **Unknown transformations are observable compile errors.**
+- [ ] Operators/transformations execution continuation: `chain`, `skip`,
+      `skipAfter`, `setvar`, `ctl`, `SecDefaultAction`, `SecMarker`,
+      `SecRuleRemoveById`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
