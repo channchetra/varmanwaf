@@ -5,8 +5,10 @@
 //! keywords, whitespace variants, stacked statements, quote-context breaks
 //! and time-based shapes. They are budgeted and must degrade, never error.
 
+pub mod command;
 pub mod sql;
 pub mod xss;
 
+pub use command::CommandInjectionDetector;
 pub use sql::SqlStructuralDetector;
 pub use xss::HtmlXssDetector;

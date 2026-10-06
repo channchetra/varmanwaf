@@ -185,8 +185,10 @@ benign-corpus blocks; benchmarked cost documented.
       event-handler calls, `javascript:`/`vbscript:` calls, tag+call
       combinations; documentation stays Log-tier. Entity-encoded payloads are
       covered by the attack corpus.
+- [x] Shell/command structural detector (`semantic::command`) — literal
+      shapes, sub-shells, metachar-before-command, `${IFS}` evasion; strong vs
+      weak command tiers keep markdown tables and query parameters clean.
 - [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] Shell/command structural detector.
 - [ ] SSRF, XXE, SSTI, NoSQL, LDAP/XPath, deserialization, prototype
       pollution, GraphQL abuse.
 - [ ] Per-detector fuzz targets and performance budgets.

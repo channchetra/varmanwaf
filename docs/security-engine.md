@@ -15,7 +15,7 @@
 | Shadow wiring (`pingap-plugin/src/waf_shadow.rs`) | Landed: opt-in with `VARMAN_WAF_SHADOW=1`; compares pipeline vs legacy per request, records counters, never changes enforcement | Observational only |
 | Lane 1 fast detectors | Started: protocol checks + Aho-Corasick signature scanner (starter table, tiered) + raw-path traversal evidence; corpora in `varman-waf/tests/corpus` | No (shadow only) |
 | Streaming body engine | Pending (Phase 5) | No |
-| Lane 2 semantic detectors | Started: SQL structural (obfuscation, stacked, time-based, tautologies) + HTML/XSS structural (entity decoding, handler/URI calls); covered by the corpora | No (shadow only) |
+| Lane 2 semantic detectors | SQL structural + HTML/XSS structural + shell/command structural; covered by the corpora | No (shadow only) |
 | SecLang / OWASP CRS (Lane 3) | Pending (Phase 7); tracked in `docs/compatibility.md` | No |
 
 The pipeline is deliberately **not wired into the proxy**: `pingap-plugin/src/waf.rs`
@@ -66,6 +66,13 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   with, so no request ever sees a half-applied configuration (mandate §13).
   The desired/active/last-good version handshake with the agent builds on
   this.
+- **`pipeline::semantic::CommandInjectionDetector`** (Phase 6) — shell
+  structure: literal attack shapes (`/bin/sh`, `nc -e`, `${IFS}`, `cmd.exe`),
+  sub-shell substitution containing a command (`$(id)`, backticks),
+  metacharacter-before-command (`;cat`, `|whoami`, `&& wget`), plus a weak
+  Log-tier context signal. Ambiguous words (`id`, `ps`, `rm`, …) only count
+  inside sub-shells or the weak tier, so markdown tables (`| id |`) and query
+  parameters (`&_fields=id`) stay clean — proven by the benign corpus.
 - **`pipeline::semantic::HtmlXssDetector`** (Phase 6) — applies HTML
   entity decoding (the inspection transformation the canonical model
   deliberately excludes) and reasons structurally: entity-obfuscated

