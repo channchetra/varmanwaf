@@ -273,8 +273,12 @@ report against the existing engine.
       `+n`, `-n`) so later rules see updated `TX`. **Strict action
       validation**: any action this engine does not implement is a compile
       error, never a silent no-op (mandate §37); non-TX `setvar` targets error.
+- [x] `SecRuleRemoveById <ids…>` inline tuning: removed before compilation;
+      unknown ids are a documented no-op (CRS removes rules that may not exist
+      at the current paranoia level); a chain member removal degrades the
+      remaining head to a singleton; missing/non-numeric ids error observably.
 - [ ] Control flow continues: `skip`, `skipAfter`, `ctl`, `SecDefaultAction`,
-      `SecMarker`, `SecRuleRemoveById`, per-chain variable capture
+      `SecMarker`, `SecRuleUpdateTargetById`, per-chain variable capture
       (`TX:0…9`).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).

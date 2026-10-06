@@ -50,6 +50,15 @@ const ALLOWED_ACTIONS: &[&str] = &[
     "auditlog",
 ];
 
+/// `true` when the line is a `SecRuleRemoveById` directive (the exact word,
+/// or followed by whitespace — never a longer identifier).
+fn parsed_removal_directive(trimmed: &str) -> bool {
+    trimmed == "SecRuleRemoveById"
+        || trimmed
+            .strip_prefix("SecRuleRemoveById")
+            .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+}
+
 fn validate_actions(group: &SecRuleGroup) -> Result<(), SecLangError> {
     for rule in &group.rules {
         for action in &rule.line.actions {
@@ -135,15 +144,48 @@ pub struct SecRuleSet {
 
 impl SecRuleSet {
     /// Parse and compile a SecLang source (comments and blank lines skipped).
+    ///
+    /// `SecRuleRemoveById <ids…>` lines remove the named rules from the set
+    /// before compilation (the mechanism OWASP CRS uses to tune itself).
     pub fn from_source(source: &str) -> Result<Self, SecLangError> {
+        let mut removals: Vec<u64> = Vec::new();
         let mut rules = Vec::new();
         for line in source.lines() {
+            let trimmed = line.trim();
+            if parsed_removal_directive(trimmed) {
+                let rest = trimmed.trim_start_matches("SecRuleRemoveById");
+                let ids: Vec<u64> = rest
+                    .split(|c: char| c == ',' || c.is_whitespace())
+                    .filter(|token| !token.is_empty())
+                    .map(|token| {
+                        token.parse::<u64>().map_err(|_| SecLangError {
+                            reason: format!("SecRuleRemoveById id {token:?} is not a number"),
+                        })
+                    })
+                    .collect::<Result<_, _>>()?;
+                if ids.is_empty() {
+                    return Err(SecLangError {
+                        reason: "SecRuleRemoveById without rule ids"
+                            .to_string(),
+                    });
+                }
+                removals.extend(ids);
+                continue;
+            }
             match parse_line(line)? {
                 SecLangLine::Ignored => {},
                 SecLangLine::Rule(rule) => rules.push(rule),
             }
         }
-        let groups = group_rules(rules)?;
+        let mut groups = group_rules(rules)?;
+        if !removals.is_empty() {
+            for group in &mut groups {
+                group.rules.retain(|rule| {
+                    !rule.rule_id().is_some_and(|id| removals.contains(&id))
+                });
+            }
+            groups.retain(|group| !group.rules.is_empty());
+        }
         let mut setvars = Vec::with_capacity(groups.len());
         for group in &groups {
             validate_actions(group)?;
@@ -265,6 +307,61 @@ mod tests {
             );
         assert!(ruleset.evaluate(&mut partial).is_empty());
         assert!(partial.tx_get("n").is_none());
+    }
+
+    #[test]
+    fn remove_by_id_drops_matching_rules() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1001,block\"\n\
+             SecRule ARGS:b \"@streq 2\" \"id:1002,block\"\n\
+             SecRuleRemoveById 1002\n",
+        )
+        .expect("compile");
+        assert_eq!(ruleset.group_count(), 1);
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1&b=2"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].rule_ids, vec![Some(1001)]);
+
+        // Unknown ids are a no-op, not an error: CRS tuning removes rules
+        // that may not exist at the current paranoia level.
+        let noop = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1001\"\nSecRuleRemoveById 9999\n",
+        )
+        .expect("compile");
+        assert_eq!(noop.group_count(), 1);
+    }
+
+    #[test]
+    fn remove_by_id_validates_its_arguments() {
+        let error = SecRuleSet::from_source("SecRuleRemoveById\n")
+            .expect_err("must fail");
+        assert!(error.reason.contains("without rule ids"), "{error}");
+        let error = SecRuleSet::from_source("SecRuleRemoveById abc\n")
+            .expect_err("must fail");
+        assert!(error.reason.contains("not a number"), "{error}");
+    }
+
+    #[test]
+    fn remove_by_id_in_a_chain_drops_the_member() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,chain\"\n\
+             SecRule ARGS:b \"@streq 2\" \"id:2\"\n\
+             SecRuleRemoveById 2\n",
+        )
+        .expect("compile");
+        // The remaining head rule is a singleton now.
+        assert_eq!(ruleset.group_count(), 1);
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].rule_ids, vec![Some(1)]);
     }
 
     #[test]
