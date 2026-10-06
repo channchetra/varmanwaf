@@ -189,8 +189,8 @@ export function BotPage() {
                 <MethodToggle
                   icon={<UserFocus weight="duotone" className="h-4 w-4" />}
                   checked={config.behavioral_analysis}
-                  disabled
-                  comingSoon
+                  disabled={!canWrite || !config.enabled}
+                  onChange={(behavioral_analysis) => patch({ behavioral_analysis })}
                   label={t('pages.bot.behavioralAnalysis')}
                   description={t('pages.bot.behavioralAnalysisHint')}
                 />

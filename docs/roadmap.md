@@ -272,15 +272,15 @@ Investigation results (2026-10-06):
 Each item lands only when the whole chain above is complete — no
 half-wired toggles that pretend to work.
 
-Status (2026-10-06): **`js_detection` and `tls_fingerprint` are implemented
-end-to-end** — proto fields (`js_detection = 4`, `tls_fingerprint = 5`),
-control-plane conversion, agent cache, plugin enforcement
-(`ClientSignals { browser_hints, tls_verified }`: browser-like UA without
-`Accept` + `Accept-Language` or without a TLS session — read from
-`session.digest().ssl_digest`, never a client header — receives the
-configured action; whitelisted verified bots pass), dashboard toggles
-enabled, plugin tests added. `behavioral_analysis` is next; `ja3` waits for
-TLS ClientHello capture.
+Status (2026-10-06): **all three bot toggles are implemented end-to-end** —
+`js_detection` (proto 4), `tls_fingerprint` (proto 5, TLS session read from
+`session.digest().ssl_digest`, never a client header) and
+`behavioral_analysis` (proto 6, bounded edge-local per-IP burst tracker:
+60 s window, 120-request threshold, 65 536-entry cap with expiry sweep).
+`ClientSignals { browser_hints, tls_verified, burst }` drives enforcement;
+whitelisted verified bots pass first; dashboard toggles enabled; plugin
+tests cover every signal. Only `ja3` remains, waiting for TLS ClientHello
+capture (Pingora exposes no JA3).
 
 ## Working agreements
 

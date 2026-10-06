@@ -457,6 +457,9 @@ message BotProtectionConfig {
   // When set, browser-like user agents must arrive over a TLS session; a
   // browser UA on a plaintext connection receives the configured action.
   bool tls_fingerprint = 5;
+  // When set, a per-IP request burst above the edge-local threshold receives
+  // the configured action (browser-spoofing floods).
+  bool behavioral_analysis = 6;
 }
 
 message RewriteRule {

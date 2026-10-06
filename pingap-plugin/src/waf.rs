@@ -633,6 +633,8 @@ struct BotPolicy {
     js_detection: bool,
     /// Browser-like UAs must arrive over a TLS session.
     tls_fingerprint: bool,
+    /// Per-IP request bursts receive the configured action.
+    behavioral_analysis: bool,
 }
 
 /// Outcome of classifying one request's user agent.
@@ -652,6 +654,49 @@ struct ClientSignals {
     browser_hints: bool,
     /// The connection presented a TLS session.
     tls_verified: bool,
+    /// The client exceeded the edge-local request burst threshold.
+    burst: bool,
+}
+
+/// Edge-local behavior tracker: per-IP request bursts inside a sliding
+/// window. Bounded — entries are swept once the map grows past a cap.
+static BOT_BEHAVIOR: LazyLock<DashMap<String, (Instant, u32)>> =
+    LazyLock::new(DashMap::new);
+
+/// Burst window and threshold for behavioral analysis.
+const BURST_WINDOW: Duration = Duration::from_secs(60);
+const BURST_THRESHOLD: u32 = 120;
+const BEHAVIOR_CAP: usize = 65_536;
+
+/// Records one request for `ip`; `true` when the rate exceeds the threshold
+/// within the window.
+fn request_burst(ip: &str) -> bool {
+    request_burst_with(
+        &BOT_BEHAVIOR,
+        ip,
+        Instant::now(),
+        BURST_WINDOW,
+        BURST_THRESHOLD,
+    )
+}
+
+fn request_burst_with(
+    map: &DashMap<String, (Instant, u32)>,
+    ip: &str,
+    now: Instant,
+    window: Duration,
+    threshold: u32,
+) -> bool {
+    if map.len() > BEHAVIOR_CAP {
+        map.retain(|_, (start, _)| now.duration_since(*start) < window * 2);
+    }
+    let mut entry = map.entry(ip.to_string()).or_insert((now, 0));
+    if now.duration_since(entry.0) >= window {
+        *entry = (now, 1);
+        return false;
+    }
+    entry.1 = entry.1.saturating_add(1);
+    entry.1 > threshold
 }
 
 impl BotPolicy {
@@ -673,7 +718,13 @@ impl BotPolicy {
             action,
             js_detection: cfg.js_detection,
             tls_fingerprint: cfg.tls_fingerprint,
+            behavioral_analysis: cfg.behavioral_analysis,
         }
+    }
+
+    /// `true` when this policy needs the edge-local burst tracker.
+    fn uses_behavioral(&self) -> bool {
+        self.behavioral_analysis
     }
 
     /// Classifies one request, assuming real browser request headers were
@@ -704,6 +755,7 @@ impl BotPolicy {
             ClientSignals {
                 browser_hints,
                 tls_verified: true,
+                burst: false,
             },
         )
     }
@@ -743,6 +795,21 @@ impl BotPolicy {
                     rule_name: "Bot protection".to_string(),
                     detail: format!(
                         "browser-like user agent '{user_agent}' without a TLS session (TLS fingerprinting)"
+                    ),
+                    challenge: self.action == BotAction::Challenge,
+                    basic_auth: false,
+                };
+                return match self.action {
+                    BotAction::Log => BotDecision::LogOnly(denial),
+                    _ => BotDecision::Deny(denial),
+                };
+            }
+            if self.behavioral_analysis && signals.burst {
+                let denial = Denial {
+                    rule_id: "bot_protection".to_string(),
+                    rule_name: "Bot protection".to_string(),
+                    detail: format!(
+                        "browser-like user agent '{user_agent}' exceeded the request burst threshold (behavioral analysis)"
                     ),
                     challenge: self.action == BotAction::Challenge,
                     basic_auth: false,
@@ -2491,6 +2558,9 @@ impl Plugin for WafPlugin {
         // ── Bot protection: UA classification runs after IP/geo and before
         // the engine, applying whether or not the WAF engine is enabled ──
         if let Some(bot) = context.as_ref().and_then(|ctx| ctx.bot.as_ref()) {
+            let burst = bot.uses_behavioral()
+                && !request_data.client_ip.is_empty()
+                && request_burst(&request_data.client_ip);
             match bot.evaluate_with_signals(
                 &user_agent,
                 ClientSignals {
@@ -2498,6 +2568,7 @@ impl Plugin for WafPlugin {
                     tls_verified: session
                         .digest()
                         .is_some_and(|d| d.ssl_digest.is_some()),
+                    burst,
                 },
             ) {
                 BotDecision::Pass => {},
@@ -4366,6 +4437,7 @@ advanced_mode = true
                             known_bots_whitelist: vec!["Googlebot".to_string()],
                             js_detection: false,
                             tls_fingerprint: false,
+                            behavioral_analysis: false,
                         }),
                         ..Default::default()
                     }),
@@ -4385,6 +4457,7 @@ advanced_mode = true
             known_bots_whitelist: vec!["Googlebot".to_string()],
             js_detection: true,
             tls_fingerprint: false,
+            behavioral_analysis: false,
         });
         let browser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
@@ -4416,6 +4489,7 @@ advanced_mode = true
             known_bots_whitelist: vec!["Googlebot".to_string()],
             js_detection: false,
             tls_fingerprint: true,
+            behavioral_analysis: false,
         });
         let browser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
@@ -4427,6 +4501,7 @@ advanced_mode = true
                 ClientSignals {
                     browser_hints: false,
                     tls_verified: true,
+                    burst: false,
                 },
             ),
             BotDecision::Pass
@@ -4438,6 +4513,7 @@ advanced_mode = true
                 ClientSignals {
                     browser_hints: true,
                     tls_verified: false,
+                    burst: false,
                 },
             ),
             BotDecision::Deny(_)
@@ -4449,9 +4525,89 @@ advanced_mode = true
                 ClientSignals {
                     browser_hints: false,
                     tls_verified: false,
+                    burst: false,
                 },
             ),
             BotDecision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn bot_behavioral_analysis_flags_bursts() {
+        let policy = BotPolicy::build(&CacheBotProtection {
+            enabled: true,
+            action: CacheWafAction::Block,
+            known_bots_whitelist: vec![],
+            js_detection: false,
+            tls_fingerprint: false,
+            behavioral_analysis: true,
+        });
+        let browser = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+        assert!(matches!(
+            policy.evaluate_with_signals(
+                browser,
+                ClientSignals {
+                    browser_hints: true,
+                    tls_verified: true,
+                    burst: false,
+                },
+            ),
+            BotDecision::Pass
+        ));
+        assert!(matches!(
+            policy.evaluate_with_signals(
+                browser,
+                ClientSignals {
+                    browser_hints: true,
+                    tls_verified: true,
+                    burst: true,
+                },
+            ),
+            BotDecision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn behavioral_tracker_flags_bursts_within_the_window() {
+        let map: dashmap::DashMap<String, (std::time::Instant, u32)> =
+            dashmap::DashMap::new();
+        let start = std::time::Instant::now();
+        let window = std::time::Duration::from_secs(60);
+        assert!(!super::request_burst_with(
+            &map,
+            "203.0.113.9",
+            start,
+            window,
+            2
+        ));
+        assert!(!super::request_burst_with(
+            &map,
+            "203.0.113.9",
+            start,
+            window,
+            2
+        ));
+        assert!(super::request_burst_with(
+            &map,
+            "203.0.113.9",
+            start,
+            window,
+            2
+        ));
+        assert!(!super::request_burst_with(
+            &map,
+            "203.0.113.10",
+            start,
+            window,
+            2
+        ));
+        let later = start + window;
+        assert!(!super::request_burst_with(
+            &map,
+            "203.0.113.9",
+            later,
+            window,
+            2
         ));
     }
 
@@ -4463,6 +4619,7 @@ advanced_mode = true
             known_bots_whitelist: vec!["Googlebot".to_string()],
             js_detection: false,
             tls_fingerprint: false,
+            behavioral_analysis: false,
         });
 
         assert!(matches!(

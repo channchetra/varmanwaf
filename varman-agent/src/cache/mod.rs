@@ -365,6 +365,8 @@ pub struct BotProtectionConfig {
     pub js_detection: bool,
     /// Browser-like UAs must arrive over a TLS session.
     pub tls_fingerprint: bool,
+    /// Per-IP request bursts receive the configured action.
+    pub behavioral_analysis: bool,
 }
 
 // ─── Basic Auth ─────────────────────────────────────────────
@@ -1348,6 +1350,7 @@ impl RuleCache {
             known_bots_whitelist: b.known_bots_whitelist.clone(),
             js_detection: b.js_detection,
             tls_fingerprint: b.tls_fingerprint,
+            behavioral_analysis: b.behavioral_analysis,
         }
     }
 
