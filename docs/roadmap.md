@@ -203,8 +203,12 @@ benign-corpus blocks; benchmarked cost documented.
       access (`__class__`, `Runtime`, `system(`) and evaluation probes
       (`7*7`) block; any other expression monitors; `${jndi:…}` only
       monitors (Log4Shell's own detector owns that family). Corpus-covered.
+- [x] XXE structural detector (`semantic::xxe`) — DOCTYPE/entity with
+      external `SYSTEM` (or `PUBLIC` alongside an entity), entity-expansion
+      bombs (3+ declarations) block; a lone `<!ENTITY` stays Log; plain HTML5
+      and HTML4 `PUBLIC` doctypes stay clean. Corpus-covered.
 - [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] XXE, LDAP/XPath, deserialization, prototype pollution, GraphQL abuse.
+- [ ] LDAP/XPath, deserialization, prototype pollution, GraphQL abuse.
 - [ ] Per-detector fuzz targets and performance budgets.
 
 Exit: per-detector acceptance + performance budget; shadow-mode comparison

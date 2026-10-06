@@ -11,6 +11,7 @@ pub mod sql;
 pub mod ssrf;
 pub mod ssti;
 pub mod xss;
+pub mod xxe;
 
 pub use command::CommandInjectionDetector;
 pub use nosql::NosqlInjectionDetector;
@@ -18,3 +19,4 @@ pub use sql::SqlStructuralDetector;
 pub use ssrf::SsrfStructuralDetector;
 pub use ssti::SstiDetector;
 pub use xss::HtmlXssDetector;
+pub use xxe::XxeDetector;
