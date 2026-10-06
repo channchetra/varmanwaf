@@ -244,6 +244,39 @@ API discovery, enterprise clustering (mandate §35).
 
 ---
 
+## Dashboard "Coming soon" backlog (implement these next)
+
+The dashboard labels these as "Coming soon" / pending; each needs backend
+enforcement work, not just UI:
+
+1. **Bot Protection — JS detection** (`web/src/pages/sites/BotPage.tsx`,
+   `js_detection` flag). Model/API fields already exist
+   (`varman-control/src/models/bot_protection.rs`); the plugin's bot check in
+   `pingap-plugin/src/waf.rs` must apply it: browser-like UA + failed
+   browser-integrity signals (missing `Accept`/`Accept-Language`/
+   `sec-fetch-*`) → configured bot action. Tests + benign corpus updates
+   required.
+2. **Bot Protection — TLS fingerprinting** (`tls_fingerprint` flag). Expose
+   the verified JA3 from the connection digest (never a client header) and
+   apply it in the bot check: browser-like UA without a TLS fingerprint over
+   an HTTPS listener → configured action. Needs a plugin test double for the
+   digest.
+3. **Bot Protection — behavioral analysis** (`behavioral_analysis` flag).
+   Add a bounded per-IP behavioral counter (path diversity / burst pattern)
+   reusing the existing rate-limit counter infrastructure; degrade-local,
+   never synchronize per request.
+4. **Rate limiting — pending characteristics**
+   (`RATE_LIMIT_CHARACTERISTICS_PENDING` in `web/src/api/rateLimiting.ts`).
+   The plugin currently invalidates rules that key on characteristics the
+   edge cannot resolve (see the guard around `pingap-plugin/src/waf.rs`'s
+   `CompiledRateRule::build`). Implement key extraction for the pending set
+   (country / ASN via the embedded GeoIP database, JA3 via the connection
+   digest), then remove them from the pending list and add tests.
+
+Each item lands with: plugin implementation, unit tests, dashboard toggle
+enablement (remove `comingSoon` / `disabled`), benign+attack corpus updates
+where relevant, and a live shadow-mode verification.
+
 ## Working agreements
 
 - Keep the repository buildable at every step (`cargo check` gate in the dev
