@@ -273,6 +273,9 @@ mod sub_filter;
 mod traffic_splitting;
 mod ua_restriction;
 mod waf;
+/// Shadow execution of the Varman pipeline beside the legacy engine (Phase 2
+/// wiring); see the module docs. Enabled with `VARMAN_WAF_SHADOW=1`.
+pub mod waf_shadow;
 
 mod plugin;
 

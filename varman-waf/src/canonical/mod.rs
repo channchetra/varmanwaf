@@ -18,7 +18,10 @@ use std::net::IpAddr;
 
 pub mod canonicalizer;
 
-pub use canonicalizer::{Canonicalizer, RequestParts, DEFAULT_DECODE_LAYERS};
+pub use canonicalizer::{
+    decode_layers, Canonicalizer, RequestParts, DEFAULT_DECODE_LAYERS,
+    STRICT_DECODE_LAYERS,
+};
 
 /// One query-string parameter.
 ///

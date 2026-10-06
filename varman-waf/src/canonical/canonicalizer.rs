@@ -49,6 +49,16 @@ pub const DEFAULT_DECODE_LAYERS: u8 = 2;
 /// Decoding passes for the strict profile.
 pub const STRICT_DECODE_LAYERS: u8 = 3;
 
+/// Apply the shared bounded decode policy to an arbitrary string.
+///
+/// Exposed so fast-lane detectors inspect exactly the decoded view the
+/// canonicalizer used, instead of re-implementing decoding per detector
+/// (mandate §10). Byte-wise with overlong-UTF-8 restoration, same as the
+/// path/query/cookie decoding.
+pub fn decode_layers(input: &str, layers: u8) -> String {
+    multi_decode(input, layers as usize)
+}
+
 /// Raw wire parts of one request, as received by the data plane.
 #[derive(Debug, Clone)]
 pub struct RequestParts {

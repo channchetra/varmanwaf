@@ -2594,6 +2594,12 @@ impl Plugin for WafPlugin {
             EngineChoice::Disabled => unreachable!("handled above"),
         };
 
+        // ── Shadow (Phase 2): run the Varman pipeline beside the legacy
+        // engine and record how the two verdicts compare. The legacy verdict
+        // below stays authoritative; observe() is a no-op unless
+        // VARMAN_WAF_SHADOW=1. ──
+        crate::waf_shadow::observe(&request_data, &verdict);
+
         // Custom rule ids carry no name of their own; the site context maps
         // the one that fired back to its configured name.
         let rule_name_of = |verdict: &WafVerdict| -> String {

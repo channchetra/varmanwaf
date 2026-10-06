@@ -160,7 +160,7 @@ The control plane and the data plane talk over the `ControlPlane` gRPC service (
 
 ### Option A — Docker Compose (recommended)
 
-The bundled [`docker-compose.yml`](./docker-compose.yml) starts VarmanWAF in `all-in-one` mode together with PostgreSQL, pulling the pre-built image from GHCR (`ghcr.io/channchetra/varmanwaf:latest`):
+The bundled [`docker-compose.yml`](./docker-compose.yml) starts VarmanWAF in `all-in-one` mode together with PostgreSQL, pulling the pre-built image from Docker Hub (`sovichetra/varmanwaf:latest`):
 
 ```bash
 git clone https://github.com/channchetra/varmanwaf.git

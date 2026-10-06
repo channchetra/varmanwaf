@@ -160,7 +160,7 @@ graph TB
 
 ### 方式 A —— Docker Compose（推荐）
 
-仓库内置的 [`docker-compose.yml`](./docker-compose.yml) 会以 `all-in-one` 模式连同 PostgreSQL 一起启动 VarmanWAF，默认拉取 GHCR 预构建镜像（`ghcr.io/channchetra/varmanwaf:latest`）：
+仓库内置的 [`docker-compose.yml`](./docker-compose.yml) 会以 `all-in-one` 模式连同 PostgreSQL 一起启动 VarmanWAF，默认拉取 Docker Hub 预构建镜像（`sovichetra/varmanwaf:latest`）：
 
 ```bash
 git clone https://github.com/channchetra/varmanwaf.git

@@ -56,8 +56,8 @@ Task list:
       path defaults (`/etc/varman`, `/var/lib/varman`).
 - [x] Deployment: `Dockerfile`, `docker-compose.yml`, `varman.toml`,
       `varman.service`, `install.sh`, `.github` workflows (canonical location
-      `github.com/channchetra/varmanwaf`, images
-      `ghcr.io/channchetra/varmanwaf`).
+      `github.com/channchetra/varmanwaf`, images published on Docker Hub as
+      `sovichetra/varmanwaf`).
 - [x] Dashboard: titles, i18n (en/zh), favicon.
 - [x] Internal rename commit: `pingwaf-*` → `varman-*` crates
       (`varman-control`, `varman-agent`, `varman-waf`, `varman-protocol`,

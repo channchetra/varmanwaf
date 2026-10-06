@@ -197,7 +197,7 @@ docker compose up -d
 ```
 
 By default Compose pulls the pre-built image
-`ghcr.io/channchetra/varmanwaf:latest`. To build from source instead, uncomment the
+`sovichetra/varmanwaf:latest`. To build from source instead, uncomment the
 `build:` section in [`docker-compose.yml`](../docker-compose.yml) and run
 `docker compose up -d --build` — the multi-stage [`Dockerfile`](../Dockerfile)
 (Node 22 frontend build → Rust 1.98 builder with protoc/cmake/nasm → minimal

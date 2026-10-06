@@ -50,6 +50,7 @@
 pub mod action;
 pub mod category;
 pub mod detector;
+pub mod fast;
 pub mod finding;
 pub mod shadow;
 
