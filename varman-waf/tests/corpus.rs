@@ -17,9 +17,10 @@ use std::path::{Path, PathBuf};
 use varman_waf::canonical::{Canonicalizer, RequestParts};
 use varman_waf::pipeline::fast::{RawPathTraversalDetector, SignatureDetector};
 use varman_waf::pipeline::semantic::{
-    CommandInjectionDetector, DeserializationDetector, HtmlXssDetector,
-    LdapXPathDetector, NosqlInjectionDetector, PrototypePollutionDetector,
-    SqlStructuralDetector, SsrfStructuralDetector, SstiDetector, XxeDetector,
+    CommandInjectionDetector, DeserializationDetector, GraphqlAbuseDetector,
+    HtmlXssDetector, LdapXPathDetector, NosqlInjectionDetector,
+    PrototypePollutionDetector, SqlStructuralDetector, SsrfStructuralDetector,
+    SstiDetector, XxeDetector,
 };
 use varman_waf::pipeline::{
     Action, AttackCategory, PipelineVerdict, SecurityPipeline,
@@ -62,6 +63,7 @@ fn pipeline() -> SecurityPipeline {
         Box::new(DeserializationDetector::new()),
         Box::new(PrototypePollutionDetector::new()),
         Box::new(LdapXPathDetector::new()),
+        Box::new(GraphqlAbuseDetector::new()),
     ])
 }
 

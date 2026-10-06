@@ -221,8 +221,14 @@ benign-corpus blocks; benchmarked cost documented.
       LDAP filter-break shapes (`)(|`, `)(cn=`, `*)(`) block, bare filter
       fragments log; XPath expression shapes (`' or count(`, `descendant-or-self::`,
       `']|`) block, bare `//*` logs. Two new attack corpus files.
+- [x] GraphQL abuse detector (`semantic::graphql`) — introspection probes
+      (`__schema`, `__type(`, `IntrospectionQuery`), nesting depth ≥ 12 and
+      batched documents (≥ 8 operations) monitor; `__typename`/`__type`
+      references log. Nothing blocks by default: introspection and batching
+      are per-API policy decisions. Corpus-covered.
 - [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] GraphQL abuse detector.
+- [ ] Remaining Phase 6 exit work: per-detector fuzz targets + performance
+      budgets; shadow-mode comparison report.
 - [ ] Per-detector fuzz targets and performance budgets.
 
 Exit: per-detector acceptance + performance budget; shadow-mode comparison

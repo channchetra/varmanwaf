@@ -1,0 +1,4 @@
+{"query":"{ __schema { types { name } } }"}
+{ __type(name: "User") { fields { name } } }
+query { a { b { c { d { e { f { g { h { i { j { k { l { m } } } } } } } } } } } } }
+query { a } query { b } query { c } query { d } query { e } query { f } query { g } query { h } query { i }
