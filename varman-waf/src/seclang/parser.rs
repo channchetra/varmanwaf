@@ -26,6 +26,8 @@ pub struct SecRuleLine {
     /// Pipe-separated variable list, e.g. `ARGS:id|REQUEST_HEADERS:Host`.
     pub variables: Vec<String>,
     pub operator: SecOperator,
+    /// `!` operator negation.
+    pub negated: bool,
     /// Raw action list, order preserved.
     pub actions: Vec<String>,
 }
@@ -42,6 +44,19 @@ pub enum SecOperator {
     DetectSqli,
     DetectXss,
     IpMatch(Vec<String>),
+    /// Numeric comparison operators (`@eq`, `@ne`, `@lt`, `@le`, `@gt`,
+    /// `@ge`); the argument is the number to compare against.
+    Eq(i64),
+    Ne(i64),
+    Lt(i64),
+    Le(i64),
+    Gt(i64),
+    Ge(i64),
+    /// `SecAction` / `@unconditionalMatch`: matches unconditionally.
+    AlwaysMatch,
+    /// `@within`: argument list is scanned for the value (substring search,
+    /// mirroring ModSecurity's implementation; empty values match).
+    Within(String),
 }
 
 impl SecOperator {
@@ -57,6 +72,14 @@ impl SecOperator {
             Self::DetectSqli => "@detectSQLi",
             Self::DetectXss => "@detectXSS",
             Self::IpMatch(_) => "@ipMatch",
+            Self::Eq(_) => "@eq",
+            Self::Ne(_) => "@ne",
+            Self::Lt(_) => "@lt",
+            Self::Le(_) => "@le",
+            Self::Gt(_) => "@gt",
+            Self::Ge(_) => "@ge",
+            Self::AlwaysMatch => "@alwaysMatch",
+            Self::Within(_) => "@within",
         }
     }
 }
@@ -184,11 +207,25 @@ fn parse_operator(raw: &str) -> Result<SecOperator, SecLangError> {
                 .filter(|entry| !entry.is_empty())
                 .collect(),
         ),
+        "@within" => SecOperator::Within(argument.to_string()),
+        "@unconditionalMatch" => SecOperator::AlwaysMatch,
+        "@eq" => SecOperator::Eq(parse_number(name, argument)?),
+        "@ne" => SecOperator::Ne(parse_number(name, argument)?),
+        "@lt" => SecOperator::Lt(parse_number(name, argument)?),
+        "@le" => SecOperator::Le(parse_number(name, argument)?),
+        "@gt" => SecOperator::Gt(parse_number(name, argument)?),
+        "@ge" => SecOperator::Ge(parse_number(name, argument)?),
         other => {
             return Err(err(format!("unsupported operator {other}")));
         },
     };
     Ok(operator)
+}
+
+fn parse_number(operator: &str, argument: &str) -> Result<i64, SecLangError> {
+    argument.trim().parse::<i64>().map_err(|_| {
+        err(format!("{operator} argument {argument:?} is not a number"))
+    })
 }
 
 /// Parse one line of a SecLang configuration.
@@ -225,6 +262,15 @@ pub fn parse_line(input: &str) -> Result<SecLangLine, SecLangError> {
         .collect::<Vec<_>>();
 
     let (operator_raw, after_operator) = parse_quoted(rest, quote_at)?;
+    let (negated, operator_raw) = match operator_raw.strip_prefix('!') {
+        Some(stripped) => (true, stripped.to_string()),
+        None => (false, operator_raw),
+    };
+    if operator_raw.contains("%{") {
+        return Err(err(
+            "macro (%{…}) expansion in operator arguments is not supported yet",
+        ));
+    }
     let operator = parse_operator(&operator_raw)?;
 
     let actions_tail = rest[after_operator..].trim_start();
@@ -238,6 +284,7 @@ pub fn parse_line(input: &str) -> Result<SecLangLine, SecLangError> {
     Ok(SecLangLine::Rule(SecRuleLine {
         variables,
         operator,
+        negated,
         actions,
     }))
 }
@@ -337,6 +384,39 @@ mod tests {
         assert!(e.reason.contains("unsupported directive"), "{e}");
         let e = error("SecDefaultAction \"phase:1,pass\"");
         assert!(e.reason.contains("unsupported directive"), "{e}");
+    }
+
+    #[test]
+    fn parses_numeric_comparison_operators() {
+        for (op, expected) in [
+            ("@eq 7", SecOperator::Eq(7)),
+            ("@ne 7", SecOperator::Ne(7)),
+            ("@lt 7", SecOperator::Lt(7)),
+            ("@le 7", SecOperator::Le(7)),
+            ("@gt 7", SecOperator::Gt(7)),
+            ("@ge 7", SecOperator::Ge(7)),
+        ] {
+            let parsed = rule(&format!("SecRule TX:score \"{op}\" \"id:1\""));
+            assert_eq!(parsed.operator, expected, "{op}");
+        }
+        let e = error("SecRule TX:score \"@eq many\" \"id:1\"");
+        assert!(e.reason.contains("not a number"), "{e}");
+    }
+
+    #[test]
+    fn parses_negation_within_and_unconditional_match() {
+        let parsed =
+            rule("SecRule REQUEST_METHOD \"!@within GET HEAD POST\" \"id:1\"");
+        assert!(parsed.negated);
+        assert_eq!(
+            parsed.operator,
+            SecOperator::Within("GET HEAD POST".into())
+        );
+        let unconditional =
+            rule("SecRule ARGS \"@unconditionalMatch\" \"id:2\"");
+        assert_eq!(unconditional.operator, SecOperator::AlwaysMatch);
+        let e = error("SecRule ARGS \"@rx %{tx.foo}\" \"id:3\"");
+        assert!(e.reason.contains("macro"), "{e}");
     }
 
     #[test]

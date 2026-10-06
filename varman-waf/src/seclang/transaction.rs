@@ -294,6 +294,11 @@ fn parse_transforms(
         let Some(name) = action.trim().strip_prefix("t:") else {
             continue;
         };
+        if name.trim().eq_ignore_ascii_case("none") {
+            // `t:none` clears inherited transforms; this engine has none, so
+            // it is a no-op by construction.
+            continue;
+        }
         let Some(transform) = Transform::parse(name) else {
             return Err(SecLangError {
                 reason: format!("unsupported transformation {name:?}"),
@@ -302,6 +307,12 @@ fn parse_transforms(
         transforms.push(transform);
     }
     Ok(transforms)
+}
+
+/// Numeric value of a resolved string, for the numeric comparison operators.
+/// Non-numeric values never match (documented in `docs/compatibility.md`).
+fn number(value: &str) -> Option<i64> {
+    value.trim().parse().ok()
 }
 
 impl CompiledSecRule {
@@ -350,10 +361,17 @@ impl CompiledSecRule {
     /// Returns the matching values (first match per variable stops that
     /// variable, mirroring ModSecurity's per-variable short-circuit).
     pub fn matches(&self, txn: &SecLangTransaction) -> Vec<ResolvedValue> {
+        if matches!(self.line.operator, SecOperator::AlwaysMatch) {
+            // `SecAction`: unconditional, no variables.
+            return vec![ResolvedValue {
+                name: "ACTION".to_string(),
+                value: String::new(),
+            }];
+        }
         let mut hits = Vec::new();
         for reference in &self.line.variables {
             for value in txn.resolve(reference) {
-                if self.operator_matches(&value.value) {
+                if self.operator_matches(&value.value) != self.line.negated {
                     hits.push(value);
                     break;
                 }
@@ -383,6 +401,28 @@ impl CompiledSecRule {
                 .parse::<std::net::IpAddr>()
                 .ok()
                 .is_some_and(|ip| self.ips.iter().any(|net| net.contains(&ip))),
+            SecOperator::Eq(expected) => {
+                number(value).is_some_and(|v| v == *expected)
+            },
+            SecOperator::Ne(expected) => {
+                number(value).is_some_and(|v| v != *expected)
+            },
+            SecOperator::Lt(expected) => {
+                number(value).is_some_and(|v| v < *expected)
+            },
+            SecOperator::Le(expected) => {
+                number(value).is_some_and(|v| v <= *expected)
+            },
+            SecOperator::Gt(expected) => {
+                number(value).is_some_and(|v| v > *expected)
+            },
+            SecOperator::Ge(expected) => {
+                number(value).is_some_and(|v| v >= *expected)
+            },
+            SecOperator::Within(list) => {
+                value.is_empty() || list.contains(value)
+            },
+            SecOperator::AlwaysMatch => true,
         }
     }
 
@@ -604,6 +644,56 @@ mod tests {
                 "{operator}"
             );
         }
+    }
+
+    #[test]
+    fn numeric_operators_compare_and_reject_non_numbers() {
+        // `request()` carries `id=42` and `q=hello`.
+        let txn = SecLangTransaction::from_request(&request());
+        let greater = rule("SecRule ARGS:id \"@gt 40\" \"id:1\"");
+        assert_eq!(greater.matches(&txn).len(), 1);
+        let less = rule("SecRule ARGS:id \"@lt 40\" \"id:1\"");
+        assert!(less.matches(&txn).is_empty());
+        let equal = rule("SecRule ARGS:id \"@eq 42\" \"id:1\"");
+        assert_eq!(equal.matches(&txn).len(), 1);
+        let not_non_numeric = rule("SecRule ARGS:q \"@ne 42\" \"id:1\"");
+        assert!(
+            not_non_numeric.matches(&txn).is_empty(),
+            "non-numeric values never match numeric operators"
+        );
+    }
+
+    #[test]
+    fn within_and_negated_operators_match() {
+        let txn = SecLangTransaction::from_request(&request());
+        let within = rule("SecRule ARGS:q \"@within hello world\" \"id:1\"");
+        assert_eq!(within.matches(&txn).len(), 1);
+        let not_within =
+            rule("SecRule ARGS:q \"!@within goodbye world\" \"id:2\"");
+        assert_eq!(not_within.matches(&txn).len(), 1);
+        let negated_hit =
+            rule("SecRule ARGS:q \"!@within hello world\" \"id:3\"");
+        assert!(negated_hit.matches(&txn).is_empty());
+    }
+
+    #[test]
+    fn t_none_is_a_noop_and_unknown_transforms_error() {
+        let matcher =
+            rule("SecRule ARGS:q \"@streq hello\" \"id:1,t:none,t:lowercase\"");
+        let txn = SecLangTransaction::from_request(&request());
+        assert_eq!(matcher.matches(&txn).len(), 1);
+        let parsed =
+            match parse_line("SecRule ARGS \"@streq x\" \"id:1,t:bogus\"")
+                .expect("parse")
+            {
+                SecLangLine::Rule(flat) => flat,
+                SecLangLine::Ignored => panic!("expected rule"),
+            };
+        let error = CompiledSecRule::compile(parsed).expect_err("must fail");
+        assert!(
+            error.reason.contains("unsupported transformation"),
+            "{error}"
+        );
     }
 
     #[test]

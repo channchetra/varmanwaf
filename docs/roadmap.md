@@ -301,9 +301,16 @@ report against the existing engine.
       hits while keeping the match; `Off` stops evaluation after the
       matching rule; unknown values error observably. With this, **SecLang
       control flow is feature-complete for CRS-style rules.**
-- [ ] Next milestone: **CRS conformance harness** — load the official OWASP
-      CRS rulesets, run their regression corpus, record results honestly in
-      `docs/compatibility.md`.
+- [x] **CRS conformance harness** landed:
+      `varman-waf/tests/crs_conformance.rs` loads every
+      `references/coreruleset/rules/*.conf` and prints per-file results
+      (`cargo test -p varman-waf --test crs_conformance -- --nocapture`).
+      First measurement: **1/27 files load, 0 rules**; blockers are tracked
+      honestly in `docs/compatibility.md`. Every slice from here ratchets the
+      load count up.
+- [ ] CRS blocker slices in progress: `%{tx.*}` macro expansion (13 files) →
+      missing transforms (`utf8toUnicode`, `cmdLine`, `removeWhitespace`,
+      `jsDecode`) → `@pmFromFile` data-file loading → `@validateByteRange`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

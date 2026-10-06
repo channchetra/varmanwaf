@@ -16,6 +16,7 @@
 
 use crate::seclang::parser::{
     parse_line, parse_quoted, split_actions, SecLangError, SecLangLine,
+    SecOperator, SecRuleLine,
 };
 use crate::seclang::transaction::{
     group_rules, ResolvedValue, SecLangTransaction, SecRuleGroup,
@@ -64,6 +65,72 @@ fn parsed_removal_directive(trimmed: &str) -> bool {
             .is_some_and(|rest| rest.starts_with(char::is_whitespace))
 }
 
+/// Join `\`-terminated continuations into logical lines. Comment lines are
+/// never continuations; joined parts keep a single space between them (CRS
+/// continues between tokens, never inside a quoted value).
+fn join_continuations(source: &str) -> Vec<String> {
+    let mut logical = Vec::new();
+    let mut current: Option<String> = None;
+    for raw in source.lines() {
+        let trimmed_end = raw.trim_end();
+        let comment = trimmed_end.trim_start().starts_with('#');
+        let continues = !comment && trimmed_end.ends_with('\\');
+        if let Some(mut joined) = current.take() {
+            joined.push(' ');
+            if continues {
+                joined.push_str(&trimmed_end[..trimmed_end.len() - 1]);
+                current = Some(joined);
+            } else {
+                joined.push_str(trimmed_end);
+                logical.push(joined);
+            }
+            continue;
+        }
+        if continues {
+            current = Some(trimmed_end[..trimmed_end.len() - 1].to_string());
+        } else {
+            logical.push(raw.to_string());
+        }
+    }
+    if let Some(joined) = current {
+        logical.push(joined);
+    }
+    logical
+}
+
+/// Parse a `SecAction "…"` line into an unconditional rule.
+fn parse_sec_action(trimmed: &str) -> Result<SecRuleLine, SecLangError> {
+    let rest = trimmed.trim_start_matches("SecAction").trim();
+    let actions_raw = if rest.starts_with('"') {
+        parse_quoted(rest, 0)?.0
+    } else {
+        rest.to_string()
+    };
+    let actions = split_actions(&actions_raw);
+    if actions.is_empty() {
+        return Err(SecLangError {
+            reason: "SecAction without actions".to_string(),
+        });
+    }
+    Ok(SecRuleLine {
+        variables: Vec::new(),
+        operator: SecOperator::AlwaysMatch,
+        negated: false,
+        actions,
+    })
+}
+
+/// Apply `SecDefaultAction` entries to a rule, per category.
+fn merge_default_actions(rule: &mut SecRuleLine, defaults: &[String]) {
+    for default in defaults {
+        let key = action_key(default);
+        let present = rule.actions.iter().any(|a| action_key(a) == key);
+        if !present {
+            rule.actions.push(default.clone());
+        }
+    }
+}
+
 fn validate_actions(group: &SecRuleGroup) -> Result<(), SecLangError> {
     for rule in &group.rules {
         for action in &rule.line.actions {
@@ -105,6 +172,13 @@ fn parse_setvar(spec: &str) -> Result<SetVar, SecLangError> {
         });
     };
     let value = value.trim();
+    if value.contains("%{") {
+        return Err(SecLangError {
+            reason: format!(
+                "macro (%{{…}}) expansion in setvar values is not supported yet: {value:?}"
+            ),
+        });
+    }
     if let Some(delta) =
         value.strip_prefix('+').or_else(|| value.strip_prefix('-'))
     {
@@ -175,7 +249,7 @@ impl SecRuleSet {
         // `SecDefaultAction` applies to every rule that follows it.
         let mut defaults: Vec<String> = Vec::new();
         let mut rules = Vec::new();
-        for line in source.lines() {
+        for line in join_continuations(source) {
             let trimmed = line.trim();
             if trimmed == "SecDefaultAction"
                 || trimmed.starts_with("SecDefaultAction ")
@@ -265,21 +339,33 @@ impl SecRuleSet {
                 retargets.push((id, variables));
                 continue;
             }
-            match parse_line(line)? {
+            if trimmed == "SecComponentSignature"
+                || trimmed.starts_with("SecComponentSignature ")
+            {
+                // Metadata ModSecurity records verbatim; accepted with an
+                // argument, otherwise it has no runtime effect.
+                let value = trimmed
+                    .trim_start_matches("SecComponentSignature")
+                    .trim()
+                    .trim_matches('"');
+                if value.is_empty() {
+                    return Err(SecLangError {
+                        reason: "SecComponentSignature without a value"
+                            .to_string(),
+                    });
+                }
+                continue;
+            }
+            if trimmed == "SecAction" || trimmed.starts_with("SecAction ") {
+                let mut rule = parse_sec_action(trimmed)?;
+                merge_default_actions(&mut rule, &defaults);
+                rules.push(rule);
+                continue;
+            }
+            match parse_line(&line)? {
                 SecLangLine::Ignored => {},
                 SecLangLine::Rule(mut rule) => {
-                    if !defaults.is_empty() {
-                        for default in &defaults {
-                            let key = action_key(default);
-                            let present = rule
-                                .actions
-                                .iter()
-                                .any(|a| action_key(a) == key);
-                            if !present {
-                                rule.actions.push(default.clone());
-                            }
-                        }
-                    }
+                    merge_default_actions(&mut rule, &defaults);
                     rules.push(rule);
                 },
             }
@@ -837,6 +923,58 @@ mod tests {
         let error = SecRuleSet::from_source("SecDefaultAction\n")
             .expect_err("must fail");
         assert!(error.reason.contains("without actions"), "{error}");
+    }
+
+    #[test]
+    fn continuations_join_logical_lines() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \\\n    \"id:1,phase:2,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].rule_ids, vec![Some(1)]);
+    }
+
+    #[test]
+    fn sec_action_matches_unconditionally() {
+        let ruleset = SecRuleSet::from_source(
+            "SecAction \"phase:1,pass,setvar:tx.score=7\"\n\
+             SecRule TX:score \"@eq 7\" \"id:1,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 2, "SecAction fires too: {hits:?}");
+        assert_eq!(hits[1].rule_ids, vec![Some(1)]);
+
+        let error =
+            SecRuleSet::from_source("SecAction\n").expect_err("must fail");
+        assert!(error.reason.contains("without actions"), "{error}");
+    }
+
+    #[test]
+    fn component_signature_is_metadata() {
+        let ruleset = SecRuleSet::from_source(
+            "SecComponentSignature \"coreruleset-4.31.0-dev\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:1\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        assert_eq!(ruleset.evaluate(&mut txn).len(), 1);
+        let error = SecRuleSet::from_source("SecComponentSignature\n")
+            .expect_err("must fail");
+        assert!(error.reason.contains("without a value"), "{error}");
     }
 
     #[test]
