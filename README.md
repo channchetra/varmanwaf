@@ -129,9 +129,11 @@ cargo fmt --all -- --check
   the Varman pipeline beside the enforcing engine and record how the two
   verdicts compare (agree / pipeline stricter / pipeline weaker). Comparisons
   are logged and counted; enforcement never changes.
-- **Dashboard assets:** `web/dist` is a build artifact embedded into the
-  binary at compile time. Run `npm run build` inside `web/` after any UI
-  change, then rebuild the binary.
+- **Dashboard assets:** `web/dist` is embedded into the binary at compile
+  time. Run `npm run build` inside `web/` **before** rebuilding the Rust
+  binary — never in parallel — or the binary embeds the previous bundle.
+  Verify after deploying: the hash in the served `index.html` must match the
+  newest `web/dist/assets/index-*.js`.
 - **Adding a site in all-in-one mode:** create the site first, then restart
   the container once so the embedded agent re-registers and binds to it.
 
