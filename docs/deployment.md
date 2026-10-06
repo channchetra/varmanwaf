@@ -427,3 +427,41 @@ psql "postgres://varman:password@localhost:5432/varman" -c "SELECT 1"
 curl http://localhost:9080/healthz
 # {"status":"ok","database":"up"}
 ```
+
+---
+
+## Verification smoke test (Phase 1 acceptance)
+
+A minimal end-to-end check that the platform serves traffic, run after
+`docker compose up -d`:
+
+```bash
+# 1. Control plane health (HTTPS by default)
+curl -k https://localhost:9080/healthz
+
+# 2. Login (default credentials; change in production)
+TOKEN=$(curl -sk -X POST https://localhost:9080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@varman.local","password":"varman123"}' | jq -r .access_token)
+
+# 3. Create a site pointing at an origin reachable from the varman container
+curl -sk -X POST https://localhost:9080/api/v1/sites \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Smoke","domain":"smoke.varman.local","upstream_address":"origin:80"}'
+
+# 4. (all-in-one only) Restart once after creating the FIRST site — see below
+docker restart varman
+
+# 5. Proxy a request through the data plane
+curl -s -H 'Host: smoke.varman.local' http://localhost/
+```
+
+### Known bootstrap-order behaviour (upstream-inherited)
+
+In `all-in-one` mode the embedded agent starts **before** any site exists, so it
+binds no site and the data plane logs “no sites configured, proxy not started”.
+Agents bind to a site automatically at registration when the account owns exactly
+one site, so after creating the first site one restart re-registers the agent and
+the proxy starts. For multi-site deployments the dashboard/API flow assigns
+agents to sites at provision time. A dashboard “assign site” control for
+already-registered agents is a Phase 2 UX candidate.

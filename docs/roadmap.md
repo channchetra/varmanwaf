@@ -65,9 +65,17 @@ Task list:
       (documented in the map).
 - [x] Docs branding sweep; provenance kept in the map/references docs and the
       upstream changelog file.
-- [ ] Verification: `cargo check --workspace --features full --all-targets`
-      green ✅; workspace test suite pending; `cargo build --release` pending;
-      `docker compose up -d` end-to-end pending.
+- [x] Verification: `cargo check --workspace --features full --all-targets`
+      green ✅; full `cargo test --workspace --features full` green ✅
+      (exit 0, no failures); `cargo build --release --bin varman --features
+      full` green ✅ (7m42s, 55 MB binary); Docker Compose end-to-end ✅
+      (runtime image built from the release binary; stack healthy on
+      80/443/9080/9090; a real request proxied to a test origin returned 200;
+      a SQLi-shaped request was recorded as a monitor-mode security event —
+      `libinjection-sqli`, score 5). Procedure in `docs/deployment.md`.
+- [x] Known behaviour recorded: in all-in-one the embedded agent registers
+      before the first site exists, so one restart after creating the first
+      site is needed to bind it (upstream-inherited; documented).
 - [ ] First VarmanWAF release notes + version marker.
 
 Exit criteria: `cargo build --release` passes and `docker compose up -d` serves
