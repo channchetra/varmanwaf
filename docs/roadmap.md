@@ -10,7 +10,7 @@
 | 0 | Repository understanding | ✅ Complete (2026-10-06) |
 | 1 | VarmanWAF bootstrap (rename, keep behaviour) | 🚧 In progress |
 | 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | 🚧 In progress — types + pipeline landed, shadow wiring pending |
-| 3 | Canonicalization (stable normalization + bypass tests) | 🚧 In progress — canonicalizer + bypass tests landed; strict-mode policy and authority handling pending |
+| 3 | Canonicalization (stable normalization + bypass tests) | 🚧 In progress — canonicalizer core landed (authority, profiles, idempotence); plugin wiring pending |
 | 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | ⏳ Planned |
 | 5 | Streaming body engine (bounded windows, limits) | ⏳ Planned |
 | 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, …) | ⏳ Planned |
@@ -113,8 +113,9 @@ change in enforcement.
 - [x] Bypass tests: `/open/../admin`, encoded and double-encoded traversal,
       single-layer budget behavior, invalid escapes preserved, fragment
       handling, duplicate query parameters, cookie quoting.
-- [ ] Authority/host canonicalization (case, trailing dot, port, IDN).
-- [ ] Strict-mode layer policy (raise layers per profile) and its corpus.
+- [x] Authority canonicalization (trim, lowercase, FQDN trailing dot; ports
+      preserved) and profile layer policy (`Normal` 2 / `Strict` 3).
+- [x] Idempotence tests: canonical output re-canonicalizes unchanged.
 - [ ] Wire the canonicalizer into `pingap-plugin/src/waf.rs` so the legacy
       engine and detectors read the same canonical request.
 - [ ] Property tests: canonicalize is idempotent on its own output.

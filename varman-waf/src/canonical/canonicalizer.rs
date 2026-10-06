@@ -27,8 +27,12 @@
 //!    duplicates preserved.
 //! 5. **Cookies** — parsed from every `Cookie` header, values percent-decoded
 //!    and unquoted, names kept verbatim.
-//! 6. **Headers** — names lowercased and trimmed, values preserved exactly
-//!    (duplicates and wire order kept: smuggling checks depend on it).
+//! 6. **Headers and authority** — header names lowercased and trimmed, values
+//!    preserved exactly (duplicates and wire order kept: smuggling checks
+//!    depend on it). The authority is trimmed, lowercased, and stripped of a
+//!    single trailing dot (FQDN root); ports are preserved — without the
+//!    request scheme there is no “default port” to drop, and two authorities
+//!    differing only by port may legitimately route differently.
 //!
 //! The raw path and raw query stay on the model (`raw_path` / `raw_query`)
 //! for logging and forwarding decisions.
@@ -36,10 +40,14 @@
 use super::{CanonicalRequest, ClientIdentity, QueryParam};
 
 use crate::normalize::url::multi_decode;
+use crate::WafLevel;
 
 /// Decoding passes applied by default. Matches the legacy engine's normal
-/// level; strict mode may raise it.
+/// level; strict mode adds one more pass via [`Canonicalizer::for_level`].
 pub const DEFAULT_DECODE_LAYERS: u8 = 2;
+
+/// Decoding passes for the strict profile.
+pub const STRICT_DECODE_LAYERS: u8 = 3;
 
 /// Raw wire parts of one request, as received by the data plane.
 #[derive(Debug, Clone)]
@@ -101,6 +109,15 @@ impl Canonicalizer {
         Self { max_decode_layers }
     }
 
+    /// Layer budget matching a detection profile: `Normal` →
+    /// [`DEFAULT_DECODE_LAYERS`], `Strict` → [`STRICT_DECODE_LAYERS`].
+    pub const fn for_level(level: WafLevel) -> Self {
+        match level {
+            WafLevel::Normal => Self::new(DEFAULT_DECODE_LAYERS),
+            WafLevel::Strict => Self::new(STRICT_DECODE_LAYERS),
+        }
+    }
+
     pub const fn max_decode_layers(self) -> u8 {
         self.max_decode_layers
     }
@@ -116,6 +133,7 @@ impl Canonicalizer {
         } = parts;
 
         let (raw_path, raw_query) = split_target(&target);
+        let authority = canonical_authority(&authority);
         let headers = normalize_headers(headers);
         let path = canonical_path(raw_path, self.max_decode_layers);
         let query = parse_query(raw_query, self.max_decode_layers);
@@ -166,6 +184,13 @@ fn normalize_headers(headers: Vec<(String, String)>) -> Vec<(String, String)> {
             (name, value)
         })
         .collect()
+}
+
+/// Canonical authority: trimmed, lowercased, one trailing dot removed.
+fn canonical_authority(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let without_dot = trimmed.strip_suffix('.').unwrap_or(trimmed);
+    without_dot.to_ascii_lowercase()
 }
 
 /// Canonical path: bounded percent decode, then dot-segment resolution.
@@ -386,5 +411,86 @@ mod tests {
             Canonicalizer::default().max_decode_layers(),
             DEFAULT_DECODE_LAYERS
         );
+    }
+
+    // ── Authority and profile policy ───────────────────────────────────────
+
+    #[test]
+    fn authority_is_lowercased_and_trailing_dot_stripped() {
+        let auth = |raw: &str| {
+            Canonicalizer::default()
+                .canonicalize(RequestParts::new("GET", raw, "/"))
+                .authority()
+                .to_string()
+        };
+        assert_eq!(auth("EXAMPLE.com."), "example.com");
+        assert_eq!(auth(" example.COM:8443 "), "example.com:8443");
+        assert_eq!(auth("localhost"), "localhost");
+    }
+
+    #[test]
+    fn strict_profile_uses_one_more_decode_layer() {
+        // %25252e decodes to '.' only on the third pass:
+        // %25252e → %252e → %2e → '.'
+        let target = "/%25252e%25252e/etc/passwd";
+        let normal = Canonicalizer::for_level(crate::WafLevel::Normal)
+            .canonicalize(RequestParts::new("GET", "example.com", target));
+        let strict = Canonicalizer::for_level(crate::WafLevel::Strict)
+            .canonicalize(RequestParts::new("GET", "example.com", target));
+        assert_eq!(normal.path(), "/%2e%2e/etc/passwd");
+        assert_eq!(strict.path(), "/etc/passwd");
+    }
+
+    // ── Idempotence ────────────────────────────────────────────────────────
+
+    /// Re-canonicalize a request from its canonical form (path + decoded
+    /// query pairs re-serialized). Values that legitimately contained `&` or
+    /// `=` are not exercised here; the corpus does that.
+    fn recanonicalize(
+        once: &super::CanonicalRequest,
+    ) -> super::CanonicalRequest {
+        let query = once
+            .query()
+            .iter()
+            .map(|p| format!("{}={}", p.name, p.value))
+            .collect::<Vec<_>>()
+            .join("&");
+        let target = if query.is_empty() {
+            once.path().to_string()
+        } else {
+            format!("{}?{}", once.path(), query)
+        };
+        Canonicalizer::default().canonicalize(RequestParts::new(
+            "GET",
+            once.authority(),
+            target,
+        ))
+    }
+
+    #[test]
+    fn canonical_form_is_idempotent() {
+        let cases = [
+            "/a/b",
+            "/a%20b?x=1%202",
+            "/open/../admin",
+            "/?id=1+OR+1%3D1",
+            "/%252e%252e/etc/passwd",
+            "/?q=%2541&q=2",
+        ];
+        for target in cases {
+            let once = Canonicalizer::default()
+                .canonicalize(RequestParts::new("GET", "example.com", target));
+            let twice = recanonicalize(&once);
+            assert_eq!(
+                twice.path(),
+                once.path(),
+                "path not idempotent for {target}"
+            );
+            assert_eq!(
+                twice.query(),
+                once.query(),
+                "query not idempotent for {target}"
+            );
+        }
     }
 }
