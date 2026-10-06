@@ -42,7 +42,7 @@ export function formatLatency(ms: number | null | undefined): string {
  * BCP-47 tag the date formatters use.
  *
  * Defaults to the browser locale, but the i18n layer calls
- * {@link setDisplayLocale} so a console switched to 中文 or 日本語 renders its
+ * {@link setDisplayLocale} so a console switched to another language renders its
  * timestamps in that language instead of whatever the machine happens to run.
  */
 let displayLocale: string | undefined = undefined

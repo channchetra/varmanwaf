@@ -23,8 +23,6 @@ import { supportedLanguages } from '@/i18n'
 
 const langLabels: Record<string, string> = {
   en: 'English',
-  zh: '中文',
-  ja: '日本語',
 }
 
 // Map the first path segment(s) to a translation key for breadcrumbs.

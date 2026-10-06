@@ -27,7 +27,7 @@ import { handleApiError, errorMessage } from '@/api/errors'
 import { isPasskeyCancellation, passkeysSupported } from '@/lib/webauthn'
 import type { LoginResponse } from '@/api/types'
 
-const langLabels: Record<string, string> = { en: 'English', zh: '中文', ja: '日本語' }
+const langLabels: Record<string, string> = { en: 'English' }
 
 /** Minimum accepted by `POST /auth/register`. */
 const MIN_PASSWORD = 8

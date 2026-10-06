@@ -104,7 +104,7 @@ import {
   type ErrorPageContentType,
 } from '@/api/types'
 
-const langLabels: Record<string, string> = { en: 'English', zh: '中文', ja: '日本語' }
+const langLabels: Record<string, string> = { en: 'English' }
 
 /** Mirrors the server-side minimum in `validate_password`. */
 const MIN_PASSWORD = 8
