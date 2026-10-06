@@ -24,6 +24,7 @@ pub mod normalize;
 pub mod pipeline;
 pub mod rules;
 pub mod score;
+pub mod seclang;
 
 pub use engine::{RequestData, WafEngine, WafEngineConfig, WafMode};
 pub use rules::{AttackCategory, CompiledRule, RuleAction};

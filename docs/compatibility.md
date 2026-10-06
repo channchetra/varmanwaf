@@ -23,9 +23,10 @@ scorer. Therefore:
 
 | Area | Status | Notes |
 |---|---|---|
-| SecLang parser (`SecRule`, `SecAction`, …) | Planned | Phase 7 |
+| SecLang parser (`SecRule` lines → AST) | Partial | Variables list, 9 operators, quoted action lists, comments; unsupported directives/operators error observably |
+| SecLang execution (variables, transforms, chains) | Planned | Phase 7 next slices |
 | Request variables (ARGS, REQUEST_HEADERS, TX, …) | Planned | Phase 7 |
-| Operators (`@rx`, `@pm`, `@detectSQLi`, `@detectXSS`, …) | Planned | Phase 7 |
+| Operators execution (`@rx`, `@pm`, `@detectSQLi`, `@detectXSS`, …) | Planned | Phase 7 |
 | Transformations (`urlDecode`, `htmlEntityDecode`, …) | Planned | Phase 7 |
 | Control flow (chain, skip, skipAfter, ctl, setvar) | Planned | Phase 7 |
 | OWASP CRS stock ruleset execution | Planned | Phase 7 + CRS regression harness |

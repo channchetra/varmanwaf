@@ -14,7 +14,7 @@
 | 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | 🚧 In progress — signature scanner + corpora landed and verified live in shadow mode; protocol checks pending |
 | 5 | Streaming body engine (bounded windows, limits) | ⏳ Planned |
 | 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, …) | 🚧 In progress — SQL structural, HTML/XSS structural and shell/command detectors landed, corpus-covered and live-verified in shadow; AST, SSRF, XXE, SSTI, NoSQL, deserialization, GraphQL pending |
-| 7 | Native SecLang core + OWASP CRS conformance | ⏳ Planned |
+| 7 | Native SecLang core + OWASP CRS conformance | 🚧 In progress — SecRule parser landed (structured AST, unsupported directives observable); execution engine next |
 | 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | ⏳ Planned |
 | 9 | Optional External Processor API | ⏳ Planned |
 
@@ -243,12 +243,20 @@ report against the existing engine.
 
 ## Phase 7 — Native SecLang core
 
-- Incremental per mandate §21: abstractions → request variables → operators →
-  transformations → control semantics → OWASP CRS conformance runs.
-- Unsupported directives stay observable; `docs/compatibility.md` tracks
-  Supported/Partial/Unsupported/Planned with evidence.
-- Exit: official CRS regression suites run in CI; differential tests vs.
-  ModSecurity/Coraza triaged.
+- [x] Parser skeleton (`varman-waf/src/seclang`): `SecRule VARIABLES "OPERATOR"
+      "ACTIONS"` → structured AST. Variables `|`-separated; operators `@rx`,
+      `@pm`, `@contains`, `@streq`, `@beginsWith`, `@endsWith`,
+      `@detectSQLi`, `@detectXSS`, `@ipMatch`, bare pattern = `@rx`; actions
+      split on commas outside quotes, order preserved; comments/blanks
+      ignored. **Unsupported directives/operators return observable errors**
+      — never silent no-ops (mandate §37).
+- [ ] Transaction model + variable resolution (phases 1/2, ARGS,
+      REQUEST_HEADERS, TX, collections).
+- [ ] Operator/transformation execution and chains
+      (`chain`, `skip`, `skipAfter`, `setvar`, `ctl`, `SecDefaultAction`,
+      `SecMarker`, `SecRuleRemoveById`).
+- [ ] OWASP CRS conformance harness against official regression tests
+      (recorded in `docs/compatibility.md`).
 
 ## Phase 8 — Advanced security
 
