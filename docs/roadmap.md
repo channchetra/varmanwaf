@@ -262,9 +262,14 @@ report against the existing engine.
       `urlDecode`/`urlDecodeUni` (one bounded layer), `htmlEntityDecode`,
       `base64Decode` (failed decoding leaves the value unchanged, mirroring
       ModSecurity). **Unknown transformations are observable compile errors.**
-- [ ] Operators/transformations execution continuation: `chain`, `skip`,
-      `skipAfter`, `setvar`, `ctl`, `SecDefaultAction`, `SecMarker`,
-      `SecRuleRemoveById`.
+- [x] `chain` groups (`SecRuleGroup`): consecutive rules joined by the `chain`
+      action fire only when **every** member matches; a chain that reaches
+      the end of input without a final rule is an observable error. `ARGS`
+      now merges form-urlencoded body parameters (ModSecurity semantics),
+      including bounded percent decoding.
+- [ ] Operators/transformations execution continuation: `skip`, `skipAfter`,
+      `setvar`, `ctl`, `SecDefaultAction`, `SecMarker`,
+      `SecRuleRemoveById`; per-chain variable capture (`TX:0…9`).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

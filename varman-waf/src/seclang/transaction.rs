@@ -56,24 +56,50 @@ impl SecLangTransaction {
     /// Alias kept for readability at call sites that think in terms of the
     /// transaction lifecycle.
     pub fn from_parts(request: &CanonicalRequest) -> Self {
+        let headers: Vec<(String, String)> = request
+            .headers()
+            .iter()
+            .map(|(n, v)| (n.clone(), v.clone()))
+            .collect();
+        let mut args: Vec<(String, String)> = request
+            .query()
+            .iter()
+            .map(|p| (p.name.clone(), p.value.clone()))
+            .collect();
+        // ModSecurity merges form-urlencoded body parameters into ARGS.
+        let content_type = headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("content-type"))
+            .map(|(_, v)| v.to_ascii_lowercase())
+            .unwrap_or_default();
+        let body_text = request
+            .body()
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .map(str::to_string);
+        if content_type.contains("application/x-www-form-urlencoded") {
+            if let Some(text) = &body_text {
+                for pair in text.split('&') {
+                    if pair.is_empty() {
+                        continue;
+                    }
+                    let (name, value) = match pair.split_once('=') {
+                        Some((name, value)) => (name, value),
+                        None => (pair, ""),
+                    };
+                    args.push((
+                        crate::normalize::url::multi_decode(name, 1),
+                        crate::normalize::url::multi_decode(value, 1),
+                    ));
+                }
+            }
+        }
         Self {
-            args: request
-                .query()
-                .iter()
-                .map(|p| (p.name.clone(), p.value.clone()))
-                .collect(),
-            headers: request
-                .headers()
-                .iter()
-                .map(|(n, v)| (n.clone(), v.clone()))
-                .collect(),
+            args,
+            headers,
             method: request.method().to_string(),
             uri: request.path().to_string(),
             query_string: request.raw_query().to_string(),
-            body: request
-                .body()
-                .and_then(|b| std::str::from_utf8(b).ok())
-                .map(str::to_string),
+            body: body_text,
             remote_addr: request
                 .client()
                 .ip
@@ -369,6 +395,65 @@ impl CompiledSecRule {
     }
 }
 
+/// One rule, or a `chain` group: every member must match for the group to
+/// fire (ModSecurity chain semantics = logical AND; per-chain variable
+/// capture — `TX:0…9` — is a later slice).
+#[derive(Debug)]
+pub struct SecRuleGroup {
+    pub rules: Vec<CompiledSecRule>,
+}
+
+impl SecRuleGroup {
+    /// `Some(hits)` when every rule matched (hits concatenated in rule
+    /// order); `None` when any member did not match.
+    pub fn matches(
+        &self,
+        txn: &SecLangTransaction,
+    ) -> Option<Vec<ResolvedValue>> {
+        let mut all = Vec::new();
+        for rule in &self.rules {
+            let hits = rule.matches(txn);
+            if hits.is_empty() {
+                return None;
+            }
+            all.extend(hits);
+        }
+        Some(all)
+    }
+
+    pub fn rule_ids(&self) -> Vec<Option<u64>> {
+        self.rules.iter().map(CompiledSecRule::rule_id).collect()
+    }
+}
+
+/// Group parsed rules into singletons and `chain` groups.
+///
+/// A rule whose actions contain `chain` opens/extend a group; the first rule
+/// without `chain` closes it. A chain that reaches the end of the input
+/// without a final rule is an observable error.
+pub fn group_rules(
+    lines: Vec<SecRuleLine>,
+) -> Result<Vec<SecRuleGroup>, SecLangError> {
+    let mut groups: Vec<SecRuleGroup> = Vec::new();
+    let mut pending: Vec<CompiledSecRule> = Vec::new();
+    for line in lines {
+        let chained = line.actions.iter().any(|a| a.trim() == "chain");
+        let compiled = CompiledSecRule::compile(line)?;
+        pending.push(compiled);
+        if !chained {
+            groups.push(SecRuleGroup {
+                rules: std::mem::take(&mut pending),
+            });
+        }
+    }
+    if !pending.is_empty() {
+        return Err(SecLangError {
+            reason: "chain ended without a final rule".to_string(),
+        });
+    }
+    Ok(groups)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CompiledSecRule, SecLangTransaction};
@@ -384,6 +469,7 @@ mod tests {
             )
             .with_header("Host", "example.com")
             .with_header("User-Agent", "curl/8.4.0")
+            .with_header("Content-Type", "application/x-www-form-urlencoded")
             .with_body("name=Ada&role=admin".as_bytes().to_vec())
             .with_client(ClientIdentity {
                 ip: Some("203.0.113.9".parse().expect("ip")),
@@ -405,12 +491,17 @@ mod tests {
     fn resolves_args_and_names() {
         let txn = SecLangTransaction::from_request(&request());
         let args = txn.resolve("ARGS");
-        assert_eq!(args.len(), 2);
+        // Query pairs plus form-body pairs merged into ARGS.
+        assert_eq!(args.len(), 4);
         assert!(args.iter().any(|v| v.name == "ARGS:id" && v.value == "42"));
+        assert!(args
+            .iter()
+            .any(|v| v.name == "ARGS:role" && v.value == "admin"));
         let only_id = txn.resolve("ARGS:id");
         assert_eq!(only_id.len(), 1);
         let names = txn.resolve("ARGS_NAMES");
         assert!(names.iter().any(|v| v.value == "q"));
+        assert!(names.iter().any(|v| v.value == "role"));
     }
 
     #[test]
@@ -420,7 +511,7 @@ mod tests {
         assert_eq!(host.len(), 1);
         assert_eq!(host[0].value, "example.com");
         let all = txn.resolve("REQUEST_HEADERS");
-        assert_eq!(all.len(), 2);
+        assert_eq!(all.len(), 3);
     }
 
     #[test]
@@ -573,6 +664,54 @@ mod tests {
             error.reason.contains("unsupported transformation"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn chain_groups_require_every_member_to_match() {
+        use super::group_rules;
+        use crate::seclang::parser::parse_line;
+
+        let lines = [
+            "SecRule REQUEST_METHOD \"@streq POST\" \"id:1,chain\"",
+            "SecRule ARGS:role \"@streq admin\" \"id:2\"",
+        ];
+        let parsed = lines
+            .iter()
+            .map(|line| match parse_line(line).expect("parse") {
+                SecLangLine::Rule(rule) => rule,
+                SecLangLine::Ignored => panic!("expected rule"),
+            })
+            .collect::<Vec<_>>();
+        let groups = group_rules(parsed).expect("groups");
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].rules.len(), 2);
+        assert_eq!(groups[0].rule_ids(), vec![Some(1), Some(2)]);
+
+        let txn = SecLangTransaction::from_request(&request());
+        assert!(groups[0].matches(&txn).is_some());
+
+        // A request that fails the second member must fail the whole chain.
+        let get_request = Canonicalizer::default().canonicalize(
+            RequestParts::new("GET", "example.com", "/?role=admin"),
+        );
+        let get_txn = SecLangTransaction::from_request(&get_request);
+        assert!(groups[0].matches(&get_txn).is_none());
+    }
+
+    #[test]
+    fn dangling_chain_is_an_observable_error() {
+        use super::group_rules;
+        use crate::seclang::parser::parse_line;
+
+        let parsed =
+            vec![match parse_line("SecRule ARGS \"@rx x\" \"id:1,chain\"")
+                .expect("parse")
+            {
+                SecLangLine::Rule(rule) => rule,
+                SecLangLine::Ignored => panic!("expected rule"),
+            }];
+        let error = group_rules(parsed).expect_err("must fail");
+        assert!(error.reason.contains("chain ended"), "{error}");
     }
 
     #[test]
