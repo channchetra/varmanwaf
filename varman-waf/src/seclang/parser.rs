@@ -55,6 +55,9 @@ pub enum SecOperator {
     Ge(String),
     /// `@validateByteRange`: inclusive byte ranges, e.g. `8,10,13,32-126`.
     ValidateByteRange(Vec<(u8, u8)>),
+    /// `@pmFromFile`: data file resolved against the rule-set base
+    /// directory; expanded to `Pm` at rule-set build time.
+    PmFromFile(String),
     /// `SecAction` / `@unconditionalMatch`: matches unconditionally.
     AlwaysMatch,
     /// `@within`: argument list is scanned for the value (substring search,
@@ -82,6 +85,7 @@ impl SecOperator {
             Self::Gt(_) => "@gt",
             Self::Ge(_) => "@ge",
             Self::ValidateByteRange(_) => "@validateByteRange",
+            Self::PmFromFile(_) => "@pmFromFile",
             Self::AlwaysMatch => "@alwaysMatch",
             Self::Within(_) => "@within",
         }
@@ -198,6 +202,13 @@ fn parse_operator(raw: &str) -> Result<SecOperator, SecLangError> {
         "@pm" => SecOperator::Pm(
             argument.split_whitespace().map(str::to_string).collect(),
         ),
+        "@pmFromFile" => {
+            let path = argument.trim();
+            if path.is_empty() {
+                return Err(err("@pmFromFile without a file name"));
+            }
+            SecOperator::PmFromFile(path.to_string())
+        },
         "@contains" => SecOperator::Contains(argument.to_string()),
         "@streq" => SecOperator::Streq(argument.to_string()),
         "@beginsWith" => SecOperator::BeginsWith(argument.to_string()),
@@ -294,9 +305,23 @@ pub(crate) fn validate_macros(raw: &str) -> Result<(), SecLangError> {
             return Err(err(format!("unterminated macro in {raw:?}")));
         };
         let token = &after[..end];
-        if !token.starts_with("tx.") {
+        let collection = token
+            .split('.')
+            .next()
+            .unwrap_or(token)
+            .to_ascii_lowercase();
+        let known = matches!(
+            collection.as_str(),
+            "tx" | "matched_var"
+                | "matched_var_name"
+                | "remote_addr"
+                | "request_line"
+                | "request_headers"
+                | "args"
+        );
+        if !known {
             return Err(err(format!(
-                "macro collection %{{{token}}} is not supported yet (only tx.*)"
+                "macro collection %{{{token}}} is not supported yet"
             )));
         }
         rest = &after[end + 1..];
@@ -477,10 +502,13 @@ mod tests {
         let e = error("SecRule TX:score \"@eq many\" \"id:1\"");
         assert!(e.reason.contains("not a number"), "{e}");
         let e = error("SecRule ARGS \"@rx %{REQUEST_URI}\" \"id:1\"");
-        assert!(e.reason.contains("only tx.*"), "{e}");
-        let e =
-            error("SecRule ARGS \"@pmFromFile lfi-os-files.data\" \"id:1\"");
-        assert!(e.reason.contains("unsupported operator"), "{e}");
+        assert!(e.reason.contains("not supported yet"), "{e}");
+        let pm =
+            rule("SecRule ARGS \"@pmFromFile lfi-os-files.data\" \"id:1\"");
+        assert_eq!(
+            pm.operator,
+            SecOperator::PmFromFile("lfi-os-files.data".into())
+        );
     }
 
     #[test]

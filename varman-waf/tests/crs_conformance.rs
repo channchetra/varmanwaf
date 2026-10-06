@@ -63,7 +63,10 @@ fn crs_rulesets_load_and_report() {
             .unwrap_or_default();
         let source = fs::read_to_string(path).expect("read CRS rule file");
         let expected = count_secrules(&source);
-        match varman_waf::seclang::ruleset::SecRuleSet::from_source(&source) {
+        match varman_waf::seclang::ruleset::SecRuleSet::from_source_with_base(
+            &source,
+            Some(&rules_dir),
+        ) {
             Ok(_) => {
                 rules_loaded += expected;
                 ok_files.push((name, expected));
@@ -93,14 +96,14 @@ fn crs_rulesets_load_and_report() {
         rules_dir.display()
     );
     // Ratchet: never regress below the recorded baseline
-    // (`docs/compatibility.md`, 2026-10-07: 6 files / 77 rules).
+    // (`docs/compatibility.md`, 2026-10-07: 17 files / 253 rules).
     assert!(
-        ok_files.len() >= 6,
-        "CRS load regressed: {} files (baseline 6)",
+        ok_files.len() >= 17,
+        "CRS load regressed: {} files (baseline 17)",
         ok_files.len()
     );
     assert!(
-        rules_loaded >= 77,
-        "CRS load regressed: {rules_loaded} rules (baseline 77)"
+        rules_loaded >= 253,
+        "CRS load regressed: {rules_loaded} rules (baseline 253)"
     );
 }

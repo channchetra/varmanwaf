@@ -70,6 +70,8 @@ pub struct RequestParts {
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
     pub client: ClientIdentity,
+    /// HTTP version as received (`None` means `HTTP/1.1`).
+    pub http_version: Option<String>,
 }
 
 impl RequestParts {
@@ -85,6 +87,7 @@ impl RequestParts {
             headers: Vec::new(),
             body: None,
             client: ClientIdentity::default(),
+            http_version: None,
         }
     }
 
@@ -104,6 +107,12 @@ impl RequestParts {
 
     pub fn with_client(mut self, client: ClientIdentity) -> Self {
         self.client = client;
+        self
+    }
+
+    /// HTTP version as received (`"HTTP/1.1"` when omitted).
+    pub fn with_http_version(mut self, version: impl Into<String>) -> Self {
+        self.http_version = Some(version.into());
         self
     }
 }
@@ -140,6 +149,7 @@ impl Canonicalizer {
             headers,
             body,
             client,
+            http_version,
         } = parts;
 
         let (raw_path, raw_query) = split_target(&target);
@@ -160,6 +170,7 @@ impl Canonicalizer {
             cookies,
             body,
             client,
+            http_version.unwrap_or_else(|| "HTTP/1.1".to_string()),
         )
     }
 }

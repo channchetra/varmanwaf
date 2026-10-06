@@ -14,6 +14,8 @@
 //! `accuracy`, `chain`, `t:<name>`, `setvar:tx.<name>=<value>` (assignment,
 //! `+n`, `-n`).
 
+use std::path::Path;
+
 use crate::seclang::parser::{
     parse_line, parse_quoted, split_actions, validate_macros, SecLangError,
     SecLangLine, SecOperator, SecRuleLine,
@@ -54,6 +56,7 @@ const ALLOWED_ACTIONS: &[&str] = &[
     "capture",
     "auditlog",
     "ctl:",
+    "noauditlog",
 ];
 
 /// `true` when the line is a `SecRuleRemoveById` directive (the exact word,
@@ -167,7 +170,11 @@ fn parse_setvar(spec: &str) -> Result<SetVar, SecLangError> {
         });
     };
     let target = target.trim();
-    let Some(name) = target.strip_prefix("tx.") else {
+    validate_macros(target)?;
+    let Some(name) = target
+        .strip_prefix("tx.")
+        .or_else(|| target.strip_prefix("TX."))
+    else {
         return Err(SecLangError {
             reason: format!("setvar target {target:?} is not a TX variable"),
         });
@@ -193,21 +200,35 @@ fn parse_setvar(spec: &str) -> Result<SetVar, SecLangError> {
     Ok(SetVar::Assign(name.to_string(), value.to_string()))
 }
 
+/// Expand macros in a `setvar` target and strip the `tx.` prefix
+/// (case-insensitive).
+fn target_name(raw: &str, txn: &SecLangTransaction) -> String {
+    let expanded = expand_macros(raw, txn);
+    let name = expanded
+        .strip_prefix("tx.")
+        .or_else(|| expanded.strip_prefix("TX."))
+        .unwrap_or(&expanded);
+    name.to_string()
+}
+
 fn apply_setvar(txn: &mut SecLangTransaction, op: &SetVar) {
     match op {
         SetVar::Assign(name, value) => {
-            txn.tx_set(name, expand_macros(value, txn))
+            let name = target_name(name, txn);
+            let value = expand_macros(value, txn);
+            txn.tx_set(&name, value);
         },
         SetVar::Increment(name, delta) => {
+            let name = target_name(name, txn);
             let current: i64 = txn
-                .tx_get(name)
+                .tx_get(&name)
                 .and_then(|v| v.trim().parse().ok())
                 .unwrap_or(0);
             // Unresolvable macros expand to empty and contribute zero,
             // mirroring ModSecurity's numeric coercion.
             let expanded = expand_macros(delta, txn);
             let delta: i64 = expanded.trim().parse().unwrap_or(0);
-            txn.tx_set(name, (current + delta).to_string());
+            txn.tx_set(&name, (current + delta).to_string());
         },
     }
 }
@@ -250,6 +271,15 @@ impl SecRuleSet {
     /// `SecRuleRemoveById <ids…>` lines remove the named rules from the set
     /// before compilation (the mechanism OWASP CRS uses to tune itself).
     pub fn from_source(source: &str) -> Result<Self, SecLangError> {
+        Self::from_source_with_base(source, None)
+    }
+
+    /// Like [`Self::from_source`], with a base directory used to resolve
+    /// `@pmFromFile` data files.
+    pub fn from_source_with_base(
+        source: &str,
+        base_dir: Option<&Path>,
+    ) -> Result<Self, SecLangError> {
         let mut removals: Vec<u64> = Vec::new();
         let mut retargets: Vec<(u64, Vec<String>)> = Vec::new();
         // `SecMarker` positions in the rule stream: `(name, rules_seen)`.
@@ -394,6 +424,45 @@ impl SecRuleSet {
                 }
             }
         }
+        // Resolve `@pmFromFile` data files before compilation.
+        for rule in &mut rules {
+            let path = match &rule.operator {
+                SecOperator::PmFromFile(path) => path.clone(),
+                _ => continue,
+            };
+            let Some(base) = base_dir else {
+                return Err(SecLangError {
+                    reason: format!(
+                        "@pmFromFile {path:?} needs a base directory; use SecRuleSet::from_source_with_base"
+                    ),
+                });
+            };
+            let full = base.join(&path);
+            // Data files are read as bytes: shared-folder mounts can return
+            // `EINVAL` for `read_to_string`, and pattern files are ASCII in
+            // practice.
+            let bytes = std::fs::read(&full).map_err(|error| SecLangError {
+                reason: format!(
+                    "@pmFromFile {path:?} could not be read from {}: {error}",
+                    full.display()
+                ),
+            })?;
+            let content = String::from_utf8_lossy(&bytes);
+            let patterns: Vec<String> = content
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .map(str::to_string)
+                .collect();
+            if patterns.is_empty() {
+                return Err(SecLangError {
+                    reason: format!(
+                        "@pmFromFile {path:?} contains no patterns"
+                    ),
+                });
+            }
+            rule.operator = SecOperator::Pm(patterns);
+        }
         let mut groups = group_rules(rules)?;
         if !removals.is_empty() {
             for group in &mut groups {
@@ -523,6 +592,7 @@ impl SecRuleSet {
                 index += 1;
                 continue;
             };
+            txn.set_matched(variables_hit.first().cloned());
             for op in &self.setvars[index] {
                 apply_setvar(txn, op);
             }
@@ -1000,6 +1070,47 @@ mod tests {
         let hits = ruleset.evaluate(&mut txn);
         assert_eq!(hits.len(), 3, "{hits:?}");
         assert_eq!(hits[2].rule_ids, vec![Some(1)]);
+    }
+
+    #[test]
+    fn setvar_target_expands_matched_var_name() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,setvar:tx.matched_%{MATCHED_VAR_NAME}=%{MATCHED_VAR}\"\n\
+             SecRule TX:matched_ARGS:a \"@streq 1\" \"id:2,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert_eq!(txn.tx_get("matched_args:a"), Some("1"));
+        assert_eq!(hits[1].rule_ids, vec![Some(2)]);
+    }
+
+    #[test]
+    fn pm_from_file_loads_against_a_base_directory() {
+        let dir = std::env::temp_dir();
+        let file = dir.join("varman-pmfromfile-test.data");
+        std::fs::write(&file, "# comment\nfoo\nbar\n").expect("write");
+        let ruleset = SecRuleSet::from_source_with_base(
+            "SecRule ARGS:a \"@pmFromFile varman-pmfromfile-test.data\" \"id:1\"\n",
+            Some(&dir),
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=foo"),
+            );
+        assert_eq!(ruleset.evaluate(&mut txn).len(), 1);
+        let _ = std::fs::remove_file(&file);
+
+        let error = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@pmFromFile missing.data\" \"id:1\"\n",
+        )
+        .expect_err("must fail");
+        assert!(error.reason.contains("base directory"), "{error}");
     }
 
     #[test]

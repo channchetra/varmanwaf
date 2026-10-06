@@ -61,6 +61,9 @@ pub struct CanonicalRequest {
     cookies: Vec<(String, String)>,
     body: Option<Vec<u8>>,
     client: ClientIdentity,
+    /// HTTP version as reported by the data plane (`"HTTP/1.1"` when the
+    /// caller did not provide one).
+    http_version: String,
 }
 
 impl CanonicalRequest {
@@ -86,6 +89,7 @@ impl CanonicalRequest {
             cookies: Vec::new(),
             body: None,
             client: ClientIdentity::default(),
+            http_version: "HTTP/1.1".to_string(),
         }
     }
 
@@ -104,6 +108,7 @@ impl CanonicalRequest {
         cookies: Vec<(String, String)>,
         body: Option<Vec<u8>>,
         client: ClientIdentity,
+        http_version: String,
     ) -> Self {
         Self {
             method,
@@ -116,6 +121,7 @@ impl CanonicalRequest {
             cookies,
             body,
             client,
+            http_version,
         }
     }
 
@@ -162,6 +168,12 @@ impl CanonicalRequest {
 
     pub fn client(&self) -> &ClientIdentity {
         &self.client
+    }
+
+    /// HTTP version as reported by the data plane (`"HTTP/1.1"` when the
+    /// caller did not provide one).
+    pub fn http_version(&self) -> &str {
+        &self.http_version
     }
 
     /// First header value for `name` (case-insensitive; names are stored

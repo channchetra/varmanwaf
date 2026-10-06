@@ -46,6 +46,10 @@ pub struct SecLangTransaction {
     body: Option<String>,
     remote_addr: String,
     tx: BTreeMap<String, String>,
+    http_version: String,
+    /// Variable that most recently matched, for `MATCHED_VAR` /
+    /// `MATCHED_VAR_NAME`.
+    matched: Option<ResolvedValue>,
 }
 
 impl SecLangTransaction {
@@ -106,15 +110,37 @@ impl SecLangTransaction {
                 .map(|ip| ip.to_string())
                 .unwrap_or_default(),
             tx: BTreeMap::new(),
+            http_version: request.http_version().to_string(),
+            matched: None,
         }
     }
 
+    /// TX names are case-insensitive (ModSecurity behaviour; CRS mixes
+    /// `TX.`/`tx.` casing).
     pub fn tx_set(&mut self, name: &str, value: impl Into<String>) {
-        self.tx.insert(name.to_string(), value.into());
+        self.tx.insert(name.to_ascii_lowercase(), value.into());
     }
 
     pub fn tx_get(&self, name: &str) -> Option<&str> {
-        self.tx.get(name).map(String::as_str)
+        self.tx.get(&name.to_ascii_lowercase()).map(String::as_str)
+    }
+
+    /// Bind the variable that most recently matched, for `MATCHED_VAR` /
+    /// `MATCHED_VAR_NAME` macros.
+    pub(crate) fn set_matched(&mut self, matched: Option<ResolvedValue>) {
+        self.matched = matched;
+    }
+
+    /// `METHOD target HTTP/x.y`, ModSecurity's `REQUEST_LINE`.
+    fn request_line(&self) -> String {
+        if self.query_string.is_empty() {
+            format!("{} {} {}", self.method, self.uri, self.http_version)
+        } else {
+            format!(
+                "{} {}?{} {}",
+                self.method, self.uri, self.query_string, self.http_version
+            )
+        }
     }
 
     /// Resolve one variable reference (`NAME` or `NAME:selector`).
@@ -194,6 +220,10 @@ impl SecLangTransaction {
                 name: "QUERY_STRING".to_string(),
                 value: self.query_string.clone(),
             }]),
+            ("REQUEST_LINE", _) => cap(vec![ResolvedValue {
+                name: "REQUEST_LINE".to_string(),
+                value: self.request_line(),
+            }]),
             ("REQUEST_BODY", _) => cap(self
                 .body
                 .iter()
@@ -208,7 +238,7 @@ impl SecLangTransaction {
             }]),
             ("TX", Some(selector)) => cap(self
                 .tx
-                .get(selector)
+                .get(&selector.to_ascii_lowercase())
                 .map(|value| {
                     vec![ResolvedValue {
                         name: format!("TX:{selector}"),
@@ -446,6 +476,38 @@ fn parse_transforms(
     Ok(transforms)
 }
 
+/// Resolve one macro token (`tx.name`, `matched_var`, `remote_addr`,
+/// `request_line`, `request_headers.<name>`, `args.<name>`) against the
+/// transaction.
+fn macro_value(token: &str, txn: &SecLangTransaction) -> Option<String> {
+    let (collection, selector) = match token.split_once('.') {
+        Some((collection, selector)) => (collection, Some(selector)),
+        None => (token, None),
+    };
+    match collection.to_ascii_lowercase().as_str() {
+        "tx" => txn.tx_get(selector.unwrap_or_default()).map(str::to_string),
+        "matched_var" => txn.matched.as_ref().map(|m| m.value.clone()),
+        "matched_var_name" => txn.matched.as_ref().map(|m| m.name.clone()),
+        "remote_addr" => {
+            txn.resolve("REMOTE_ADDR").first().map(|v| v.value.clone())
+        },
+        "request_line" => {
+            txn.resolve("REQUEST_LINE").first().map(|v| v.value.clone())
+        },
+        "request_headers" => selector.and_then(|selector| {
+            txn.resolve(&format!("REQUEST_HEADERS:{selector}"))
+                .first()
+                .map(|v| v.value.clone())
+        }),
+        "args" => selector.and_then(|selector| {
+            txn.resolve(&format!("ARGS:{selector}"))
+                .first()
+                .map(|v| v.value.clone())
+        }),
+        _ => None,
+    }
+}
+
 /// Expand `%{tx.<name>}` macros against the transaction; unset variables
 /// expand to the empty string (ModSecurity behaviour).
 pub(crate) fn expand_macros(input: &str, txn: &SecLangTransaction) -> String {
@@ -459,11 +521,8 @@ pub(crate) fn expand_macros(input: &str, txn: &SecLangTransaction) -> String {
             return output;
         };
         let token = &after[..end];
-        let name = token
-            .strip_prefix("tx.")
-            .unwrap_or_else(|| token.rsplit('.').next().unwrap_or(token));
-        let value = txn.tx_get(name).unwrap_or_default();
-        output.push_str(value);
+        let value = macro_value(token, txn).unwrap_or_default();
+        output.push_str(&value);
         rest = &after[end + 1..];
     }
     output.push_str(rest);
@@ -628,6 +687,7 @@ impl CompiledSecRule {
                         .any(|(start, end)| byte >= *start && byte <= *end)
                 })
             },
+            SecOperator::PmFromFile(_) => false,
             SecOperator::AlwaysMatch => true,
         }
     }
@@ -730,7 +790,10 @@ pub fn group_rules(
 
 #[cfg(test)]
 mod tests {
-    use super::{CompiledSecRule, SecLangTransaction, Transform};
+    use super::{
+        expand_macros, CompiledSecRule, ResolvedValue, SecLangTransaction,
+        Transform,
+    };
     use crate::canonical::{Canonicalizer, ClientIdentity, RequestParts};
     use crate::seclang::parser::{parse_line, SecLangLine};
 
@@ -900,6 +963,37 @@ mod tests {
             error.reason.contains("unsupported transformation"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn request_line_and_macro_collections_resolve() {
+        let mut txn = SecLangTransaction::from_request(&request());
+        let line = txn.resolve("REQUEST_LINE");
+        assert_eq!(line[0].value, "POST /api/items?id=42&q=hello HTTP/1.1");
+        txn.set_matched(Some(ResolvedValue {
+            name: "ARGS:id".to_string(),
+            value: "42".to_string(),
+        }));
+        assert_eq!(
+            expand_macros("%{MATCHED_VAR_NAME}=%{MATCHED_VAR}", &txn),
+            "ARGS:id=42"
+        );
+        assert_eq!(
+            expand_macros("%{request_headers.host}", &txn),
+            "example.com"
+        );
+        assert_eq!(expand_macros("%{remote_addr}", &txn), "203.0.113.9");
+        assert_eq!(expand_macros("%{args.id}", &txn), "42");
+    }
+
+    #[test]
+    fn tx_names_are_case_insensitive() {
+        let mut txn = SecLangTransaction::from_request(&request());
+        txn.tx_set("Score", "7");
+        assert_eq!(txn.tx_get("score"), Some("7"));
+        assert_eq!(expand_macros("%{TX.score}", &txn), "7");
+        let matcher = rule("SecRule TX:SCORE \"@eq 7\" \"id:1\"");
+        assert_eq!(matcher.matches(&txn).len(), 1);
     }
 
     #[test]
