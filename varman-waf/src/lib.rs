@@ -1,6 +1,16 @@
 //! VarmanWAF detection engine.
 //!
-//! Multi-stage request inspection:
+//! Two engine generations live here during the Phase 2 transition:
+//!
+//! * **Legacy engine** (`engine`, `normalize`, `rules`, `score`) — the
+//!   imported signature-first engine; it still serves every request.
+//! * **Varman pipeline** (`pipeline`, `canonical`) — the new multi-lane
+//!   skeleton: canonical request model, structured findings, monotonic action
+//!   escalation, bounded detection context and shadow comparison. Not wired
+//!   into enforcement yet; see `docs/security-engine.md` and
+//!   `docs/roadmap.md` (Phase 2).
+//!
+//! Legacy engine stages:
 //! 1. Normalize / decode input (URL, HTML entities, path traversal collapsing).
 //! 2. Stage 1 — fast path: Aho-Corasick signature scan plus libinjection-style
 //!    SQLi / XSS detectors. Target ≤ 100µs.
@@ -8,8 +18,10 @@
 //!    anomaly scoring. Target ≤ 300µs.
 //! 4. Emit a [`WafVerdict`] describing the action, score and matched rules.
 
+pub mod canonical;
 pub mod engine;
 pub mod normalize;
+pub mod pipeline;
 pub mod rules;
 pub mod score;
 

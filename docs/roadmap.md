@@ -9,7 +9,7 @@
 |---|---|---|
 | 0 | Repository understanding | ✅ Complete (2026-10-06) |
 | 1 | VarmanWAF bootstrap (rename, keep behaviour) | 🚧 In progress |
-| 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | ⏳ Planned |
+| 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | 🚧 In progress — types + pipeline landed, shadow wiring pending |
 | 3 | Canonicalization (stable normalization + bypass tests) | ⏳ Planned |
 | 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | ⏳ Planned |
 | 5 | Streaming body engine (bounded windows, limits) | ⏳ Planned |
@@ -85,13 +85,24 @@ a working VarmanWAF with unchanged behaviour.
 
 ## Phase 2 — New WAF engine skeleton
 
-- Introduce `CanonicalRequest`, `Finding`, `AttackCategory`, `Action`,
-  `Detector` trait, `SecurityPipeline`, `SecuritySnapshot` in `varman-waf`.
-- Ordered stages with shadow execution next to the current engine; compare
-  verdicts before replacing anything.
-- Immutable per-site runtime behind ArcSwap; atomic swap; version ack.
-- Exit: both engines run side by side; shadow results measurable; no behaviour
-  change in enforcement.
+- [x] `CanonicalRequest` model (provisional types; normalization Phase 3).
+- [x] `Finding`, `AttackCategory`, `Confidence`, `Severity`, `EvidenceSource`,
+      `DetectorId`.
+- [x] `Action` with monotonic escalation (`Pass < Log < Monitor < Challenge <
+      Block`), terminal `Block`.
+- [x] `Detector` trait, `DetectionContext`, bounded `InspectionBudget`,
+      structured `Degradation`.
+- [x] `SecurityPipeline` with deterministic detector order, saturating score
+      sum, optional stop-on-block.
+- [x] `shadow::compare` — agree / stricter / **weaker** classification against
+      the legacy `WafVerdict` (downgrades are the alertable class).
+- [ ] Wire shadow execution into `pingap-plugin/src/waf.rs` (feature-flagged,
+      metrics + structured logs; no enforcement change).
+- [ ] Immutable per-site `SecuritySnapshot` behind ArcSwap; config version ack.
+- [ ] Benchmarks: pipeline overhead vs legacy on the request corpus.
+
+Exit: both engines run side by side; shadow results measurable; no behaviour
+change in enforcement.
 
 ## Phase 3 — Canonicalization
 
