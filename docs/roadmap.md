@@ -198,9 +198,13 @@ benign-corpus blocks; benchmarked cost documented.
       names (`user[$ne]`) and driver syntax (`db.users.find(`) monitor;
       legitimate operator payloads (`{"price":{"$gt":10}}`) stay at Log.
       Corpus-covered (attacks + a benign Mongo-style API payload).
+- [x] SSTI structural detector (`semantic::ssti`) — delimiter-aware
+      (`{{}}`, `${}`, `<%= %>`, `{% %}`, `#{}`, `*{}`, `@{}`): runtime/class
+      access (`__class__`, `Runtime`, `system(`) and evaluation probes
+      (`7*7`) block; any other expression monitors; `${jndi:…}` only
+      monitors (Log4Shell's own detector owns that family). Corpus-covered.
 - [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] XXE, SSTI, LDAP/XPath, deserialization, prototype pollution,
-      GraphQL abuse.
+- [ ] XXE, LDAP/XPath, deserialization, prototype pollution, GraphQL abuse.
 - [ ] Per-detector fuzz targets and performance budgets.
 
 Exit: per-detector acceptance + performance budget; shadow-mode comparison

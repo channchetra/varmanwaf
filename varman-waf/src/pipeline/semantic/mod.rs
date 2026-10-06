@@ -9,10 +9,12 @@ pub mod command;
 pub mod nosql;
 pub mod sql;
 pub mod ssrf;
+pub mod ssti;
 pub mod xss;
 
 pub use command::CommandInjectionDetector;
 pub use nosql::NosqlInjectionDetector;
 pub use sql::SqlStructuralDetector;
 pub use ssrf::SsrfStructuralDetector;
+pub use ssti::SstiDetector;
 pub use xss::HtmlXssDetector;
