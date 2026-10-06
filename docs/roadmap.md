@@ -212,8 +212,13 @@ benign-corpus blocks; benchmarked cost documented.
       ViewState/LosFormatter base64 prefixes block; PHP magic-method
       mentions (`__wakeup`, `__destruct`) stay Log. Java markers remain
       owned by the signature table. Corpus-covered.
+- [x] Prototype pollution structural detector (`semantic::proto`) —
+      mutation shapes (`"__proto__":`, `__proto__[`, `[__proto__]`,
+      `__proto__.`, `__proto__=`, `constructor[prototype]`) block; bare
+      `__proto__` / `constructor.prototype` mentions (documentation) stay
+      Log. Corpus-covered.
 - [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] LDAP/XPath injection, prototype pollution, GraphQL abuse.
+- [ ] LDAP/XPath injection, GraphQL abuse.
 - [ ] Per-detector fuzz targets and performance budgets.
 
 Exit: per-detector acceptance + performance budget; shadow-mode comparison

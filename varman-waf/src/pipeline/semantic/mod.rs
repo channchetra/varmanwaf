@@ -8,6 +8,7 @@
 pub mod command;
 pub mod deser;
 pub mod nosql;
+pub mod proto;
 pub mod sql;
 pub mod ssrf;
 pub mod ssti;
@@ -17,6 +18,7 @@ pub mod xxe;
 pub use command::CommandInjectionDetector;
 pub use deser::DeserializationDetector;
 pub use nosql::NosqlInjectionDetector;
+pub use proto::PrototypePollutionDetector;
 pub use sql::SqlStructuralDetector;
 pub use ssrf::SsrfStructuralDetector;
 pub use ssti::SstiDetector;
