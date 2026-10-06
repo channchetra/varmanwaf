@@ -24,9 +24,7 @@ scorer. Therefore:
 | Area | Status | Notes |
 |---|---|---|
 | SecLang parser (`SecRule` lines → AST) | Partial | Variables list, 9 operators, quoted action lists, comments; unsupported directives/operators error observably |
-| SecLang execution (variables, transforms, chains) | Planned | Phase 7 next slices |
-| Request variables (ARGS, REQUEST_HEADERS, TX, …) | Planned | Phase 7 |
-| Operators execution (`@rx`, `@pm`, `@detectSQLi`, `@detectXSS`, …) | Planned | Phase 7 |
+| SecLang execution (variables, operators) | Partial | `ARGS`, `ARGS_NAMES`, `REQUEST_HEADERS[:name]`, `REQUEST_METHOD`, `REQUEST_URI`, `QUERY_STRING`, `REQUEST_BODY`, `REMOTE_ADDR`, `TX`; `@rx` pre-compiled, `@ipMatch` CIDR; bounded resolution |
 | Transformations (`urlDecode`, `htmlEntityDecode`, …) | Planned | Phase 7 |
 | Control flow (chain, skip, skipAfter, ctl, setvar) | Planned | Phase 7 |
 | OWASP CRS stock ruleset execution | Planned | Phase 7 + CRS regression harness |

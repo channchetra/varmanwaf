@@ -250,11 +250,16 @@ report against the existing engine.
       split on commas outside quotes, order preserved; comments/blanks
       ignored. **Unsupported directives/operators return observable errors**
       — never silent no-ops (mandate §37).
-- [ ] Transaction model + variable resolution (phases 1/2, ARGS,
-      REQUEST_HEADERS, TX, collections).
-- [ ] Operator/transformation execution and chains
-      (`chain`, `skip`, `skipAfter`, `setvar`, `ctl`, `SecDefaultAction`,
-      `SecMarker`, `SecRuleRemoveById`).
+- [x] Transaction + execution slice (`seclang::transaction`): variables
+      `ARGS`, `ARGS_NAMES`, `REQUEST_HEADERS[:name]` (case-insensitive),
+      `REQUEST_METHOD`, `REQUEST_URI`, `QUERY_STRING`, `REQUEST_BODY`,
+      `REMOTE_ADDR`, `TX` (set/get); operators pre-compiled once (`@rx`
+      regex, `@ipMatch` CIDR) and evaluated with bounded resolution
+      (≤256 values, ≤8 KiB per value); `@detectSQLi`/`@detectXSS` reuse the
+      existing detectors.
+- [ ] Operators/transformations execution continuation: `t:` transforms,
+      `chain`, `skip`, `skipAfter`, `setvar`, `ctl`, `SecDefaultAction`,
+      `SecMarker`, `SecRuleRemoveById`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

@@ -18,7 +18,12 @@
 //!   (recorded verbatim; transformation execution is a later slice)
 
 pub mod parser;
+pub mod transaction;
 
 pub use parser::{
     parse_line, SecLangError, SecLangLine, SecOperator, SecRuleLine,
+};
+pub use transaction::{
+    CompiledSecRule, ResolvedValue, SecLangTransaction, MAX_VALUES,
+    MAX_VALUE_LEN,
 };
