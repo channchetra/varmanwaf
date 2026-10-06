@@ -11,7 +11,7 @@
 | 1 | VarmanWAF bootstrap (rename, keep behaviour) | 🚧 In progress |
 | 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | 🚧 In progress — types, pipeline and shadow wiring landed and verified E2E; snapshot/benchmarks pending |
 | 3 | Canonicalization (stable normalization + bypass tests) | 🚧 In progress — canonicalizer core landed (authority, profiles, idempotence); plugin wiring pending |
-| 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | 🚧 In progress — signature scanner + corpora landed; protocol checks pending |
+| 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | 🚧 In progress — signature scanner + corpora landed and verified live in shadow mode; protocol checks pending |
 | 5 | Streaming body engine (bounded windows, limits) | ⏳ Planned |
 | 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, …) | ⏳ Planned |
 | 7 | Native SecLang core + OWASP CRS conformance | ⏳ Planned |
@@ -143,6 +143,12 @@ independently.
 - [x] Attack corpus (11 categories) + benign corpus (WordPress, SQL/JS docs,
       markdown, signed URLs, JWTs, API payloads) with CI ratchets:
       attacks must stay detected, benign must never reach `Monitor`/`Block`.
+- [x] Live shadow verification (2026-10-06): SQLi, XSS, traversal and
+      Log4Shell probes produced `PipelineStricter` comparisons
+      (pipeline=`block` vs legacy=`monitor`; score deltas 15–41, one to two
+      findings each) with enforcement unchanged. The only `PipelineWeaker`
+      outcome was in-tree `/a/../b` (Log-tier traversal evidence — policy
+      tuning backlog, not a detection gap).
 - [ ] HTTP protocol checks: smuggling indicators, CL/TE ambiguity, header
       sanity, duplicate framing (applied where the parser still surfaces
       them), structured `ProtocolViolation` findings.
