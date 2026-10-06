@@ -180,8 +180,13 @@ benign-corpus blocks; benchmarked cost documented.
       shapes, boolean tautologies, quote-break + keywords (Monitor), bare
       keywords (Log). Corpus-covered by the attack/benign suites; benign SQL
       documentation never reaches Monitor.
+- [x] HTML/XSS structural detector (`semantic::xss`) — entity decoding plus
+      structure: entity-obfuscated tags, iframes with script URIs,
+      event-handler calls, `javascript:`/`vbscript:` calls, tag+call
+      combinations; documentation stays Log-tier. Entity-encoded payloads are
+      covered by the attack corpus.
 - [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] HTML5/DOM XSS detector; shell/command structural detector.
+- [ ] Shell/command structural detector.
 - [ ] SSRF, XXE, SSTI, NoSQL, LDAP/XPath, deserialization, prototype
       pollution, GraphQL abuse.
 - [ ] Per-detector fuzz targets and performance budgets.

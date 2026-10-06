@@ -15,7 +15,7 @@
 | Shadow wiring (`pingap-plugin/src/waf_shadow.rs`) | Landed: opt-in with `VARMAN_WAF_SHADOW=1`; compares pipeline vs legacy per request, records counters, never changes enforcement | Observational only |
 | Lane 1 fast detectors | Started: protocol checks + Aho-Corasick signature scanner (starter table, tiered) + raw-path traversal evidence; corpora in `varman-waf/tests/corpus` | No (shadow only) |
 | Streaming body engine | Pending (Phase 5) | No |
-| Lane 2 semantic detectors | Started: SQL structural detector (comment-obfuscated keywords, stacked statements, time-based, tautologies, whitespace variants); covered by the corpora | No (shadow only) |
+| Lane 2 semantic detectors | Started: SQL structural (obfuscation, stacked, time-based, tautologies) + HTML/XSS structural (entity decoding, handler/URI calls); covered by the corpora | No (shadow only) |
 | SecLang / OWASP CRS (Lane 3) | Pending (Phase 7); tracked in `docs/compatibility.md` | No |
 
 The pipeline is deliberately **not wired into the proxy**: `pingap-plugin/src/waf.rs`
@@ -66,6 +66,13 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   with, so no request ever sees a half-applied configuration (mandate §13).
   The desired/active/last-good version handshake with the agent builds on
   this.
+- **`pipeline::semantic::HtmlXssDetector`** (Phase 6) — applies HTML
+  entity decoding (the inspection transformation the canonical model
+  deliberately excludes) and reasons structurally: entity-obfuscated
+  dangerous tags (`&lt;script&gt;`), iframes with script/data URIs,
+  event-handler attributes that call a function, `javascript:`/`vbscript:`
+  URIs that call, and dangerous tags followed by calls. Bare `<script`
+  snippets and prose about `javascript:` stay at Log tier.
 - **`pipeline::semantic::SqlStructuralDetector`** (Phase 6, first semantic
   detector) — normalizes values the way an SQL engine would (comments
   stripped, whitespace collapsed) and reasons about structure:

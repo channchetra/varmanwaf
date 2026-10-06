@@ -6,5 +6,7 @@
 //! and time-based shapes. They are budgeted and must degrade, never error.
 
 pub mod sql;
+pub mod xss;
 
 pub use sql::SqlStructuralDetector;
+pub use xss::HtmlXssDetector;
