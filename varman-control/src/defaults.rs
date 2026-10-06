@@ -112,7 +112,8 @@ pub fn waf_rules() -> Vec<DefaultWafRule> {
     vec![
         DefaultWafRule {
             name: "SQL injection (anomaly)",
-            description: "SQL injection family score at or above the anomaly threshold.",
+            description:
+                "SQL injection family score at or above the anomaly threshold.",
             expression: "cf.waf.score.sqli ge 40",
             action: "block",
             severity: 5,
@@ -128,7 +129,8 @@ pub fn waf_rules() -> Vec<DefaultWafRule> {
         },
         DefaultWafRule {
             name: "Command injection",
-            description: "Shell metacharacter followed by a Unix command in the URI.",
+            description:
+                "Shell metacharacter followed by a Unix command in the URI.",
             expression: r#"http.request.uri.full matches "(?i)(?:;|%3b|\||%7c|\$\(|`)\s*(?:cat|curl|wget|bash|sh|nc|ncat|python|perl|chmod|id)\b""#,
             action: "block",
             severity: 5,
@@ -144,7 +146,8 @@ pub fn waf_rules() -> Vec<DefaultWafRule> {
         },
         DefaultWafRule {
             name: "Path traversal / file inclusion",
-            description: "Dot segments or well-known sensitive file paths in the URI.",
+            description:
+                "Dot segments or well-known sensitive file paths in the URI.",
             expression: r#"http.request.uri.full matches "(?i)(?:\.\./|%2e%2e%2f|%252e%252e|/etc/(?:passwd|shadow|hosts)|/proc/self|win\.ini)""#,
             action: "block",
             severity: 5,
@@ -152,7 +155,8 @@ pub fn waf_rules() -> Vec<DefaultWafRule> {
         },
         DefaultWafRule {
             name: "SSRF",
-            description: "Internal, loopback or cloud-metadata targets in the URI.",
+            description:
+                "Internal, loopback or cloud-metadata targets in the URI.",
             expression: r#"http.request.uri.full matches "(?i)(?:gopher|dict|ftp|file)://|(?:https?://)?(?:127\.0\.0\.1|0\.0\.0\.0|localhost|\[::1\]|169\.254\.169\.254|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)""#,
             action: "block",
             severity: 4,
@@ -176,7 +180,8 @@ pub fn waf_rules() -> Vec<DefaultWafRule> {
         },
         DefaultWafRule {
             name: "Backup file reconnaissance",
-            description: "Requests for .bak/.sql/.zip and similar archive files.",
+            description:
+                "Requests for .bak/.sql/.zip and similar archive files.",
             expression: r#"http.request.uri.path matches "(?i)\.(?:bak|backup|old|orig|swp|sql|tar|tgz|zip|gz|rar|7z)$""#,
             action: "block",
             severity: 3,

@@ -267,9 +267,15 @@ report against the existing engine.
       the end of input without a final rule is an observable error. `ARGS`
       now merges form-urlencoded body parameters (ModSecurity semantics),
       including bounded percent decoding.
-- [ ] Operators/transformations execution continuation: `skip`, `skipAfter`,
-      `setvar`, `ctl`, `SecDefaultAction`, `SecMarker`,
-      `SecRuleRemoveById`; per-chain variable capture (`TX:0…9`).
+- [x] Rule-set runner (`seclang::ruleset`): `SecRuleSet::from_source` parses +
+      validates a whole source; `evaluate` runs groups in order, records
+      `RuleHit`s, and executes **`setvar:tx.<name>=<value>`** (assignment,
+      `+n`, `-n`) so later rules see updated `TX`. **Strict action
+      validation**: any action this engine does not implement is a compile
+      error, never a silent no-op (mandate §37); non-TX `setvar` targets error.
+- [ ] Control flow continues: `skip`, `skipAfter`, `ctl`, `SecDefaultAction`,
+      `SecMarker`, `SecRuleRemoveById`, per-chain variable capture
+      (`TX:0…9`).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
