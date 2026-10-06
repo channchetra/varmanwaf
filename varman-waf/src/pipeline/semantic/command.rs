@@ -17,6 +17,7 @@ use super::super::{
 };
 
 use crate::canonical::CanonicalRequest;
+use crate::pipeline::safe_window;
 
 /// Default maximum value length considered by the structural analysis.
 pub const DEFAULT_MAX_VALUE_LEN: usize = 8 * 1024;
@@ -87,7 +88,7 @@ fn any_command_word(low: &str) -> Option<&'static str> {
 fn subshell_with_command(low: &str) -> bool {
     let subshell = low
         .find("$(")
-        .map(|pos| &low[pos + 2..low.len().min(pos + 64)])
+        .map(|pos| safe_window(low, pos + 2, 64))
         .is_some_and(|window| any_command_word(window).is_some());
     if subshell {
         return true;
@@ -114,7 +115,7 @@ fn metachar_before_command(low: &str) -> bool {
             continue;
         }
         let after = index + ch.len_utf8();
-        let window = &low[after..low.len().min(after + 40)];
+        let window = safe_window(low, after, 40);
         let window = window.trim_start_matches([' ', '\t']);
         if find_word(window, STRONG_COMMANDS).is_some() {
             return true;

@@ -27,6 +27,7 @@ use super::super::{
 };
 
 use crate::canonical::CanonicalRequest;
+use crate::pipeline::safe_window;
 
 /// Default maximum value length considered by the structural analysis.
 pub const DEFAULT_MAX_VALUE_LEN: usize = 8 * 1024;
@@ -224,7 +225,7 @@ fn time_based(low: &str) -> bool {
         let mut start = 0;
         while let Some(pos) = low[start..].find(func) {
             let after = start + pos + func.len();
-            let window = &low[after..low.len().min(after + 16)];
+            let window = safe_window(low, after, 16);
             let digit = window
                 .chars()
                 .take_while(|c| *c != ')')

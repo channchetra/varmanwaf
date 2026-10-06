@@ -16,6 +16,7 @@ use super::super::{
 };
 
 use crate::canonical::CanonicalRequest;
+use crate::pipeline::safe_window;
 
 /// Default maximum value length considered by the structural analysis.
 pub const DEFAULT_MAX_VALUE_LEN: usize = 8 * 1024;
@@ -83,7 +84,7 @@ fn contains_private_ipv4(low: &str) -> bool {
                 }
                 i += 1;
             }
-            if dots == 3 && private_ipv4(&low[start..i]) {
+            if dots == 3 && private_ipv4(safe_window(low, start, i - start)) {
                 return true;
             }
         } else {
@@ -99,7 +100,7 @@ fn obfuscated_private_ip(low: &str) -> bool {
     let bytes = low.as_bytes();
     while i < bytes.len() {
         let start = i;
-        let hex = low[i..].starts_with("0x");
+        let hex = bytes[i] == b'0' && bytes.get(i + 1) == Some(&b'x');
         if hex {
             i += 2;
         }
@@ -113,7 +114,10 @@ fn obfuscated_private_ip(low: &str) -> bool {
         let token_len = i - digits_start;
         if token_len >= 8 {
             let radix = if hex { 16 } else { 10 };
-            if let Ok(n) = u32::from_str_radix(&low[digits_start..i], radix) {
+            if let Ok(n) = u32::from_str_radix(
+                safe_window(low, digits_start, token_len),
+                radix,
+            ) {
                 let a = (n >> 24) as u8;
                 let b = (n >> 16) as u8;
                 let addr = format!("{a}.{b}.{}.{}", (n >> 8) as u8, n as u8);

@@ -226,9 +226,16 @@ benign-corpus blocks; benchmarked cost documented.
       batched documents (≥ 8 operations) monitor; `__typename`/`__type`
       references log. Nothing blocks by default: introspection and batching
       are per-API policy decisions. Corpus-covered.
+- [x] Robustness soak (`varman-waf/tests/robustness.rs`): 5,000 deterministic
+      pseudo-random byte sequences + targeted hostile shapes (invalid UTF-8,
+      NUL, huge nesting, lone delimiters) through the full 14-detector
+      pipeline. It immediately caught **three real UTF-8 boundary panics**
+      (byte-window slicing in the shell/SSRF/XSS detectors) — all detectors
+      now slice through `pipeline::safe_window`, and malformed input can no
+      longer crash the edge.
 - [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] Remaining Phase 6 exit work: per-detector fuzz targets + performance
-      budgets; shadow-mode comparison report.
+- [ ] Remaining Phase 6 exit work: per-detector fuzz targets; shadow-mode
+      comparison report.
 - [ ] Per-detector fuzz targets and performance budgets.
 
 Exit: per-detector acceptance + performance budget; shadow-mode comparison

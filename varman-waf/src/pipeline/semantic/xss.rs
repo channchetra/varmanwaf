@@ -18,6 +18,7 @@ use super::super::{
 
 use crate::canonical::CanonicalRequest;
 use crate::normalize::html::decode_entities;
+use crate::pipeline::safe_window;
 
 /// Default maximum value length considered by the structural analysis.
 pub const DEFAULT_MAX_VALUE_LEN: usize = 8 * 1024;
@@ -87,11 +88,12 @@ fn handler_call(low: &str) -> bool {
             {
                 j += 1;
             }
-            if j < bytes.len() && bytes[j] == b'=' && j > i + 2 {
-                let window_end = low.len().min(j + 40);
-                if contains_call(&low[j..window_end]) {
-                    return true;
-                }
+            if j < bytes.len()
+                && bytes[j] == b'='
+                && j > i + 2
+                && contains_call(safe_window(low, j, 40))
+            {
+                return true;
             }
             i = j;
         } else {
@@ -107,8 +109,7 @@ fn js_uri_call(low: &str) -> bool {
         let mut start = 0;
         while let Some(pos) = low[start..].find(scheme) {
             let after = start + pos + scheme.len();
-            let window_end = low.len().min(after + 40);
-            if contains_call(&low[after..window_end]) {
+            if contains_call(safe_window(low, after, 40)) {
                 return true;
             }
             start = after;
@@ -176,7 +177,7 @@ fn analyze(value: &str) -> Option<Evidence> {
         // (e.g. `<script>alert(1)`).
         let call_after = low
             .find(tag)
-            .map(|pos| contains_call(&low[pos..low.len().min(pos + 64)]))
+            .map(|pos| contains_call(safe_window(&low, pos, 64)))
             .unwrap_or(false);
         if call_after {
             return Some(Evidence {

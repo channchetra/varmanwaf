@@ -67,6 +67,22 @@ pub use snapshot::{SecurityRuntime, SecuritySnapshot, SiteRuntime};
 
 use crate::canonical::CanonicalRequest;
 
+/// Byte-window slice that never cuts a UTF-8 character.
+///
+/// Detectors scan arbitrary attacker bytes; slicing at `start + max_len` can
+/// land mid-character and panic. All window readers go through this helper.
+pub(crate) fn safe_window(s: &str, start: usize, max_len: usize) -> &str {
+    let mut start = start.min(s.len());
+    while start < s.len() && !s.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut end = start.saturating_add(max_len).min(s.len());
+    while end > start && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[start..end]
+}
+
 /// Pipeline-wide behaviour switches.
 ///
 /// Defaults to running every detector (`stop_on_block: false`): shadow mode

@@ -118,6 +118,11 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
 - **`pipeline::fast::RawPathTraversalDetector`** (Phase 4) — dot-segment
   evidence in the decoded raw path; `Log` tier, medium severity when a `..`
   segment tries to climb above the root.
+- **Robustness**: all detectors slice attacker strings through
+  `pipeline::safe_window`, which never cuts a UTF-8 character; a
+  deterministic soak test drives 5,000 random byte sequences plus hostile
+  shapes through the full pipeline and asserts no panic, bounded findings and
+  a generous time budget. Malformed input must never crash the edge.
 - **`pipeline::Detector`** — `id()` + `inspect(&CanonicalRequest, &mut
   DetectionContext) -> DetectorResult`. `Send + Sync`, no I/O, no panics on
   attacker input.
