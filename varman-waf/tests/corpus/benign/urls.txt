@@ -1,0 +1,4 @@
+https://cdn.example.com/file.zip?X-Amz-Signature=abc123&X-Amz-Expires=900
+https://example.com/redirect?url=https%3A%2F%2Fexample.com%2Fhome
+/api/v2/orders?limit=50&offset=100&sort=-created_at
+/search?q=how+to+bake+bread&page=2

@@ -106,6 +106,42 @@ impl AttackCategory {
     }
 }
 
+impl AttackCategory {
+    /// Parse a policy/config name (the value of [`AttackCategory::as_str`])
+    /// back into a category, case-insensitively.
+    pub fn parse(name: &str) -> Option<Self> {
+        let lowered = name.trim().to_ascii_lowercase();
+        [
+            Self::SqlInjection,
+            Self::Xss,
+            Self::CommandInjection,
+            Self::PathTraversal,
+            Self::LfiRfi,
+            Self::Ssrf,
+            Self::Xxe,
+            Self::Ssti,
+            Self::NosqlInjection,
+            Self::LdapInjection,
+            Self::XPathInjection,
+            Self::Deserialization,
+            Self::PrototypePollution,
+            Self::Log4Shell,
+            Self::CrlfInjection,
+            Self::HttpSmuggling,
+            Self::OpenRedirect,
+            Self::GraphqlAbuse,
+            Self::ApiAbuse,
+            Self::CredentialAbuse,
+            Self::BotActivity,
+            Self::SensitiveDataExposure,
+            Self::ProtocolViolation,
+            Self::Unknown,
+        ]
+        .into_iter()
+        .find(|category| category.as_str() == lowered.as_str())
+    }
+}
+
 impl std::fmt::Display for AttackCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
@@ -115,6 +151,47 @@ impl std::fmt::Display for AttackCategory {
 #[cfg(test)]
 mod tests {
     use super::AttackCategory;
+
+    #[test]
+    fn parse_round_trips_every_name() {
+        let all = [
+            AttackCategory::SqlInjection,
+            AttackCategory::Xss,
+            AttackCategory::CommandInjection,
+            AttackCategory::PathTraversal,
+            AttackCategory::LfiRfi,
+            AttackCategory::Ssrf,
+            AttackCategory::Xxe,
+            AttackCategory::Ssti,
+            AttackCategory::NosqlInjection,
+            AttackCategory::LdapInjection,
+            AttackCategory::XPathInjection,
+            AttackCategory::Deserialization,
+            AttackCategory::PrototypePollution,
+            AttackCategory::Log4Shell,
+            AttackCategory::CrlfInjection,
+            AttackCategory::HttpSmuggling,
+            AttackCategory::OpenRedirect,
+            AttackCategory::GraphqlAbuse,
+            AttackCategory::ApiAbuse,
+            AttackCategory::CredentialAbuse,
+            AttackCategory::BotActivity,
+            AttackCategory::SensitiveDataExposure,
+            AttackCategory::ProtocolViolation,
+            AttackCategory::Unknown,
+        ];
+        for category in all {
+            assert_eq!(
+                AttackCategory::parse(category.as_str()),
+                Some(category)
+            );
+        }
+        assert_eq!(
+            AttackCategory::parse(" SQL_INJECTION "),
+            Some(AttackCategory::SqlInjection)
+        );
+        assert_eq!(AttackCategory::parse("nonsense"), None);
+    }
 
     #[test]
     fn names_are_unique() {

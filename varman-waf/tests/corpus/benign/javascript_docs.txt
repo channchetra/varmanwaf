@@ -1,0 +1,5 @@
+Use element.addEventListener('click', handler) for events.
+img.onerror = () => console.log('failed to load');
+The javascript: URL scheme is legacy; prefer https: links.
+document.cookie returns the cookie string for the current origin.
+<script src="/assets/app.js" defer></script>

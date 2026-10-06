@@ -11,7 +11,7 @@
 | 1 | VarmanWAF bootstrap (rename, keep behaviour) | 🚧 In progress |
 | 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | 🚧 In progress — types, pipeline and shadow wiring landed and verified E2E; snapshot/benchmarks pending |
 | 3 | Canonicalization (stable normalization + bypass tests) | 🚧 In progress — canonicalizer core landed (authority, profiles, idempotence); plugin wiring pending |
-| 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | ⏳ Planned |
+| 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | 🚧 In progress — signature scanner + corpora landed; protocol checks pending |
 | 5 | Streaming body engine (bounded windows, limits) | ⏳ Planned |
 | 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, …) | ⏳ Planned |
 | 7 | Native SecLang core + OWASP CRS conformance | ⏳ Planned |
@@ -135,12 +135,22 @@ independently.
 
 ## Phase 4 — Fast lane
 
-- Aho-Corasick scanner, protocol/HTTP sanity checks (smuggling indicators,
-  Host/authority issues), path traversal, CRLF, Log4Shell, high-confidence
-  fingerprints, lightweight SQLi/XSS signals.
-- Off/Monitor/Block modes, structured findings, metrics.
-- Exit: fast lane alone detects the high-confidence attack corpus with zero
-  benign-corpus blocks; benchmarked cost documented.
+- [x] Aho-Corasick signature scanner (`pipeline::fast::signatures`) with a
+      tiered starter table (Block = payload syntax; Log = ambiguous tokens)
+      over canonical path, query, cookies and bounded UTF-8 bodies.
+      Overlapping matches fix the `../`-hides-`/etc/passwd` class.
+- [x] Raw-path traversal evidence detector.
+- [x] Attack corpus (11 categories) + benign corpus (WordPress, SQL/JS docs,
+      markdown, signed URLs, JWTs, API payloads) with CI ratchets:
+      attacks must stay detected, benign must never reach `Monitor`/`Block`.
+- [ ] HTTP protocol checks: smuggling indicators, CL/TE ambiguity, header
+      sanity, duplicate framing (applied where the parser still surfaces
+      them), structured `ProtocolViolation` findings.
+- [ ] Expand signatures with per-pattern bypass cases and FP tuning.
+- [ ] Fast-lane benchmarks vs the legacy engine (lane-cost report).
+
+Exit: fast lane alone detects the high-confidence attack corpus with zero
+benign-corpus blocks; benchmarked cost documented.
 
 ## Phase 5 — Streaming body engine
 

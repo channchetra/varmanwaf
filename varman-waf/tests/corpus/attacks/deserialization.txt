@@ -1,0 +1,3 @@
+rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAAAAAAAAAAM
+aced0005737200116a617661
+java org.apache.commons.collections.functors.InvokerTransformer

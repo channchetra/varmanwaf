@@ -1,0 +1,5 @@
+## Deployment notes
+- **Bold** and `code` are fine in markdown.
+- The editor saves drafts every 30 seconds.
+| column | type | nullable |
+| id | uuid | no |

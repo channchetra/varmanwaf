@@ -1,0 +1,2 @@
+next=%0d%0aSet-Cookie:%20session=evil
+redirect=%0d%0aLocation:%20http://evil.example

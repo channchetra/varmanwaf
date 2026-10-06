@@ -13,7 +13,7 @@
 | Canonical model (`varman-waf/src/canonical`) | Canonicalizer landed (Phase 3 first slice): bounded decode layers, path collapse, query/cookie/header policy + bypass tests | No |
 | Pipeline (`varman-waf/src/pipeline`) | Skeleton landed: detector contract, findings, monotonic actions, bounded context, shadow comparison; first fast detector (raw-path traversal evidence) | No |
 | Shadow wiring (`pingap-plugin/src/waf_shadow.rs`) | Landed: opt-in with `VARMAN_WAF_SHADOW=1`; compares pipeline vs legacy per request, records counters, never changes enforcement | Observational only |
-| Lane 1 fast detectors | Pending (Phase 4) | No |
+| Lane 1 fast detectors | Started: Aho-Corasick signature scanner (starter table, tiered) + raw-path traversal evidence; corpora in `varman-waf/tests/corpus` | No (shadow only) |
 | Streaming body engine | Pending (Phase 5) | No |
 | Lane 2 semantic detectors | Pending (Phase 6) | No |
 | SecLang / OWASP CRS (Lane 3) | Pending (Phase 7); tracked in `docs/compatibility.md` | No |
@@ -59,6 +59,25 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   on the percent-decoded bytes, and an entity-decoded path would route
   differently from the wire. Canonical output is idempotent under
   re-canonicalization (tested).
+- **`pipeline::fast::SignatureDetector`** (Phase 4) — Aho-Corasick scan
+  (ASCII case-insensitive, **overlapping** matches so `../` cannot hide
+  `/etc/passwd` behind it) over canonical path, query names/values, cookies
+  (parsed pairs *and* the raw `Cookie` header, whose parsing can split a
+  payload apart) and UTF-8 bodies within the body budget. One finding per
+  signature per request; signatures are tiered:
+  - **Block tier** — payload syntax (e.g. `union select null`,
+    `<script>alert`, `/bin/sh`, `${jndi:`, `/etc/passwd`, `php://filter`,
+    `rO0AB`, `169.254.169.254`, `\r\nset-cookie:`);
+  - **Log tier** — ambiguous tokens that occur in documentation and normal
+    traffic (`<script`, `union select`, `information_schema.tables`, `sleep(`,
+    `javascript:`, `../`, `%0d%0a`); weak signals may feed scoring but never
+    block on their own (mandate §9).
+  The starter table ships with `varman-waf/tests/corpus` (attacks by category,
+  realistic benign traffic) and CI asserts both ratchets: every attack case
+  stays detected, no benign case reaches `Monitor`/`Block`.
+- **`pipeline::fast::RawPathTraversalDetector`** (Phase 4) — dot-segment
+  evidence in the decoded raw path; `Log` tier, medium severity when a `..`
+  segment tries to climb above the root.
 - **`pipeline::Detector`** — `id()` + `inspect(&CanonicalRequest, &mut
   DetectionContext) -> DetectorResult`. `Send + Sync`, no I/O, no panics on
   attacker input.

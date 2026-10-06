@@ -1,0 +1,6 @@
+Just another WordPress site
+/wp-content/uploads/2024/05/photo-1024x768.jpg
+/?p=123&preview=true
+admin-ajax.php?action=heartbeat&_nonce=abc123def456
+<!-- wp:paragraph --><p>Hello world from the editor.</p><!-- /wp:paragraph -->
+/wp-json/wp/v2/posts?per_page=10&_fields=id,title

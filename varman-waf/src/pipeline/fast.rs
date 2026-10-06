@@ -1,14 +1,18 @@
-//! Lane 1 — fast detectors (Phase 4, first detector).
+//! Lane 1 — fast detectors (Phase 4).
 //!
 //! Fast detectors run before any semantic parsing: they are pure functions
 //! over the canonical request with no allocations on the happy path, and
 //! their findings carry weak actions (never `Block` until policy says so).
 //!
-//! The first detector covers path traversal *evidence*: dot segments that
-//! the canonicalizer resolved. It exists for the shadow period — it measures
-//! how much traversal material reaches the data plane and whether the
-//! canonical form differs from the raw one, feeding
-//! [`shadow::compare`](super::shadow::compare) without changing enforcement.
+//! Detectors:
+//! - [`signatures::SignatureDetector`] — Aho-Corasick signature scanning of
+//!   the canonical request (starter table, tiered Block/Log).
+//! - [`RawPathTraversalDetector`] — dot-segment evidence in the raw path,
+//!   resolved by the canonicalizer.
+
+pub mod signatures;
+
+pub use signatures::SignatureDetector;
 
 use super::{
     Action, AttackCategory, Detector, DetectorId, DetectorResult,

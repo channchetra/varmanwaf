@@ -1,0 +1,5 @@
+SELECT id, name FROM users WHERE active = 1 ORDER BY name;
+UNION SELECT combines the result sets of two queries; duplicates are removed.
+Use information_schema.tables to list tables in PostgreSQL.
+The SLEEP() function pauses execution for the given number of seconds.
+An index on (tenant_id, created_at) makes this query fast.
