@@ -52,6 +52,7 @@ pub mod category;
 pub mod detector;
 pub mod fast;
 pub mod finding;
+pub mod semantic;
 pub mod shadow;
 pub mod snapshot;
 
@@ -61,6 +62,7 @@ pub use detector::{
     Degradation, DetectionContext, Detector, DetectorResult, InspectionBudget,
 };
 pub use finding::{Confidence, DetectorId, EvidenceSource, Finding, Severity};
+pub use semantic::SqlStructuralDetector;
 pub use snapshot::{SecurityRuntime, SecuritySnapshot, SiteRuntime};
 
 use crate::canonical::CanonicalRequest;

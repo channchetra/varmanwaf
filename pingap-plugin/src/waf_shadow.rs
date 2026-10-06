@@ -23,6 +23,7 @@ use varman_waf::pipeline::SecurityPipeline;
 use varman_waf::pipeline::fast::{
     ProtocolDetector, RawPathTraversalDetector, SignatureDetector,
 };
+use varman_waf::pipeline::semantic::SqlStructuralDetector;
 use varman_waf::pipeline::shadow::{self, Agreement, ShadowComparison};
 use varman_waf::{RequestData, WafVerdict};
 
@@ -68,12 +69,13 @@ struct ShadowRuntime {
 
 static SHADOW: LazyLock<ShadowRuntime> = LazyLock::new(|| ShadowRuntime {
     enabled: shadow_enabled_from_env(),
-    // Lane ordering is detector list order; the fast lane comes first —
-    // protocol checks are the cheapest, then signature scanning.
+    // Lane ordering is detector list order: cheapest protocol checks first,
+    // then signatures, then raw-path evidence, then semantic analysis.
     pipeline: SecurityPipeline::new(vec![
         Box::new(ProtocolDetector::new()),
         Box::new(SignatureDetector::new()),
         Box::new(RawPathTraversalDetector::new()),
+        Box::new(SqlStructuralDetector::new()),
     ]),
     counters: ShadowCounters::default(),
 });

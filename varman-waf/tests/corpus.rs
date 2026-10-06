@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use varman_waf::canonical::{Canonicalizer, RequestParts};
 use varman_waf::pipeline::fast::{RawPathTraversalDetector, SignatureDetector};
+use varman_waf::pipeline::semantic::SqlStructuralDetector;
 use varman_waf::pipeline::{
     Action, AttackCategory, PipelineVerdict, SecurityPipeline,
 };
@@ -42,11 +43,12 @@ fn corpus_dir(kind: &str) -> PathBuf {
         .join(kind)
 }
 
-/// The detector set under corpus test: the fast lane.
+/// The detector set under corpus test: fast lane + first semantic detector.
 fn pipeline() -> SecurityPipeline {
     SecurityPipeline::new(vec![
         Box::new(SignatureDetector::new()),
         Box::new(RawPathTraversalDetector::new()),
+        Box::new(SqlStructuralDetector::new()),
     ])
 }
 

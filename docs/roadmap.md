@@ -13,7 +13,7 @@
 | 3 | Canonicalization (stable normalization + bypass tests) | 🚧 In progress — canonicalizer core landed (authority, profiles, idempotence); plugin wiring pending |
 | 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | 🚧 In progress — signature scanner + corpora landed and verified live in shadow mode; protocol checks pending |
 | 5 | Streaming body engine (bounded windows, limits) | ⏳ Planned |
-| 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, …) | ⏳ Planned |
+| 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, …) | 🚧 In progress — SQL structural detector landed and corpus-covered; AST, XSS, shell and the rest pending |
 | 7 | Native SecLang core + OWASP CRS conformance | ⏳ Planned |
 | 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | ⏳ Planned |
 | 9 | Optional External Processor API | ⏳ Planned |
@@ -174,13 +174,20 @@ benign-corpus blocks; benchmarked cost documented.
 
 ## Phase 6 — Semantic lane
 
-- Detectors in order: SQL structural + SQL AST, HTML5/DOM XSS, shell/command,
-  then SSRF, XXE, SSTI, NoSQL, LDAP/XPath, deserialization, prototype
-  pollution, GraphQL abuse, API patterns.
-- Every detector ships: attack corpus, benign corpus, bypass corpus, fuzz
-  target, budget limits, degradation metrics.
-- Exit: per-detector acceptance + performance budget; shadow-mode comparison
-  report against the existing engine.
+- [x] `SqlStructuralDetector` — comment-stripping and whitespace-collapsing
+      normalization, then structural tiers: comment obfuscation, stacked
+      statements, dangerous functions, attack-shaped UNION, time-based
+      shapes, boolean tautologies, quote-break + keywords (Monitor), bare
+      keywords (Log). Corpus-covered by the attack/benign suites; benign SQL
+      documentation never reaches Monitor.
+- [ ] SQL AST detector (dialect-aware) as the second SQL tier.
+- [ ] HTML5/DOM XSS detector; shell/command structural detector.
+- [ ] SSRF, XXE, SSTI, NoSQL, LDAP/XPath, deserialization, prototype
+      pollution, GraphQL abuse.
+- [ ] Per-detector fuzz targets and performance budgets.
+
+Exit: per-detector acceptance + performance budget; shadow-mode comparison
+report against the existing engine.
 
 ## Phase 7 — Native SecLang core
 
