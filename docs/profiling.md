@@ -1,12 +1,12 @@
-# PingWAF Profiling
+# VarmanWAF Profiling
 
-PingWAF ships built-in pprof-style profiling in every binary — no sidecar, no external collector, no cargo feature. It works like Go's `net/http/pprof`: hit an endpoint, get a profile.
+VarmanWAF ships built-in pprof-style profiling in every binary — no sidecar, no external collector, no cargo feature. It works like Go's `net/http/pprof`: hit an endpoint, get a profile.
 
 Both planes are covered:
 
 | Plane | Endpoints | Auth |
 | --- | --- | --- |
-| Control plane (`pingwaf-server`) | `GET /api/v1/debug/pprof/{profile,flamegraph,memory}` | Admin JWT bearer token |
+| Control plane (`varman-control`) | `GET /api/v1/debug/pprof/{profile,flamegraph,memory}` | Admin JWT bearer token |
 | Data plane (pingap admin plugin) | `GET {admin-path}/api/pprof/{profile,flamegraph,memory}` | Admin plugin credentials |
 
 ## Endpoints
@@ -29,8 +29,8 @@ Data plane (admin path below is `/admin`, adjust to your config; use `-H` or a b
 
 ```bash
 curl -u admin:password \
-  "http://localhost:3000/admin/api/pprof/profile?seconds=30" -o pingwaf-cpu.pb.gz
-go tool pprof -http=: pingwaf-cpu.pb.gz
+  "http://localhost:3000/admin/api/pprof/profile?seconds=30" -o varman-cpu.pb.gz
+go tool pprof -http=: varman-cpu.pb.gz
 ```
 
 Flamegraph without Go tooling:
@@ -54,7 +54,7 @@ make release-perf        # cargo build --profile=release-perf --features=perf
 ## Reading the results
 
 - Widest boxes are where CPU time goes; the box above is the caller.
-- For the data plane the interesting frames are `pingwaf_waf` (rule evaluation), `pingap_proxy` (upstream forwarding) and `pingap_cache` (cache lookups).
+- For the data plane the interesting frames are `varman_waf` (rule evaluation), `pingap_proxy` (upstream forwarding) and `pingap_cache` (cache lookups).
 - Compare a capture under load against one at idle; the delta is your hot path.
 
 For continuous always-on profiling shipped to a server, see the Pyroscope integration (`pingap-pyroscope`, `--features=pyro`). The built-in endpoints are for on-demand investigation.

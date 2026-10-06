@@ -1,8 +1,8 @@
-# PingWAF 数据面 WAF 实测评估报告（基于 blazehttp 攻击样本）
+# VarmanWAF 数据面 WAF 实测评估报告（基于 blazehttp 攻击样本）
 
 - 测试日期：2026-10-04
 - 样本来源：[chaitin/blazehttp](https://github.com/chaitin/blazehttp) 内置测试集（33877 条原始 HTTP 报文：恶意 658 / 正常 33219）
-- 被测对象：PingWAF 数据面（pingap-plugin WAF，pingora 0.9.0）静态配置模式
+- 被测对象：VarmanWAF 数据面（pingap-plugin WAF，pingora 0.9.0）静态配置模式
 - 工具：自研原始报文回放器 `tools/waf-bench/replay.py`（raw socket 逐字节发送，保真畸形样本）+ 官方 blazehttp v0.3.0 CLI 交叉对账
 
 ## 1. 执行摘要
@@ -94,7 +94,7 @@ G1 主基线的恶意样本（black）按类目拦截情况：
 4. **整类规则缺失**（黑样本 100% 放行）：
    - **CRLF 注入**（5/5）：`GET /vulnerabilities/sqli/%0D%0AX-Pen-Test%3AeKqNz22M6K` —— 托管规则集无任何 CRLF/响应拆分规则；
    - **SSTI**（5/5）、**XXE**（2/2）、**Java 反序列化**（6/6）：无对应检测类目；
-   - **Log4Shell in URI**（1/1）：托管规则 PINGWAF-1050 表达式只查 `user-agent` 头（规则名却写着 "in any header"），`${jndi:ldap://...}` 出现在 URI 即完全绕过 —— `19/c7/0731629c2498100dc8a3247e06f7.black`。
+   - **Log4Shell in URI**（1/1）：托管规则 VARMAN-1050 表达式只查 `user-agent` 头（规则名却写着 "in any header"），`${jndi:ldap://...}` 出现在 URI 即完全绕过 —— `19/c7/0731629c2498100dc8a3247e06f7.black`。
 5. **SSRF 检测面过窄**（13 条仅拦 1）：正则只匹配回环/内网/元数据 IP 字面量与 gopher/dict 协议头，实际样本多把目标放在 body/JSON/参数值深处（如 solr dataConfig 中 `URLDataSource`），且不含 DNS 类变体。
 
 ### 4.2 误报 TOP 模式（白样本拦截，~0.4% 但高度集中）
@@ -114,7 +114,7 @@ G1 主基线的恶意样本（black）按类目拦截情况：
 
 ## 5. 生效规则面与命中情况
 
-静态模式生效的是引擎托管规则集（`pingwaf-waf/src/rules/managed.rs`，13 条）：
+静态模式生效的是引擎托管规则集（`varman-waf/src/rules/managed.rs`，13 条）：
 
 | 规则 | 语义 | 动作 | PL | 备注 |
 |---|---|---|---|---|
@@ -136,7 +136,7 @@ G1 主基线的恶意样本（black）按类目拦截情况：
 
 ## 6. 机制层发现
 
-1. **静态模式下 monitor 判决与 block 判决均无任何日志落点**。`log_event`（waf.rs:1796）在 `PingWafAgent::instance()` 为 None 时直接 return；安全事件、访问日志、分析管道全部依赖 agent。实测 G2 monitor 全量回放 33877 请求，服务器日志 0 条 WAF 记录。含义：以静态 TOML 部署、或控制面短暂失联时，WAF 变成"静默黑洞"——拦截了什么、放过了什么无从得知。
+1. **静态模式下 monitor 判决与 block 判决均无任何日志落点**。`log_event`（waf.rs:1796）在 `VarmanAgent::instance()` 为 None 时直接 return；安全事件、访问日志、分析管道全部依赖 agent。实测 G2 monitor 全量回放 33877 请求，服务器日志 0 条 WAF 记录。含义：以静态 TOML 部署、或控制面短暂失联时，WAF 变成"静默黑洞"——拦截了什么、放过了什么无从得知。
 2. **`inspect_body` 被 agent 门控，请求体默认不进引擎**（waf.rs:2107 `if agent.is_some() && (body_limit > 0 || self.inspect_body)`）。与 `docs/waf.md` 宣称的 body 检测能力不符；agent 模式下还受 `max_body_log_size` 间接影响。
 3. **规则级 monitor 不下传数据面**：控制面规则若配为 monitor 动作，`waf_config_to_proto` 只聚合站点级 mode，观测语义丢失；叠加发现 1，监控模式实际完全不可观测。
 4. **`detections` 开关与 `ml_*` 字段是 TODO**：`waf_config_to_proto` 中 `ml_enabled` 硬编码 false、`anomaly_threshold` 固定传 0（引擎侧回落 40）；sqli/xss/rce/lfi/ssrf/bot 检测开关未接线到引擎，站点无法按类目关闭检测。
@@ -221,11 +221,11 @@ G1 主基线的恶意样本（black）按类目拦截情况：
 | `log_event` 无 agent 静默返回 | pingap-plugin/src/waf.rs:1796-1804 |
 | auto-block 仅 agent 在位 | pingap-plugin/src/waf.rs:2595-2606 |
 | 规则编译失败静默丢弃 | pingap-plugin/src/waf.rs:1687-1734 |
-| 引擎 monitor 降级与 Stage-1 短路 | pingwaf-waf/src/engine/mod.rs:371-379, 461-466 |
-| 托管 13 条规则定义 | pingwaf-waf/src/rules/managed.rs:17-140 |
+| 引擎 monitor 降级与 Stage-1 短路 | varman-waf/src/engine/mod.rs:371-379, 461-466 |
+| 托管 13 条规则定义 | varman-waf/src/rules/managed.rs:17-140 |
 | 默认信任 XFF | pingap-core/src/http_header.rs:415-424 |
-| 控制面 PL= max(severity)、ml/threshold TODO | pingwaf-server/src/grpc/config.rs:669-694 |
-| 控制面播种 11 条默认规则 | pingwaf-server/src/defaults.rs:111-202 |
+| 控制面 PL= max(severity)、ml/threshold TODO | varman-control/src/grpc/config.rs:669-694 |
+| 控制面播种 11 条默认规则 | varman-control/src/defaults.rs:111-202 |
 
 ## 9. 拦截级别落地与实测（Normal / Strict）
 
@@ -409,9 +409,9 @@ P4 以「post7 strict+body 漏报 147 条全量归因 + strict 档 105 条 FP �
 
 1. **解码链补齐**：b64 解码层 `\u`/`\x` 转义无条件还原、JSON 结构位置裸控制字符剥离重试、query 参数 JSON 值解包、HTML 符号实体表补 27 个（`&colon;`/`&Tab;` 等 DOM 序列化常用变体）——打开三层编码（b64→JSON→b64）与转义混淆载荷的可见性。
 2. **needle 扩面**：宽命令分隔（`;|`/反引号/`||` 前缀 × whoami/uname/ping/curl/wget/sleep/echo）、`eval(atob(`、LDAP 注入三形态、JSFuck、`WEB-INF`/`portal_inc.lua` 源码路径、Postgres `COPY … TO PROGRAM`——全部 sev4~5 强特征。
-3. **strict FP 治理**：PINGWAF-1051（长 URI）Block→Log；strict CRLF blanket-critical 摘除（body 多行文本/非头名形态不 critical）；path 源 CI/Deser 旁路 RCE 子分桶（矩阵参数是存储 URL 语法）；js-call 对非字段 body blob 零分跳过。
+3. **strict FP 治理**：VARMAN-1051（长 URI）Block→Log；strict CRLF blanket-critical 摘除（body 多行文本/非头名形态不 critical）；path 源 CI/Deser 旁路 RCE 子分桶（矩阵参数是存储 URL 语法）；js-call 对非字段 body blob 零分跳过。
 
-CRLF critical 摘除的直接代价是 strict+body 回退 42 条（35 条为「CRLF+弱同伴」黑样本）。逐条归因后补**同伴门**回修：strict 下同值携带 CI/PT/Deser/SSRF 家族特征时 CRLF 恢复 critical——换行走私载荷是真实 response-splitting 流量，纯多行文本无同伴。同轮回修还有 into-file 语句形态门（SQL-008/009 + libinjection `into-file` 指纹要求 `into (out|dump)file '目标'` 引号形态，搜索短语零分跳过）与 PINGWAF-1021 摘压缩包后缀（`.zip/.tar.gz` 是普通下载资源）。
+CRLF critical 摘除的直接代价是 strict+body 回退 42 条（35 条为「CRLF+弱同伴」黑样本）。逐条归因后补**同伴门**回修：strict 下同值携带 CI/PT/Deser/SSRF 家族特征时 CRLF 恢复 critical——换行走私载荷是真实 response-splitting 流量，纯多行文本无同伴。同轮回修还有 into-file 语句形态门（SQL-008/009 + libinjection `into-file` 指纹要求 `into (out|dump)file '目标'` 引号形态，搜索短语零分跳过）与 VARMAN-1021 摘压缩包后缀（`.zip/.tar.gz` 是普通下载资源）。
 
 ### P4 实测（post9 全量回放，33877 样本）
 
@@ -428,14 +428,14 @@ P4 内部两阶段对照（post8 = P4 主体落地、post9 = 归因回修后）�
 
 类别增量（strict-body，vs post7）：ssrf 53.8%→**69.2%**（SSRF-013~017 回环变体 + 解码链补齐）、lfi 88%→**92%**（PT-016/017/018）、other 76.0%→**77.7%**（宽命令分隔 + LDAP + COPY TO PROGRAM + 三层编码解码）；crlf 100%→80%、rce 83.3%→75%、xss 90%→86.7% 为 strict critical 收敛与同伴门的既定语义代价（各 -1 条）。
 
-残余 46 条 strict+body 误报构成（下轮素材）：libinjection-sqli tautology/quote-keyword ×15、XSS 反射类（script-tag/`<script>` 查询值）×13、XXE+XSS 收集 HTML ×4、TI/EXPR ×2、其余零星（SSRF-008、PINGWAF-1020、CI-019 各 1）。拦截侧剩余 138 条漏报以多层编码数组嵌套与深层混淆为主。
+残余 46 条 strict+body 误报构成（下轮素材）：libinjection-sqli tautology/quote-keyword ×15、XSS 反射类（script-tag/`<script>` 查询值）×13、XXE+XSS 收集 HTML ×4、TI/EXPR ×2、其余零星（SSRF-008、VARMAN-1020、CI-019 各 1）。拦截侧剩余 138 条漏报以多层编码数组嵌套与深层混淆为主。
 
 ## 14. P5 残余 FP 形态门与实测（§13 之后的第六轮）
 
 P5 以 post9 残余 46 条 strict+body 误报的逐条归因为输入（libinjection tautology/quote-keyword 指纹 ×15、XSS 反射 `<script` 文字引用 ×13、同伴门反噬 ×6、收集 HTML/playground ×8），落地两道确定性语义门（实现细节见 `waf-engine-review.md` §5 P5 节）：
 
 1. **libinjection 指纹长度门**：`tautology` 指纹 + 值 >32B 且无 comment-terminator → 搜索短语零分（真实恒真探测极短，散文 "1 and 1=1 is a basic operation" 不拦，长盲注带注释终止符保留 critical）；`quote-keyword` 指纹 + 值 >256B → 零分（词表文档远距撇号误触发，真实长 exfiltration 自有 UNION 关键指纹）。第一版门误伤 11 条黑样本（长盲注 ×9、`<script+…>` 未解码 ×2），收紧后 527 条拦截全部保持。
-2. **`<script` 闭合标签门**：XSS-001 needle 与 libinjection `script-tag` 指纹两侧同语义，要求 `<script` 具备真实开标签形态；无闭合的 `<script`（`1<script`、"binary<script is incorrect"）是文字引用而非标签。零星条目 SSRF-008 / PINGWAF-1020 / CI-019 各按形态收窄。
+2. **`<script` 闭合标签门**：XSS-001 needle 与 libinjection `script-tag` 指纹两侧同语义，要求 `<script` 具备真实开标签形态；无闭合的 `<script`（`1<script`、"binary<script is incorrect"）是文字引用而非标签。零星条目 SSRF-008 / VARMAN-1020 / CI-019 各按形态收窄。
 
 ### P5 实测（post10 全量回放，33877 样本）
 
@@ -465,7 +465,7 @@ P6 输入是 post9 strict+body 口径 138 条漏报（658−520）的全量分�
 - **CI needle ×2**：CI-083 `ping -c `（链式 ping 探测）、CI-084 `#context.get(`（Struts2 OGNL 上下文变量链）。
 - **b64 展开实体解码扩面**：解码值 `%` 条件扩为 `%` 或 `&#`（b64 内 HTML 实体 meta-refresh 形态可见）。
 - **query key 进扫描面**：`?redirect:%24%7B…` 的 `%3D` 编码 `=` 使整串成为 key、value 为空——解码 key（≤512B）以 `field` 形态加入扫描面，否则 OGNL 载荷整体不可见。
-- **path 独立扫描循环补 search_phrase 门**：P5 门只加了 decoded_values 循环，`normalized.path` 的独立 sev5 fast-path 循环漏加——补门且 search_phrase 时 `continue` 零分跳过（否则 XSS 子分 48 会被 PINGWAF-1003 兜底重新拦截）。
+- **path 独立扫描循环补 search_phrase 门**：P5 门只加了 decoded_values 循环，`normalized.path` 的独立 sev5 fast-path 循环漏加——补门且 search_phrase 时 `continue` 零分跳过（否则 XSS 子分 48 会被 VARMAN-1003 兜底重新拦截）。
 
 ### P6 实测（post11 全量回放，33877 样本）
 
@@ -796,7 +796,7 @@ post18 遗留 REAL 面 4 条中最后一项可修候选 `ff/67`（S2-045 OGNL �
 
 1. **http::Uri 语义**：`http` 1.5 `Uri` 无 fragment 存储位（scheme/authority/path_and_query 三元），探针实测 `#` 后内容被解析器静默丢弃（`/index.action?redirect:${#a=…}` → `path_and_query()` 仅返回 `"/index.action?redirect:${"`）。
 2. **pingora 解析层主动剥离**：pingora 0.9 `parse_request_target` 在构造 Uri **之前**按 RFC 9112 §3.2 剥离 fragment（源码注释明确 "must not reach the upstream request-line"），`RequestHeader.raw_target` 保存的同样是剥后字节——插件层既拿不到 fragment 内容，也拿不到 `#` 存在信号。
-3. **利用链物理断裂**：pingwaf 转发上游的请求行不含 fragment——OGNL 载荷永远到不了 Struts2。样本库把 `ff/67` 标黑基于「WAF 直连目标服务器」假设；反代部署形态下该载荷无效。
+3. **利用链物理断裂**：varman 转发上游的请求行不含 fragment——OGNL 载荷永远到不了 Struts2。样本库把 `ff/67` 标黑基于「WAF 直连目标服务器」假设；反代部署形态下该载荷无效。
 
 **结论**：`ff/67` 与「无 Content-Length 的 POST」同级的部署形态伪影——pingora 的 RFC 合规解析行为本身就是防护的一环。可达性口径随之修正：伪影面 ~40 条（34 无 C-L + 3 protocol_reject + 2 SSRF 弱语义 + 1 fragment），**658 口径理论上限 618/658 = 93.9%**，等效口径 **617/618 = 99.8%**。真实不可修面仅剩 waf-ce 合成 XSS 洋葱 2 条 + 未授权 API 注定面 1 条。
 

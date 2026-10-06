@@ -1,4 +1,4 @@
-# PingWAF User Guide
+# VarmanWAF User Guide
 
 ## Getting Started
 
@@ -7,8 +7,8 @@
 1. Open the dashboard at `https://your-server:9080` (self-signed certificate
    until you upload a real one under Settings → Control plane HTTPS)
 2. Log in with the seeded credentials:
-   - Email: `admin@pingwaf.local`
-   - Password: `pingwaf123`
+   - Email: `admin@varman.local`
+   - Password: `varman123`
 3. **Immediately change your password**: Profile → Change Password
 
 ### Dashboard Overview
@@ -48,8 +48,8 @@ The **Origin** tab is a site's default view. Every site starts with a `default` 
 
 ### Step 3: DNS Setup
 
-Point your domain's DNS to the PingWAF server:
-- **A record**: `api.example.com → YOUR_PINGWAF_IP`
+Point your domain's DNS to the VarmanWAF server:
+- **A record**: `api.example.com → YOUR_VARMAN_IP`
 - **CNAME**: If behind a load balancer
 
 ### Step 4: SSL Certificate
@@ -150,7 +150,7 @@ Each rule defines a condition and an action:
 
 ### Managed Rulesets
 
-PingWAF includes built-in protection against:
+VarmanWAF includes built-in protection against:
 - SQL Injection (SQLi)
 - Cross-Site Scripting (XSS)
 - Remote Code Execution (RCE)
@@ -378,8 +378,8 @@ Settings → Elasticsearch
 
 Enable the Elasticsearch shipper via environment:
 ```bash
-PINGWAF_ES_ENABLED=true
-PINGWAF_ES_URLS=http://elasticsearch:9200
+VARMAN_ES_ENABLED=true
+VARMAN_ES_URLS=http://elasticsearch:9200
 ```
 
 ### Log Retention
@@ -396,7 +396,7 @@ Logs → Purge (select age threshold)
 1. Generate an API key: **Settings → API Keys → Create**
 2. Install the agent on the edge server:
    ```bash
-   pingwaf agent --server-url http://control-plane:9090 --api-key YOUR_KEY
+   varman agent --server-url http://control-plane:9090 --api-key YOUR_KEY
    ```
 3. The agent appears automatically in **Agents**
 
@@ -525,7 +525,7 @@ Every deployment hosts an MCP (Model Context Protocol) endpoint at `/mcp` on the
 To connect a client you need an API key (**Settings → API keys**) with the `read` permission; add `write`, whose owner must be an administrator, for the two tools that change state. Then paste the card's JSON into the client, or for Claude Code run:
 
 ```bash
-claude mcp add --transport http pingwaf https://waf.example.com:9080/mcp \
+claude mcp add --transport http varman https://waf.example.com:9080/mcp \
   --header "Authorization: Bearer pwk_YOUR_KEY"
 ```
 

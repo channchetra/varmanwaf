@@ -56,17 +56,17 @@ Examples of representing our community include using an official email address,
 posting via an official social media account, or acting as an appointed
 representative at an online or offline event.
 
-Concretely, for PingWAF this covers the GitHub repository (issues, pull
+Concretely, for VarmanWAF this covers the GitHub repository (issues, pull
 requests, code reviews, commits and discussions), any chat or mailing channels
-we operate, and in-person or online events where PingWAF is represented.
+we operate, and in-person or online events where VarmanWAF is represented.
 
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at
-**`conduct@pingwaf.local`**.
+**`conduct@varman.local`**.
 
-> **Maintainers:** replace `conduct@pingwaf.local` with a real, monitored
+> **Maintainers:** replace `conduct@varman.local` with a real, monitored
 > mailbox (ideally owned by more than one person) before publishing this
 > repository widely, and keep this address in sync with the contact listed in
 > [`SECURITY.md`](./SECURITY.md).

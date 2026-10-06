@@ -1,16 +1,16 @@
 # The HTTP request lifecycle
 
-PingWAF's data plane is a [Pingora](https://github.com/cloudflare/pingora)-based
+VarmanWAF's data plane is a [Pingora](https://github.com/cloudflare/pingora)-based
 reverse proxy (`pingap`). Every request walks the same fixed pipeline of
-phases, and every PingWAF feature hooks into exactly one of them:
+phases, and every VarmanWAF feature hooks into exactly one of them:
 
-- the **WAF plugin** (`pingwaf:waf`) runs before the cache, before routing to
+- the **WAF plugin** (`varman:waf`) runs before the cache, before routing to
   the upstream and on the way back — so a cached response can never bypass it;
-- the **challenge plugin** (`pingwaf:challenge`) serves the challenge verify
+- the **challenge plugin** (`varman:challenge`) serves the challenge verify
   endpoint at the same early phase;
-- the **rewrite plugin** (`pingwaf:rewrite`) and the **cache plugin**
-  (`pingwaf:cache`) run once the location is known;
-- the **error page plugin** (`pingwaf:error_page`) only acts on responses;
+- the **rewrite plugin** (`varman:rewrite`) and the **cache plugin**
+  (`varman:cache`) run once the location is known;
+- the **error page plugin** (`varman:error_page`) only acts on responses;
 - the per-site **HSTS** and **force-HTTPS** plugins act on response headers and
   on plaintext requests respectively.
 
@@ -26,15 +26,15 @@ Client
   ▼
 ┌─ early_request ──────────────────────────────────────────────────────────┐
 │  location match (host + path) · request-id · OpenTelemetry                │
-│  ▶ pingwaf:waf      站点策略、IP/地域、Basic Auth、Bot、限流、WAF 引擎    │
-│  ▶ pingwaf:challenge  质询校验端点 /_pingwaf/challenge/verify             │
+│  ▶ varman:waf      站点策略、IP/地域、Basic Auth、Bot、限流、WAF 引擎    │
+│  ▶ varman:challenge  质询校验端点 /_varman/challenge/verify             │
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
 ┌─ request ────────────────────────────────────────────────────────────────┐
 │  ACME HTTP-01 / metrics answered (after passing the WAF above)            │
 │  location path rewrite · no match → 404                                   │
-│  ▶ pingwaf:rewrite   request header/path/body rewrite                     │
-│  ▶ pingwaf:cache     per-session cache setup, PURGE handling              │
+│  ▶ varman:rewrite   request header/path/body rewrite                     │
+│  ▶ varman:cache     per-session cache setup, PURGE handling              │
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
 ┌─ cache lookup (pingora built-in) ────────────────────────────────────────┐
@@ -49,16 +49,16 @@ Client
   ▼
 ┌─ upstream response ──────────────────────────────────────────────────────┐
 │  上游响应头到达 · 缓存写入决策                                            │
-│  ▶ pingwaf:error_page  用站点自定义错误页替换上游错误响应                  │
+│  ▶ varman:error_page  用站点自定义错误页替换上游错误响应                  │
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
 ┌─ response ───────────────────────────────────────────────────────────────┐
-│  ▶ pingwaf:error_page  · pingwaf:waf 记录状态供访问日志                   │
+│  ▶ varman:error_page  · varman:waf 记录状态供访问日志                   │
 │  ▶ 每站点的 HSTS 响应头插件 · 缓存头（Age 等）                             │
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
 ┌─ response body ──────────────────────────────────────────────────────────┐
-│  ▶ pingwaf:waf  流结束时发出访问日志（含响应体采样）                      │
+│  ▶ varman:waf  流结束时发出访问日志（含响应体采样）                      │
 │  响应体重写插件（升级为 WebSocket 的 101 之后跳过）                        │
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
@@ -68,7 +68,7 @@ Client
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
 ┌─ logging ────────────────────────────────────────────────────────────────┐
-│  pingap 访问日志（PingWAF 的日志在更早的阶段已经发出）                     │
+│  pingap 访问日志（VarmanWAF 的日志在更早的阶段已经发出）                     │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -84,17 +84,17 @@ Client
 | 5 | Upstream response | `upstream_response_filter`, `upstream_response_body_filter` | The upstream response headers arrive: pingora decides whether the response may be stored in the cache, `X-Request-Id` is set, and the error page plugin may replace upstream error responses with the site's configured pages (400 and above, including 502/504). |
 | 6 | Response | `response_filter`, `response_body_filter` | Response-step plugins run: the error page plugin gets a second chance on responses, the WAF plugin records the status/size for the access log, the per-site HSTS plugin adds `Strict-Transport-Security`, and cache headers (`Age`, …) are added. Body filters rewrite the response body — except after a `101 Switching Protocols` upgrade, where the bytes are WebSocket traffic, not an HTTP body. At end of stream the WAF plugin emits the access log entry (with response body sampled per the site's logging settings). |
 | 7 | Failure | `fail_to_proxy` | Only on errors: classified as `502` (upstream error), `499` (client gone), `408` (read timeout) or `400` (invalid header) and rendered with pingap's built-in error template. No plugins run here, so **custom error pages cannot replace this page** either. |
-| 8 | Logging | `logging` | pingap writes its own access log last. PingWAF's log entries were already emitted at the stage where the decision was made (see [Debugging](#debugging-with-the-lifecycle)). |
+| 8 | Logging | `logging` | pingap writes its own access log last. VarmanWAF's log entries were already emitted at the stage where the decision was made (see [Debugging](#debugging-with-the-lifecycle)). |
 
 Plugin **step** names map to the configuration key `step` of each plugin
 (`early_request`, `request`, `proxy_upstream`, `upstream_response`,
-`response`). PingWAF injects its plugins with fixed steps: the WAF and
+`response`). VarmanWAF injects its plugins with fixed steps: the WAF and
 challenge plugins at `early_request`, the rewrite and cache plugins at
 `request`, the error page plugin on the response path.
 
 ## Inside the WAF plugin
 
-The WAF plugin is where most of PingWAF's policy is enforced. Its checks run
+The WAF plugin is where most of VarmanWAF's policy is enforced. Its checks run
 in this order and **the first one that answers ends the request**:
 
 | # | Check | Configured under | Behaviour |
@@ -119,11 +119,11 @@ Two cross-cutting behaviours are worth remembering:
 
 ## The challenge subsystem
 
-`pingwaf:challenge` and the WAF plugin share one pending-challenge store:
+`varman:challenge` and the WAF plugin share one pending-challenge store:
 
 - a block/challenge verdict returns the JS challenge page (`503`) or a hard
   block (`403`);
-- the page posts its proof-of-work solution to `/_pingwaf/challenge/verify`,
+- the page posts its proof-of-work solution to `/_varman/challenge/verify`,
   which the challenge plugin serves at the `early_request` phase;
 - on success the visitor receives a signed clearance cookie, so later requests
   skip the challenge until it expires;
@@ -153,13 +153,13 @@ decides what the cache stores:
   cache hits included: a cached response still runs the response filters (only
   the upstream filters are skipped), so the client always gets the modified
   response while the stored copy keeps the upstream's original bytes.
-  PingWAF's rewrite response rules and the per-site HSTS header work this way,
+  VarmanWAF's rewrite response rules and the per-site HSTS header work this way,
   so they are never baked into the cache.
 - **Error page replacements are never stored** — while replacing a response
   the plugin sends `Cache-Control: private, no-store`, so the generated page
   is served but not written to the cache.
 
-A practical consequence: modifying a response in the response phase (a PingWAF
+A practical consequence: modifying a response in the response phase (a VarmanWAF
 rewrite rule) does not change what is cached — the modification runs again on
 every request, including cache hits. To store a modified response, make the
 change in the upstream phase.

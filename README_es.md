@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ PingWAF
+# 🛡️ VarmanWAF
 
 **Un firewall de aplicaciones web (WAF) distribuido y de control centralizado, construido sobre [`pingap`](https://github.com/vicanso/pingap) y [`Pingora`](https://github.com/cloudflare/pingora) de Cloudflare.**
 
@@ -8,7 +8,7 @@ Detección semántica de ataques · Reglas al estilo Cloudflare · Defensa CC y 
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
-[![Build](https://github.com/shuaiZend/PingWAF/actions/workflows/test.yml/badge.svg)](https://github.com/shuaiZend/PingWAF/actions/workflows/test.yml)
+[![Build](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml/badge.svg)](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml)
 
 **[English](./README.md) | [简体中文](./README_zh.md) | [Español](./README_es.md) | [Français](./README_fr.md)**
 
@@ -16,9 +16,9 @@ Detección semántica de ataques · Reglas al estilo Cloudflare · Defensa CC y 
 
 ---
 
-## 📖 ¿Qué es PingWAF?
+## 📖 ¿Qué es VarmanWAF?
 
-**PingWAF** es un **WAF** (firewall de aplicaciones web) de código abierto y alto rendimiento que lleva la seguridad de borde de nivel Cloudflare a tu propia infraestructura. Está construido sobre [`pingap`](https://github.com/vicanso/pingap) — un proxy inverso de producción impulsado por el framework de red [`Pingora`](https://github.com/cloudflare/pingora) de Cloudflare — y añade sobre él una capa de seguridad **distribuida y de control centralizado**.
+**VarmanWAF** es un **WAF** (firewall de aplicaciones web) de código abierto y alto rendimiento que lleva la seguridad de borde de nivel Cloudflare a tu propia infraestructura. Está construido sobre [`pingap`](https://github.com/vicanso/pingap) — un proxy inverso de producción impulsado por el framework de red [`Pingora`](https://github.com/cloudflare/pingora) de Cloudflare — y añade sobre él una capa de seguridad **distribuida y de control centralizado**.
 
 Un único **plano de control** define sitios, reglas y políticas; uno o varios **agentes del plano de datos** las aplican en el borde. Las reglas, los registros y las métricas fluyen entre ambos mediante **flujos gRPC bidireccionales persistentes**, de modo que un cambio de política realizado en el panel llega a todos los agentes en segundos, sin recargas ni tiempos de inactividad.
 
@@ -27,7 +27,7 @@ Un único **plano de control** define sitios, reglas y políticas; uno o varios 
 - 🧭 **Todo incluido, desactivado por defecto** — cada protección se envía desactivada y se habilita por sitio: tú mantienes el control total de tu tráfico.
 - ⚡ **Rust de principio a fin** — seguridad de memoria, E/S asíncrona y un único binario autocontenido con el panel integrado.
 
-> PingWAF es un proyecto independiente. No está afiliado a ni respaldado por Cloudflare ni por los mantenedores de `pingap`.
+> VarmanWAF es un proyecto independiente. No está afiliado a ni respaldado por Cloudflare ni por los mantenedores de `pingap`.
 
 ---
 
@@ -53,8 +53,8 @@ Un único **plano de control** define sitios, reglas y políticas; uno o varios 
 ### Opción A — Docker Compose (recomendada)
 
 ```bash
-git clone https://github.com/shuaiZend/PingWAF.git
-cd PingWAF
+git clone https://github.com/varmanwaf/varmanwaf.git
+cd VarmanWAF
 
 # Inicia el plano de control + plano de datos + PostgreSQL (imagen preconstruida de GHCR)
 docker compose up -d
@@ -63,17 +63,17 @@ docker compose up -d
 Abre el panel:
 
 - **URL:** https://localhost:9080 (certificado autofirmado; súbelo o reemplázalo en Ajustes → HTTPS del plano de control)
-- **Correo:** `admin@pingwaf.local`
-- **Contraseña:** `pingwaf123`
+- **Correo:** `admin@varman.local`
+- **Contraseña:** `varman123`
 
-> ⚠️ **Cambia la contraseña del administrador y `PINGWAF_JWT_SECRET` antes de usarlo en producción.**
+> ⚠️ **Cambia la contraseña del administrador y `VARMAN_JWT_SECRET` antes de usarlo en producción.**
 
 ### Opción B — Script de instalación (Linux)
 
-Los binarios precompilados para **Linux (amd64 / arm64)** están disponibles en [Releases](https://github.com/shuaiZend/PingWAF/releases):
+Los binarios precompilados para **Linux (amd64 / arm64)** están disponibles en [Releases](https://github.com/varmanwaf/varmanwaf/releases):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shuaiZend/PingWAF/main/install.sh | sudo bash -s -- --mode all-in-one
+curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | sudo bash -s -- --mode all-in-one
 ```
 
 ### Opción C — Compilar desde el código fuente
@@ -81,12 +81,12 @@ curl -fsSL https://raw.githubusercontent.com/shuaiZend/PingWAF/main/install.sh |
 En macOS (o si prefieres compilar) se requieren **Rust 1.96+**, **Node.js 22**, `protoc` y `cmake`:
 
 ```bash
-git clone https://github.com/shuaiZend/PingWAF.git
-cd PingWAF
+git clone https://github.com/varmanwaf/varmanwaf.git
+cd VarmanWAF
 cd web && npm ci && npm run build && cd ..
-cargo build --release --bin pingwaf --features full
-./target/release/pingwaf all-in-one \
-  --db-url "postgres://pingwaf:pingwaf@localhost:5432/pingwaf"
+cargo build --release --bin varman --features full
+./target/release/varman all-in-one \
+  --db-url "postgres://varman:varman@localhost:5432/varman"
 ```
 
 ### Puertos predeterminados
@@ -115,4 +115,4 @@ cargo build --release --bin pingwaf --features full
 
 ## 📄 Licencia
 
-PingWAF se distribuye bajo la **[Apache License 2.0](./LICENSE)**. Es un trabajo derivado de `pingap` / `Pingora` y conserva sus avisos de copyright originales; no está afiliado a ni respaldado por Cloudflare ni por el proyecto `pingap`.
+VarmanWAF se distribuye bajo la **[Apache License 2.0](./LICENSE)**. Es un trabajo derivado de `pingap` / `Pingora` y conserva sus avisos de copyright originales; no está afiliado a ni respaldado por Cloudflare ni por el proyecto `pingap`.

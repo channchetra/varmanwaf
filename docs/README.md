@@ -1,6 +1,6 @@
-# PingWAF Documentation
+# VarmanWAF Documentation
 
-Welcome to the PingWAF documentation index. PingWAF is a distributed,
+Welcome to the VarmanWAF documentation index. VarmanWAF is a distributed,
 centrally-controlled Web Application Firewall built on
 [`pingap`](https://github.com/vicanso/pingap) and Cloudflare
 [`Pingora`](https://github.com/cloudflare/pingora).
@@ -45,18 +45,18 @@ Run everything in one process with `all-in-one`, or split the control plane
 
 ## 📦 Crate documentation
 
-PingWAF adds six WAF-specific crates on top of the `pingap` proxy foundation.
+VarmanWAF adds six WAF-specific crates on top of the `pingap` proxy foundation.
 
 **WAF crates:**
 
 | Crate | What it does |
 | --- | --- |
-| [pingwaf-proto](../pingwaf-proto) | Control-plane gRPC protocol definitions (single source: `control_plane.proto`) |
-| [pingwaf-server](../pingwaf-server) | Control plane: Axum REST + tonic gRPC + SeaORM/PostgreSQL + ES logs + embedded frontend + agent health monitoring |
-| [pingwaf-agent](../pingwaf-agent) | Data-plane agent: connects to the control plane, caches rules with disk persistence, ships logs/metrics, receives commands |
-| [pingwaf-waf](../pingwaf-waf) | Detection engine: normalize → signatures → expression → anomaly score |
-| [pingwaf-challenge](../pingwaf-challenge) | Dynamic challenges: JS 5-second shield, interactive challenge, PoW, fingerprinting, HMAC clearance cookies |
-| [pingwaf-pprof](../pingwaf-pprof) | Built-in profiling: `go tool pprof` CPU profiles, SVG flame graphs, memory snapshots (CPU sampling is Linux-only) |
+| [varman-protocol](../varman-protocol) | Control-plane gRPC protocol definitions (single source: `control_plane.proto`) |
+| [varman-control](../varman-control) | Control plane: Axum REST + tonic gRPC + SeaORM/PostgreSQL + ES logs + embedded frontend + agent health monitoring |
+| [varman-agent](../varman-agent) | Data-plane agent: connects to the control plane, caches rules with disk persistence, ships logs/metrics, receives commands |
+| [varman-waf](../varman-waf) | Detection engine: normalize → signatures → expression → anomaly score |
+| [varman-challenge](../varman-challenge) | Dynamic challenges: JS 5-second shield, interactive challenge, PoW, fingerprinting, HMAC clearance cookies |
+| [varman-pprof](../varman-pprof) | Built-in profiling: `go tool pprof` CPU profiles, SVG flame graphs, memory snapshots (CPU sampling is Linux-only) |
 
 **Proxy foundation (`pingap-*`) — each crate has its own README** describing what
 it owns, how it is configured and where it sits in the dependency graph:

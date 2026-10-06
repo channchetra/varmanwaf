@@ -1,4 +1,4 @@
-# PingWAF REST API Reference
+# VarmanWAF REST API Reference
 
 Base URL: `https://your-server:9080/api/v1`
 
@@ -32,8 +32,8 @@ Authenticate and receive tokens.
 **Request:**
 ```json
 {
-  "email": "admin@pingwaf.local",
-  "password": "pingwaf123"
+  "email": "admin@varman.local",
+  "password": "varman123"
 }
 ```
 
@@ -46,7 +46,7 @@ Authenticate and receive tokens.
   "expires_in": 43200,
   "user": {
     "id": "uuid",
-    "email": "admin@pingwaf.local",
+    "email": "admin@varman.local",
     "name": "Administrator",
     "role": "admin",
     "created_at": "2024-01-01T00:00:00Z",
@@ -191,7 +191,7 @@ encoding (base64url strings, camelCase fields) to be handed to
 
 ```json
 {
-  "rp": { "id": "waf.example.com", "name": "PingWAF" },
+  "rp": { "id": "waf.example.com", "name": "VarmanWAF" },
   "user": { "id": "…", "name": "ops@example.com", "displayName": "Ops" },
   "challenge": "…",
   "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
@@ -248,15 +248,15 @@ it answers `429`.
 
 | Env var | Default | Meaning |
 |---------|---------|---------|
-| `PINGWAF_PASSKEY_ENABLED` | `true` | Offer passkeys at all |
-| `PINGWAF_PASSKEY_RP_NAME` | `PingWAF` | Relying party name shown by the browser |
-| `PINGWAF_PASSKEY_RP_ID` | derived from `Host` | Relying party id (registrable domain) |
-| `PINGWAF_PASSKEY_ORIGIN` | derived from `Host` | Exact origin the browser must report |
-| `PINGWAF_PASSKEY_TRUST_FORWARDED_PROTO` | `false` | Honour `X-Forwarded-Proto` when deriving the origin |
+| `VARMAN_PASSKEY_ENABLED` | `true` | Offer passkeys at all |
+| `VARMAN_PASSKEY_RP_NAME` | `VarmanWAF` | Relying party name shown by the browser |
+| `VARMAN_PASSKEY_RP_ID` | derived from `Host` | Relying party id (registrable domain) |
+| `VARMAN_PASSKEY_ORIGIN` | derived from `Host` | Exact origin the browser must report |
+| `VARMAN_PASSKEY_TRUST_FORWARDED_PROTO` | `false` | Honour `X-Forwarded-Proto` when deriving the origin |
 
 Deriving from `Host` assumes the console is reached directly. Behind a reverse
-proxy that terminates TLS, either set `PINGWAF_PASSKEY_ORIGIN` explicitly or turn
-on `PINGWAF_PASSKEY_TRUST_FORWARDED_PROTO` — a wrong origin is an opaque
+proxy that terminates TLS, either set `VARMAN_PASSKEY_ORIGIN` explicitly or turn
+on `VARMAN_PASSKEY_TRUST_FORWARDED_PROTO` — a wrong origin is an opaque
 `SecurityError` in the browser, not a helpful message.
 
 ---
@@ -279,7 +279,7 @@ Build metadata.
 **Response (200):**
 ```json
 {
-  "name": "pingwaf-server",
+  "name": "varman-control",
   "version": "0.20.0",
   "api": "/api/v1",
   "registration_open": true
@@ -1026,12 +1026,12 @@ Host probe history (CPU, memory, network, disk), newest first. Cumulative counte
 
 ### GET /agents/{agent_id}/metrics
 
-Aggregated edge-metric history shipped by the agent (`pingwaf_requests_total`, `pingwaf_blocked_requests_total`, `pingwaf_active_connections`, `pingwaf_site_cache_used_bytes`). Rows are grouped by their label set and bucketed into `step`-second windows.
+Aggregated edge-metric history shipped by the agent (`varman_requests_total`, `varman_blocked_requests_total`, `varman_active_connections`, `varman_site_cache_used_bytes`). Rows are grouped by their label set and bucketed into `step`-second windows.
 
 **Query params:**
 | Param | Description |
 |-------|-------------|
-| `name` | Required. Metric name, e.g. `pingwaf_requests_total`. |
+| `name` | Required. Metric name, e.g. `varman_requests_total`. |
 | `from` | Inclusive lower bound, RFC 3339. Defaults to one hour before `to`. |
 | `to` | Exclusive upper bound, RFC 3339. Defaults to now. |
 | `step` | Bucket width in seconds, minimum 10. Defaults to 60. |
@@ -1039,7 +1039,7 @@ Aggregated edge-metric history shipped by the agent (`pingwaf_requests_total`, `
 **Response:**
 ```json
 {
-  "name": "pingwaf_site_cache_used_bytes",
+  "name": "varman_site_cache_used_bytes",
   "from": "2024-01-01T11:00:00Z",
   "to": "2024-01-01T12:00:00Z",
   "step": 60,
@@ -1055,7 +1055,7 @@ Aggregated edge-metric history shipped by the agent (`pingwaf_requests_total`, `
 }
 ```
 
-`metric_type`: `0` gauge, `1` counter. Metric samples are retained for 7 days by default (`PINGWAF_METRIC_RETENTION_DAYS`).
+`metric_type`: `0` gauge, `1` counter. Metric samples are retained for 7 days by default (`VARMAN_METRIC_RETENTION_DAYS`).
 
 ### DELETE /agents/{agent_id}
 
@@ -1506,7 +1506,7 @@ Recording is controlled by the `access_log_enabled` switch and
       "user_agent": "curl/8.4.0",
       "referer": null,
       "user_id": "uuid",
-      "user_email": "admin@pingwaf.local",
+      "user_email": "admin@varman.local",
       "action": "allowed",
       "reason": null
     }
@@ -2014,7 +2014,7 @@ Create a rewrite rule.
   "type": "request",
   "match_pattern": "^/api/v1/(.*)",
   "replace_with": "/$1",
-  "headers_add": {"X-Forwarded-By": "PingWAF"},
+  "headers_add": {"X-Forwarded-By": "VarmanWAF"},
   "headers_remove": ["Server"],
   "priority": 10,
   "enabled": true
@@ -2100,7 +2100,7 @@ Update Elasticsearch settings.
 {
   "enabled": true,
   "urls": ["http://elasticsearch:9200"],
-  "index_prefix": "pingwaf",
+  "index_prefix": "varman",
   "username": "elastic",
   "password": "secret",
   "max_body_size": 8192
@@ -2188,7 +2188,7 @@ bundles to the agents right away — no restart, no manual sync.
 
 `observation_mode` is required; a body without it is rejected with `400`.
 A change made directly in the database — e.g. by the
-`pingwaf mode observe` CLI on the server — is picked up and pushed by a
+`varman mode observe` CLI on the server — is picked up and pushed by a
 background watcher within about 15 seconds.
 
 **Response (200):** the updated row, same shape as `GET`.
@@ -2276,7 +2276,7 @@ operator out of the console they are using:
 ```
 
 Add the address (or retry with `force: true`) to apply it anyway. The
-`pingwaf security allowlist off` CLI on the server is the escape hatch when
+`varman security allowlist off` CLI on the server is the escape hatch when
 HTTP access is already gone.
 
 **Response (200):** the same view as `GET`.
@@ -2288,7 +2288,7 @@ HTTP access is already gone.
 The certificate the dashboard and REST API are served with. Administrators
 only: the private key never leaves the server and no endpoint returns it.
 
-A self-signed pair (EC P-256, `CN=PingWAF Control Plane`) is generated on first
+A self-signed pair (EC P-256, `CN=VarmanWAF Control Plane`) is generated on first
 boot when TLS is enabled and nothing has been stored yet. Replacing it takes
 effect immediately — the listener swaps the pair in place, so no restart is
 needed. Passkeys require a secure origin, which is the reason this exists.
@@ -2305,8 +2305,8 @@ Current status, including the active certificate's metadata.
   "certificate": {
     "id": "uuid",
     "source": "self_signed",
-    "subject_dn": "CN=PingWAF Control Plane",
-    "common_name": "PingWAF Control Plane",
+    "subject_dn": "CN=VarmanWAF Control Plane",
+    "common_name": "VarmanWAF Control Plane",
     "sans": ["localhost", "127.0.0.1", "waf.example.com"],
     "serial": "1f0c…",
     "fingerprint_sha256": "3b1a…",
@@ -2356,7 +2356,7 @@ Generate and install a fresh self-signed certificate.
 **Request** (every field optional):
 ```json
 {
-  "common_name": "PingWAF Control Plane",
+  "common_name": "VarmanWAF Control Plane",
   "sans": ["waf.example.com", "10.0.0.5"],
   "validity_days": 825
 }
@@ -2394,7 +2394,7 @@ the defaults shown below on first read.
   "base_url": "https://api.openai.com/v1",
   "api_key": "",
   "model": "gpt-4o-mini",
-  "system_prompt": "You are the built-in assistant of PingWAF, a reverse-proxy and web application firewall console. …",
+  "system_prompt": "You are the built-in assistant of VarmanWAF, a reverse-proxy and web application firewall console. …",
   "temperature": 0.2,
   "max_tool_rounds": 5,
   "allow_write_tools": false,
@@ -2627,7 +2627,7 @@ plus `write` for the write tools). A generic Streamable HTTP client:
 ```json
 {
   "mcpServers": {
-    "pingwaf": {
+    "varman": {
       "url": "https://waf.example.com:9080/mcp",
       "headers": { "Authorization": "Bearer pwk_YOUR_KEY" }
     }
@@ -2638,7 +2638,7 @@ plus `write` for the write tools). A generic Streamable HTTP client:
 Claude Code takes the same settings in one command:
 
 ```bash
-claude mcp add --transport http pingwaf https://waf.example.com:9080/mcp \
+claude mcp add --transport http varman https://waf.example.com:9080/mcp \
   --header "Authorization: Bearer pwk_YOUR_KEY"
 ```
 
@@ -2669,7 +2669,7 @@ result with `isError: true` and the message in the content text.
 ### Resources and prompts
 
 `resources/list` exposes the fleet's readable state as MCP resources, each
-with a `pingwaf://` URI (defense status, sites, agents, certificates, traffic
+with a `varman://` URI (defense status, sites, agents, certificates, traffic
 and the control-plane log). `prompts/list` offers ready-made troubleshooting
 prompts — incident triage, traffic report, security review and certificate
 audit — that clients can surface as one-click actions.

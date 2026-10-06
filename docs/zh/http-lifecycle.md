@@ -1,15 +1,15 @@
 # HTTP 请求生命周期
 
-PingWAF 的数据面是基于 [Pingora](https://github.com/cloudflare/pingora) 的反向代理
-（`pingap`）。每个请求都会沿固定的流水线阶段依次推进，而 PingWAF 的每一项功能都
+VarmanWAF 的数据面是基于 [Pingora](https://github.com/cloudflare/pingora) 的反向代理
+（`pingap`）。每个请求都会沿固定的流水线阶段依次推进，而 VarmanWAF 的每一项功能都
 挂接在其中一个确定的阶段上：
 
-- **WAF 插件**（`pingwaf:waf`）在缓存之前、路由到上游之前运行，并在回程再次参与——
+- **WAF 插件**（`varman:waf`）在缓存之前、路由到上游之前运行，并在回程再次参与——
   因此命中缓存的响应也无法绕过检查；
-- **质询插件**（`pingwaf:challenge`）在同一个早期阶段提供质询校验端点；
-- **重写插件**（`pingwaf:rewrite`）与**缓存插件**（`pingwaf:cache`）在 location
+- **质询插件**（`varman:challenge`）在同一个早期阶段提供质询校验端点；
+- **重写插件**（`varman:rewrite`）与**缓存插件**（`varman:cache`）在 location
   确定之后运行；
-- **错误页插件**（`pingwaf:error_page`）只作用于响应；
+- **错误页插件**（`varman:error_page`）只作用于响应；
 - 站点级的 **HSTS** 与**强制 HTTPS** 插件分别作用于响应头与明文请求。
 
 理解这个顺序，就能预测一条规则会做什么、以及调试一个请求为什么被放行、拦截或质询。
@@ -23,15 +23,15 @@ PingWAF 的数据面是基于 [Pingora](https://github.com/cloudflare/pingora) �
   ▼
 ┌─ early_request ──────────────────────────────────────────────────────────┐
 │  location 匹配（host + path）· 请求 ID · OpenTelemetry                    │
-│  ▶ pingwaf:waf        站点策略、IP/地域、Basic Auth、Bot、限流、WAF 引擎  │
-│  ▶ pingwaf:challenge  质询校验端点 /_pingwaf/challenge/verify             │
+│  ▶ varman:waf        站点策略、IP/地域、Basic Auth、Bot、限流、WAF 引擎  │
+│  ▶ varman:challenge  质询校验端点 /_varman/challenge/verify             │
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
 ┌─ request ────────────────────────────────────────────────────────────────┐
 │  ACME HTTP-01 / metrics 在本阶段应答（此前已通过 WAF）                    │
 │  location 路径重写 · 未匹配 location → 404                                │
-│  ▶ pingwaf:rewrite   请求头/路径/正文重写                                 │
-│  ▶ pingwaf:cache     配置本次会话的缓存、处理 PURGE                       │
+│  ▶ varman:rewrite   请求头/路径/正文重写                                 │
+│  ▶ varman:cache     配置本次会话的缓存、处理 PURGE                       │
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
 ┌─ 缓存查找（pingora 内置） ────────────────────────────────────────────────┐
@@ -46,16 +46,16 @@ PingWAF 的数据面是基于 [Pingora](https://github.com/cloudflare/pingora) �
   ▼
 ┌─ 上游响应 ───────────────────────────────────────────────────────────────┐
 │  上游响应头到达 · 缓存写入决策                                            │
-│  ▶ pingwaf:error_page  用站点自定义错误页替换上游错误响应                  │
+│  ▶ varman:error_page  用站点自定义错误页替换上游错误响应                  │
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
 ┌─ 响应 ───────────────────────────────────────────────────────────────────┐
-│  ▶ pingwaf:error_page  · pingwaf:waf 记录状态供访问日志                   │
+│  ▶ varman:error_page  · varman:waf 记录状态供访问日志                   │
 │  ▶ 每站点的 HSTS 响应头插件 · 缓存头（Age 等）                             │
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
 ┌─ 响应体 ─────────────────────────────────────────────────────────────────┐
-│  ▶ pingwaf:waf  流结束时发出访问日志（含响应体采样）                      │
+│  ▶ varman:waf  流结束时发出访问日志（含响应体采样）                      │
 │  响应体重写插件（升级为 WebSocket 的 101 之后跳过）                        │
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
@@ -65,7 +65,7 @@ PingWAF 的数据面是基于 [Pingora](https://github.com/cloudflare/pingora) �
 └──────────────────────────────────────────────────────────────────────────┘
   ▼
 ┌─ logging ────────────────────────────────────────────────────────────────┐
-│  pingap 访问日志（PingWAF 的日志在更早的阶段已经发出）                     │
+│  pingap 访问日志（VarmanWAF 的日志在更早的阶段已经发出）                     │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -81,15 +81,15 @@ PingWAF 的数据面是基于 [Pingora](https://github.com/cloudflare/pingora) �
 | 5 | 上游响应 | `upstream_response_filter`、`upstream_response_body_filter` | 上游响应头到达：pingora 判定响应能否写入缓存，设置 `X-Request-Id`，错误页插件可将上游错误响应（400 及以上，含 502/504）替换为站点配置的页面。 |
 | 6 | 响应 | `response_filter`、`response_body_filter` | 运行 `response` 步骤插件：错误页插件获得第二次机会；WAF 插件记录状态与大小供访问日志使用；站点 HSTS 插件添加 `Strict-Transport-Security`；缓存头（`Age` 等）在此写入。响应体过滤器可改写正文——但 `101 Switching Protocols` 升级之后跳过的字节是 WebSocket 流量而非 HTTP 正文。流结束时 WAF 插件发出访问日志条目（按站点日志设置采样响应体）。 |
 | 7 | 失败 | `fail_to_proxy` | 仅在出错时触发：分类为 `502`（上游错误）、`499`（客户端断开）、`408`（读取超时）或 `400`（非法请求头），并用 pingap 内置错误模板渲染。此处**不运行任何插件**，自定义错误页同样无法替换该页面。 |
-| 8 | 日志 | `logging` | pingap 最后写入自己的访问日志。PingWAF 的日志条目在做出决定的那一刻就已经发出（见[调试](#调试与生命周期)）。 |
+| 8 | 日志 | `logging` | pingap 最后写入自己的访问日志。VarmanWAF 的日志条目在做出决定的那一刻就已经发出（见[调试](#调试与生命周期)）。 |
 
 插件的**步骤**（step）名与配置键 `step` 一一对应（`early_request`、`request`、
-`proxy_upstream`、`upstream_response`、`response`）。PingWAF 注入插件时使用固定
+`proxy_upstream`、`upstream_response`、`response`）。VarmanWAF 注入插件时使用固定
 步骤：WAF 与质询插件在 `early_request`，重写与缓存在 `request`，错误页插件在响应路径上。
 
 ## WAF 插件内部
 
-PingWAF 的大部分策略都在 WAF 插件内执行。检查按以下顺序进行，**任何一个环节做出
+VarmanWAF 的大部分策略都在 WAF 插件内执行。检查按以下顺序进行，**任何一个环节做出
 应答，请求即告结束**：
 
 | # | 检查 | 配置位置 | 行为 |
@@ -112,10 +112,10 @@ PingWAF 的大部分策略都在 WAF 插件内执行。检查按以下顺序进�
 
 ## 质询子系统
 
-`pingwaf:challenge` 与 WAF 插件共用一个待质询存储：
+`varman:challenge` 与 WAF 插件共用一个待质询存储：
 
 - 拦截/质询结论返回 JS 质询页（`503`）或硬拦截（`403`）；
-- 质询页把工作量证明提交到 `/_pingwaf/challenge/verify`，该端点由质询插件在
+- 质询页把工作量证明提交到 `/_varman/challenge/verify`，该端点由质询插件在
   `early_request` 阶段提供；
 - 校验通过后访客获得签名的 clearance cookie，之后的请求在过期前跳过质询；
 - 难度、放行时长与质询级别是站点级设置（站点 → 安全 → CC 防护）。
@@ -137,12 +137,12 @@ PingWAF 的大部分策略都在 WAF 插件内执行。检查按以下顺序进�
 - **响应阶段（缓存写入之后）** —— `response_filter` /
   `response_body_filter` 的修改在**每次服务时**重新应用，包括缓存命中：
   缓存响应同样会运行 response 过滤器（只跳过 upstream 过滤器），因此客户端
-  总能拿到修改后的响应，而缓存副本保持上游的原始字节。PingWAF 的重写响应
+  总能拿到修改后的响应，而缓存副本保持上游的原始字节。VarmanWAF 的重写响应
   规则与站点 HSTS 响应头都走这条路，永远不会写进缓存。
 - **错误页替换不会被存储** —— 插件在替换响应时发送
   `Cache-Control: private, no-store`：页面照常返回，但不会写入缓存。
 
-实际含义：在响应阶段修改响应（PingWAF 重写规则）不会改变缓存内容——修改会在
+实际含义：在响应阶段修改响应（VarmanWAF 重写规则）不会改变缓存内容——修改会在
 每次请求（包括缓存命中）时重新执行；若希望修改后的内容进入缓存，需要在上游
 阶段完成修改。
 

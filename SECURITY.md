@@ -1,6 +1,6 @@
 # Security Policy
 
-PingWAF sits directly in the request path of the applications it protects, so
+VarmanWAF sits directly in the request path of the applications it protects, so
 its own security matters as much as the rules it enforces. We take vulnerability
 reports seriously and appreciate the effort of security researchers who disclose
 them responsibly.
@@ -8,16 +8,16 @@ them responsibly.
 ## Reporting a Vulnerability
 
 **Please do NOT open a public GitHub issue, discussion, or pull request for a
-security vulnerability.** Public reports put every PingWAF deployment at risk
+security vulnerability.** Public reports put every VarmanWAF deployment at risk
 before a fix exists.
 
 Instead, report privately:
 
 | Channel | Address |
 | --- | --- |
-| **Email (preferred)** | `security@pingwaf.local` |
+| **Email (preferred)** | `security@varman.local` |
 
-> **Maintainers:** replace `security@pingwaf.local` with a real, monitored
+> **Maintainers:** replace `security@varman.local` with a real, monitored
 > mailbox owned by at least two people before publishing this repository widely.
 > Consider publishing a PGP key for that address, and enabling GitHub's
 > *Private vulnerability reporting* (Security → Advisories) as a second channel,
@@ -58,7 +58,7 @@ pursue legal action for good-faith research conducted under this policy.
 
 ## Supported Versions
 
-PingWAF shares its version lineage with [pingap](https://github.com/vicanso/pingap),
+VarmanWAF shares its version lineage with [pingap](https://github.com/vicanso/pingap),
 from which it inherits the proxy data plane.
 
 | Version | Status | Receives security fixes |
@@ -78,7 +78,7 @@ run an older version, please upgrade — see
 [`docs/deployment.md` → Upgrade Procedure](./docs/deployment.md#upgrade-procedure).
 
 > **Note:** prebuilt Linux (amd64/arm64) binaries are published on
-> [GitHub Releases](https://github.com/shuaiZend/PingWAF/releases); on macOS,
+> [GitHub Releases](https://github.com/varmanwaf/varmanwaf/releases); on macOS,
 > build from source. Either way, pin the exact version or commit you deploy so
 > you can tell us what you are running.
 
@@ -87,7 +87,7 @@ run an older version, please upgrade — see
 The following are in scope for this policy:
 
 - **WAF bypass** — payloads that evade normalisation, signature matching or the
-  rule engine (`pingwaf-waf`) and reach the origin unblocked.
+  rule engine (`varman-waf`) and reach the origin unblocked.
 - **Authentication and authorisation** — JWT issuance/validation, session and
   refresh-token handling, role checks, user registration controls in the
   control-plane REST API (`/api/v1`).
@@ -105,19 +105,19 @@ The following are in scope for this policy:
 - **Memory safety and DoS** — panics, unbounded allocation, quadratic parsing or
   other resource exhaustion reachable from untrusted HTTP input.
 - **Proxy request smuggling** — HTTP/1.1, HTTP/2 or gRPC-Web parsing
-  inconsistencies between PingWAF and an upstream or downstream hop.
+  inconsistencies between VarmanWAF and an upstream or downstream hop.
 
 Out of scope (please still tell us if you are unsure):
 
 - Reports that require physical access to the host, or an already-compromised
   server.
 - Findings that depend on a deployment running with the documented insecure
-  defaults (`pingwaf123`, `change-me-in-production`, open registration) on a
+  defaults (`varman123`, `change-me-in-production`, open registration) on a
   public network — these are configuration issues, covered under
   [Hardening](#hardening-checklist) below.
 - Missing security headers or TLS best-practice settings on *your* origin.
 - Vulnerabilities in third-party dependencies without a demonstrated impact on
-  PingWAF (please report those upstream, and open an issue for the dependency
+  VarmanWAF (please report those upstream, and open an issue for the dependency
   bump).
 - Social engineering of maintainers or contributors.
 
@@ -139,21 +139,21 @@ document why it is not exploitable and when it can be removed.
 
 ## Hardening Checklist
 
-PingWAF ships with development-friendly defaults so you can evaluate it quickly.
+VarmanWAF ships with development-friendly defaults so you can evaluate it quickly.
 **Change every one of them before exposing an instance to a network you do not
 control.**
 
 ### Credentials and secrets
 
-- [ ] Set `PINGWAF_ADMIN_EMAIL` and a strong `PINGWAF_ADMIN_PASSWORD` — never
-      leave `admin@pingwaf.local` / `pingwaf123`.
-- [ ] Set `PINGWAF_JWT_SECRET` to at least 16 characters of random data
+- [ ] Set `VARMAN_ADMIN_EMAIL` and a strong `VARMAN_ADMIN_PASSWORD` — never
+      leave `admin@varman.local` / `varman123`.
+- [ ] Set `VARMAN_JWT_SECRET` to at least 16 characters of random data
       (32 random bytes recommended): `openssl rand -hex 32`. Rotate it
       immediately if it was ever committed or logged.
-- [ ] Set `PINGWAF_ALLOW_REGISTRATION=false` unless you need self-service
+- [ ] Set `VARMAN_ALLOW_REGISTRATION=false` unless you need self-service
       signups.
-- [ ] Change the PostgreSQL password away from `pingwaf`, and use a role with
-      the minimum privileges PingWAF needs (DDL rights are required at startup
+- [ ] Change the PostgreSQL password away from `varman`, and use a role with
+      the minimum privileges VarmanWAF needs (DDL rights are required at startup
       for migrations).
 - [ ] Issue a dedicated agent API key per edge node
       (**Settings → API Keys → Create Key**) and rotate keys on staff or host
@@ -165,7 +165,7 @@ control.**
       put it behind a reverse proxy or VPN rather than exposing `0.0.0.0:9080`.
       The port serves HTTPS by default with a self-signed certificate — upload a
       real one (**Settings → Control plane HTTPS**) or set
-      `PINGWAF_TLS_ENABLED=false` behind a proxy that terminates TLS.
+      `VARMAN_TLS_ENABLED=false` behind a proxy that terminates TLS.
 - [ ] Allow port `9090` (gRPC control plane) only from your agent hosts — it is
       not needed by end users.
 - [ ] Never expose PostgreSQL (`5432`) publicly; keep it on a private network or
@@ -191,10 +191,10 @@ control.**
       unacceptable, start agents with `--fail-open=false` and accept the
       availability trade-off.
 - [ ] Right-size `--log-batch-size`, `--max-body-log-size` and
-      `PINGWAF_DB_MAX_CONNECTIONS`; consider shipping logs to Elasticsearch
+      `VARMAN_DB_MAX_CONNECTIONS`; consider shipping logs to Elasticsearch
       instead of retaining everything in PostgreSQL.
 - [ ] Run the service as an unprivileged user with the hardened
-      [`pingwaf.service`](./pingwaf.service) unit (`NoNewPrivileges`,
+      [`varman.service`](./varman.service) unit (`NoNewPrivileges`,
       `ProtectSystem=strict`, read-only paths).
 
 ### Operations

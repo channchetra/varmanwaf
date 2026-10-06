@@ -1,7 +1,7 @@
-# PingWAF 引擎复盘与语义检测演进方案
+# VarmanWAF 引擎复盘与语义检测演进方案
 
 - 复盘日期：2026-10-04
-- 对象：`pingwaf-waf` 引擎全部源码（5839 行）+ 基准实测数据（blazehttp 33877 样本，Normal/Strict 两档）
+- 对象：`varman-waf` 引擎全部源码（5839 行）+ 基准实测数据（blazehttp 33877 样本，Normal/Strict 两档）
 - 方法：源码通读 + 漏报/误报样本逐条归因 + 关键假设 curl 实测复现 + 业界方案对标
 - 基线：Normal 拦截 33.1% / 误报 0.17%；Strict 37.8% / 0.30%（见 `waf-benchmark-report.md` §9）
 
@@ -68,7 +68,7 @@ Stage 2：14 条托管规则（Cloudflare 风格 DSL）
 
 ## 3. 业界对标
 
-| 机制 | 代表实现 | PingWAF 现状 | 可借鉴 |
+| 机制 | 代表实现 | VarmanWAF 现状 | 可借鉴 |
 |---|---|---|---|
 | 语义化检测：tokenize → 语法结构匹配 | SafeLine 雷池（词法/AST/威胁模型） | 只有字符串 needle + 正则 + 结构容器启发 | 轻量 token 归一化：按语法角色给关键词赋分，而非裸匹配（§4-P2） |
 | 异常评分 + PL 分级 + 变换链 | OWASP CRS v4（Coraza/ModSecurity） | 已有评分/PL/transform，缺参数名感知与排除机制 | 规则级参数名 exclude；libinjection 只作加分不作一票否决（现已如此） |
@@ -97,7 +97,7 @@ Stage 2：14 条托管规则（Cloudflare 风格 DSL）
 7. **CRLF/SSRF needle 扩面** ✅：CRLF 分源 critical 收敛为**头名注入形态**——解码值中 CRLF/CR/LF 混排（`\r\n` 与 `\r\r\n\n` 规避等价处理）后紧跟 `name:` 头名形态才 critical（query/path/header/cookie 任意面）；裸多行文本（表单多行输入回传 query、散文）只评分不拦（白样本实测：百度翻译多行 query、mathb.in 文档、StackBlitz 代码文件均为此形态）。body 面始终只评分。SSRF 补回环变体 SSRF-013~017（`localhost`/`127.0.0.1` sev4、`0x7f000001`/`2130706433`/`0177.0.0.1` sev5）与 CI-032~037（`invoke-expression`/`iex (`/`cmd /c`/`powershell -enc`/`system(`）。
 8. **SQL union-select 语义门**（P2-8 的第一步落地）✅：`sqli_union_statement_shaped` 判定解码值是否具备注入语句结构特征（引号破出 `['"`]union`、常量探测 `union select <数字/引号/null>`、注释终止符/FROM 子句）；四特征全缺的 `union select` 命中（needle SQL-001/002 与 libinjection union-select 指纹）在 Normal **零分跳过**（needle 与 lib 指纹描述同一字符串，镜像多面不放大），压掉搜索短语类误报（`site:x.com union select 关键词怎么用` 是 FP 大头，sqli FP 23.9%→1.5%）；Strict 不设门（该档即激进）。
 9. **弱信号评分语义修正** ✅：两轮实测迭代后的最终形态——(a) 降权命中仍进 family 子评分（sev2→24），**三轮实测证明完全脱离 family 会漏掉 Referer/UA 承载的真实反射攻击**（DVWA 型 3 个独立弱特征过门样本，拦截率 -6pp）；(b) 无语句结构的 `union select` 短语命中改为**零分跳过**（needle 与 libinjection 指纹同现只描述同一字符串，镜像多面不放大，Pass 快路径零开销）；(c) `FIELD_STRONG_MAX_LEN`（256B）：离散 body 字段解码值超长按 bulk 内容弱信号化——粘贴的代码/文档（mathb.in 7KB 数学文档、StackBlitz 源码文件）常含 `<script>`/引号关键词/CRLF 样板，短载荷（真实注入 <256B）不受影响。
-10. **script-URI HTML 上下文门 + 分源语义** ✅：`xss_script_uri_html_shaped` 判定值内是否具备 HTML 标签结构（`<svg onload=…>`、`"><img …>`）——真注入需要标签上下文执行，遥测埋点把 DOM 属性原样序列化进 JSON（`{"href":"javascript: void(0);"}`，beacon 类 16 条误报全部此形态）。语义：**body 源**无标签结构的 `javascript:` 命中（XSS-007 + libinjection js-uri 指纹）在 Normal 零分跳过——blob 与解包成员的镜像不能靠弱信号累加踩过 XSS family 门（PINGWAF-1003）；**query/cookie/header 源**的裸 `javascript:` 保留 critical（`?url=javascript:alert(1)` 是真实反射形态）。Strict 不设门。
+10. **script-URI HTML 上下文门 + 分源语义** ✅：`xss_script_uri_html_shaped` 判定值内是否具备 HTML 标签结构（`<svg onload=…>`、`"><img …>`）——真注入需要标签上下文执行，遥测埋点把 DOM 属性原样序列化进 JSON（`{"href":"javascript: void(0);"}`，beacon 类 16 条误报全部此形态）。语义：**body 源**无标签结构的 `javascript:` 命中（XSS-007 + libinjection js-uri 指纹）在 Normal 零分跳过——blob 与解包成员的镜像不能靠弱信号累加踩过 XSS family 门（VARMAN-1003）；**query/cookie/header 源**的裸 `javascript:` 保留 critical（`?url=javascript:alert(1)` 是真实反射形态）。Strict 不设门。
 
 ### P2/P3 确定性扩面（第三轮实测驱动）——已落地 ✅
 
@@ -116,8 +116,8 @@ post7 归因（strict+body 漏报 147 条 + strict 档 105 条 FP 全量脚本�
 
 17. **解码链补齐** ✅：(a) b64 解码层含 `\u`/`\x` 转义时无条件还原（b64 包裹的 JS/Java escape 二次混淆）；(b) JSON 结构位置裸控制字符剥离重试（`{"policy":"<b64>"}` 混入 `\r\t\x00` 后 serde_json 解析失败导致成员不可见）；(c) `parse_query` 对 `param={"json":…}` 值就地解包（对齐 form 语义）；(d) HTML 符号实体表补 27 个（`&colon;`/`&semi;`/`&sol;`/`&lpar;`/`&Tab;`/`&NewLine;` 等——DOM 序列化常用的无分号变体）。
 18. **needle 扩面** ✅：宽命令分隔 CI-045~072（`;|` + 反引号 + `||` 前缀的 whoami/uname/ping/curl/wget/sleep/echo）、CI-078 `eval(atob(`、LDAP 注入 CI-080~082（`)(uid=`/`)(|(`/`*)(objectclass=`）、JSFuck XSS-022 `[(+{}+[])`、PT-017 `web-inf`/PT-018 `portal_inc.lua`、SQL-021 Postgres `COPY … TO PROGRAM '`（sev5 全档 critical）。
-19. **strict FP 治理** ✅：PINGWAF-1051（长 URI）Block→Log；strict CRLF blanket-critical 摘除（body 源多行文本 + 非头名形态不 critical）；path 源 CI/Deser 形态改走 `add_severity_hit` 旁路（矩阵参数 `/foo;cat=…` 是存储 URL 语法不是 shell，保持聚合分但不进 RCE 子分桶）；strict js-call 对非字段 body blob 零分跳过（收集页面文本的括号调用是散文）。
-20. **post8 归因回修（第三轮语义门）** ✅：strict+body 回退 42 条与残余 69 FP 逐条归因后——(a) **CRLF 同伴门**：strict 下同值携带 CI/PT/Deser/SSRF 家族特征时 CRLF 恢复 critical（换行走私载荷 = 真实 response-splitting 流量，纯多行文本无同伴），追回 17 条回退；(b) **into-file 语句形态门**：`sqli_into_file_statement_shaped` 要求 `into (out|dump)file '目标'` 引号目标形态，SQL-008/009 needle 与 libinjection `into-file` 指纹两侧同语义（对齐 union-select 门），6 条搜索短语 FP 消除；(c) PINGWAF-1021 摘压缩包后缀（`.zip/.tar.gz` 是普通下载资源，仅保留 bak/backup/old/swp/sql），5 条 FP 消除；(d) js-call blob 豁免贯彻到 RCE 子分（`add_expr_hit` 的 rce+48 会让 PINGWAF-1061 重新拦截——豁免必须是零分跳过而非仅降 critical），16 条 FP 消除。
+19. **strict FP 治理** ✅：VARMAN-1051（长 URI）Block→Log；strict CRLF blanket-critical 摘除（body 源多行文本 + 非头名形态不 critical）；path 源 CI/Deser 形态改走 `add_severity_hit` 旁路（矩阵参数 `/foo;cat=…` 是存储 URL 语法不是 shell，保持聚合分但不进 RCE 子分桶）；strict js-call 对非字段 body blob 零分跳过（收集页面文本的括号调用是散文）。
+20. **post8 归因回修（第三轮语义门）** ✅：strict+body 回退 42 条与残余 69 FP 逐条归因后——(a) **CRLF 同伴门**：strict 下同值携带 CI/PT/Deser/SSRF 家族特征时 CRLF 恢复 critical（换行走私载荷 = 真实 response-splitting 流量，纯多行文本无同伴），追回 17 条回退；(b) **into-file 语句形态门**：`sqli_into_file_statement_shaped` 要求 `into (out|dump)file '目标'` 引号目标形态，SQL-008/009 needle 与 libinjection `into-file` 指纹两侧同语义（对齐 union-select 门），6 条搜索短语 FP 消除；(c) VARMAN-1021 摘压缩包后缀（`.zip/.tar.gz` 是普通下载资源，仅保留 bak/backup/old/swp/sql），5 条 FP 消除；(d) js-call blob 豁免贯彻到 RCE 子分（`add_expr_hit` 的 rce+48 会让 VARMAN-1061 重新拦截——豁免必须是零分跳过而非仅降 critical），16 条 FP 消除。
 
 
 ### P3 语义架构演进（高性能高命中低误报的地基）
@@ -144,7 +144,7 @@ post9 strict+body 口径 138 条漏报全量分层后的确定性方案（12 条
 24. **SQL/CI needle 扩面 ×5** ✅：SQL-022 `cast((select`（PortSwigger 嵌套 CAST 外带，8d/78）、SQL-023 `extractvalue(`（Oracle XPATH 报错注入，9d/63）、SQL-024 `or 1 limit`（截断恒真尾，3e/ba）、CI-083 `ping -c `（链式 ping 探测，64/b5）、CI-084 `#context.get(`（Struts2 OGNL 上下文变量链，ff/67），全部 sev5 critical。
 25. **query key 进扫描面** ✅：`?redirect:%24%7B%23a%3D%23context.get(...)` 的 `%3D` 编码 `=` 不算 pair 分隔符——整串是 key、value 为空，OGNL 载荷对全部检测器不可见。解码 key（≤512B 上限防词表键镜像）以 `field` 形态加入 `decoded_values`。
 26. **b64 展开实体解码扩面** ✅：expand_base64 的二级解码条件 `%` 扩为 `%` 或 `&#`——b64 内 HTML 实体 meta-refresh（05/4a）payload 可见。
-27. **path 独立扫描循环补 search_phrase 门** ✅：P5 门只覆盖 decoded_values 循环，`normalized.path` 的独立 sev5 fast-path 循环漏加，`binary<script is incorrect` 作为 URL slug 会经 XSS-001 sev5 直接 critical。补门且 search_phrase 命中时 `continue` 零分跳过——否则 XSS family 子分 48 会经 PINGWAF-1003 兜底重新拦截（豁免必须零分跳过原则的又一实例）。
+27. **path 独立扫描循环补 search_phrase 门** ✅：P5 门只覆盖 decoded_values 循环，`normalized.path` 的独立 sev5 fast-path 循环漏加，`binary<script is incorrect` 作为 URL slug 会经 XSS-001 sev5 直接 critical。补门且 search_phrase 命中时 `continue` 零分跳过——否则 XSS family 子分 48 会经 VARMAN-1003 兜底重新拦截（豁免必须零分跳过原则的又一实例）。
 
 回归：172 单测全绿（新增 4 个确定性覆盖：紧凑标签反射面拦截、path 散文通过、五类 post9 漏报形态、b64 实体包裹）；658 黑样本 triage 527→539（+12 零回退）；fp46 白样本 Block 22→20（多修 2 条、零新增）。12 条 triage/回放差异定性为样本传输语义缺陷（11 条 POST 无 Content-Length，HTTP/1.1 下 body 为空，payload 无法到达服务器；1 条 GET 400），非引擎缺口。
 
@@ -227,7 +227,7 @@ post11 漏报经 P7 后仍开放 84 条（44 Pass / 37 Monitor / 2 链路 / 1 Ch
 
 50. **expr 容器可打印性门** ✅（P13 bench FP 归因）：post19 验证轮 strict-body 出现 1 条新 FP（74df46db，Ctrip 移动端 `saveLogInfo` 162KB 日志上报，body 为高熵乱码）——归因链跨三层：①插件 body 检测的 max_body_size（默认 64KB）门按 **chunk 粒度**截断，无负载时单次 IO 可读满 64KB，实际检测面达 130556 字节（3580+61440+65536 三次 IO 累计）；②检测面覆盖 64KB~130KB 区间的乱码段，其中 `${…}` 容器出现率≈1，`is_structural_expr` 的「identifier(」与运算符特征在乱码中同样≈1 命中 → strict 档 expr-injection critical → Block；③判决随 socket chunk 边界**抖动**——post18 bench 高负载下 chunk 碎片化、停点贴近 64KB 门，仅 TI-002/003 低分 Monitor → passed；post19 无负载大 chunk 一次越过门 → blocked。与 P13 needle 无关（needle 全注释仍复现）。修复：`is_structural_expr` 开头加容器内容**可打印性门**（全字节 `is_ascii_graphic()` 或空格）——真实 EL/SSTI/JSP payload 按构造全为可打印 ASCII（P2/P3 全部 EL/SSTI 正样本验证无损），乱码容器直接拒判结构。**双收益**：重跑后 74df46db 放行，且同族既有 FP 0db7f97（同族 Ctrip `SaveTraceInfo` 164KB 高熵 body，printable ratio 50%）一并从 post18 FP 集合消除——同一条 chunk 抖动链的两条误报一次修复带走，strict-body FP 22→21。方法论沉淀：**max_body_size 是 chunk 粒度近似而非硬上界**，任何「区间越过门才触达」的检测器都自带判决抖动，对乱码类高熵内容必须独立于长度门做质量过滤。
 
-51. **URL fragment 盲区重定性（P14，零代码修复）** ✅：post18 REAL 面最后一项可修候选 ff/67（S2-045 OGNL 全量藏 URL `#` fragment 后）经三轮技术归因**从 REAL 漏报改判为链路伪影**：①`http` 1.5 `Uri` 无 fragment 存储位（scheme/authority/path_and_query 三元），探针实测 `#` 后内容被解析器静默丢弃（`/index.action?redirect:${#a=…}` → `path_and_query()` 仅返回 `"/index.action?redirect:${"`）；②pingora 0.9 `parse_request_target` 在构造 Uri **之前**按 RFC 9112 §3.2 主动剥离 fragment（源码注释 "must not reach the upstream request-line"），`raw_target` 保存的同样是剥后字节——插件层既拿不到内容也拿不到 `#` 存在信号；③pingwaf 转发上游的请求行不含 fragment，OGNL 载荷永远到不了 Struts2，**利用链在解析层物理断裂**。与「无 Content-Length POST」同级的部署形态伪影：样本库标黑基于直连服务器假设，反代形态下载荷无效。曾实现路径 B（`normalize_request` 加 `raw_fragment` 参数 + `ValueSource::Fragment` 变体 + plugin/server/triage 全消费侧接线）后确认解析层已丢弃而整体回滚。方法论沉淀：**跨层修复前先验证数据在源头是否可达**——一段 http::Uri 解析 probe 可省掉整轮接线；解析器的 RFC 合规剥离行为本身就是防护面的一部分。等效口径随之修正为 617/618 = 99.8%（伪影面 +1）。
+51. **URL fragment 盲区重定性（P14，零代码修复）** ✅：post18 REAL 面最后一项可修候选 ff/67（S2-045 OGNL 全量藏 URL `#` fragment 后）经三轮技术归因**从 REAL 漏报改判为链路伪影**：①`http` 1.5 `Uri` 无 fragment 存储位（scheme/authority/path_and_query 三元），探针实测 `#` 后内容被解析器静默丢弃（`/index.action?redirect:${#a=…}` → `path_and_query()` 仅返回 `"/index.action?redirect:${"`）；②pingora 0.9 `parse_request_target` 在构造 Uri **之前**按 RFC 9112 §3.2 主动剥离 fragment（源码注释 "must not reach the upstream request-line"），`raw_target` 保存的同样是剥后字节——插件层既拿不到内容也拿不到 `#` 存在信号；③varman 转发上游的请求行不含 fragment，OGNL 载荷永远到不了 Struts2，**利用链在解析层物理断裂**。与「无 Content-Length POST」同级的部署形态伪影：样本库标黑基于直连服务器假设，反代形态下载荷无效。曾实现路径 B（`normalize_request` 加 `raw_fragment` 参数 + `ValueSource::Fragment` 变体 + plugin/server/triage 全消费侧接线）后确认解析层已丢弃而整体回滚。方法论沉淀：**跨层修复前先验证数据在源头是否可达**——一段 http::Uri 解析 probe 可省掉整轮接线；解析器的 RFC 合规剥离行为本身就是防护面的一部分。等效口径随之修正为 617/618 = 99.8%（伪影面 +1）。
 
 ### 收益矩阵（基于 bench 归因的保守估算）
 

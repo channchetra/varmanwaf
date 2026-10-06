@@ -1,12 +1,12 @@
-# PingWAF 内置性能剖析
+# VarmanWAF 内置性能剖析
 
-PingWAF 在每个二进制中都内置了 pprof 风格的性能剖析——无需 sidecar、无需外部采集器、无需 cargo feature。用法类似 Go 的 `net/http/pprof`：请求一个端点，拿到一份剖析文件。
+VarmanWAF 在每个二进制中都内置了 pprof 风格的性能剖析——无需 sidecar、无需外部采集器、无需 cargo feature。用法类似 Go 的 `net/http/pprof`：请求一个端点，拿到一份剖析文件。
 
 两个平面都支持：
 
 | 平面 | 端点 | 鉴权 |
 | --- | --- | --- |
-| 控制面（`pingwaf-server`） | `GET /api/v1/debug/pprof/{profile,flamegraph,memory}` | 管理员 JWT Bearer token |
+| 控制面（`varman-control`） | `GET /api/v1/debug/pprof/{profile,flamegraph,memory}` | 管理员 JWT Bearer token |
 | 数据面（pingap admin 插件） | `GET {admin-path}/api/pprof/{profile,flamegraph,memory}` | admin 插件凭据 |
 
 ## 端点
@@ -29,8 +29,8 @@ go tool pprof -http=: http://localhost:8080/api/v1/debug/pprof/profile?seconds=3
 
 ```bash
 curl -u admin:password \
-  "http://localhost:3000/admin/api/pprof/profile?seconds=30" -o pingwaf-cpu.pb.gz
-go tool pprof -http=: pingwaf-cpu.pb.gz
+  "http://localhost:3000/admin/api/pprof/profile?seconds=30" -o varman-cpu.pb.gz
+go tool pprof -http=: varman-cpu.pb.gz
 ```
 
 没有 Go 工具链时直接看火焰图：
@@ -54,7 +54,7 @@ make release-perf        # cargo build --profile=release-perf --features=perf
 ## 读图
 
 - 最宽的方块就是 CPU 时间所在；上方的方块是调用者。
-- 数据面值得关注的是 `pingwaf_waf`（规则求值）、`pingap_proxy`（上游转发）与 `pingap_cache`（缓存查找）。
+- 数据面值得关注的是 `varman_waf`（规则求值）、`pingap_proxy`（上游转发）与 `pingap_cache`（缓存查找）。
 - 把负载下的采集与空闲时的采集对比，差值就是热点路径。
 
 如需持续在线剖析并上报服务器，参见 Pyroscope 集成（`pingap-pyroscope`，`--features=pyro`）。内置端点用于按需排查。

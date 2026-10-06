@@ -127,7 +127,7 @@ release-rustls-full:
 
 release-all:
 	cargo build --release --features=full
-	mv target/release/pingap target/release/pingap-full
+	mv target/release/varman target/release/varman-full
 	cargo build --release
 	ls -lh target/release
 

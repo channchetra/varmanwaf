@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ PingWAF
+# 🛡️ VarmanWAF
 
 **基于 [`pingap`](https://github.com/vicanso/pingap) 与 Cloudflare [`Pingora`](https://github.com/cloudflare/pingora) 构建的分布式、集中控制的高性能 Web 应用防火墙（WAF）。**
 
@@ -8,7 +8,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
-[![Build](https://github.com/shuaiZend/PingWAF/actions/workflows/test.yml/badge.svg)](https://github.com/shuaiZend/PingWAF/actions/workflows/test.yml)
+[![Build](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml/badge.svg)](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml)
 [![Docker](https://img.shields.io/badge/docker-compose%20ready-2496ED?logo=docker&logoColor=white)](./docker-compose.yml)
 
 **[English](./README.md) | [简体中文](./README_zh.md) | [Español](./README_es.md) | [Français](./README_fr.md)**
@@ -19,9 +19,9 @@
 
 ---
 
-## 📖 PingWAF 是什么？
+## 📖 VarmanWAF 是什么？
 
-**PingWAF** 是一款高性能的开源 **Web 应用防火墙（WAF）**，把 Cloudflare 级别的边缘安全能力带到你自己掌控的基础设施中。它构建于 [`pingap`](https://github.com/vicanso/pingap)——一款由 Cloudflare [`Pingora`](https://github.com/cloudflare/pingora) 网络框架驱动的生产级反向代理——之上，并在其上叠加了**分布式、集中控制**的安全层。
+**VarmanWAF** 是一款高性能的开源 **Web 应用防火墙（WAF）**，把 Cloudflare 级别的边缘安全能力带到你自己掌控的基础设施中。它构建于 [`pingap`](https://github.com/vicanso/pingap)——一款由 Cloudflare [`Pingora`](https://github.com/cloudflare/pingora) 网络框架驱动的生产级反向代理——之上，并在其上叠加了**分布式、集中控制**的安全层。
 
 单一的**控制面（Control Plane）**负责定义站点、规则与策略；一个或多个**数据面（Data Plane）Agent** 在边缘执行它们。规则、日志与指标通过持久化的 **gRPC 双向流**在两者之间流转，因此在控制台修改策略后，几秒内即可下发到所有 Agent——无需重载、无需停机。
 
@@ -30,7 +30,7 @@
 - 🧭 **开箱即用，默认关闭**——每一项防护能力默认关闭，按站点单独开启，让你对流量拥有完全的掌控。
 - ⚡ **纯 Rust 打造**——内存安全、异步 I/O，单个自包含二进制文件，控制台已内嵌其中。
 
-> PingWAF 是一个独立项目，与 Cloudflare 及 `pingap` 维护者均无关联，也未获其背书。详见[致谢](#-致谢)。
+> VarmanWAF 是一个独立项目，与 Cloudflare 及 `pingap` 维护者均无关联，也未获其背书。详见[致谢](#-致谢)。
 
 ---
 
@@ -40,14 +40,14 @@
 graph TB
     Client[客户端 / 浏览器]
 
-    subgraph ControlPlane["控制面 (pingwaf server)"]
+    subgraph ControlPlane["控制面 (varman server)"]
         Dashboard[内嵌控制台 + REST API :9080]
         GRPC[gRPC ControlPlane 服务 :9090]
         PG[(PostgreSQL 14+)]
         ES[(Elasticsearch - 可选)]
     end
 
-    subgraph DataPlane["数据面 (pingwaf agents)"]
+    subgraph DataPlane["数据面 (varman agents)"]
         AgentA[边缘 Agent A :80 / :443]
         AgentB[边缘 Agent B :80 / :443]
     end
@@ -65,7 +65,7 @@ graph TB
     AgentB -->|安全流量| Origin
 ```
 
-控制面与数据面通过 `ControlPlane` gRPC 服务通信（定义于 [`control_plane.proto`](./pingwaf-proto/proto/control_plane.proto)），共包含 7 个 RPC：
+控制面与数据面通过 `ControlPlane` gRPC 服务通信（定义于 [`control_plane.proto`](./varman-protocol/proto/control_plane.proto)），共包含 7 个 RPC：
 
 | RPC | 类型 | 用途 |
 | --- | --- | --- |
@@ -146,25 +146,25 @@ graph TB
 
 | Crate | 职责 |
 | --- | --- |
-| [`pingwaf-proto`](./pingwaf-proto) | 控制面 gRPC 协议定义（单一来源：`control_plane.proto`） |
-| [`pingwaf-server`](./pingwaf-server) | 控制面：Axum REST + tonic gRPC + SeaORM/PostgreSQL + ES 日志 + 内嵌前端 + Agent 健康监控 |
-| [`pingwaf-agent`](./pingwaf-agent) | 数据面 Agent：连接控制面、规则缓存 + 磁盘持久化、回传日志/指标、接收命令 |
-| [`pingwaf-waf`](./pingwaf-waf) | 检测引擎：归一化 → 签名 → 表达式 → 异常评分 |
-| [`pingwaf-challenge`](./pingwaf-challenge) | 动态挑战子系统：JS 5 秒盾、交互式挑战、PoW、浏览器指纹、HMAC 签名 clearance cookie |
+| [`varman-protocol`](./varman-protocol) | 控制面 gRPC 协议定义（单一来源：`control_plane.proto`） |
+| [`varman-control`](./varman-control) | 控制面：Axum REST + tonic gRPC + SeaORM/PostgreSQL + ES 日志 + 内嵌前端 + Agent 健康监控 |
+| [`varman-agent`](./varman-agent) | 数据面 Agent：连接控制面、规则缓存 + 磁盘持久化、回传日志/指标、接收命令 |
+| [`varman-waf`](./varman-waf) | 检测引擎：归一化 → 签名 → 表达式 → 异常评分 |
+| [`varman-challenge`](./varman-challenge) | 动态挑战子系统：JS 5 秒盾、交互式挑战、PoW、浏览器指纹、HMAC 签名 clearance cookie |
 
 ---
 
 ## 🚀 快速开始
 
-> **注意：** 预编译二进制目前仅提供 **Linux（amd64 / arm64）** 版本——见 [Releases 页面](https://github.com/shuaiZend/PingWAF/releases)。macOS 请使用源码编译（方式 B）。Docker 镜像支持两种架构。
+> **注意：** 预编译二进制目前仅提供 **Linux（amd64 / arm64）** 版本——见 [Releases 页面](https://github.com/varmanwaf/varmanwaf/releases)。macOS 请使用源码编译（方式 B）。Docker 镜像支持两种架构。
 
 ### 方式 A —— Docker Compose（推荐）
 
-仓库内置的 [`docker-compose.yml`](./docker-compose.yml) 会以 `all-in-one` 模式连同 PostgreSQL 一起启动 PingWAF，默认拉取 GHCR 预构建镜像（`ghcr.io/shuaizend/pingwaf:latest`）：
+仓库内置的 [`docker-compose.yml`](./docker-compose.yml) 会以 `all-in-one` 模式连同 PostgreSQL 一起启动 VarmanWAF，默认拉取 GHCR 预构建镜像（`ghcr.io/varmanwaf/varmanwaf:latest`）：
 
 ```bash
-git clone https://github.com/shuaiZend/PingWAF.git
-cd PingWAF
+git clone https://github.com/varmanwaf/varmanwaf.git
+cd VarmanWAF
 
 # 启动控制面 + 数据面 + PostgreSQL
 docker compose up -d
@@ -173,14 +173,14 @@ docker compose up -d
 随后打开控制台：
 
 - **地址：** https://localhost:9080
-- **邮箱：** `admin@pingwaf.local`
-- **密码：** `pingwaf123`
+- **邮箱：** `admin@varman.local`
+- **密码：** `varman123`
 
-> ⚠️ **在任何生产环境使用前，请务必修改默认管理员密码与 `PINGWAF_JWT_SECRET`。**
+> ⚠️ **在任何生产环境使用前，请务必修改默认管理员密码与 `VARMAN_JWT_SECRET`。**
 
 控制台默认以 **HTTPS** 提供服务，首次启动自动生成自签名证书，浏览器会提示不受信任；
 可在**设置 → 控制台 HTTPS** 下载该证书或上传正式证书替换。若访问使用的主机名不是
-`localhost`，请通过 `PINGWAF_TLS_SANS` 指定，使生成的证书覆盖该主机名。
+`localhost`，请通过 `VARMAN_TLS_SANS` 指定，使生成的证书覆盖该主机名。
 
 健康检查：`GET http://localhost:9080/healthz`（HTTP 与 HTTPS 均可访问；其余路径会 308 跳转到 `https://`）。
 
@@ -196,7 +196,7 @@ docker compose up -d
 | `cmake` | 任意较新版本 | 构建 TLS 后端（OpenSSL）所需 |
 | PostgreSQL | 14+（推荐 16） | 控制面数据存储 |
 
-> ⚠️ **`protoc` 为必需项。** 若缺失，`pingwaf-proto` 会静默降级为占位文件，导致下游 crate 编译失败。请先安装：
+> ⚠️ **`protoc` 为必需项。** 若缺失，`varman-protocol` 会静默降级为占位文件，导致下游 crate 编译失败。请先安装：
 >
 > ```bash
 > brew install protobuf                        # macOS
@@ -206,18 +206,18 @@ docker compose up -d
 **编译与运行**
 
 ```bash
-git clone https://github.com/shuaiZend/PingWAF.git
-cd PingWAF
+git clone https://github.com/varmanwaf/varmanwaf.git
+cd VarmanWAF
 
 # 1. 构建内嵌控制台
 cd web && npm ci && npm run build && cd ..
 
-# 2. 构建 pingwaf 二进制
-cargo build --release --bin pingwaf --features full
+# 2. 构建 varman 二进制
+cargo build --release --bin varman --features full
 
 # 3. 以 all-in-one 模式运行
-./target/release/pingwaf all-in-one \
-  --db-url "postgres://pingwaf:pingwaf@localhost:5432/pingwaf"
+./target/release/varman all-in-one \
+  --db-url "postgres://varman:varman@localhost:5432/varman"
 ```
 
 👉 完整流程（数据库准备、首个站点、分布式 Agent、systemd）请见 **[docs/quick-start.md](./docs/quick-start.md)**。
@@ -227,62 +227,62 @@ cargo build --release --bin pingwaf --features full
 在 Linux 服务器上，一键脚本会下载预编译二进制并安装，可选配置 systemd 服务：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shuaiZend/PingWAF/main/install.sh | sudo bash -s -- --mode all-in-one
+curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | sudo bash -s -- --mode all-in-one
 ```
 
 ---
 
 ## 🧭 运行模式
 
-PingWAF 是单一二进制（`pingwaf`），与 `pingap` 共享入口。它通过 CLI 子命令**或** `PINGWAF_MODE` 环境变量选择运行模式。
+VarmanWAF 是单一二进制（`varman`），与 `pingap` 共享入口。它通过 CLI 子命令**或** `VARMAN_MODE` 环境变量选择运行模式。
 
 | 模式 | 命令 | 角色 |
 | --- | --- | --- |
-| **控制面** | `pingwaf server` | REST API + gRPC 服务 + 控制台 + PostgreSQL。不代理流量。 |
-| **数据面** | `pingwaf agent` | 连接远端控制面，执行规则，在 :80/:443 代理流量。 |
-| **All-in-One** | `pingwaf all-in-one` | 单进程同时运行上述两者（Agent 通过本地回环连接 Server）。 |
+| **控制面** | `varman server` | REST API + gRPC 服务 + 控制台 + PostgreSQL。不代理流量。 |
+| **数据面** | `varman agent` | 连接远端控制面，执行规则，在 :80/:443 代理流量。 |
+| **All-in-One** | `varman all-in-one` | 单进程同时运行上述两者（Agent 通过本地回环连接 Server）。 |
 
 ```bash
-# 等价于 `pingwaf all-in-one`
-PINGWAF_MODE=all-in-one ./pingwaf
+# 等价于 `varman all-in-one`
+VARMAN_MODE=all-in-one ./varman
 ```
 
 ---
 
 ## ⚙️ 配置说明
 
-PingWAF 通过 **TOML 配置文件**、**`PINGWAF_*` 环境变量**与 **CLI 参数**进行配置，优先级依次升高（后者覆盖前者）。
+VarmanWAF 通过 **TOML 配置文件**、**`VARMAN_*` 环境变量**与 **CLI 参数**进行配置，优先级依次升高（后者覆盖前者）。
 
 ```bash
-pingwaf all-in-one --config /etc/pingwaf/pingwaf.toml
+varman all-in-one --config /etc/varman/varman.toml
 
-PINGWAF_CONFIG=/etc/pingwaf/pingwaf.toml pingwaf all-in-one   # 等价写法
+VARMAN_CONFIG=/etc/varman/varman.toml varman all-in-one   # 等价写法
 ```
 
-> ℹ️ 仓库根目录的 [`pingwaf.toml`](./pingwaf.toml) 是可用的示例配置——用
+> ℹ️ 仓库根目录的 [`varman.toml`](./varman.toml) 是可用的示例配置——用
 > `--config` 指定后，其中 `[server]` / `[agent]` 两张表即会生效（启动时会打印
-> `pingwaf: loaded N setting(s)`）。键名即 CLI 参数名（下划线形式，如
+> `varman: loaded N setting(s)`）。键名即 CLI 参数名（下划线形式，如
 > `admin_addr`、`max_body_log_size`）；无法识别的键会被提示并忽略。
 
 ### 关键环境变量
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `PINGWAF_CONFIG` | — | TOML 配置文件路径 |
-| `PINGWAF_MODE` | — | `server`、`agent` 或 `all-in-one` |
-| `PINGWAF_DB_URL` | `postgres://pingwaf:pingwaf@localhost:5432/pingwaf` | PostgreSQL DSN |
-| `PINGWAF_ADMIN_ADDR` | `0.0.0.0:9080` | REST API + 控制台监听地址 |
-| `PINGWAF_GRPC_ADDR` | `0.0.0.0:9090` | gRPC 控制面监听地址 |
-| `PINGWAF_JWT_SECRET` | `change-me-in-production` | JWT 签名密钥（**≥ 16 字符**，生产必改） |
-| `PINGWAF_ADMIN_EMAIL` | `admin@pingwaf.local` | 初始管理员邮箱 |
-| `PINGWAF_ADMIN_PASSWORD` | `pingwaf123` | 初始管理员密码（**生产必改**） |
-| `PINGWAF_ALLOW_REGISTRATION` | `true` | `POST /api/v1/auth/register` 是否接受注册（`docker-compose.yml` 与 `install.sh` 已将其设为 `false`） |
-| `PINGWAF_HEARTBEAT_INTERVAL` | `15` | 下发给 Agent 的心跳间隔（秒） |
-| `PINGWAF_SERVER_URL` | `http://localhost:9090` | *（agent）* 控制面 gRPC 地址 |
-| `PINGWAF_API_KEY` | *（空）* | *（agent）* API Key；为空则通过本地回环自动注册 |
-| `PINGWAF_CACHE_DIR` | `./data/cache` | *（agent）* 本地规则缓存目录 |
-| `PINGWAF_ES_ENABLED` | `false` | 是否启用 Elasticsearch 日志投递 |
-| `PINGWAF_ES_URLS` | *（空）* | 逗号分隔的 Elasticsearch 地址 |
+| `VARMAN_CONFIG` | — | TOML 配置文件路径 |
+| `VARMAN_MODE` | — | `server`、`agent` 或 `all-in-one` |
+| `VARMAN_DB_URL` | `postgres://varman:varman@localhost:5432/varman` | PostgreSQL DSN |
+| `VARMAN_ADMIN_ADDR` | `0.0.0.0:9080` | REST API + 控制台监听地址 |
+| `VARMAN_GRPC_ADDR` | `0.0.0.0:9090` | gRPC 控制面监听地址 |
+| `VARMAN_JWT_SECRET` | `change-me-in-production` | JWT 签名密钥（**≥ 16 字符**，生产必改） |
+| `VARMAN_ADMIN_EMAIL` | `admin@varman.local` | 初始管理员邮箱 |
+| `VARMAN_ADMIN_PASSWORD` | `varman123` | 初始管理员密码（**生产必改**） |
+| `VARMAN_ALLOW_REGISTRATION` | `true` | `POST /api/v1/auth/register` 是否接受注册（`docker-compose.yml` 与 `install.sh` 已将其设为 `false`） |
+| `VARMAN_HEARTBEAT_INTERVAL` | `15` | 下发给 Agent 的心跳间隔（秒） |
+| `VARMAN_SERVER_URL` | `http://localhost:9090` | *（agent）* 控制面 gRPC 地址 |
+| `VARMAN_API_KEY` | *（空）* | *（agent）* API Key；为空则通过本地回环自动注册 |
+| `VARMAN_CACHE_DIR` | `./data/cache` | *（agent）* 本地规则缓存目录 |
+| `VARMAN_ES_ENABLED` | `false` | 是否启用 Elasticsearch 日志投递 |
+| `VARMAN_ES_URLS` | *（空）* | 逗号分隔的 Elasticsearch 地址 |
 
 ### 默认端口
 
@@ -320,16 +320,16 @@ PINGWAF_CONFIG=/etc/pingwaf/pingwaf.toml pingwaf all-in-one   # 等价写法
 
 ## 🙏 致谢
 
-PingWAF 建立在优秀的开源项目之上：
+VarmanWAF 建立在优秀的开源项目之上：
 
-- **[pingap](https://github.com/vicanso/pingap)**（作者 Tree Xie）——PingWAF 数据面所依托的反向代理基础（路由、插件、ACME、缓存、热重载）。
+- **[pingap](https://github.com/vicanso/pingap)**（作者 Tree Xie）——VarmanWAF 数据面所依托的反向代理基础（路由、插件、ACME、缓存、热重载）。
 - **[Pingora](https://github.com/cloudflare/pingora)**（Cloudflare）——驱动 `pingap` 的异步网络框架。
 - **[libinjection](https://github.com/client9/libinjection)**——WAF 引擎所使用的 SQLi/XSS 检测启发式算法。
 
-PingWAF 是在上述项目之上的衍生作品，新增了 WAF 控制面、数据面 Agent 与检测引擎。它与上游依赖一样，采用相同的 **[Apache License 2.0](./LICENSE)** 分发，并保留了 `pingap`/`Pingora` 的原始版权声明。PingWAF 与 Cloudflare 及 `pingap` 项目**均无关联，也未获其背书**。
+VarmanWAF 是在上述项目之上的衍生作品，新增了 WAF 控制面、数据面 Agent 与检测引擎。它与上游依赖一样，采用相同的 **[Apache License 2.0](./LICENSE)** 分发，并保留了 `pingap`/`Pingora` 的原始版权声明。VarmanWAF 与 Cloudflare 及 `pingap` 项目**均无关联，也未获其背书**。
 
 ---
 
 ## 📄 License
 
-PingWAF 基于 **[Apache License 2.0](./LICENSE)** 发布。
+VarmanWAF 基于 **[Apache License 2.0](./LICENSE)** 发布。

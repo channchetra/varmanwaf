@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ PingWAF
+# 🛡️ VarmanWAF
 
 **A distributed, centrally-controlled Web Application Firewall built on [`pingap`](https://github.com/vicanso/pingap) and Cloudflare [`Pingora`](https://github.com/cloudflare/pingora).**
 
@@ -8,7 +8,7 @@ Semantic-grade attack detection · Cloudflare-style rules · CC & Bot defense ·
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
-[![Build](https://github.com/shuaiZend/PingWAF/actions/workflows/test.yml/badge.svg)](https://github.com/shuaiZend/PingWAF/actions/workflows/test.yml)
+[![Build](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml/badge.svg)](https://github.com/varmanwaf/varmanwaf/actions/workflows/test.yml)
 [![Docker](https://img.shields.io/badge/docker-compose%20ready-2496ED?logo=docker&logoColor=white)](./docker-compose.yml)
 
 **[English](./README.md) | [简体中文](./README_zh.md) | [Español](./README_es.md) | [Français](./README_fr.md)**
@@ -19,9 +19,9 @@ Semantic-grade attack detection · Cloudflare-style rules · CC & Bot defense ·
 
 ---
 
-## 📖 What is PingWAF?
+## 📖 What is VarmanWAF?
 
-**PingWAF** is a high-performance, open-source **Web Application Firewall (WAF)** that brings Cloudflare-class edge security to your own infrastructure. It is built on top of [`pingap`](https://github.com/vicanso/pingap) — a production reverse proxy powered by Cloudflare's [`Pingora`](https://github.com/cloudflare/pingora) networking framework — and adds a **distributed, centrally-controlled** security layer over it.
+**VarmanWAF** is a high-performance, open-source **Web Application Firewall (WAF)** that brings Cloudflare-class edge security to your own infrastructure. It is built on top of [`pingap`](https://github.com/vicanso/pingap) — a production reverse proxy powered by Cloudflare's [`Pingora`](https://github.com/cloudflare/pingora) networking framework — and adds a **distributed, centrally-controlled** security layer over it.
 
 A single **control plane** defines sites, rules and policies; one or many **data-plane agents** enforce them at the edge. Rules, logs and metrics flow between the two over persistent **gRPC bidirectional streams**, so a policy change made in the dashboard propagates to every agent in seconds — no reload, no downtime.
 
@@ -30,7 +30,7 @@ A single **control plane** defines sites, rules and policies; one or many **data
 - 🧭 **Batteries included, off by default** — every protection feature ships disabled and is enabled per site, so you stay in full control of your traffic.
 - ⚡ **Rust all the way down** — memory safety, async I/O and a single self-contained binary with the dashboard embedded.
 
-> PingWAF is an independent project. It is not affiliated with, nor endorsed by, Cloudflare or the `pingap` maintainers. See [Acknowledgements](#-acknowledgements).
+> VarmanWAF is an independent project. It is not affiliated with, nor endorsed by, Cloudflare or the `pingap` maintainers. See [Acknowledgements](#-acknowledgements).
 
 ---
 
@@ -40,14 +40,14 @@ A single **control plane** defines sites, rules and policies; one or many **data
 graph TB
     Client[Client / Browser]
 
-    subgraph ControlPlane["Control Plane (pingwaf server)"]
+    subgraph ControlPlane["Control Plane (varman server)"]
         Dashboard[Embedded Dashboard + REST API :9080]
         GRPC[gRPC ControlPlane service :9090]
         PG[(PostgreSQL 14+)]
         ES[(Elasticsearch - optional)]
     end
 
-    subgraph DataPlane["Data Plane (pingwaf agents)"]
+    subgraph DataPlane["Data Plane (varman agents)"]
         AgentA[Edge Agent A :80 / :443]
         AgentB[Edge Agent B :80 / :443]
     end
@@ -65,7 +65,7 @@ graph TB
     AgentB -->|safe traffic| Origin
 ```
 
-The control plane and the data plane talk over the `ControlPlane` gRPC service (defined in [`control_plane.proto`](./pingwaf-proto/proto/control_plane.proto)) with seven RPCs:
+The control plane and the data plane talk over the `ControlPlane` gRPC service (defined in [`control_plane.proto`](./varman-protocol/proto/control_plane.proto)) with seven RPCs:
 
 | RPC | Kind | Purpose |
 | --- | --- | --- |
@@ -146,25 +146,25 @@ The control plane and the data plane talk over the `ControlPlane` gRPC service (
 
 | Crate | Responsibility |
 | --- | --- |
-| [`pingwaf-proto`](./pingwaf-proto) | Control-plane gRPC protocol definitions (single source: `control_plane.proto`) |
-| [`pingwaf-server`](./pingwaf-server) | Control plane: Axum REST + tonic gRPC + SeaORM/PostgreSQL + ES logs + embedded frontend + agent health monitoring |
-| [`pingwaf-agent`](./pingwaf-agent) | Data-plane agent: connects to the control plane, caches rules with disk persistence, ships logs/metrics, receives commands |
-| [`pingwaf-waf`](./pingwaf-waf) | Detection engine: normalize → signatures → expression → anomaly score |
-| [`pingwaf-challenge`](./pingwaf-challenge) | Dynamic challenges: JS 5-second shield, interactive challenge, PoW, fingerprinting, HMAC clearance cookies |
+| [`varman-protocol`](./varman-protocol) | Control-plane gRPC protocol definitions (single source: `control_plane.proto`) |
+| [`varman-control`](./varman-control) | Control plane: Axum REST + tonic gRPC + SeaORM/PostgreSQL + ES logs + embedded frontend + agent health monitoring |
+| [`varman-agent`](./varman-agent) | Data-plane agent: connects to the control plane, caches rules with disk persistence, ships logs/metrics, receives commands |
+| [`varman-waf`](./varman-waf) | Detection engine: normalize → signatures → expression → anomaly score |
+| [`varman-challenge`](./varman-challenge) | Dynamic challenges: JS 5-second shield, interactive challenge, PoW, fingerprinting, HMAC clearance cookies |
 
 ---
 
 ## 🚀 Quick Start
 
-> **Note:** Prebuilt binaries are currently published for **Linux (amd64 / arm64)** only — see the [releases page](https://github.com/shuaiZend/PingWAF/releases). On macOS, build from source (Option B). The Docker image supports both architectures.
+> **Note:** Prebuilt binaries are currently published for **Linux (amd64 / arm64)** only — see the [releases page](https://github.com/varmanwaf/varmanwaf/releases). On macOS, build from source (Option B). The Docker image supports both architectures.
 
 ### Option A — Docker Compose (recommended)
 
-The bundled [`docker-compose.yml`](./docker-compose.yml) starts PingWAF in `all-in-one` mode together with PostgreSQL, pulling the pre-built image from GHCR (`ghcr.io/shuaizend/pingwaf:latest`):
+The bundled [`docker-compose.yml`](./docker-compose.yml) starts VarmanWAF in `all-in-one` mode together with PostgreSQL, pulling the pre-built image from GHCR (`ghcr.io/varmanwaf/varmanwaf:latest`):
 
 ```bash
-git clone https://github.com/shuaiZend/PingWAF.git
-cd PingWAF
+git clone https://github.com/varmanwaf/varmanwaf.git
+cd VarmanWAF
 
 # Start the control plane + data plane + PostgreSQL
 docker compose up -d
@@ -173,15 +173,15 @@ docker compose up -d
 Then open the dashboard:
 
 - **URL:** https://localhost:9080
-- **Email:** `admin@pingwaf.local`
-- **Password:** `pingwaf123`
+- **Email:** `admin@varman.local`
+- **Password:** `varman123`
 
-> ⚠️ **Change the default admin password and `PINGWAF_JWT_SECRET` before any production use.**
+> ⚠️ **Change the default admin password and `VARMAN_JWT_SECRET` before any production use.**
 
 The dashboard is served over **HTTPS** with a self-signed certificate generated
 on first boot, so the browser warns until you either trust the downloaded
 certificate or upload a real one under **Settings → Control plane HTTPS**. Set
-`PINGWAF_TLS_SANS` to the hostname you use if it is not `localhost`.
+`VARMAN_TLS_SANS` to the hostname you use if it is not `localhost`.
 
 Health check: `GET http://localhost:9080/healthz` (answers on HTTP and HTTPS;
 everything else redirects to `https://`).
@@ -198,7 +198,7 @@ everything else redirects to `https://`).
 | `cmake` | any recent | Required to build the TLS backend (OpenSSL) |
 | PostgreSQL | 14+ (16 recommended) | Control-plane datastore |
 
-> ⚠️ **`protoc` is mandatory.** If it is missing, `pingwaf-proto` silently falls back to placeholder files and downstream crates fail to compile. Install it first:
+> ⚠️ **`protoc` is mandatory.** If it is missing, `varman-protocol` silently falls back to placeholder files and downstream crates fail to compile. Install it first:
 >
 > ```bash
 > brew install protobuf                 # macOS
@@ -208,18 +208,18 @@ everything else redirects to `https://`).
 **Build & run**
 
 ```bash
-git clone https://github.com/shuaiZend/PingWAF.git
-cd PingWAF
+git clone https://github.com/varmanwaf/varmanwaf.git
+cd VarmanWAF
 
 # 1. Build the embedded dashboard
 cd web && npm ci && npm run build && cd ..
 
-# 2. Build the pingwaf binary
-cargo build --release --bin pingwaf --features full
+# 2. Build the varman binary
+cargo build --release --bin varman --features full
 
 # 3. Run in all-in-one mode
-./target/release/pingwaf all-in-one \
-  --db-url "postgres://pingwaf:pingwaf@localhost:5432/pingwaf"
+./target/release/varman all-in-one \
+  --db-url "postgres://varman:varman@localhost:5432/varman"
 ```
 
 ### Option C — Install script (Linux)
@@ -227,7 +227,7 @@ cargo build --release --bin pingwaf --features full
 On a Linux server, the one-line script downloads the prebuilt binary, installs it and (optionally) sets up a systemd service:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shuaiZend/PingWAF/main/install.sh | sudo bash -s -- --mode all-in-one
+curl -fsSL https://raw.githubusercontent.com/varmanwaf/varmanwaf/main/install.sh | sudo bash -s -- --mode all-in-one
 ```
 
 👉 For a full walkthrough (database setup, first site, distributed agents, systemd), see **[docs/quick-start.md](./docs/quick-start.md)**.
@@ -236,34 +236,34 @@ curl -fsSL https://raw.githubusercontent.com/shuaiZend/PingWAF/main/install.sh |
 
 ## 🧭 Run Modes
 
-PingWAF is a single binary (`pingwaf`) that shares its entry point with `pingap`. It selects a mode from the CLI subcommand **or** the `PINGWAF_MODE` environment variable.
+VarmanWAF is a single binary (`varman`) that shares its entry point with `pingap`. It selects a mode from the CLI subcommand **or** the `VARMAN_MODE` environment variable.
 
 | Mode | Command | Role |
 | --- | --- | --- |
-| **Control plane** | `pingwaf server` | REST API + gRPC server + dashboard + PostgreSQL. Does not proxy traffic. |
-| **Data plane** | `pingwaf agent` | Connects to a remote control plane, enforces rules, proxies traffic on :80/:443. |
-| **All-in-One** | `pingwaf all-in-one` | Both of the above in one process (agent talks to the local server over loopback). |
+| **Control plane** | `varman server` | REST API + gRPC server + dashboard + PostgreSQL. Does not proxy traffic. |
+| **Data plane** | `varman agent` | Connects to a remote control plane, enforces rules, proxies traffic on :80/:443. |
+| **All-in-One** | `varman all-in-one` | Both of the above in one process (agent talks to the local server over loopback). |
 
 ```bash
-# Equivalent to `pingwaf all-in-one`
-PINGWAF_MODE=all-in-one ./pingwaf
+# Equivalent to `varman all-in-one`
+VARMAN_MODE=all-in-one ./varman
 ```
 
 ---
 
 ## ⚙️ Configuration
 
-PingWAF is configured through a **TOML file**, **`PINGWAF_*` environment variables**, and **CLI flags**, in that order of precedence (a later channel overrides an earlier one).
+VarmanWAF is configured through a **TOML file**, **`VARMAN_*` environment variables**, and **CLI flags**, in that order of precedence (a later channel overrides an earlier one).
 
 ```bash
-pingwaf all-in-one --config /etc/pingwaf/pingwaf.toml
+varman all-in-one --config /etc/varman/varman.toml
 
-PINGWAF_CONFIG=/etc/pingwaf/pingwaf.toml pingwaf all-in-one   # equivalent
+VARMAN_CONFIG=/etc/varman/varman.toml varman all-in-one   # equivalent
 ```
 
-> ℹ️ The [`pingwaf.toml`](./pingwaf.toml) in the repository root is a working
+> ℹ️ The [`varman.toml`](./varman.toml) in the repository root is a working
 > example — pass it with `--config` and its `[server]` / `[agent]` tables are
-> applied (the process logs `pingwaf: loaded N setting(s)`). Keys are the flag
+> applied (the process logs `varman: loaded N setting(s)`). Keys are the flag
 > names with underscores (`admin_addr`, `max_body_log_size`); unknown keys are
 > reported and skipped.
 
@@ -271,23 +271,23 @@ PINGWAF_CONFIG=/etc/pingwaf/pingwaf.toml pingwaf all-in-one   # equivalent
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PINGWAF_CONFIG` | — | Path to the TOML configuration file |
-| `PINGWAF_MODE` | — | `server`, `agent` or `all-in-one` |
-| `PINGWAF_DB_URL` | `postgres://pingwaf:pingwaf@localhost:5432/pingwaf` | PostgreSQL DSN |
-| `PINGWAF_ADMIN_ADDR` | `0.0.0.0:9080` | REST API + dashboard listen address |
-| `PINGWAF_GRPC_ADDR` | `0.0.0.0:9090` | gRPC control-plane listen address |
-| `PINGWAF_JWT_SECRET` | `change-me-in-production` | JWT signing secret (**≥ 16 chars**, change in production) |
-| `PINGWAF_ADMIN_EMAIL` | `admin@pingwaf.local` | Seeded administrator email |
-| `PINGWAF_ADMIN_PASSWORD` | `pingwaf123` | Seeded administrator password (**change in production**) |
-| `PINGWAF_ALLOW_REGISTRATION` | `true` | Whether `POST /api/v1/auth/register` accepts signups (`docker-compose.yml` and `install.sh` set this to `false`) |
-| `PINGWAF_HEARTBEAT_INTERVAL` | `15` | Heartbeat interval handed to agents (seconds) |
-| `PINGWAF_TLS_ENABLED` | `true` | Serve the REST API + dashboard over HTTPS (self-signed until replaced); `false` behind a TLS-terminating proxy |
-| `PINGWAF_TLS_SANS` | hostname, `localhost`, `127.0.0.1` | Comma-separated SANs of the generated self-signed certificate |
-| `PINGWAF_SERVER_URL` | `http://localhost:9090` | *(agent)* control-plane gRPC URL |
-| `PINGWAF_API_KEY` | *(empty)* | *(agent)* API key; empty = auto-register over loopback |
-| `PINGWAF_CACHE_DIR` | `./data/cache` | *(agent)* local rule cache directory |
-| `PINGWAF_ES_ENABLED` | `false` | Enable Elasticsearch log shipping |
-| `PINGWAF_ES_URLS` | *(empty)* | Comma-separated Elasticsearch URLs |
+| `VARMAN_CONFIG` | — | Path to the TOML configuration file |
+| `VARMAN_MODE` | — | `server`, `agent` or `all-in-one` |
+| `VARMAN_DB_URL` | `postgres://varman:varman@localhost:5432/varman` | PostgreSQL DSN |
+| `VARMAN_ADMIN_ADDR` | `0.0.0.0:9080` | REST API + dashboard listen address |
+| `VARMAN_GRPC_ADDR` | `0.0.0.0:9090` | gRPC control-plane listen address |
+| `VARMAN_JWT_SECRET` | `change-me-in-production` | JWT signing secret (**≥ 16 chars**, change in production) |
+| `VARMAN_ADMIN_EMAIL` | `admin@varman.local` | Seeded administrator email |
+| `VARMAN_ADMIN_PASSWORD` | `varman123` | Seeded administrator password (**change in production**) |
+| `VARMAN_ALLOW_REGISTRATION` | `true` | Whether `POST /api/v1/auth/register` accepts signups (`docker-compose.yml` and `install.sh` set this to `false`) |
+| `VARMAN_HEARTBEAT_INTERVAL` | `15` | Heartbeat interval handed to agents (seconds) |
+| `VARMAN_TLS_ENABLED` | `true` | Serve the REST API + dashboard over HTTPS (self-signed until replaced); `false` behind a TLS-terminating proxy |
+| `VARMAN_TLS_SANS` | hostname, `localhost`, `127.0.0.1` | Comma-separated SANs of the generated self-signed certificate |
+| `VARMAN_SERVER_URL` | `http://localhost:9090` | *(agent)* control-plane gRPC URL |
+| `VARMAN_API_KEY` | *(empty)* | *(agent)* API key; empty = auto-register over loopback |
+| `VARMAN_CACHE_DIR` | `./data/cache` | *(agent)* local rule cache directory |
+| `VARMAN_ES_ENABLED` | `false` | Enable Elasticsearch log shipping |
+| `VARMAN_ES_URLS` | *(empty)* | Comma-separated Elasticsearch URLs |
 
 ### Default ports
 
@@ -325,16 +325,16 @@ Contributions are welcome! Please read **[CONTRIBUTING.md](./CONTRIBUTING.md)** 
 
 ## 🙏 Acknowledgements
 
-PingWAF stands on the shoulders of excellent open-source projects:
+VarmanWAF stands on the shoulders of excellent open-source projects:
 
-- **[pingap](https://github.com/vicanso/pingap)** by Tree Xie — the reverse-proxy foundation (routing, plugins, ACME, caching, hot reload) that PingWAF's data plane is built on.
+- **[pingap](https://github.com/vicanso/pingap)** by Tree Xie — the reverse-proxy foundation (routing, plugins, ACME, caching, hot reload) that VarmanWAF's data plane is built on.
 - **[Pingora](https://github.com/cloudflare/pingora)** by Cloudflare — the async networking framework that powers `pingap`.
 - **[libinjection](https://github.com/client9/libinjection)** — SQLi/XSS detection heuristics used by the WAF engine.
 
-PingWAF is a derivative work that adds the WAF control plane, data-plane agents and detection engine. It is distributed under the same **[Apache License 2.0](./LICENSE)** as its upstream dependencies, and the original `pingap`/`Pingora` copyright notices are preserved. PingWAF is **not** affiliated with or endorsed by Cloudflare or the `pingap` project.
+VarmanWAF is a derivative work that adds the WAF control plane, data-plane agents and detection engine. It is distributed under the same **[Apache License 2.0](./LICENSE)** as its upstream dependencies, and the original `pingap`/`Pingora` copyright notices are preserved. VarmanWAF is **not** affiliated with or endorsed by Cloudflare or the `pingap` project.
 
 ---
 
 ## 📄 License
 
-PingWAF is released under the **[Apache License 2.0](./LICENSE)**.
+VarmanWAF is released under the **[Apache License 2.0](./LICENSE)**.

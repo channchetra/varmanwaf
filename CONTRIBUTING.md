@@ -1,8 +1,8 @@
-# Contributing to PingWAF
+# Contributing to VarmanWAF
 
-Thank you for your interest in PingWAF! 🦀
+Thank you for your interest in VarmanWAF! 🦀
 
-PingWAF is a distributed, centrally managed Web Application Firewall built on
+VarmanWAF is a distributed, centrally managed Web Application Firewall built on
 [pingap](https://github.com/vicanso/pingap) and Cloudflare's
 [Pingora](https://github.com/cloudflare/pingora). It is a Rust workspace with a
 React dashboard, and there is plenty of interesting work: proxy behaviour, WAF
@@ -19,7 +19,7 @@ we follow, and how to get a change merged.
 - [Security Issues](#security-issues)
 - [Development Environment](#development-environment)
 - [Project Layout](#project-layout)
-- [Running PingWAF Locally](#running-pingwaf-locally)
+- [Running VarmanWAF Locally](#running-varman-locally)
 - [Code Style](#code-style)
 - [Testing](#testing)
 - [Dependencies and MSRV](#dependencies-and-msrv)
@@ -41,17 +41,17 @@ document.
 
 ## Reporting Bugs and Requesting Features
 
-Use [GitHub Issues](https://github.com/shuaiZend/PingWAF/issues).
+Use [GitHub Issues](https://github.com/varmanwaf/varmanwaf/issues).
 
 **Before opening an issue**, search existing issues and read
 [`docs/quick-start.md` → Troubleshooting](./docs/quick-start.md#troubleshooting)
 and [`docs/deployment.md` → Troubleshooting](./docs/deployment.md#troubleshooting).
 Many reported problems (missing `protoc`, ports 80/443 not listening until a
-site exists, stale `pingwaf-proto` build cache) are already documented there.
+site exists, stale `varman-protocol` build cache) are already documented there.
 
 **For a bug report, include:**
 
-1. PingWAF version (`pingwaf --version`) and the git commit you built from
+1. VarmanWAF version (`varman --version`) and the git commit you built from
 2. Operating system, architecture, and how you installed it (Docker Compose,
    source build, systemd)
 3. Run mode: `all-in-one`, `server` or `agent`
@@ -82,7 +82,7 @@ disclosure process in [`SECURITY.md`](./SECURITY.md).
 | --- | --- | --- |
 | Rust | **1.96+** (MSRV; CI also runs 1.97 and stable) | Everything |
 | Node.js | **22** | Building/linting the dashboard |
-| protoc | any recent release | Generating `pingwaf-proto` gRPC stubs |
+| protoc | any recent release | Generating `varman-protocol` gRPC stubs |
 | cmake, clang/libclang | — | Native dependencies (e.g. TLS/ML crates) |
 | pkg-config, OpenSSL dev headers | — | The default `openssl` TLS backend |
 | nasm | — | Assembling optimised TLS/crypto code |
@@ -111,20 +111,20 @@ cargo install cargo-msrv --version 0.18.4
 ```
 
 > ⚠️ **Install `protoc` before your first `cargo build`.** If it is missing,
-> [`pingwaf-proto/build.rs`](./pingwaf-proto/build.rs) writes a placeholder
+> [`varman-protocol/build.rs`](./varman-protocol/build.rs) writes a placeholder
 > instead of the real gRPC code and only emits a `cargo:warning`. The failure
-> surfaces later as baffling "cannot find type" errors in `pingwaf-server` and
-> `pingwaf-agent`. Recover with:
+> surfaces later as baffling "cannot find type" errors in `varman-control` and
+> `varman-agent`. Recover with:
 >
 > ```bash
-> cargo clean -p pingwaf-proto
+> cargo clean -p varman-protocol
 > ```
 
 ### Get the code
 
 ```bash
-git clone https://github.com/shuaiZend/PingWAF.git
-cd PingWAF
+git clone https://github.com/varmanwaf/varmanwaf.git
+cd VarmanWAF
 
 # Install the pre-commit hook (runs `make lint`)
 make hooks
@@ -138,14 +138,14 @@ cd web && npm ci && npm run build && cd ..
 # or, for the pingap admin plugin assets in ./dist:
 make build-web
 
-# The PingWAF binary (full feature set: tracing + imageoptim)
-cargo build --bin pingwaf --features full
+# The VarmanWAF binary (full feature set: tracing + imageoptim)
+cargo build --bin varman --features full
 
 # Release build
-cargo build --release --bin pingwaf --features full
+cargo build --release --bin varman --features full
 
 # The rustls TLS backend instead of OpenSSL
-cargo build --bin pingwaf --no-default-features --features tls-rustls,full
+cargo build --bin varman --no-default-features --features tls-rustls,full
 ```
 
 > Local builds are tuned for a small `target/`: dependencies are compiled
@@ -160,13 +160,13 @@ cargo build --bin pingwaf --no-default-features --features tls-rustls,full
 
 | Path | What lives there |
 | --- | --- |
-| `src/` | Binary entry points (`pingap`, `pingwaf`), CLI parsing, process management |
-| `pingwaf-server/` | Control plane: Axum REST API, dashboard serving, gRPC server, SeaORM entities and migrations |
-| `pingwaf-agent/` | Data plane agent: gRPC client, config, local rule cache, heartbeat and log shipping |
-| `pingwaf-proto/` | `control_plane.proto` and the generated gRPC stubs (needs `protoc`) |
-| `pingwaf-waf/` | Detection engine: input normalisation, Aho-Corasick + libinjection-style SQLi/XSS fast path, expression rule engine with anomaly scoring (`WafVerdict`) |
-| `pingwaf-challenge/` | JS challenge, clearance cookies, browser fingerprinting |
-| `pingwaf-pprof/` | pprof-style profiling endpoints: CPU profile and SVG flamegraph (CPU sampling is Linux-only), memory snapshot |
+| `src/` | Binary entry points (`pingap`, `varman`), CLI parsing, process management |
+| `varman-control/` | Control plane: Axum REST API, dashboard serving, gRPC server, SeaORM entities and migrations |
+| `varman-agent/` | Data plane agent: gRPC client, config, local rule cache, heartbeat and log shipping |
+| `varman-protocol/` | `control_plane.proto` and the generated gRPC stubs (needs `protoc`) |
+| `varman-waf/` | Detection engine: input normalisation, Aho-Corasick + libinjection-style SQLi/XSS fast path, expression rule engine with anomaly scoring (`WafVerdict`) |
+| `varman-challenge/` | JS challenge, clearance cookies, browser fingerprinting |
+| `varman-pprof/` | pprof-style profiling endpoints: CPU profile and SVG flamegraph (CPU sampling is Linux-only), memory snapshot |
 | `pingap-*` | The inherited proxy stack: cache, certificates, ACME, config, plugins, proxy, upstream, logging, observability |
 | `web/` | React 19 + TypeScript + Vite dashboard (Tailwind v4, Zustand, TanStack Query, i18next) |
 | `docs/` | English documentation; `docs/zh/` holds the Chinese mirror |
@@ -177,9 +177,9 @@ Shared dependencies are pinned once in the root `Cargo.toml` under
 `{ workspace = true }`. Do not add a second version of a crate in a member
 manifest.
 
-## Running PingWAF Locally
+## Running VarmanWAF Locally
 
-Fastest: Docker Compose (`pingwaf` all-in-one + `postgres:16-alpine`).
+Fastest: Docker Compose (`varman` all-in-one + `postgres:16-alpine`).
 
 ```bash
 export POSTGRES_PASSWORD="$(openssl rand -hex 16)"
@@ -192,18 +192,18 @@ curl -sf http://localhost:9080/healthz      # {"status":"ok","database":"up"} (h
 Native, against a local PostgreSQL:
 
 ```bash
-docker run -d --name pingwaf-postgres \
-  -e POSTGRES_USER=pingwaf -e POSTGRES_PASSWORD=pingwaf -e POSTGRES_DB=pingwaf \
+docker run -d --name varman-postgres \
+  -e POSTGRES_USER=varman -e POSTGRES_PASSWORD=varman -e POSTGRES_DB=varman \
   -p 5432:5432 postgres:16-alpine
 
-cargo run --bin pingwaf --features full -- all-in-one \
-  --db-url "postgres://pingwaf:pingwaf@localhost:5432/pingwaf"
+cargo run --bin varman --features full -- all-in-one \
+  --db-url "postgres://varman:varman@localhost:5432/varman"
 ```
 
 Dashboard: <https://localhost:9080> — default credentials
-`admin@pingwaf.local` / `pingwaf123` unless you overrode them.
+`admin@varman.local` / `varman123` unless you overrode them.
 
-Configuration comes from CLI flags and `PINGWAF_*` environment variables; CLI
+Configuration comes from CLI flags and `VARMAN_*` environment variables; CLI
 flags win. See [`docs/quick-start.md`](./docs/quick-start.md#configuration-cheat-sheet)
 and [`docs/deployment.md`](./docs/deployment.md#configuration-reference).
 
@@ -244,7 +244,7 @@ npm run build   # tsc -b && vite build (strict TypeScript)
 make test            # cargo test --workspace --features=full
 make test-rustls     # same suite on the rustls TLS backend
 make cov             # cargo llvm-cov --workspace --html --open
-cargo test -p pingwaf-server        # a single crate
+cargo test -p varman-control        # a single crate
 ```
 
 - CI runs the suite on Rust **1.96.0**, **1.97.0** and **stable**, plus a
@@ -364,7 +364,7 @@ Confirm your acceptance by ticking the CLA checkbox in the pull request
 template. We do not currently require a `Signed-off-by` (DCO) trailer, but
 adding one with `git commit -s` is welcome.
 
-PingWAF is licensed under [Apache-2.0](./LICENSE). New source files should carry
+VarmanWAF is licensed under [Apache-2.0](./LICENSE). New source files should carry
 the standard Apache-2.0 header used throughout the workspace.
 
 ## Getting Help
@@ -383,19 +383,19 @@ the standard Apache-2.0 header used throughout the workspace.
 
 ## 中文速览
 
-欢迎贡献 PingWAF！
+欢迎贡献 VarmanWAF！
 
 1. **环境**：Rust ≥ 1.96、Node 22、`protoc`（**必装**，缺失会静默生成占位文件导致
-   `pingwaf-server` / `pingwaf-agent` 编译失败，需 `cargo clean -p pingwaf-proto`
+   `varman-control` / `varman-agent` 编译失败，需 `cargo clean -p varman-protocol`
    重新生成）、cmake、clang、pkg-config、libssl-dev、nasm、PostgreSQL ≥ 14。
 2. **构建**：先 `cd web && npm ci && npm run build`（前端资源在编译期通过
-   rust-embed 打进二进制），再 `cargo build --bin pingwaf --features full`。
+   rust-embed 打进二进制），再 `cargo build --bin varman --features full`。
    本地构建已针对 `target/` 体积调优（依赖不保留调试信息）；`make clean`
    可随时清理，`target/` 超过 `TARGET_MAX_GB`（默认 20 GB）时 `make lint` /
    `test` / `release` 等目标会自动先删 incremental 缓存、必要时再整目录清理。
-3. **本地运行**：`cargo run --bin pingwaf --features full -- all-in-one
-   --db-url "postgres://pingwaf:pingwaf@localhost:5432/pingwaf"`，
-   控制台 <https://localhost:9080>（自签名证书），默认账号 `admin@pingwaf.local` / `pingwaf123`。
+3. **本地运行**：`cargo run --bin varman --features full -- all-in-one
+   --db-url "postgres://varman:varman@localhost:5432/varman"`，
+   控制台 <https://localhost:9080>（自签名证书），默认账号 `admin@varman.local` / `varman123`。
 4. **提交前**：`make fmt`、`make lint`、`make test`，前端 `npm run lint`。
    `clippy::unwrap_used` 全局 deny，请勿在请求路径中 panic。
 5. **提交信息**：遵循 Conventional Commits（`feat/fix/perf/refactor/docs/test/chore`），
