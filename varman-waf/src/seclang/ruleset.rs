@@ -58,6 +58,7 @@ const ALLOWED_ACTIONS: &[&str] = &[
     "ctl:",
     "noauditlog",
     "multimatch",
+    "initcol:",
 ];
 
 /// `true` when the line is a `SecRuleRemoveById` directive (the exact word,
@@ -164,6 +165,47 @@ enum SetVar {
     Increment(String, String),
 }
 
+/// Validated `initcol` operation: creates a collection instance whose key is
+/// the expanded value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InitCol {
+    collection: String,
+    key: String,
+}
+
+/// Case-insensitive action prefix stripping; the action validator accepts
+/// case-insensitive names, so execution must match every accepted spelling.
+fn strip_action_prefix<'a>(action: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = action.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &action[prefix.len()..])
+}
+
+fn parse_initcol(spec: &str) -> Result<InitCol, SecLangError> {
+    let spec = spec.trim().trim_matches('\'').trim_matches('"');
+    let Some((collection, key)) = spec.split_once('=') else {
+        return Err(SecLangError {
+            reason: format!("initcol without '=': {spec:?}"),
+        });
+    };
+    let collection = collection.trim().to_ascii_lowercase();
+    const COLLECTIONS: &[&str] =
+        &["global", "ip", "user", "session", "resource"];
+    if !COLLECTIONS.contains(&collection.as_str()) {
+        return Err(SecLangError {
+            reason: format!(
+                "initcol collection {collection:?} is not supported"
+            ),
+        });
+    }
+    let key = key.trim();
+    validate_macros(key)?;
+    Ok(InitCol {
+        collection,
+        key: key.to_string(),
+    })
+}
+
 fn parse_setvar(spec: &str) -> Result<SetVar, SecLangError> {
     let spec = spec.trim().trim_matches('\'').trim_matches('"');
     let Some((target, value)) = spec.split_once('=') else {
@@ -256,6 +298,8 @@ pub struct SecRuleSet {
     skip_after: Vec<Option<usize>>,
     /// `ctl:ruleEngine=…` per group.
     ctl_modes: Vec<Option<CtlMode>>,
+    /// `initcol` operations per group.
+    initcols: Vec<Vec<InitCol>>,
 }
 
 /// `ctl:ruleEngine` values: `On` (default), `DetectionOnly` (matches are
@@ -475,17 +519,25 @@ impl SecRuleSet {
             groups.retain(|group| !group.rules.is_empty());
         }
         let mut setvars = Vec::with_capacity(groups.len());
+        let mut initcols: Vec<Vec<InitCol>> = Vec::with_capacity(groups.len());
         for group in &groups {
             validate_actions(group)?;
             let mut ops = Vec::new();
+            let mut cols = Vec::new();
             for rule in &group.rules {
                 for action in &rule.line.actions {
-                    if let Some(spec) = action.trim().strip_prefix("setvar:") {
+                    let action = action.trim();
+                    if let Some(spec) = strip_action_prefix(action, "setvar:") {
                         ops.push(parse_setvar(spec)?);
+                    } else if let Some(spec) =
+                        strip_action_prefix(action, "initcol:")
+                    {
+                        cols.push(parse_initcol(spec)?);
                     }
                 }
             }
             setvars.push(ops);
+            initcols.push(cols);
         }
         // Group start positions in the rule stream, for marker resolution.
         let mut starts = Vec::with_capacity(groups.len());
@@ -509,7 +561,7 @@ impl SecRuleSet {
             let mut ctl_mode: Option<CtlMode> = None;
             for action in &actions {
                 let action = action.trim();
-                if let Some(rest) = action.strip_prefix("skip:") {
+                if let Some(rest) = strip_action_prefix(action, "skip:") {
                     skip_count =
                         Some(rest.trim().parse::<u64>().map_err(|_| {
                             SecLangError {
@@ -518,10 +570,12 @@ impl SecRuleSet {
                                 ),
                             }
                         })?);
-                } else if let Some(name) = action.strip_prefix("skipAfter:") {
+                } else if let Some(name) =
+                    strip_action_prefix(action, "skipafter:")
+                {
                     after_name = Some(name.trim().to_string());
                 } else if let Some(spec) =
-                    action.strip_prefix("ctl:ruleEngine=")
+                    strip_action_prefix(action, "ctl:ruleengine=")
                 {
                     ctl_mode =
                         Some(match spec.trim().to_ascii_lowercase().as_str() {
@@ -574,6 +628,7 @@ impl SecRuleSet {
             skip_groups,
             skip_after,
             ctl_modes,
+            initcols,
         })
     }
 
@@ -595,6 +650,10 @@ impl SecRuleSet {
                 continue;
             };
             txn.set_matched(variables_hit.first().cloned());
+            for collection in &self.initcols[index] {
+                let key = expand_macros(&collection.key, txn);
+                txn.register_collection(&collection.collection, &key);
+            }
             for op in &self.setvars[index] {
                 apply_setvar(txn, op);
             }
@@ -1144,6 +1203,26 @@ mod tests {
             );
         let hits = single.evaluate(&mut txn);
         assert_eq!(hits[0].variables_hit.len(), 1);
+    }
+
+    #[test]
+    fn initcol_registers_an_expanded_collection() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,initcol:ip=%{MATCHED_VAR}\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        ruleset.evaluate(&mut txn);
+        assert!(txn.has_collection("ip", "1"));
+
+        let error = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,initcol:wat=x\"\n",
+        )
+        .expect_err("must fail");
+        assert!(error.reason.contains("initcol"), "{error}");
     }
 
     #[test]

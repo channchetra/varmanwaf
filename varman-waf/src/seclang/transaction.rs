@@ -46,6 +46,10 @@ pub struct SecLangTransaction {
     body: Option<String>,
     remote_addr: String,
     tx: BTreeMap<String, String>,
+    /// `initcol` collection instances: collection name → instance key →
+    /// value. Per-transaction storage; cross-request persistence is not
+    /// implemented yet (no stock CRS rule depends on it).
+    collections: BTreeMap<String, BTreeMap<String, String>>,
     http_version: String,
     /// Variable that most recently matched, for `MATCHED_VAR` /
     /// `MATCHED_VAR_NAME`.
@@ -110,6 +114,7 @@ impl SecLangTransaction {
                 .map(|ip| ip.to_string())
                 .unwrap_or_default(),
             tx: BTreeMap::new(),
+            collections: BTreeMap::new(),
             http_version: request.http_version().to_string(),
             matched: None,
         }
@@ -129,6 +134,23 @@ impl SecLangTransaction {
     /// `MATCHED_VAR_NAME` macros.
     pub(crate) fn set_matched(&mut self, matched: Option<ResolvedValue>) {
         self.matched = matched;
+    }
+
+    /// Register a collection instance created by `initcol`.
+    pub(crate) fn register_collection(&mut self, collection: &str, key: &str) {
+        self.collections
+            .entry(collection.to_ascii_lowercase())
+            .or_default()
+            .entry(key.to_string())
+            .or_default();
+    }
+
+    /// `true` when `initcol` created this collection instance.
+    #[cfg(test)]
+    pub(crate) fn has_collection(&self, collection: &str, key: &str) -> bool {
+        self.collections
+            .get(&collection.to_ascii_lowercase())
+            .is_some_and(|instances| instances.contains_key(key))
     }
 
     /// `METHOD target HTTP/x.y`, ModSecurity's `REQUEST_LINE`.
@@ -283,6 +305,8 @@ pub enum Transform {
     RemoveCommentsChar,
     EscapeSeqDecode,
     CssDecode,
+    Sha1,
+    HexEncode,
 }
 
 impl Transform {
@@ -307,6 +331,8 @@ impl Transform {
             "removecommentschar" => Some(Self::RemoveCommentsChar),
             "escapeseqdecode" => Some(Self::EscapeSeqDecode),
             "cssdecode" => Some(Self::CssDecode),
+            "sha1" => Some(Self::Sha1),
+            "hexencode" => Some(Self::HexEncode),
             "utf8tounicode" => Some(Self::Utf8ToUnicode),
             _ => None,
         }
@@ -344,6 +370,11 @@ impl Transform {
             Self::RemoveCommentsChar => remove_comments_char(value),
             Self::EscapeSeqDecode => escape_seq_decode(value),
             Self::CssDecode => css_decode(value),
+            // ModSecurity emits the raw 20 digest bytes; in a string-valued
+            // engine we emit the lowercase hex digest instead (documented in
+            // `docs/compatibility.md`).
+            Self::Sha1 => sha1_hex(value),
+            Self::HexEncode => hex_encode(value),
             Self::Utf8ToUnicode => utf8_to_unicode(value),
         }
     }
@@ -473,6 +504,86 @@ fn hex_byte(high: u8, low: u8) -> u8 {
         }
     }
     (nibble(high) << 4) | nibble(low)
+}
+
+/// SHA-1 digest (RFC 3174), used by the `sha1` transform.
+fn sha1_digest(input: &[u8]) -> [u8; 20] {
+    let mut state: [u32; 5] =
+        [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
+    let bit_len = (input.len() as u64) * 8;
+    let mut message = input.to_vec();
+    message.push(0x80);
+    while message.len() % 64 != 56 {
+        message.push(0);
+    }
+    message.extend_from_slice(&bit_len.to_be_bytes());
+    for chunk in message.as_chunks::<64>().0 {
+        let mut words = [0u32; 80];
+        for (index, word) in chunk.as_chunks::<4>().0.iter().enumerate() {
+            words[index] =
+                u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+        }
+        for index in 16..80 {
+            words[index] = (words[index - 3]
+                ^ words[index - 8]
+                ^ words[index - 14]
+                ^ words[index - 16])
+                .rotate_left(1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e) =
+            (state[0], state[1], state[2], state[3], state[4]);
+        for (index, word) in words.iter().enumerate() {
+            let (f, k) = match index {
+                0..=19 => ((b & c) | ((!b) & d), 0x5A827999u32),
+                20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
+                _ => (b ^ c ^ d, 0xCA62C1D6),
+            };
+            let temp = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*word);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = temp;
+        }
+        state[0] = state[0].wrapping_add(a);
+        state[1] = state[1].wrapping_add(b);
+        state[2] = state[2].wrapping_add(c);
+        state[3] = state[3].wrapping_add(d);
+        state[4] = state[4].wrapping_add(e);
+    }
+    let mut digest = [0u8; 20];
+    for (index, word) in state.iter().enumerate() {
+        digest[index * 4..index * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    }
+    digest
+}
+
+/// Lowercase hex SHA-1 digest (see the `sha1` transform note above).
+fn sha1_hex(value: &str) -> String {
+    let digest = sha1_digest(value.as_bytes());
+    let mut out = String::with_capacity(40);
+    for byte in digest {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+/// ModSecurity `hexEncode`: lowercase hex of every byte; empty stays empty.
+fn hex_encode(value: &str) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+    let mut out = String::with_capacity(value.len() * 2);
+    for byte in value.bytes() {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
 }
 
 /// ModSecurity `replaceComments`: `/* … */` spans collapse to one space; an
@@ -885,6 +996,18 @@ fn css_decode(value: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
+/// Case-insensitive action prefix stripping (`t:`, `setvar:`, …): the
+/// validator accepts ModSecurity's case-insensitive action names, so the
+/// execution paths must match every spelling it accepts.
+fn strip_prefix_ignore_case<'a>(
+    value: &'a str,
+    prefix: &str,
+) -> Option<&'a str> {
+    let head = value.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &value[prefix.len()..])
+}
+
 /// Collect `t:` actions in order; an unknown transformation is an observable
 /// error (mandate §37: unsupported SecLang must never be silently ignored).
 fn parse_transforms(
@@ -892,7 +1015,7 @@ fn parse_transforms(
 ) -> Result<Vec<Transform>, SecLangError> {
     let mut transforms = Vec::new();
     for action in actions {
-        let Some(name) = action.trim().strip_prefix("t:") else {
+        let Some(name) = strip_prefix_ignore_case(action.trim(), "t:") else {
             continue;
         };
         if name.trim().eq_ignore_ascii_case("none") {
@@ -1143,7 +1266,10 @@ impl CompiledSecRule {
 
     /// `true` when the rule's actions include `capture`.
     pub(crate) fn has_capture(&self) -> bool {
-        self.line.actions.iter().any(|a| a.trim() == "capture")
+        self.line
+            .actions
+            .iter()
+            .any(|a| a.trim().eq_ignore_ascii_case("capture"))
     }
 
     /// Apply the `capture` action: `TX:0` = whole match, `TX:1..9` = regex
@@ -1212,7 +1338,10 @@ pub fn group_rules(
     let mut groups: Vec<SecRuleGroup> = Vec::new();
     let mut pending: Vec<CompiledSecRule> = Vec::new();
     for line in lines {
-        let chained = line.actions.iter().any(|a| a.trim() == "chain");
+        let chained = line
+            .actions
+            .iter()
+            .any(|a| a.trim().eq_ignore_ascii_case("chain"));
         let compiled = CompiledSecRule::compile(line)?;
         pending.push(compiled);
         if !chained {
@@ -1232,8 +1361,8 @@ pub fn group_rules(
 #[cfg(test)]
 mod tests {
     use super::{
-        expand_macros, CompiledSecRule, ResolvedValue, SecLangTransaction,
-        Transform,
+        expand_macros, sha1_hex, CompiledSecRule, ResolvedValue,
+        SecLangTransaction, Transform,
     };
     use crate::canonical::{Canonicalizer, ClientIdentity, RequestParts};
     use crate::seclang::parser::{parse_line, SecLangLine};
@@ -1523,6 +1652,30 @@ mod tests {
         assert_eq!(css.apply("\\z"), "z");
         assert_eq!(css.apply("\\"), "");
         assert_eq!(css.apply("\\\n"), "");
+    }
+
+    #[test]
+    fn sha1_and_hex_encode_transforms() {
+        // RFC 3174 test vectors.
+        assert_eq!(sha1_hex(""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+        assert_eq!(sha1_hex("abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
+        assert_eq!(
+            sha1_hex(
+                "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+            ),
+            "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
+        );
+        let sha1 = Transform::parse("sha1").expect("parse");
+        assert_eq!(
+            sha1.apply("abc"),
+            "a9993e364706816aba3e25717850c26c9cd0d89d"
+        );
+        let hex = Transform::parse("hexEncode").expect("parse");
+        assert_eq!(hex.apply("Ab"), "4162");
+        assert_eq!(hex.apply(""), "");
+        // Case-insensitive action names must still resolve.
+        assert!(Transform::parse("HexEncode").is_some());
+        assert!(Transform::parse("SHA1").is_some());
     }
 
     #[test]
