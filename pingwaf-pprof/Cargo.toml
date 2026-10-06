@@ -1,0 +1,33 @@
+[package]
+name = "pingwaf-pprof"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Built-in pprof-style profiling for PingWAF: CPU sampling as go-tool-pprof compatible protobuf, SVG flamegraphs and a memory snapshot. Shared by the control plane REST API and the data plane admin plugin."
+
+[dependencies]
+bytesize = { workspace = true }
+memory-stats = { workspace = true }
+serde = { workspace = true }
+sysinfo = { workspace = true }
+
+# Sampling is Linux-only (see src/lib.rs), so the profiler stack is not even
+# built on other platforms.
+[target.'cfg(target_os = "linux")'.dependencies]
+flate2 = { workspace = true }
+# default-features = false drops the C++ demangler; only Rust symbols are
+# needed. large-depth raises the per-sample stack limit from 128 to 1024
+# frames so deep async/proxy call chains are not truncated.
+#
+# pprof 0.15 still builds against prost 0.12 while the workspace pins 0.14
+# (tonic 0.14). That second copy is accepted here because the profile is
+# encoded to self-contained bytes - no prost types are shared with the rest
+# of the tree.
+pprof = { version = "0.15", default-features = false, features = [
+    "flamegraph",
+    "prost-codec",
+    "large-depth",
+] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

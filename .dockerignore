@@ -1,0 +1,101 @@
+# ─── VCS / IDE / 工具元数据 ────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+.github
+.qoder
+.idea
+.vscode
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─── Rust 构建产物（最大头，~7.9 GB）──────────────────────────────────────
+target/
+**/target/
+**/*.rs.bk
+*.pdb
+
+# ─── Node / 前端构建产物与依赖 ─────────────────────────────────────────────
+node_modules/
+**/node_modules/
+web/dist/
+web/*.tsbuildinfo
+**/*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage/
+
+# ─── 根 dist/ 仅保留 README.md 占位（rust-embed 编译期需要目录存在）────────
+dist/*
+!dist/README.md
+
+# ─── 文档 / 资源 / 示例（构建不需要）───────────────────────────────────────
+docs/
+website/
+asset/
+icons/
+examples/
+packaging/
+hooks/
+scripts/
+benches/nginx.conf
+benches/pingap.toml
+benches/README.md
+
+# ─── 顶层 Markdown / 配置（构建不需要）─────────────────────────────────────
+CHANGELOG.md
+CLA.md
+CLAUDE.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+SECURITY.md
+README.md
+README_zh.md
+Makefile
+bacon.toml
+cliff.toml
+clippy.toml
+typos.toml
+publish.sh
+install.sh
+pingap.service
+pingwaf.service
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# ─── 本地环境 / 运行时文件 ─────────────────────────────────────────────────
+.env
+.env.*
+*.log
+data/
+var/
+default_*
+report.*
+.shuttle*
+Secrets*.toml
+dhat*.json
+
+# ─── 本地证书与私钥（仅匹配仓库根级文件）───────────────────────────────────
+# NOTE: Docker 的 `*` 不跨 `/`，所以这些规则只匹配上下文根目录下的文件。
+# ⚠️ 切勿改成 **/*.pem —— pingap-certificate/src/chain.rs 通过 include_bytes!
+#    嵌入 ../assets/{e5,e6,r10,r11}.pem，排除它们会导致编译失败。
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+
+# ─── 仓库根可能残留的本地编译二进制 ────────────────────────────────────────
+pingwaf
+pingap
+
+# ─── Rust 工具链配置（Docker 内不需要）─────────────────────────────────────
+.cargo/
+.rustfmt.toml
+LICENSE

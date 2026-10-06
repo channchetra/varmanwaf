@@ -1,0 +1,18 @@
+[package]
+name = "pingwaf-challenge"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "PingWAF dynamic challenge subsystem: JS 5-second shield, interactive challenges, proof-of-work, browser fingerprinting and HMAC-signed clearance cookies."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }

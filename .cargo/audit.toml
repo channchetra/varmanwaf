@@ -1,0 +1,39 @@
+# Configuration for cargo-audit / the security-audit CI job.
+
+[advisories]
+# Every entry here MUST say why it is ignored and what unblocks removing it.
+ignore = [
+    # derivative 2.2 (unmaintained, not a vulnerability). A proc-macro, so it
+    # emits no runtime code and is absent from the shipped binary. A
+    # non-optional dependency of pingora-core 0.9. Remove when pingora drops it.
+    "RUSTSEC-2024-0388",
+
+    # paste 1.0 (unmaintained, not a vulnerability). Also a proc-macro, also
+    # absent from the binary. Reaches this tree only under the `imageoptim`
+    # feature, through rav1e (ravif -> image), which still requires paste ^1.0
+    # as of its latest release 0.8.1; dropping it would mean dropping avif
+    # output. The `exr` path was removed by trimming image's default features.
+    # Remove when rav1e moves to pastey or drops the dependency.
+    "RUSTSEC-2024-0436",
+
+    # rsa 0.9.10 (RUSTSEC-2023-0071, "Marvin" timing side-channel in PKCS#1 v1.5
+    # decryption). No upstream fix exists yet. It reaches this tree only through
+    # sqlx-mysql (MySQL caching_sha2_password authentication); this project uses
+    # PostgreSQL, so that code path is never exercised.
+    # Remove once rsa ships a constant-time fix.
+    "RUSTSEC-2023-0071",
+
+    # rustls-pemfile 2.2 (RUSTSEC-2025-0134) is unmaintained, not vulnerable.
+    # It is required by Pingora 0.9's optional rustls backend; the current
+    # upstream main branch still depends on it. Remove when Pingora replaces it.
+    "RUSTSEC-2025-0134",
+
+    # quick-xml 0.26 (RUSTSEC-2026-0194/0195, uncontrolled recursion and
+    # potential XSS in untrusted documents). It reaches this tree through
+    # pprof 0.15 -> inferno 0.11, and pprof pins inferno ^0.11, so there is no
+    # semver-compatible upgrade. quick-xml is only used on the Linux pprof
+    # flamegraph rendering path, parsing locally collected sampling data — it
+    # never parses untrusted input. Remove once pprof allows inferno 0.12+.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

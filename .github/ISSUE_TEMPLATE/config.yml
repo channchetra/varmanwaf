@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Security vulnerability / 安全漏洞
+    url: https://github.com/shuaiZend/PingWAF/blob/main/SECURITY.md
+    about: Report security issues privately following SECURITY.md — do not open a public issue. / 请按 SECURITY.md 私密上报安全问题，勿公开提 issue。
+  - name: 💬 Questions & discussions / 提问与讨论
+    url: https://github.com/shuaiZend/PingWAF/discussions
+    about: Ask questions, share setups, or discuss ideas with the community. / 提问、分享配置或交流想法。
+  - name: 📚 Documentation / 文档
+    url: https://github.com/shuaiZend/PingWAF/tree/main/docs
+    about: Read the guides and plugin reference before opening an issue. / 提 issue 前请先查阅文档与插件说明。

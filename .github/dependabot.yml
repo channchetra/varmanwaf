@@ -1,0 +1,84 @@
+# Dependabot configuration for the PingWAF workspace.
+#
+# Four ecosystems are tracked weekly. Cargo updates are grouped to keep the PR
+# count manageable, but note that Dependabot resolves without regard to the
+# workspace `rust-version = "1.96"` MSRV: verify `make msrv` locally before
+# merging any cargo bump that could raise the minimum toolchain.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - rust
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # sea-orm 2.0 needs a dedicated migration (~80 files) and must land
+      # together with sea-orm-migration; revisit as planned work.
+      - dependency-name: "sea-orm"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "sea-orm-migration"
+        update-types:
+          - version-update:semver-major
+      # pingora-core 0.9 pins sentry 0.36, so no sentry-core bump can be
+      # handed to pingora's set_sentry_config; ignore every update rather
+      # than only majors, since 0.x minors would slip past update-types.
+      # Lift this once pingora ships a newer sentry.
+      - dependency-name: "sentry-core"
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - javascript
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # TypeScript 7 is the native-port compiler; adopt it as planned work.
+      - dependency-name: "typescript"
+        update-types:
+          - version-update:semver-major
+      # i18next 26 and react-i18next 17 need a coordinated upgrade with
+      # code changes; revisit together.
+      - dependency-name: "i18next"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "react-i18next"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - docker

@@ -1,0 +1,34 @@
+# PingWAF Runtime-only Dockerfile
+# 用于 release workflow：从预编译二进制构建最小运行时镜像
+# 完整源码构建请使用 Dockerfile
+# Must use trixie (glibc 2.40) because binaries job compiles on
+# ubuntu-latest (glibc 2.39); bookworm (glibc 2.36) is too old.
+FROM debian:trixie-slim
+
+# SYNC: keep in lockstep with Dockerfile / ci.yml / release.yml
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -m -s /usr/sbin/nologin pingwaf \
+    && mkdir -p /etc/pingwaf /var/lib/pingwaf \
+    && chown -R pingwaf:pingwaf /var/lib/pingwaf /etc/pingwaf
+
+COPY pingwaf /usr/local/bin/pingwaf
+COPY pingwaf.toml /etc/pingwaf/pingwaf.toml
+
+EXPOSE 80 443 9080 9090
+
+VOLUME ["/var/lib/pingwaf"]
+
+# ./data/cache (PINGWAF_CACHE_DIR default) and the ACME state file are
+# relative paths; anchor them in the writable, volume-backed directory.
+WORKDIR /var/lib/pingwaf
+
+USER pingwaf
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -sf http://localhost:9080/healthz || exit 1
+
+ENTRYPOINT ["pingwaf"]
+CMD ["all-in-one"]

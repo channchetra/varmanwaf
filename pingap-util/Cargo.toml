@@ -1,0 +1,44 @@
+[package]
+name = "pingap-util"
+version.workspace = true
+edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "util"]
+description = "Util for pingap"
+
+
+[lib]
+name = "pingap_util"
+path = "src/lib.rs"
+
+
+[dependencies]
+aes-gcm-siv = { workspace = true }
+ahash = { workspace = true }
+base64 = { workspace = true }
+dirs = { workspace = true }
+ipnet = { workspace = true }
+itoa = { workspace = true }
+path-absolutize = { workspace = true }
+pem = { workspace = true }
+rustc_version_runtime = { workspace = true }
+snafu = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+bytes = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "bench"
+harness = false
+
+[lints.clippy]
+# Set the unwrap_used lint level to deny
+unwrap_used = "deny"

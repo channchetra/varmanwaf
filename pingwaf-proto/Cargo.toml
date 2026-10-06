@@ -1,0 +1,17 @@
+[package]
+name = "pingwaf-proto"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "PingWAF control-plane gRPC protocol definitions, generated from the single source of truth control_plane.proto."
+
+[dependencies]
+tonic = { workspace = true }
+# The generated service stubs name `tonic_prost::ProstCodec` as their codec, so
+# this is required at compile time of the generated module, not just at build time.
+tonic-prost = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+
+[build-dependencies]
+tonic-prost-build = { workspace = true }

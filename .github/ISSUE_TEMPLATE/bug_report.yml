@@ -1,0 +1,85 @@
+name: "🐛 Bug report / 缺陷报告"
+description: "Report something that is broken or behaves unexpectedly / 报告一个错误或异常行为"
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail
+        as you can — it makes triage much faster. For security vulnerabilities,
+        do **not** open a public issue; follow [SECURITY.md](https://github.com/shuaiZend/PingWAF/blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description / 问题描述
+      description: A clear and concise description of the bug. / 清晰简洁地描述这个问题。
+      placeholder: What happened? What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      description: Minimal steps, config, or a request that triggers the bug. / 触发该问题的最小步骤、配置或请求。
+      placeholder: |
+        1. Run `pingwaf all-in-one --db-url ...`
+        2. Add a site with ...
+        3. Send request ...
+        4. See error
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PingWAF version / 版本
+      description: Output of `pingwaf --version`. / `pingwaf --version` 的输出。
+      placeholder: v0.20.0
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component / 受影响组件
+      multiple: true
+      options:
+        - Control plane (pingwaf-server)
+        - Detection engine (pingwaf-waf)
+        - Challenge (pingwaf-challenge)
+        - Agent (pingwaf-agent)
+        - gRPC / proto (pingwaf-proto)
+        - Web dashboard (web/)
+        - Reverse proxy (pingap-*)
+        - Install / packaging
+        - Other / 其它
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system / 操作系统
+      multiple: true
+      options:
+        - Linux (amd64)
+        - Linux (arm64)
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Docker
+        - Other / 其它
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output / 相关日志
+      description: Paste logs or stack traces. This is automatically formatted as code. / 粘贴日志或堆栈，将自动按代码格式化。
+      render: shell
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Pre-submission checks / 提交前确认
+      options:
+        - label: I searched existing issues and this is not a duplicate. / 我已搜索现有 issue，确认这不是重复。
+          required: true
+        - label: This is not a security vulnerability (those go through SECURITY.md). / 这不是安全漏洞（安全漏洞请走 SECURITY.md）。
+          required: true

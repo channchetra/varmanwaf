@@ -1,0 +1,1321 @@
+// Copyright 2024-2025 Tree xie.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use super::{
+    Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
+};
+use async_trait::async_trait;
+use bstr::ByteSlice;
+use bytes::Bytes;
+use bytesize::ByteSize;
+use dashmap::DashMap;
+use fancy_regex::Regex;
+use http::{Method, StatusCode, header};
+use humantime::parse_duration;
+use pingap_cache::{HttpCache, new_cache_backend};
+use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+    ensure_client_ip, get_cache_key, get_host,
+};
+use pingap_util::IpRules;
+use pingora::cache::CacheOptionOverrides;
+use pingora::cache::eviction::EvictionManager;
+use pingora::cache::eviction::simple_lru::Manager;
+use pingora::cache::key::CacheHashKey;
+use pingora::cache::lock::{CacheKeyLock, CacheLock};
+use pingora::cache::predictor::{CacheablePredictor, Predictor};
+use pingora::http::RequestHeader;
+use pingora::proxy::Session;
+use pingwaf_agent::PingWafAgent;
+use pingwaf_agent::cache::{
+    CacheRule as AgentCacheRule, SiteRules as AgentSiteRules,
+};
+use pingwaf_waf::rules::{
+    EvalContext, Expression, FieldKind, evaluate, parse_expression,
+};
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::net::IpAddr;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::time::Duration;
+use tracing::{debug, error, info};
+
+type Result<T> = std::result::Result<T, Error>;
+
+// Singleton instances using OnceCell for thread-safe lazy initialization
+// Predictor: Determines if a response should be cached based on patterns/rules
+static PREDICTOR: OnceLock<Predictor<32>> = OnceLock::new();
+// EvictionManager: Handles removing entries when cache is full using LRU strategy
+static EVICTION_MANAGER: OnceLock<Manager> = OnceLock::new();
+// CacheLock: Prevents multiple requests from generating the same cache entry
+// simultaneously. `session.cache.enable` wants a `&'static` lock, so one is
+// leaked per distinct duration and reused from then on — bounded by the number
+// of distinct `lock` values in the configuration, not by the number of plugin
+// instances, so a hot reload does not leak.
+static CACHE_LOCKS: LazyLock<
+    Mutex<HashMap<Duration, &'static (dyn CacheKeyLock + Send + Sync)>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+// ─── Control-plane cache rules (agent mode) ───────────────────────────────
+
+/// A control-plane cache rule with its match expression pre-compiled.
+struct CompiledCacheRule {
+    expression: Expression,
+    /// Edge freshness ceiling from `edge_ttl_seconds`; `None` (a zero
+    /// value) leaves the plugin's static `max_ttl` in charge.
+    max_ttl: Option<Duration>,
+    /// Browser-facing `Cache-Control: max-age` override from
+    /// `browser_ttl_seconds`; `None` leaves the origin header untouched.
+    browser_ttl: Option<u32>,
+    /// Whether requests matching this rule may be cached at all.
+    cache_eligible: bool,
+    /// Whether the origin's `Cache-Control` is still consulted.
+    respect_origin: bool,
+    /// Request headers this rule folds into the cache key.
+    key_headers: Vec<String>,
+}
+
+/// What must be gathered from a request before a site's expressions can be
+/// evaluated. Unioned over all of a site's rules at build time, so the hot
+/// path only pays for what some expression actually references.
+#[derive(Default, Clone, Copy)]
+struct Requirements {
+    headers: bool,
+    cookies: bool,
+    client_ip: bool,
+}
+
+impl Requirements {
+    fn union(self, other: Self) -> Self {
+        Self {
+            headers: self.headers || other.headers,
+            cookies: self.cookies || other.cookies,
+            client_ip: self.client_ip || other.client_ip,
+        }
+    }
+}
+
+/// A site's enabled cache rules compiled for evaluation.
+struct SiteCacheRules {
+    /// The site's canonical control-plane domain. Doubles as the cache
+    /// namespace so the agent's per-domain disk quota ledger charges this
+    /// site's writes, whichever of its domains the request used.
+    namespace: String,
+    requirements: Requirements,
+    rules: Vec<CompiledCacheRule>,
+}
+
+/// A cached per-site rule set plus the fingerprint it was built from.
+struct CachedSiteCacheRules {
+    fingerprint: Arc<str>,
+    rules: Arc<SiteCacheRules>,
+}
+
+/// Which request parts an expression references.
+fn expression_requirements(expr: &Expression) -> Requirements {
+    match expr {
+        Expression::And(a, b) | Expression::Or(a, b) => {
+            expression_requirements(a).union(expression_requirements(b))
+        },
+        Expression::Not(inner) => expression_requirements(inner),
+        Expression::Field { field, .. } => match &field.kind {
+            FieldKind::RequestHeader => Requirements {
+                headers: true,
+                ..Default::default()
+            },
+            FieldKind::RequestCookie => Requirements {
+                cookies: true,
+                ..Default::default()
+            },
+            FieldKind::IpSrc | FieldKind::IpSrcCountry => Requirements {
+                client_ip: true,
+                ..Default::default()
+            },
+            _ => Requirements::default(),
+        },
+    }
+}
+
+/// Lower-cased header names paired with their values, as the WAF expression
+/// evaluator expects them. Only collected when a rule references headers.
+fn collect_request_headers(
+    req_header: &RequestHeader,
+) -> Vec<(String, String)> {
+    let mut headers = Vec::with_capacity(req_header.headers.len());
+    for (name, value) in req_header.headers.iter() {
+        if let Ok(v) = value.to_str() {
+            headers.push((name.as_str().to_string(), v.to_string()));
+        }
+    }
+    headers
+}
+
+/// Raw `Cookie:` pairs, sharing the WAF normalizer's split semantics but
+/// without percent-decoding: cache expressions compare wire values.
+fn parse_cookie_pairs(value: &str, cookies: &mut Vec<(String, String)>) {
+    for pair in value.split(';') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        let (name, val) = match pair.split_once('=') {
+            Some((n, v)) => (n.trim(), v.trim()),
+            None => (pair, ""),
+        };
+        cookies.push((name.to_string(), val.to_string()));
+    }
+}
+
+fn collect_request_cookies(
+    req_header: &RequestHeader,
+    cookies: &mut Vec<(String, String)>,
+) {
+    for value in req_header.headers.get_all(header::COOKIE) {
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        parse_cookie_pairs(value, cookies);
+    }
+}
+
+fn compile_cache_rule(rule: &AgentCacheRule) -> Option<CompiledCacheRule> {
+    let expression = parse_expression(&rule.match_expression).ok()?;
+    Some(CompiledCacheRule {
+        expression,
+        max_ttl: if rule.edge_ttl_seconds > 0 {
+            Some(Duration::from_secs(u64::from(rule.edge_ttl_seconds)))
+        } else {
+            None
+        },
+        browser_ttl: if rule.browser_ttl_seconds > 0 {
+            Some(rule.browser_ttl_seconds)
+        } else {
+            None
+        },
+        cache_eligible: rule.cache_eligible,
+        respect_origin: rule.respect_origin_headers,
+        key_headers: rule.cache_key_headers.clone(),
+    })
+}
+
+/// Compile a site's enabled cache rules, in control-plane order (the first
+/// match wins at evaluation time). A rule whose expression fails to parse is
+/// dropped with an error log — one bad rule must not take the site's whole
+/// cache policy down.
+fn build_site_cache_rules(site: &AgentSiteRules) -> SiteCacheRules {
+    let mut requirements = Requirements::default();
+    let mut rules = Vec::new();
+    for rule in site.cache_rules.iter().filter(|r| r.enabled) {
+        match compile_cache_rule(rule) {
+            Some(compiled) => {
+                requirements = requirements
+                    .union(expression_requirements(&compiled.expression));
+                rules.push(compiled);
+            },
+            None => error!(
+                rule = %rule.id,
+                expression = %rule.match_expression,
+                "invalid cache rule expression, rule ignored"
+            ),
+        }
+    }
+    SiteCacheRules {
+        namespace: site.domain.clone(),
+        requirements,
+        rules,
+    }
+}
+
+pub struct Cache {
+    // Determines when this plugin runs in the request/response lifecycle
+    plugin_step: PluginStep,
+    // Optional LRU-based memory management for cache entries
+    // Static lifetime ensures the eviction manager lives for the program duration
+    eviction: Option<&'static (dyn EvictionManager + Sync)>,
+    // Optional predictor to determine if responses should be cached
+    // Uses patterns and rules to make intelligent caching decisions
+    predictor: Option<&'static (dyn CacheablePredictor + Sync)>,
+    // Optional lock mechanism to prevent cache stampede
+    // (multiple identical requests generating the same cache entry)
+    lock: Option<&'static (dyn CacheKeyLock + Send + Sync)>,
+    // How many times a request waiting on the cache lock re-checks the
+    // cache before giving up; None keeps pingora's default of 2
+    lock_retries: Option<usize>,
+    // Backend storage implementation for the HTTP cache
+    http_cache: &'static HttpCache,
+    // Maximum size in bytes for individual cached files
+    max_file_size: usize,
+    // Optional maximum time a cache entry can live
+    // Overrides Cache-Control headers if set
+    max_ttl: Option<Duration>,
+    // Optional namespace for cache isolation
+    // Useful for multi-tenant systems or separating different types of cached content
+    namespace: Option<String>,
+    // Optional list of headers to include when generating cache keys
+    // Allows for variant caching (e.g., different versions based on Accept-Encoding)
+    headers: Option<Vec<String>>,
+    // Optional allow list for the origin's `Vary` header: only these request
+    // headers may create cache variants. None honours everything it names.
+    vary_headers: Option<Arc<Vec<String>>>,
+    // Whether to check the cache-control header, if not exist the response will not be cached.
+    check_cache_control: bool,
+    // IP-based access control for cache purge operations
+    purge_ip_rules: IpRules,
+    // Optional regex pattern to skip caching for certain requests
+    skip: Option<Regex>,
+    // Unique identifier for this cache configuration
+    hash_value: String,
+    // Per-site cache rules compiled from agent (control plane) rules,
+    // keyed by request host — mirrors the waf plugin's site engines.
+    site_cache_rules: DashMap<String, CachedSiteCacheRules>,
+}
+
+/// Helper function to initialize or retrieve the eviction manager singleton.
+/// This manager handles the LRU (Least Recently Used) cache eviction strategy.
+///
+/// # Returns
+/// Returns a static reference to the Manager instance that handles cache eviction.
+///
+/// # Implementation Details
+/// - Uses the configured cache size from current config if available
+/// - Falls back to MAX_MEMORY_SIZE (100MB) if not configured
+/// - Ensures only one instance is created using OnceCell
+fn get_eviction_manager(cache_max_size: u64) -> &'static Manager {
+    EVICTION_MANAGER.get_or_init(|| Manager::new(cache_max_size as usize))
+}
+
+/// Returns the cache lock for `lock`, creating it on first use.
+/// Cache locks prevent cache stampede by ensuring only one request generates a
+/// cache entry.
+///
+/// # Arguments
+/// * `lock` - The desired lock duration
+///
+/// # Returns
+/// * `Some(&CacheLock)` - For any non-zero duration
+/// * `None` - For a zero duration, which disables locking
+fn get_cache_lock(
+    lock: Duration,
+) -> Option<&'static (dyn CacheKeyLock + Send + Sync)> {
+    if lock.is_zero() {
+        return None;
+    }
+    let mut locks = CACHE_LOCKS.lock().ok()?;
+    if let Some(cache_lock) = locks.get(&lock) {
+        return Some(*cache_lock);
+    }
+    let cache_lock: &'static (dyn CacheKeyLock + Send + Sync) =
+        Box::leak(CacheLock::new_boxed(lock));
+    locks.insert(lock, cache_lock);
+    Some(cache_lock)
+}
+
+/// Helper function to initialize or retrieve the predictor singleton.
+/// The predictor determines whether responses should be cached based on configured rules.
+///
+/// # Returns
+/// Returns a static reference to a CacheablePredictor implementation.
+///
+/// # Implementation Details
+/// - Creates a new Predictor with capacity of 128 entries
+/// - No additional predictor configuration (None parameter)
+/// - Ensures only one instance is created using OnceCell
+fn get_predictor() -> &'static (dyn CacheablePredictor + Sync) {
+    PREDICTOR.get_or_init(|| Predictor::new(128, None))
+}
+
+impl TryFrom<&PluginConf> for Cache {
+    type Error = Error;
+
+    /// Attempts to create a Cache instance from plugin configuration.
+    ///
+    /// # Arguments
+    /// * `value` - Plugin configuration to convert
+    ///
+    /// # Returns
+    /// * `Result<Self>` - Configured Cache instance or conversion error
+    ///
+    /// # Configuration Options
+    /// - eviction: Enables LRU cache eviction
+    /// - lock: Cache lock duration (1-3s)
+    /// - max_ttl: Maximum cache entry lifetime
+    /// - max_file_size: Maximum cached file size
+    /// - namespace: Cache isolation namespace
+    /// - disk_quota_mb: Per-namespace disk ceiling, 0 = unlimited
+    /// - headers: Headers to include in cache key
+    /// - predictor: Enables cache prediction
+    /// - purge_ip_list: IPs allowed to purge cache
+    /// - skip: Regex pattern for requests to skip
+    ///
+    /// # Validation
+    /// - Ensures plugin step is Request
+    /// - Validates duration formats
+    /// - Creates cache directories if needed
+    /// - Compiles skip regex if provided
+    fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
+        let directory = get_str_conf(value, "directory");
+
+        let cache = new_cache_backend(directory.as_str()).map_err(|e| {
+            Error::Invalid {
+                category: "cache".to_string(),
+                message: e.to_string(),
+            }
+        })?;
+        let cache_max_size = cache.max_size;
+
+        let eviction = if value.contains_key("eviction") {
+            if cache_max_size > 0 {
+                let eviction = get_eviction_manager(cache_max_size);
+                Some(eviction as &'static (dyn EvictionManager + Sync))
+            } else {
+                // Eviction needs a bounded backend to evict against. The file
+                // backend does not report a size, so say so instead of leaving
+                // the operator believing the cache is capped.
+                error!(
+                    directory,
+                    "eviction is only supported by the memory cache backend, ignoring it"
+                );
+                None
+            }
+        } else {
+            None
+        };
+
+        let lock = get_str_conf(value, "lock");
+        let lock = if !lock.is_empty() {
+            parse_duration(&lock).map_err(|e| Error::Invalid {
+                category: PluginCategory::Cache.to_string(),
+                message: e.to_string(),
+            })?
+        } else {
+            Duration::from_secs(1)
+        };
+
+        let lock_retries = if value.get("lock_retries").is_some() {
+            let retries =
+                usize::try_from(crate::get_int_conf(value, "lock_retries"))
+                    .map_err(|_| Error::Invalid {
+                        category: PluginCategory::Cache.to_string(),
+                        message:
+                            "lock_retries should be a non-negative integer"
+                                .to_string(),
+                    })?;
+            Some(retries)
+        } else {
+            None
+        };
+
+        let max_ttl = get_str_conf(value, "max_ttl");
+        let max_ttl = if !max_ttl.is_empty() {
+            Some(parse_duration(&max_ttl).map_err(|e| Error::Invalid {
+                category: PluginCategory::Cache.to_string(),
+                message: e.to_string(),
+            })?)
+        } else {
+            None
+        };
+
+        let max_file_size = get_str_conf(value, "max_file_size");
+        let max_file_size = if !max_file_size.is_empty() {
+            ByteSize::from_str(&max_file_size).map_err(|e| Error::Invalid {
+                category: PluginCategory::Cache.to_string(),
+                message: e.to_string(),
+            })?
+        } else {
+            ByteSize::mb(1)
+        };
+        let namespace = get_str_conf(value, "namespace");
+        if !namespace.is_empty() && cache.directory.is_some() {
+            let path = format!(
+                "{}/{namespace}",
+                cache.directory.clone().unwrap_or_default()
+            );
+            if let Err(e) = std::fs::create_dir_all(&path) {
+                error!(
+                    error = e.to_string(),
+                    path, "create directory of cache fail"
+                );
+            }
+        }
+        let namespace = if namespace.is_empty() {
+            None
+        } else {
+            Some(namespace)
+        };
+
+        // Per-domain disk quota. The namespace is the accounting unit of the
+        // ledger, so a quota without one has nothing to charge: refusing the
+        // configuration beats silently letting the site grow without bound.
+        let disk_quota_mb = crate::get_int_conf(value, "disk_quota_mb");
+        if disk_quota_mb < 0 {
+            return Err(Error::Invalid {
+                category: PluginCategory::Cache.to_string(),
+                message: format!(
+                    "disk_quota_mb {disk_quota_mb} is invalid, expected 0 or more"
+                ),
+            });
+        }
+        let disk_quota_mb = disk_quota_mb as u64;
+        // The ledger only exists for file backends: memory caches have no disk
+        // to budget, and a ceiling there would be a lie. `cache.directory` is
+        // what says which kind this plugin got - the mere presence of a global
+        // ledger does not, because another cache plugin in the same process may
+        // have created one for its own directory.
+        let quota = if cache.directory.is_some() {
+            pingap_cache::global_disk_quota()
+        } else {
+            None
+        };
+        if let (Some(namespace), Some(quota)) = (namespace.as_deref(), quota) {
+            // Re-asserted on every build, `0` included. The plugin's hash covers
+            // the whole config map, so dropping the option rebuilds the plugin:
+            // skipping the call there would pin the previous ceiling in the
+            // ledger forever and keep evicting a site that asked to be unlimited.
+            quota.set_quota(namespace, disk_quota_mb);
+            info!(namespace, disk_quota_mb, "cache disk quota for namespace");
+        } else if disk_quota_mb > 0 {
+            let message = if namespace.is_none() {
+                "disk_quota_mb requires the namespace option"
+            } else {
+                "disk_quota_mb requires a file cache backend"
+            };
+            return Err(Error::Invalid {
+                category: PluginCategory::Cache.to_string(),
+                message: message.to_string(),
+            });
+        }
+        let headers = get_str_slice_conf(value, "headers");
+        let headers = if headers.is_empty() {
+            None
+        } else {
+            Some(headers)
+        };
+        let vary_headers = get_str_slice_conf(value, "vary_headers");
+        let vary_headers = if vary_headers.is_empty() {
+            None
+        } else {
+            Some(Arc::new(
+                vary_headers
+                    .iter()
+                    .map(|name| name.trim().to_ascii_lowercase())
+                    .collect(),
+            ))
+        };
+
+        let predictor = if value.contains_key("predictor") {
+            Some(get_predictor())
+        } else {
+            None
+        };
+
+        let purge_ip_rules =
+            IpRules::try_new(&get_str_slice_conf(value, "purge_ip_list"))
+                .map_err(|e| Error::Invalid {
+                    category: PluginCategory::Cache.to_string(),
+                    message: e.to_string(),
+                })?;
+
+        let skip_value = get_str_conf(value, "skip");
+        let skip = if skip_value.is_empty() {
+            None
+        } else {
+            Some(Regex::new(&skip_value).map_err(|e| Error::Regex {
+                category: "cache".to_string(),
+                source: Box::new(e),
+            })?)
+        };
+
+        let params = Self {
+            hash_value,
+            http_cache: cache,
+            plugin_step: PluginStep::Request,
+            eviction,
+            predictor,
+            lock: get_cache_lock(lock),
+            lock_retries,
+            max_ttl,
+            max_file_size: max_file_size.as_u64() as usize,
+            namespace,
+            headers,
+            vary_headers,
+            purge_ip_rules,
+            check_cache_control: get_bool_conf(value, "check_cache_control"),
+            skip,
+            site_cache_rules: DashMap::new(),
+        };
+        Ok(params)
+    }
+}
+
+impl Cache {
+    /// Resolve compiled cache rules for `host` from the agent's rule cache,
+    /// keeping them per host and rebuilding when the agent's config
+    /// fingerprint changes. `None` (no agent, unknown host, or no rules)
+    /// leaves the plugin's static behaviour in charge.
+    fn resolve_site_rules(&self, host: &str) -> Option<Arc<SiteCacheRules>> {
+        let agent = PingWafAgent::instance()?;
+        if host.is_empty() {
+            return None;
+        }
+        let site_rules = agent.get_rules_for_domain(host)?;
+        if site_rules.cache_rules.is_empty() {
+            return None;
+        }
+        let fingerprint = agent.config_hash();
+        if let Some(cached) = self.site_cache_rules.get(host)
+            && cached.fingerprint == fingerprint
+        {
+            return Some(Arc::clone(&cached.rules));
+        }
+        let rules = Arc::new(build_site_cache_rules(&site_rules));
+        self.site_cache_rules.insert(
+            host.to_string(),
+            CachedSiteCacheRules {
+                fingerprint,
+                rules: Arc::clone(&rules),
+            },
+        );
+        Some(rules)
+    }
+
+    /// Creates a new Cache instance from the provided plugin configuration.
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration parameters
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New Cache instance or error if configuration is invalid
+    ///
+    /// # Logging
+    /// Logs debug information about the cache plugin creation
+    /// Per-request overrides for pingora's cache lock. Only the retry
+    /// budget is configurable, and only when the plugin sets it; otherwise
+    /// pingora keeps its defaults.
+    fn cache_option_overrides(&self) -> Option<CacheOptionOverrides> {
+        let retries = self.lock_retries?;
+        let mut overrides = CacheOptionOverrides::default();
+        overrides.max_lock_retries = Some(retries);
+        Some(overrides)
+    }
+
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!(params = params.to_string(), "new http cache plugin");
+        Self::try_from(params)
+    }
+}
+
+static METHOD_PURGE: LazyLock<Method> = LazyLock::new(|| {
+    Method::from_bytes(b"PURGE").expect("Failed to create PURGE method")
+});
+
+#[async_trait]
+impl Plugin for Cache {
+    /// Returns the unique hash key for this cache configuration.
+    /// Used to identify different cache configurations in the system.
+    #[inline]
+    fn config_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
+    }
+
+    /// Handles incoming HTTP requests for caching operations.
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step
+    /// * `session` - HTTP session containing request/response data
+    /// * `ctx` - Ctx context for sharing data between plugins
+    ///
+    /// # Returns
+    /// * `Ok(Some(HttpResponse))` - For immediate responses (e.g., PURGE operations)
+    /// * `Ok(None)` - To continue normal request processing
+    ///
+    /// # Processing Steps
+    /// 1. Validates plugin step and HTTP method
+    /// 2. Checks skip patterns
+    /// 3. Builds cache key from URI and headers
+    /// 4. Handles PURGE requests with access control
+    /// 5. Configures cache settings for the session
+    /// 6. Enables caching with configured components
+    /// 7. Sets up size limits and tracking
+    #[inline]
+    async fn handle_request(
+        &self,
+        step: PluginStep,
+        session: &mut Session,
+        ctx: &mut Ctx,
+    ) -> pingora::Result<RequestPluginResult> {
+        // Only process if we're in the correct plugin step
+        if step != self.plugin_step {
+            return Ok(RequestPluginResult::Skipped);
+        }
+
+        // Cache operations only support GET/HEAD for retrieval and PURGE for invalidation
+        let req_header = session.req_header();
+        let method = &req_header.method;
+        if ![&Method::GET, &Method::HEAD, &*METHOD_PURGE].contains(&method) {
+            return Ok(RequestPluginResult::Skipped);
+        }
+
+        // Check if request matches skip pattern (if configured)
+        if let Some(skip) = &self.skip
+            && let Some(value) = req_header.uri.path_and_query()
+            && skip.is_match(value.as_str()).unwrap_or_default()
+        {
+            return Ok(RequestPluginResult::Skipped);
+        }
+
+        // ── Control-plane cache rules (agent mode) ──
+        // The first matching rule redefines this request's cache behaviour.
+        // No agent, unknown host, or no match leaves the static config
+        // below in charge.
+        let host = get_host(req_header).unwrap_or_default();
+        let site_rules = self.resolve_site_rules(host);
+        let matched = if let Some(site) = site_rules.as_deref() {
+            // Only gather what some expression on this site actually
+            // references — the common path-only rules then collect nothing.
+            let headers = if site.requirements.headers {
+                collect_request_headers(req_header)
+            } else {
+                Vec::new()
+            };
+            let mut cookies = Vec::new();
+            if site.requirements.cookies {
+                collect_request_cookies(req_header, &mut cookies);
+            }
+            let client_ip = if site.requirements.client_ip {
+                ensure_client_ip(session, ctx).to_string()
+            } else {
+                String::new()
+            };
+            let full_uri = req_header
+                .uri
+                .path_and_query()
+                .map(|value| value.as_str())
+                .unwrap_or_else(|| req_header.uri.path());
+            let eval_ctx = EvalContext {
+                method: req_header.method.as_str(),
+                path: req_header.uri.path(),
+                full_uri,
+                host,
+                user_agent: req_header
+                    .headers
+                    .get(header::USER_AGENT)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default(),
+                body: None,
+                headers: &headers,
+                cookies: &cookies,
+                client_ip: &client_ip,
+                parsed_ip: IpAddr::from_str(&client_ip).ok(),
+                country_code: None,
+                ssl: ctx.conn.tls_version.is_some(),
+                waf_score: 0,
+                waf_score_sqli: 0,
+                waf_score_xss: 0,
+                waf_score_rce: 0,
+            };
+            site.rules
+                .iter()
+                .find(|rule| evaluate(&rule.expression, &eval_ctx))
+        } else {
+            None
+        };
+
+        // A rule that marks the request non-cacheable opts GET/HEAD out of
+        // the cache entirely; PURGE keeps working so whatever is already
+        // stored can still be cleared.
+        if method != *METHOD_PURGE
+            && let Some(rule) = matched
+            && !rule.cache_eligible
+        {
+            return Ok(RequestPluginResult::Skipped);
+        }
+
+        // A matched rule files the entry under the site's canonical domain
+        // instead of the static namespace, keeping the agent's per-domain
+        // disk quota ledger aligned with what is written.
+        let dynamic_namespace = match (matched, site_rules.as_deref()) {
+            (Some(_), Some(site)) => Some(site.namespace.clone()),
+            _ => None,
+        };
+
+        // Build cache key components including configured headers
+        let mut keys = Vec::with_capacity(4);
+        {
+            let cache_info = ctx.cache.get_or_insert_default();
+            cache_info.namespace = dynamic_namespace
+                .as_deref()
+                .map(str::to_string)
+                .or_else(|| self.namespace.clone());
+        }
+        if let Some(rule) = matched {
+            for key in rule.key_headers.iter() {
+                let buf = session.get_header_bytes(key).to_str_lossy();
+                if !buf.is_empty() {
+                    keys.push(buf.to_string());
+                }
+            }
+        }
+        if let Some(headers) = &self.headers {
+            for key in headers.iter() {
+                let buf = session.get_header_bytes(key).to_str_lossy();
+                if !buf.is_empty() {
+                    keys.push(buf.to_string());
+                }
+            }
+        }
+        if !keys.is_empty() {
+            ctx.extend_cache_keys(keys);
+            if let Some(cache_info) = &ctx.cache {
+                debug!("Cache keys: {:?}", cache_info.keys);
+            }
+        }
+
+        // Handle PURGE requests with IP-based access control
+        if method == *METHOD_PURGE {
+            let ip = ensure_client_ip(session, ctx);
+            let found = match self.purge_ip_rules.is_match(ip) {
+                Ok(matched) => matched,
+                Err(e) => {
+                    return Ok(RequestPluginResult::Respond(
+                        HttpResponse::bad_request(e.to_string()),
+                    ));
+                },
+            };
+            if !found {
+                return Ok(RequestPluginResult::Respond(HttpResponse {
+                    status: StatusCode::FORBIDDEN,
+                    body: Bytes::from_static(b"Forbidden, ip is not allowed"),
+                    ..Default::default()
+                }));
+            }
+
+            // `PURGE /*` empties the whole namespace. Anything else purges
+            // exactly the requested uri.
+            if session.req_header().uri.path() == "/*" {
+                let Some(namespace) =
+                    dynamic_namespace.as_deref().or(self.namespace.as_deref())
+                else {
+                    return Ok(RequestPluginResult::Respond(HttpResponse {
+                        status: StatusCode::NOT_IMPLEMENTED,
+                        body: Bytes::from_static(
+                            b"namespace purge requires the namespace option",
+                        ),
+                        ..Default::default()
+                    }));
+                };
+                let result =
+                    self.http_cache.cache.purge_namespace(namespace).await?;
+                let Some(stats) = result else {
+                    return Ok(RequestPluginResult::Respond(HttpResponse {
+                        status: StatusCode::NOT_IMPLEMENTED,
+                        body: Bytes::from_static(
+                            b"namespace purge is not supported by the memory cache backend",
+                        ),
+                        ..Default::default()
+                    }));
+                };
+                return Ok(RequestPluginResult::Respond(HttpResponse::text(
+                    format!("purged: {}, fail: {}", stats.success, stats.fail),
+                )));
+            }
+
+            // Cached GET and HEAD responses are separate entries (the method
+            // is part of the key); purge both so a HEAD variant cannot keep
+            // answering for a url that was just purged.
+            for method in [Method::GET, Method::HEAD] {
+                let key = get_cache_key(
+                    ctx,
+                    method.as_ref(),
+                    &session.req_header().uri,
+                );
+                self.http_cache
+                    .cache
+                    .remove(&key.combined(), key.user_tag().as_bytes())
+                    .await?;
+            }
+            return Ok(
+                RequestPluginResult::Respond(HttpResponse::no_content()),
+            );
+        }
+
+        // Configure cache settings for this request. A matched control-plane
+        // rule wins over the static options; its zero TTLs mean "leave the
+        // static value alone".
+        if let Some(cache_info) = &mut ctx.cache {
+            match matched {
+                Some(rule) => {
+                    cache_info.max_ttl = rule.max_ttl.or(self.max_ttl);
+                    cache_info.check_cache_control = rule.respect_origin;
+                    cache_info.browser_ttl = rule.browser_ttl;
+                },
+                None => {
+                    cache_info.max_ttl = self.max_ttl;
+                    cache_info.check_cache_control = self.check_cache_control;
+                },
+            }
+            cache_info.vary_headers = self.vary_headers.clone();
+        }
+
+        // Enable caching for this session with configured components
+        session.cache.enable(
+            self.http_cache,
+            self.eviction,
+            self.predictor,
+            self.lock,
+            self.cache_option_overrides(),
+        );
+
+        // Set maximum cached file size if configured
+        if self.max_file_size > 0 {
+            session.cache.set_max_file_size_bytes(self.max_file_size);
+        }
+
+        // Track cache statistics if available
+        if let Some(stats) = self.http_cache.stats()
+            && let Some(cache_info) = ctx.cache.as_mut()
+        {
+            cache_info.reading_count = Some(stats.reading);
+            cache_info.writing_count = Some(stats.writing);
+        }
+
+        Ok(RequestPluginResult::Continue)
+    }
+}
+
+register_plugin!("cache", Cache);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
+    use pingora::proxy::Session;
+    use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
+
+    #[test]
+    fn test_cache_params() {
+        let params = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+eviction = true
+headers = ["Accept-Encoding"]
+lock = "2s"
+lock_retries = 5
+max_file_size = "100kb"
+predictor = true
+max_ttl = "1m"
+vary_headers = ["Accept-Encoding", " accept "]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            Some(vec!["accept-encoding".to_string(), "accept".to_string()]),
+            params.vary_headers.as_deref().cloned()
+        );
+        assert_eq!(Some(5), params.lock_retries);
+        assert_eq!(
+            Some(5),
+            params.cache_option_overrides().unwrap().max_lock_retries
+        );
+        assert_eq!(true, params.eviction.is_some());
+        assert_eq!(
+            r#"Some(["Accept-Encoding"])"#,
+            format!("{:?}", params.headers)
+        );
+        assert_eq!(true, params.lock.is_some());
+        assert_eq!(100 * 1000, params.max_file_size);
+        assert_eq!(60, params.max_ttl.unwrap().as_secs());
+        assert_eq!(true, params.predictor.is_some());
+
+        // Unset leaves pingora's defaults alone; negatives are rejected.
+        let params = Cache::try_from(
+            &toml::from_str::<PluginConf>(r###"lock = "1s""###).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(None, params.lock_retries);
+        assert_eq!(true, params.cache_option_overrides().is_none());
+        let err = Cache::try_from(
+            &toml::from_str::<PluginConf>("lock_retries = -1").unwrap(),
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert_eq!(true, err.contains("lock_retries"), "{err}");
+    }
+
+    /// Regression: only 1, 2 and 3 second locks used to be honoured, every
+    /// other value silently disabled locking altogether.
+    #[test]
+    fn test_cache_lock_any_duration() {
+        let lock_of = |lock: &str| {
+            Cache::try_from(
+                &toml::from_str::<PluginConf>(&format!(
+                    r###"lock = "{lock}""###
+                ))
+                .unwrap(),
+            )
+            .unwrap()
+            .lock
+            .is_some()
+        };
+
+        for lock in ["1s", "2s", "3s", "5s", "30s", "500ms", "1m"] {
+            assert_eq!(true, lock_of(lock), "lock({lock}) was disabled");
+        }
+        // Zero explicitly means "no lock".
+        assert_eq!(false, lock_of("0s"));
+    }
+    #[tokio::test]
+    async fn test_cache() {
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+namespace = "pingap"
+eviction = true
+headers = ["Accept-Encoding"]
+purge_ip_list = ["127.0.0.1"]
+lock = "2s"
+max_file_size = "100kb"
+predictor = true
+max_ttl = "1m"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let headers = ["Accept-Encoding: gzip"].join("\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        cache
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(
+            "pingap",
+            ctx.cache.as_ref().unwrap().namespace.as_ref().unwrap()
+        );
+        assert_eq!(
+            "gzip",
+            ctx.cache.as_ref().unwrap().keys.as_ref().unwrap().join(":")
+        );
+        assert_eq!(true, session.cache.enabled());
+        assert_eq!(100 * 1000, cache.max_file_size);
+    }
+
+    async fn purge(cache: &Cache, path: &str) -> HttpResponse {
+        let input_header = format!("PURGE {path} HTTP/1.1\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        // The mock io has no peer address, so the ip check is satisfied
+        // explicitly instead of through `get_client_ip`.
+        ctx.conn.client_ip = Some("127.0.0.1".to_string());
+        let result = cache
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("purge must respond, got a pass-through");
+        };
+        resp
+    }
+
+    #[tokio::test]
+    async fn test_purge_namespace_memory_backend_unsupported() {
+        // No directory -> memory backend, which cannot enumerate entries.
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+namespace = "purge-mem"
+purge_ip_list = ["127.0.0.1"]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let resp = purge(&cache, "/*").await;
+        assert_eq!(StatusCode::NOT_IMPLEMENTED, resp.status);
+    }
+
+    #[tokio::test]
+    async fn test_purge_namespace_file_backend() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(&format!(
+                r###"
+directory = "{}"
+namespace = "purge-ns"
+purge_ip_list = ["127.0.0.1"]
+"###,
+                dir.path().to_string_lossy()
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+
+        // Seed one object in the plugin's namespace and one outside it.
+        let obj = pingap_cache::CacheObject {
+            meta: (Bytes::from_static(b"meta0"), Bytes::from_static(b"meta1")),
+            body: Bytes::from_static(b"cached body"),
+        };
+        cache
+            .http_cache
+            .cache
+            .put("purge-key", b"purge-ns", obj.clone())
+            .await
+            .unwrap();
+        cache
+            .http_cache
+            .cache
+            .put("other-key", b"other-ns", obj)
+            .await
+            .unwrap();
+
+        let resp = purge(&cache, "/*").await;
+        assert_eq!(StatusCode::OK, resp.status);
+        assert_eq!(
+            "purged: 1, fail: 0",
+            std::str::from_utf8(&resp.body).unwrap()
+        );
+
+        // The namespace is empty, the other one is untouched.
+        let purged = cache
+            .http_cache
+            .cache
+            .get("purge-key", b"purge-ns")
+            .await
+            .unwrap();
+        assert_eq!(true, purged.is_none());
+        let kept = cache
+            .http_cache
+            .cache
+            .get("other-key", b"other-ns")
+            .await
+            .unwrap();
+        assert_eq!(true, kept.is_some());
+
+        // An exact purge responds 204 whether or not the entry existed.
+        let resp = purge(&cache, "/vicanso/pingap").await;
+        assert_eq!(StatusCode::NO_CONTENT, resp.status);
+    }
+
+    #[tokio::test]
+    async fn test_purge_forbidden_ip() {
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+namespace = "purge-deny"
+purge_ip_list = ["192.168.1.1"]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let resp = purge(&cache, "/*").await;
+        assert_eq!(StatusCode::FORBIDDEN, resp.status);
+    }
+
+    fn cache_rule(
+        match_expression: &str,
+        cache_eligible: bool,
+    ) -> AgentCacheRule {
+        AgentCacheRule {
+            id: "rule-1".to_string(),
+            name: "static assets".to_string(),
+            match_expression: match_expression.to_string(),
+            edge_ttl_seconds: 300,
+            browser_ttl_seconds: 60,
+            disk_quota_mb: 0,
+            cache_eligible,
+            cache_key_headers: vec!["Accept-Encoding".to_string()],
+            respect_origin_headers: true,
+            stale_while_revalidate_seconds: 0,
+            enabled: true,
+        }
+    }
+
+    fn agent_site_rules(cache_rules: Vec<AgentCacheRule>) -> AgentSiteRules {
+        AgentSiteRules {
+            site_id: "site-1".to_string(),
+            domain: "example.com".to_string(),
+            alternate_domains: vec![],
+            status: "active".to_string(),
+            waf_config: None,
+            rate_limit_rules: vec![],
+            ip_access_rules: vec![],
+            geo_config: None,
+            cache_rules,
+            challenge_config: None,
+            rewrite_rules: vec![],
+            error_pages: vec![],
+            ssl_config: None,
+            upstreams: vec![],
+            routes: vec![],
+            bot_protection: None,
+            basic_auth: None,
+            observation_mode: false,
+        }
+    }
+
+    fn eval_ctx<'a>(
+        path: &'a str,
+        headers: &'a [(String, String)],
+        cookies: &'a [(String, String)],
+    ) -> EvalContext<'a> {
+        EvalContext {
+            method: "GET",
+            path,
+            full_uri: path,
+            host: "example.com",
+            user_agent: "",
+            body: None,
+            headers,
+            cookies,
+            client_ip: "",
+            parsed_ip: None,
+            country_code: None,
+            ssl: false,
+            waf_score: 0,
+            waf_score_sqli: 0,
+            waf_score_xss: 0,
+            waf_score_rce: 0,
+        }
+    }
+
+    #[test]
+    fn test_cache_rule_compilation() {
+        let site = build_site_cache_rules(&agent_site_rules(vec![cache_rule(
+            r#"http.request.uri.path contains "/static/""#,
+            true,
+        )]));
+        assert_eq!("example.com", site.namespace);
+        assert_eq!(1, site.rules.len());
+        let compiled = &site.rules[0];
+        assert_eq!(Some(Duration::from_secs(300)), compiled.max_ttl);
+        assert_eq!(Some(60), compiled.browser_ttl);
+        assert!(compiled.cache_eligible);
+        assert!(compiled.respect_origin);
+        assert_eq!(vec!["Accept-Encoding".to_string()], compiled.key_headers);
+
+        // Zero TTLs mean "leave the static defaults alone".
+        let mut rule = cache_rule(r#"http.request.uri.path eq "/a""#, false);
+        rule.edge_ttl_seconds = 0;
+        rule.browser_ttl_seconds = 0;
+        let site = build_site_cache_rules(&agent_site_rules(vec![rule]));
+        assert_eq!(None, site.rules[0].max_ttl);
+        assert_eq!(None, site.rules[0].browser_ttl);
+        assert!(!site.rules[0].cache_eligible);
+    }
+
+    #[test]
+    fn test_cache_rule_requirements() {
+        let site = build_site_cache_rules(&agent_site_rules(vec![
+            cache_rule(r#"http.request.uri.path contains "/static/""#, true),
+            cache_rule(r#"http.request.headers["x-branch"] eq "main""#, true),
+            cache_rule(r#"http.request.cookies["session"] eq "1""#, true),
+            cache_rule(r#"ip.src in {10.0.0.0/8}"#, true),
+        ]));
+        assert_eq!(
+            (true, true, true),
+            (
+                site.requirements.headers,
+                site.requirements.cookies,
+                site.requirements.client_ip
+            )
+        );
+
+        // A path-only site gathers nothing beyond the borrowed basics.
+        let site = build_site_cache_rules(&agent_site_rules(vec![cache_rule(
+            r#"http.request.uri.path contains "/static/""#,
+            true,
+        )]));
+        assert_eq!(
+            (false, false, false),
+            (
+                site.requirements.headers,
+                site.requirements.cookies,
+                site.requirements.client_ip
+            )
+        );
+    }
+
+    #[test]
+    fn test_cache_rule_evaluation() {
+        let site = build_site_cache_rules(&agent_site_rules(vec![
+            cache_rule(r#"http.request.uri.path contains "/static/""#, true),
+            cache_rule(r#"http.request.headers["x-branch"] eq "main""#, true),
+        ]));
+        let headers = vec![("x-branch".to_string(), "main".to_string())];
+        let empty: Vec<(String, String)> = Vec::new();
+        assert!(evaluate(
+            &site.rules[0].expression,
+            &eval_ctx("/static/app.css", &empty, &empty)
+        ));
+        assert!(!evaluate(
+            &site.rules[0].expression,
+            &eval_ctx("/api/data", &empty, &empty)
+        ));
+        assert!(evaluate(
+            &site.rules[1].expression,
+            &eval_ctx("/api/data", &headers, &empty)
+        ));
+        assert!(!evaluate(
+            &site.rules[1].expression,
+            &eval_ctx("/api/data", &empty, &empty)
+        ));
+    }
+
+    #[test]
+    fn test_cache_rule_invalid_or_disabled_dropped() {
+        let site = build_site_cache_rules(&agent_site_rules(vec![cache_rule(
+            "this is not ( a valid expression",
+            true,
+        )]));
+        assert!(site.rules.is_empty());
+
+        let mut rule = cache_rule(r#"http.request.uri.path eq "/a""#, true);
+        rule.enabled = false;
+        let site = build_site_cache_rules(&agent_site_rules(vec![rule]));
+        assert!(site.rules.is_empty());
+    }
+
+    #[test]
+    fn test_parse_cookie_pairs() {
+        let mut cookies = Vec::new();
+        parse_cookie_pairs("a=1; b=2 ; flag; ", &mut cookies);
+        assert_eq!(
+            vec![
+                ("a".to_string(), "1".to_string()),
+                ("b".to_string(), "2".to_string()),
+                ("flag".to_string(), String::new()),
+            ],
+            cookies
+        );
+    }
+}

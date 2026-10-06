@@ -1,0 +1,149 @@
+name: CI
+
+# Continuous integration for the PingWAF workspace.
+#
+#   - push to `main`  -> full gate (rust + web + docker build verification)
+#   - pull_request    -> rust + web gate (docker is skipped, it only runs on main)
+#
+# The rust job builds the `pingwaf` binary with the default OpenSSL backend and
+# the `full` feature set (the same configuration the release pipeline and the
+# Dockerfile use). `--all-features` is deliberately NOT used: `openssl` and
+# `tls-rustls` are mutually exclusive TLS backends and enabling both fails to
+# link. The rustls backend is exercised by the dedicated lint-rustls/test-rustls
+# gates elsewhere; this workflow keeps to the shipped default.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One run per ref; a newer push to the same branch/PR cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust:
+    name: Rust (fmt / clippy / build / test)
+    runs-on: ubuntu-latest
+    env:
+      # pingwaf-proto/build.rs honours PROTOC; point it at the apt-installed
+      # protoc so the tonic/prost gRPC stubs are generated instead of the empty
+      # placeholder build.rs writes when protoc is missing.
+      PROTOC: /usr/bin/protoc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          # SYNC: keep this list in lockstep with Dockerfile / release.yml
+          sudo apt-get install -y --no-install-recommends \
+            protobuf-compiler \
+            libprotobuf-dev \
+            cmake \
+            libclang-dev \
+            pkg-config \
+            libssl-dev \
+            nasm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      # pingwaf-server embeds ../web/dist/ at compile time via rust-embed. The
+      # folder has to exist for the crate to build; the `web` job below verifies
+      # the real bundle, so an empty placeholder is enough here.
+      - name: Ensure embedded frontend directory exists
+        run: mkdir -p web/dist
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --features full -- -D warnings
+
+      - name: Build (release, pingwaf, full)
+        run: cargo build --release --bin pingwaf --features full
+
+      - name: Test (workspace)
+        run: cargo test --workspace --features full --no-fail-fast
+
+      - name: Check rustls backend compiles
+        if: always()
+        run: cargo check --workspace --no-default-features --features tls-rustls,full
+
+      - name: Typos
+        if: always()
+        uses: crate-ci/typos@v1.50.3
+
+  web:
+    name: Web (lint / build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  # Verifies the multi-stage Dockerfile still builds and pushes :latest to GHCR.
+  # Only on main: a PR run would burn a lot of minutes for little signal.
+  docker:
+    name: Docker build & push :latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/shuaizend/pingwaf:latest
+          cache-from: type=gha,scope=docker
+          cache-to: type=gha,scope=docker,mode=max

@@ -1,0 +1,24 @@
+[basic]
+name = "waf-eval-spot-monitor-sqli"
+log_level = "INFO"
+threads = 2
+
+[upstreams.mock]
+addrs = ["127.0.0.1:6199"]
+
+[locations.main]
+path = "/"
+upstream = "mock"
+plugins = ["waf"]
+
+[servers.http]
+addr = "127.0.0.1:6288"
+locations = ["main"]
+
+[plugins.waf]
+category = "waf"
+mode = "block"
+level = "normal"
+paranoia_level = 2
+anomaly_threshold = 40
+monitor_categories = ["sqli"]

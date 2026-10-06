@@ -1,0 +1,22 @@
+[basic]
+name = "waf-eval-g3-pl1"
+log_level = "INFO"
+threads = 2
+
+[upstreams.mock]
+addrs = ["127.0.0.1:6199"]
+
+[locations.main]
+path = "/"
+upstream = "mock"
+plugins = ["waf"]
+
+[servers.http]
+addr = "127.0.0.1:6188"
+locations = ["main"]
+
+[plugins.waf]
+category = "waf"
+mode = "block"
+paranoia_level = 1
+anomaly_threshold = 40

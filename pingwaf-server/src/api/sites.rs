@@ -1,0 +1,1923 @@
+//! Site management: CRUD for sites plus their origin servers and TLS material.
+
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, put};
+use axum::Json;
+use axum::Router;
+use chrono::{DateTime, Utc};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, Set,
+};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::api::common::{
+    ensure_acme_wildcard_supported, ensure_domains_available, load_site_read,
+    load_site_write, non_empty, normalise_domain, normalise_domain_list,
+    parse_uuid, require_write, Page, Pagination,
+};
+use crate::api::error::ApiError;
+use crate::api::state::AppState;
+use crate::auth::AuthUser;
+use crate::grpc::notify_config_changed;
+use crate::models::{
+    acme_challenge, cache_rules, ip_groups, rate_limit_rules, route_match_type,
+    rule, rule_groups, site, site_certificates, site_routes, site_ssl,
+    site_status, site_upstream_pools, site_upstreams, tls_version,
+};
+
+/// Public representation of a site.
+#[derive(Debug, Clone, Serialize)]
+pub struct SiteResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub domain: String,
+    /// Extra hostnames served by the same site configuration.
+    pub alternate_domains: Vec<String>,
+    pub status: String,
+    pub plan: String,
+    /// Disk budget, in MiB, the agents may use for this site's cache.
+    pub cache_quota_mb: i32,
+    pub user_id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<site::Model> for SiteResponse {
+    fn from(model: site::Model) -> Self {
+        Self {
+            id: model.id,
+            name: model.name,
+            domain: model.domain,
+            alternate_domains: model.alternate_domains,
+            status: model.status,
+            plan: model.plan,
+            cache_quota_mb: model.cache_quota_mb,
+            user_id: model.user_id,
+            created_at: model.created_at,
+            updated_at: model.updated_at,
+        }
+    }
+}
+
+/// A site together with everything the dashboard shows on its detail page.
+#[derive(Debug, Serialize)]
+pub struct SiteDetail {
+    pub site: SiteResponse,
+    pub upstreams: Vec<site_upstreams::Model>,
+    pub ssl: Option<SslResponse>,
+    pub rule_count: u64,
+    pub rule_group_count: u64,
+    pub rate_limit_count: u64,
+    pub cache_rule_count: u64,
+}
+
+/// TLS material as shown in the dashboard — never includes the private key.
+#[derive(Debug, Serialize)]
+pub struct SslResponse {
+    pub id: Uuid,
+    pub site_id: Uuid,
+    pub domain: String,
+    pub issuer: Option<String>,
+    pub has_certificate: bool,
+    pub has_private_key: bool,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub auto_renew: bool,
+    pub acme_email: Option<String>,
+    pub acme_challenge_type: Option<String>,
+    pub acme_dns_provider: Option<String>,
+    pub acme_dns_config: Option<serde_json::Value>,
+    pub https_enabled: bool,
+    pub min_tls_version: String,
+    pub max_tls_version: Option<String>,
+    pub self_signed: bool,
+    pub certificate_id: Option<Uuid>,
+    pub mtls_enabled: bool,
+    pub has_mtls_client_ca: bool,
+    pub mtls_organization: Option<String>,
+    pub mtls_require_client_cert: bool,
+    pub hsts_enabled: bool,
+    pub hsts_max_age: i32,
+    pub always_use_https: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<site_ssl::Model> for SslResponse {
+    fn from(model: site_ssl::Model) -> Self {
+        Self {
+            id: model.id,
+            site_id: model.site_id,
+            domain: model.domain,
+            issuer: model.issuer,
+            has_certificate: model
+                .cert_pem
+                .as_ref()
+                .is_some_and(|v| !v.is_empty()),
+            has_private_key: model
+                .key_pem
+                .as_ref()
+                .is_some_and(|v| !v.is_empty()),
+            expires_at: model.expires_at,
+            auto_renew: model.auto_renew,
+            acme_email: model.acme_email,
+            acme_challenge_type: model.acme_challenge_type,
+            acme_dns_provider: model.acme_dns_provider,
+            acme_dns_config: model.acme_dns_config,
+            https_enabled: model.https_enabled,
+            min_tls_version: model.min_tls_version,
+            max_tls_version: model.max_tls_version,
+            self_signed: model.self_signed,
+            certificate_id: model.certificate_id,
+            mtls_enabled: model.mtls_enabled,
+            has_mtls_client_ca: model
+                .mtls_client_ca
+                .as_ref()
+                .is_some_and(|v| !v.is_empty()),
+            mtls_organization: model.mtls_organization,
+            mtls_require_client_cert: model.mtls_require_client_cert,
+            hsts_enabled: model.hsts_enabled,
+            hsts_max_age: model.hsts_max_age,
+            always_use_https: model.always_use_https,
+            created_at: model.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListQuery {
+    #[serde(flatten)]
+    pub pagination: Pagination,
+    pub search: Option<String>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSiteRequest {
+    pub name: String,
+    pub domain: String,
+    /// Extra hostnames (wildcards allowed) the site also answers on.
+    #[serde(default)]
+    pub alternate_domains: Option<Vec<String>>,
+    /// Origin the site proxies to — a CDN/WAF hostname or the application
+    /// itself. Required: a site without an origin cannot serve traffic.
+    pub upstream_address: String,
+    #[serde(default)]
+    pub upstream_name: Option<String>,
+    #[serde(default)]
+    pub upstream_tls: Option<bool>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub plan: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct UpdateSiteRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
+    /// Replaces the whole list; an empty array clears it.
+    #[serde(default)]
+    pub alternate_domains: Option<Vec<String>>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub plan: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateUpstreamRequest {
+    pub name: String,
+    pub address: String,
+    #[serde(default = "default_weight")]
+    pub weight: i32,
+    #[serde(default)]
+    pub tls: bool,
+    /// Target pool; defaults to the site's default pool.
+    #[serde(default)]
+    pub pool_id: Option<Uuid>,
+}
+
+fn default_weight() -> i32 {
+    1
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct UpdateUpstreamRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub address: Option<String>,
+    #[serde(default)]
+    pub weight: Option<i32>,
+    #[serde(default)]
+    pub tls: Option<bool>,
+    #[serde(default)]
+    pub health_status: Option<String>,
+    #[serde(default)]
+    pub pool_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreatePoolRequest {
+    pub name: String,
+    #[serde(default = "default_lb_algorithm")]
+    pub lb_algorithm: String,
+    /// Non-empty enables TLS to the origin; empty means plain HTTP.
+    #[serde(default)]
+    pub sni: Option<String>,
+    /// `None` keeps the proxy default (certificate verification on).
+    #[serde(default)]
+    pub verify_cert: Option<bool>,
+}
+
+fn default_lb_algorithm() -> String {
+    "round_robin".to_string()
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct UpdatePoolRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub lb_algorithm: Option<String>,
+    /// `Some("")` clears the SNI (disables origin TLS); `None` leaves it.
+    #[serde(default)]
+    pub sni: Option<String>,
+    #[serde(default)]
+    pub verify_cert: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateRouteRequest {
+    pub name: String,
+    pub match_type: String,
+    pub path: String,
+    /// Manual location weight; `None` uses the auto weight.
+    #[serde(default)]
+    pub priority: Option<i32>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub pool_id: Uuid,
+    /// Gate the route on an IP group's ranges; `None` matches every client.
+    #[serde(default)]
+    pub ip_group_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct UpdateRouteRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub match_type: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    /// `Some(0)` clears the priority back to the auto weight.
+    #[serde(default)]
+    pub priority: Option<i32>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub pool_id: Option<Uuid>,
+    /// An empty string clears the gate; the field must be present to change it.
+    #[serde(default)]
+    pub ip_group_id: Option<Option<Uuid>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpsertSslRequest {
+    pub domain: String,
+    #[serde(default)]
+    pub cert_pem: Option<String>,
+    #[serde(default)]
+    pub key_pem: Option<String>,
+    #[serde(default)]
+    pub issuer: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default = "default_true")]
+    pub auto_renew: bool,
+    #[serde(default)]
+    pub acme_email: Option<String>,
+    #[serde(default)]
+    pub acme_challenge_type: Option<String>,
+    #[serde(default)]
+    pub acme_dns_provider: Option<String>,
+    #[serde(default)]
+    pub acme_dns_config: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub tls: TlsPostureRequest,
+}
+
+/// The TLS switches a site is served with. Shared by the certificate upload and
+/// the SSL settings endpoints, which both edit the same `site_ssl` row.
+#[derive(Debug, Deserialize, Default)]
+pub struct TlsPostureRequest {
+    #[serde(default)]
+    pub https_enabled: Option<bool>,
+    #[serde(default)]
+    pub min_tls_version: Option<String>,
+    #[serde(default)]
+    pub max_tls_version: Option<String>,
+    #[serde(default)]
+    pub self_signed: Option<bool>,
+    #[serde(default)]
+    pub certificate_id: Option<Uuid>,
+    #[serde(default)]
+    pub mtls_enabled: Option<bool>,
+    #[serde(default)]
+    pub mtls_client_ca: Option<String>,
+    #[serde(default)]
+    pub mtls_organization: Option<String>,
+    #[serde(default)]
+    pub mtls_require_client_cert: Option<bool>,
+    #[serde(default)]
+    pub hsts_enabled: Option<bool>,
+    #[serde(default)]
+    pub hsts_max_age: Option<i32>,
+    #[serde(default)]
+    pub always_use_https: Option<bool>,
+}
+
+/// Largest HSTS lifetime accepted, in seconds (two years).
+pub(crate) const MAX_HSTS_AGE: i32 = 63_072_000;
+
+/// The effective TLS posture of a site, as stored on `site_ssl`.
+#[derive(Debug, Clone)]
+pub(crate) struct TlsPosture {
+    pub https_enabled: bool,
+    pub min_tls_version: String,
+    pub max_tls_version: Option<String>,
+    pub self_signed: bool,
+    pub certificate_id: Option<Uuid>,
+    pub mtls_enabled: bool,
+    pub mtls_client_ca: Option<String>,
+    pub mtls_organization: Option<String>,
+    pub mtls_require_client_cert: bool,
+    pub hsts_enabled: bool,
+    pub hsts_max_age: i32,
+    pub always_use_https: bool,
+}
+
+impl TlsPosture {
+    /// Posture of a site that has no `site_ssl` row yet: plain HTTP, and ready
+    /// for a certificate to be attached.
+    pub(crate) fn unset() -> Self {
+        Self {
+            https_enabled: false,
+            min_tls_version: tls_version::TLS_12.to_string(),
+            max_tls_version: None,
+            self_signed: false,
+            certificate_id: None,
+            mtls_enabled: false,
+            mtls_client_ca: None,
+            mtls_organization: None,
+            mtls_require_client_cert: false,
+            hsts_enabled: false,
+            hsts_max_age: 0,
+            always_use_https: false,
+        }
+    }
+
+    pub(crate) fn from_model(model: &site_ssl::Model) -> Self {
+        Self {
+            https_enabled: model.https_enabled,
+            min_tls_version: model.min_tls_version.clone(),
+            max_tls_version: model.max_tls_version.clone(),
+            self_signed: model.self_signed,
+            certificate_id: model.certificate_id,
+            mtls_enabled: model.mtls_enabled,
+            mtls_client_ca: model.mtls_client_ca.clone(),
+            mtls_organization: model.mtls_organization.clone(),
+            mtls_require_client_cert: model.mtls_require_client_cert,
+            hsts_enabled: model.hsts_enabled,
+            hsts_max_age: model.hsts_max_age,
+            always_use_https: model.always_use_https,
+        }
+    }
+
+    /// Overlays the request's switches, rejecting combinations an agent could
+    /// not serve.
+    fn merged(&self, req: &TlsPostureRequest) -> Result<Self, ApiError> {
+        let mut next = self.clone();
+        if let Some(value) = req.https_enabled {
+            next.https_enabled = value;
+        }
+        if let Some(value) = req.self_signed {
+            next.self_signed = value;
+        }
+        if let Some(value) = req.certificate_id {
+            next.certificate_id = Some(value);
+        }
+        if let Some(value) = req.mtls_enabled {
+            next.mtls_enabled = value;
+        }
+        if let Some(value) = req.mtls_require_client_cert {
+            next.mtls_require_client_cert = value;
+        }
+        if let Some(raw) = non_empty(&req.mtls_organization) {
+            next.mtls_organization = Some(raw);
+        }
+        if let Some(value) = req.hsts_enabled {
+            next.hsts_enabled = value;
+        }
+        if let Some(value) = req.always_use_https {
+            next.always_use_https = value;
+        }
+        if let Some(raw) = non_empty(&req.min_tls_version) {
+            next.min_tls_version = normalise_tls_version(&raw)?;
+        }
+        if let Some(raw) = non_empty(&req.max_tls_version) {
+            next.max_tls_version = Some(normalise_tls_version(&raw)?);
+        }
+        if let Some(raw) = non_empty(&req.mtls_client_ca) {
+            next.mtls_client_ca = Some(raw);
+        }
+        if let Some(age) = req.hsts_max_age {
+            if !(0..=MAX_HSTS_AGE).contains(&age) {
+                return Err(ApiError::BadRequest(format!(
+                    "hsts_max_age must be between 0 and {MAX_HSTS_AGE}"
+                )));
+            }
+            next.hsts_max_age = age;
+        }
+
+        let (Some(min), Some(max)) = (
+            tls_version::rank(&next.min_tls_version),
+            next.max_tls_version.as_deref().and_then(tls_version::rank),
+        ) else {
+            return Err(ApiError::BadRequest(format!(
+                "unsupported TLS version (supported: {})",
+                tls_version::ALL.join(", ")
+            )));
+        };
+        if min > max {
+            return Err(ApiError::BadRequest(format!(
+                "min_tls_version {} is above max_tls_version {}",
+                next.min_tls_version,
+                next.max_tls_version.unwrap_or_default()
+            )));
+        }
+        if next.mtls_enabled && next.mtls_client_ca.is_none() {
+            return Err(ApiError::BadRequest(
+                "mtls_enabled requires the client CA bundle".to_string(),
+            ));
+        }
+        if !next.mtls_enabled {
+            // Switching mTLS off must not leave checks armed behind it.
+            next.mtls_require_client_cert = false;
+            next.mtls_organization = None;
+        }
+        if next.self_signed {
+            next.certificate_id = None;
+            next.https_enabled = true;
+        }
+
+        Ok(next)
+    }
+
+    pub(crate) fn apply_to(&self, active: &mut site_ssl::ActiveModel) {
+        active.https_enabled = Set(self.https_enabled);
+        active.min_tls_version = Set(self.min_tls_version.clone());
+        active.max_tls_version = Set(self.max_tls_version.clone());
+        active.self_signed = Set(self.self_signed);
+        active.certificate_id = Set(self.certificate_id);
+        active.mtls_enabled = Set(self.mtls_enabled);
+        active.mtls_client_ca = Set(self.mtls_client_ca.clone());
+        active.mtls_organization = Set(self.mtls_organization.clone());
+        active.mtls_require_client_cert = Set(self.mtls_require_client_cert);
+        active.hsts_enabled = Set(self.hsts_enabled);
+        active.hsts_max_age = Set(self.hsts_max_age);
+        active.always_use_https = Set(self.always_use_https);
+    }
+}
+
+/// Applies a TLS posture request to the site's `site_ssl` row, creating the row
+/// when the site has none. Returns the stored posture.
+pub(crate) async fn save_tls_posture(
+    state: &AppState,
+    site: &site::Model,
+    req: &TlsPostureRequest,
+) -> Result<TlsPosture, ApiError> {
+    let existing = site_ssl::Entity::find()
+        .filter(site_ssl::Column::SiteId.eq(site.id))
+        .one(&state.db)
+        .await?;
+
+    if let Some(cert_id) = req.certificate_id {
+        let owned = site_certificates::Entity::find_by_id(cert_id)
+            .filter(site_certificates::Column::SiteId.eq(site.id))
+            .one(&state.db)
+            .await?
+            .is_some();
+        if !owned {
+            return Err(ApiError::BadRequest(format!(
+                "certificate {cert_id} does not belong to this site"
+            )));
+        }
+    }
+
+    let current = match &existing {
+        Some(row) => TlsPosture::from_model(row),
+        None => TlsPosture::unset(),
+    };
+    let next = current.merged(req)?;
+
+    match existing {
+        Some(row) => {
+            let mut active: site_ssl::ActiveModel = row.into();
+            next.apply_to(&mut active);
+            active.update(&state.db).await?;
+        },
+        None => {
+            let mut active = site_ssl::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                site_id: Set(site.id),
+                cert_pem: Set(None),
+                key_pem: Set(None),
+                issuer: Set(None),
+                domain: Set(site.domain.clone()),
+                expires_at: Set(None),
+                auto_renew: Set(true),
+                acme_email: Set(None),
+                acme_challenge_type: Set(None),
+                acme_dns_provider: Set(None),
+                acme_dns_config: Set(None),
+                https_enabled: Set(false),
+                min_tls_version: Set(tls_version::TLS_12.to_string()),
+                max_tls_version: Set(None),
+                self_signed: Set(false),
+                certificate_id: Set(None),
+                mtls_enabled: Set(false),
+                mtls_client_ca: Set(None),
+                mtls_organization: Set(None),
+                mtls_require_client_cert: Set(false),
+                hsts_enabled: Set(false),
+                hsts_max_age: Set(0),
+                always_use_https: Set(false),
+                created_at: Set(Utc::now()),
+            };
+            next.apply_to(&mut active);
+            active.insert(&state.db).await?;
+        },
+    }
+
+    Ok(next)
+}
+
+/// Reads the site's TLS posture, falling back to the defaults for a site that
+/// has no `site_ssl` row yet.
+pub(crate) async fn load_tls_posture(
+    state: &AppState,
+    site_id: Uuid,
+) -> Result<TlsPosture, ApiError> {
+    let row = site_ssl::Entity::find()
+        .filter(site_ssl::Column::SiteId.eq(site_id))
+        .one(&state.db)
+        .await?;
+    Ok(match row {
+        Some(row) => TlsPosture::from_model(&row),
+        None => TlsPosture::unset(),
+    })
+}
+
+fn normalise_tls_version(value: &str) -> Result<String, ApiError> {
+    tls_version::normalise(value).ok_or_else(|| {
+        ApiError::BadRequest(format!(
+            "unsupported TLS version '{value}' (supported: {})",
+            tls_version::ALL.join(", ")
+        ))
+    })
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Routes contributed to `/api/v1`.
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/sites", get(list).post(create))
+        .route("/sites/{site_id}", get(show).put(update).delete(remove))
+        .route(
+            "/sites/{site_id}/upstreams",
+            get(list_upstreams).post(create_upstream),
+        )
+        .route(
+            "/sites/{site_id}/upstreams/{upstream_id}",
+            put(update_upstream).delete(delete_upstream),
+        )
+        .route(
+            "/sites/{site_id}/upstream-pools",
+            get(list_pools).post(create_pool),
+        )
+        .route(
+            "/sites/{site_id}/upstream-pools/{pool_id}",
+            put(update_pool).delete(delete_pool),
+        )
+        .route(
+            "/sites/{site_id}/routes",
+            get(list_routes).post(create_route),
+        )
+        .route(
+            "/sites/{site_id}/routes/{route_id}",
+            put(update_route).delete(delete_route),
+        )
+        .route(
+            "/sites/{site_id}/ssl",
+            get(show_ssl).put(upsert_ssl).delete(delete_ssl),
+        )
+}
+
+/// `GET /api/v1/sites`
+async fn list(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<Page<SiteResponse>>, ApiError> {
+    let pagination = query.pagination.normalise();
+
+    let mut condition = Condition::all();
+    if !current.is_admin() {
+        condition = condition.add(site::Column::UserId.eq(current.id));
+    }
+    if let Some(status) = non_empty(&query.status) {
+        if !site_status::is_valid(&status) {
+            return Err(ApiError::BadRequest(format!(
+                "unknown site status '{status}'"
+            )));
+        }
+        condition = condition.add(site::Column::Status.eq(status));
+    }
+    if let Some(search) = non_empty(&query.search) {
+        let pattern = format!("%{}%", search.to_lowercase());
+        condition = condition.add(
+            Condition::any()
+                .add(site::Column::Domain.like(&pattern))
+                .add(site::Column::Name.like(&pattern)),
+        );
+    }
+
+    let paginator = site::Entity::find()
+        .filter(condition)
+        .order_by_desc(site::Column::CreatedAt)
+        .paginate(&state.db, pagination.limit());
+
+    let total = paginator.num_items().await?;
+    let rows = paginator.fetch_page(pagination.index()).await?;
+
+    Ok(Json(Page::new(
+        rows.into_iter().map(SiteResponse::from).collect(),
+        total,
+        pagination,
+    )))
+}
+
+/// `POST /api/v1/sites`
+async fn create(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Json(payload): Json<CreateSiteRequest>,
+) -> Result<Response, ApiError> {
+    require_write(&current)?;
+
+    let name = payload.name.trim().to_string();
+    if name.is_empty() || name.len() > 100 {
+        return Err(ApiError::BadRequest(
+            "name must be 1-100 characters".to_string(),
+        ));
+    }
+    let domain = normalise_domain(&payload.domain)?;
+    let alternate_domains = normalise_domain_list(
+        &domain,
+        &payload.alternate_domains.unwrap_or_default(),
+    )?;
+    let mut all_domains = vec![domain.clone()];
+    all_domains.extend(alternate_domains.iter().cloned());
+    ensure_domains_available(&state.db, &all_domains, None).await?;
+
+    let upstream_name = non_empty(&payload.upstream_name)
+        .unwrap_or_else(|| "origin".to_string());
+    let upstream_address = normalize_origin_address(&payload.upstream_address)?;
+    validate_upstream(&upstream_name, &upstream_address, default_weight())?;
+
+    // New sites are live immediately; the dashboard toggles them between
+    // active and paused afterwards.
+    let status = payload
+        .status
+        .unwrap_or_else(|| site_status::ACTIVE.to_string());
+    if !site_status::is_valid(&status) {
+        return Err(ApiError::BadRequest(format!(
+            "unknown site status '{status}'"
+        )));
+    }
+    let plan = payload.plan.unwrap_or_else(|| "free".to_string());
+    if plan.len() > 20 {
+        return Err(ApiError::BadRequest(
+            "plan must be at most 20 characters".to_string(),
+        ));
+    }
+
+    let timestamp = Utc::now();
+    let id = Uuid::new_v4();
+    let model = site::ActiveModel {
+        id: Set(id),
+        user_id: Set(current.id),
+        name: Set(name),
+        domain: Set(domain.clone()),
+        alternate_domains: Set(alternate_domains),
+        status: Set(status),
+        plan: Set(plan),
+        cache_quota_mb: Set(crate::defaults::DEFAULT_CACHE_QUOTA_MB),
+        created_at: Set(timestamp),
+        updated_at: Set(timestamp),
+    }
+    .insert(&state.db)
+    .await?;
+
+    // Every site starts with a default origin pool; the first origin node
+    // goes into it.
+    let pool = site_upstream_pools::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        site_id: Set(id),
+        name: Set("default".to_string()),
+        lb_algorithm: Set(default_lb_algorithm()),
+        sni: Set(payload
+            .upstream_tls
+            .filter(|tls| *tls)
+            .map(|_| origin_host(&upstream_address).to_string())),
+        verify_cert: Set(None),
+        is_default: Set(true),
+        created_at: Set(timestamp),
+    }
+    .insert(&state.db)
+    .await?;
+
+    site_upstreams::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        site_id: Set(id),
+        pool_id: Set(pool.id),
+        name: Set(upstream_name),
+        address: Set(upstream_address.clone()),
+        weight: Set(default_weight()),
+        tls: Set(payload.upstream_tls.unwrap_or(false)),
+        health_status: Set("unknown".to_string()),
+        created_at: Set(timestamp),
+    }
+    .insert(&state.db)
+    .await?;
+
+    // Built-in WAF (monitor mode) and cache rules ship with every new site.
+    if let Err(err) = crate::defaults::seed_site_defaults(&state.db, id).await {
+        tracing::error!(%id, error = %err, "failed to seed built-in rules");
+    }
+
+    tracing::info!(%id, %domain, upstream = %upstream_address, owner = %current.id, "site created");
+    notify_config_changed(&state, id).await;
+
+    Ok((StatusCode::CREATED, Json(SiteResponse::from(model))).into_response())
+}
+
+/// `GET /api/v1/sites/{site_id}`
+async fn show(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+) -> Result<Json<SiteDetail>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let model = load_site_read(&state.db, id, &current).await?;
+
+    let upstreams = site_upstreams::Entity::find()
+        .filter(site_upstreams::Column::SiteId.eq(id))
+        .order_by_desc(site_upstreams::Column::Weight)
+        .all(&state.db)
+        .await?;
+    let ssl = site_ssl::Entity::find()
+        .filter(site_ssl::Column::SiteId.eq(id))
+        .one(&state.db)
+        .await?
+        .map(SslResponse::from);
+
+    let rule_count = rule::Entity::find()
+        .filter(rule::Column::SiteId.eq(id))
+        .count(&state.db)
+        .await?;
+    let rule_group_count = rule_groups::Entity::find()
+        .filter(rule_groups::Column::SiteId.eq(id))
+        .count(&state.db)
+        .await?;
+    let rate_limit_count = rate_limit_rules::Entity::find()
+        .filter(rate_limit_rules::Column::SiteId.eq(id))
+        .count(&state.db)
+        .await?;
+    let cache_rule_count = cache_rules::Entity::find()
+        .filter(cache_rules::Column::SiteId.eq(id))
+        .count(&state.db)
+        .await?;
+
+    Ok(Json(SiteDetail {
+        site: model.into(),
+        upstreams,
+        ssl,
+        rule_count,
+        rule_group_count,
+        rate_limit_count,
+        cache_rule_count,
+    }))
+}
+
+/// `PUT /api/v1/sites/{site_id}`
+async fn update(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+    Json(payload): Json<UpdateSiteRequest>,
+) -> Result<Json<SiteResponse>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let model = load_site_write(&state.db, id, &current).await?;
+    let previous_domain = model.domain.clone();
+    let previous_alternates = model.alternate_domains.clone();
+
+    let mut active: site::ActiveModel = model.into();
+    if let Some(name) = non_empty(&payload.name) {
+        if name.len() > 100 {
+            return Err(ApiError::BadRequest(
+                "name must be at most 100 characters".to_string(),
+            ));
+        }
+        active.name = Set(name);
+    }
+    let requested_domain = match non_empty(&payload.domain) {
+        Some(domain) => Some(normalise_domain(&domain)?),
+        None => None,
+    };
+    if requested_domain.is_some() || payload.alternate_domains.is_some() {
+        let primary = requested_domain
+            .clone()
+            .unwrap_or_else(|| previous_domain.clone());
+        let alternates_source = payload
+            .alternate_domains
+            .clone()
+            .unwrap_or_else(|| previous_alternates.clone());
+        let alternates = normalise_domain_list(&primary, &alternates_source)?;
+
+        let mut all_domains = vec![primary.clone()];
+        all_domains.extend(alternates.iter().cloned());
+        ensure_domains_available(&state.db, &all_domains, Some(id)).await?;
+
+        active.domain = Set(primary);
+        active.alternate_domains = Set(alternates);
+    }
+    if let Some(status) = non_empty(&payload.status) {
+        if !site_status::is_valid(&status) {
+            return Err(ApiError::BadRequest(format!(
+                "unknown site status '{status}'"
+            )));
+        }
+        active.status = Set(status);
+    }
+    if let Some(plan) = non_empty(&payload.plan) {
+        if plan.len() > 20 {
+            return Err(ApiError::BadRequest(
+                "plan must be at most 20 characters".to_string(),
+            ));
+        }
+        active.plan = Set(plan);
+    }
+    active.updated_at = Set(Utc::now());
+
+    let updated = active.update(&state.db).await?;
+    tracing::info!(%id, "site updated");
+    notify_config_changed(&state, id).await;
+
+    Ok(Json(updated.into()))
+}
+
+/// `DELETE /api/v1/sites/{site_id}`
+async fn remove(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    // Verify ownership first so that the ON DELETE CASCADE rules never run for a
+    // site the caller must not see.
+    load_site_write(&state.db, id, &current).await?;
+    site::Entity::delete_by_id(id).exec(&state.db).await?;
+
+    tracing::info!(%id, owner = %current.id, "site deleted");
+    notify_config_changed(&state, id).await;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// `GET /api/v1/sites/{site_id}/upstreams`
+async fn list_upstreams(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+) -> Result<Json<Vec<site_upstreams::Model>>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    load_site_read(&state.db, id, &current).await?;
+
+    let rows = site_upstreams::Entity::find()
+        .filter(site_upstreams::Column::SiteId.eq(id))
+        .order_by_desc(site_upstreams::Column::Weight)
+        .all(&state.db)
+        .await?;
+    Ok(Json(rows))
+}
+
+/// `POST /api/v1/sites/{site_id}/upstreams`
+async fn create_upstream(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+    Json(payload): Json<CreateUpstreamRequest>,
+) -> Result<Response, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    let name = payload.name.trim().to_string();
+    let address = normalize_origin_address(&payload.address)?;
+    validate_upstream(&name, &address, payload.weight)?;
+    let pool_id = resolve_pool(&state, id, payload.pool_id.as_ref()).await?;
+
+    let model = site_upstreams::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        site_id: Set(id),
+        pool_id: Set(pool_id),
+        name: Set(name),
+        address: Set(address),
+        weight: Set(payload.weight),
+        tls: Set(payload.tls),
+        health_status: Set("unknown".to_string()),
+        created_at: Set(Utc::now()),
+    }
+    .insert(&state.db)
+    .await?;
+
+    tracing::info!(site_id = %id, upstream = %model.id, pool = %pool_id, "upstream added");
+    touch_site(&state, id).await?;
+    notify_config_changed(&state, id).await;
+
+    Ok((StatusCode::CREATED, Json(model)).into_response())
+}
+
+/// `PUT /api/v1/sites/{site_id}/upstreams/{upstream_id}`
+async fn update_upstream(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path((site_id, upstream_id)): Path<(String, String)>,
+    Json(payload): Json<UpdateUpstreamRequest>,
+) -> Result<Json<site_upstreams::Model>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let target = parse_uuid(&upstream_id, "upstream id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    let row = site_upstreams::Entity::find_by_id(target)
+        .filter(site_upstreams::Column::SiteId.eq(id))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("upstream {target} not found"))
+        })?;
+
+    let mut active: site_upstreams::ActiveModel = row.into();
+    if let Some(name) = non_empty(&payload.name) {
+        active.name = Set(name);
+    }
+    if let Some(address) = non_empty(&payload.address) {
+        active.address = Set(normalize_origin_address(&address)?);
+    }
+    if let Some(weight) = payload.weight {
+        active.weight = Set(weight);
+    }
+    if let Some(tls) = payload.tls {
+        active.tls = Set(tls);
+    }
+    if let Some(pool_id) = payload.pool_id {
+        ensure_pool_belongs_to_site(&state, id, pool_id).await?;
+        active.pool_id = Set(pool_id);
+    }
+    if let Some(health) = non_empty(&payload.health_status) {
+        if health.len() > 20 {
+            return Err(ApiError::BadRequest(
+                "health_status must be at most 20 characters".to_string(),
+            ));
+        }
+        active.health_status = Set(health);
+    }
+
+    let updated = active.update(&state.db).await?;
+    validate_upstream(&updated.name, &updated.address, updated.weight)?;
+
+    tracing::info!(site_id = %id, upstream = %target, "upstream updated");
+    touch_site(&state, id).await?;
+    notify_config_changed(&state, id).await;
+
+    Ok(Json(updated))
+}
+
+/// `DELETE /api/v1/sites/{site_id}/upstreams/{upstream_id}`
+async fn delete_upstream(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path((site_id, upstream_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let target = parse_uuid(&upstream_id, "upstream id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    let deleted = site_upstreams::Entity::delete_by_id(target)
+        .filter(site_upstreams::Column::SiteId.eq(id))
+        .exec(&state.db)
+        .await?;
+    if deleted.rows_affected == 0 {
+        return Err(ApiError::NotFound(format!("upstream {target} not found")));
+    }
+
+    tracing::info!(site_id = %id, upstream = %target, "upstream removed");
+    touch_site(&state, id).await?;
+    notify_config_changed(&state, id).await;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// `GET /api/v1/sites/{site_id}/upstream-pools`
+async fn list_pools(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+) -> Result<Json<Vec<site_upstream_pools::Model>>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    load_site_read(&state.db, id, &current).await?;
+
+    let mut rows = site_upstream_pools::Entity::find()
+        .filter(site_upstream_pools::Column::SiteId.eq(id))
+        .order_by_desc(site_upstream_pools::Column::IsDefault)
+        .order_by_asc(site_upstream_pools::Column::CreatedAt)
+        .all(&state.db)
+        .await?;
+    // `ORDER BY is_default DESC` puts the default first on PostgreSQL; the
+    // in-memory pass keeps that guarantee independent of SQL boolean order.
+    rows.sort_by_key(|row| !row.is_default);
+    Ok(Json(rows))
+}
+
+/// `POST /api/v1/sites/{site_id}/upstream-pools`
+async fn create_pool(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+    Json(payload): Json<CreatePoolRequest>,
+) -> Result<Response, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    let name = payload.name.trim().to_string();
+    let lb_algorithm = payload.lb_algorithm.trim().to_string();
+    let sni = non_empty(&payload.sni);
+    validate_pool(&name, &lb_algorithm, sni.as_deref())?;
+
+    let model = site_upstream_pools::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        site_id: Set(id),
+        name: Set(name),
+        lb_algorithm: Set(lb_algorithm),
+        sni: Set(sni),
+        verify_cert: Set(payload.verify_cert),
+        is_default: Set(false),
+        created_at: Set(Utc::now()),
+    }
+    .insert(&state.db)
+    .await?;
+
+    tracing::info!(site_id = %id, pool = %model.id, "origin pool added");
+    touch_site(&state, id).await?;
+    notify_config_changed(&state, id).await;
+
+    Ok((StatusCode::CREATED, Json(model)).into_response())
+}
+
+/// `PUT /api/v1/sites/{site_id}/upstream-pools/{pool_id}`
+async fn update_pool(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path((site_id, pool_id)): Path<(String, String)>,
+    Json(payload): Json<UpdatePoolRequest>,
+) -> Result<Json<site_upstream_pools::Model>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let target = parse_uuid(&pool_id, "pool id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    let row = site_upstream_pools::Entity::find_by_id(target)
+        .filter(site_upstream_pools::Column::SiteId.eq(id))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("pool {target} not found"))
+        })?;
+
+    let mut active: site_upstream_pools::ActiveModel = row.into();
+    if let Some(name) = non_empty(&payload.name) {
+        active.name = Set(name);
+    }
+    if let Some(lb_algorithm) = non_empty(&payload.lb_algorithm) {
+        active.lb_algorithm = Set(lb_algorithm.clone());
+    }
+    if let Some(sni) = payload.sni.as_deref() {
+        // `Some("")` clears the SNI and disables origin TLS.
+        active.sni = Set(non_empty(&Some(sni.to_string())));
+    }
+    if let Some(verify_cert) = payload.verify_cert {
+        active.verify_cert = Set(Some(verify_cert));
+    }
+
+    let updated = active.update(&state.db).await?;
+    validate_pool(
+        &updated.name,
+        &updated.lb_algorithm,
+        updated.sni.as_deref(),
+    )?;
+
+    tracing::info!(site_id = %id, pool = %target, "origin pool updated");
+    touch_site(&state, id).await?;
+    notify_config_changed(&state, id).await;
+
+    Ok(Json(updated))
+}
+
+/// `DELETE /api/v1/sites/{site_id}/upstream-pools/{pool_id}`
+async fn delete_pool(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path((site_id, pool_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let target = parse_uuid(&pool_id, "pool id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    let row = site_upstream_pools::Entity::find_by_id(target)
+        .filter(site_upstream_pools::Column::SiteId.eq(id))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("pool {target} not found"))
+        })?;
+    if row.is_default {
+        return Err(ApiError::BadRequest(
+            "the default pool cannot be deleted".to_string(),
+        ));
+    }
+
+    let referencing = site_routes::Entity::find()
+        .filter(site_routes::Column::PoolId.eq(target))
+        .count(&state.db)
+        .await?;
+    if referencing > 0 {
+        return Err(ApiError::Conflict(
+            "pool is still referenced by routes".to_string(),
+        ));
+    }
+
+    let nodes = site_upstreams::Entity::find()
+        .filter(site_upstreams::Column::PoolId.eq(target))
+        .count(&state.db)
+        .await?;
+    if nodes > 0 {
+        return Err(ApiError::Conflict(
+            "pool still has origin nodes; remove them first".to_string(),
+        ));
+    }
+
+    site_upstream_pools::Entity::delete_by_id(target)
+        .exec(&state.db)
+        .await?;
+
+    tracing::info!(site_id = %id, pool = %target, "origin pool removed");
+    touch_site(&state, id).await?;
+    notify_config_changed(&state, id).await;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// `GET /api/v1/sites/{site_id}/routes`
+async fn list_routes(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+) -> Result<Json<Vec<site_routes::Model>>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    load_site_read(&state.db, id, &current).await?;
+
+    let rows = site_routes::Entity::find()
+        .filter(site_routes::Column::SiteId.eq(id))
+        .order_by_desc(site_routes::Column::Priority)
+        .order_by_asc(site_routes::Column::CreatedAt)
+        .all(&state.db)
+        .await?;
+    Ok(Json(rows))
+}
+
+/// `POST /api/v1/sites/{site_id}/routes`
+async fn create_route(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+    Json(payload): Json<CreateRouteRequest>,
+) -> Result<Response, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    let name = payload.name.trim().to_string();
+    let match_type = payload.match_type.trim().to_string();
+    let path = payload.path.trim().to_string();
+    validate_route(&name, &match_type, &path, payload.priority)?;
+    ensure_pool_can_serve(&state, id, payload.pool_id).await?;
+    if let Some(group_id) = payload.ip_group_id {
+        ensure_route_ip_group(&state, group_id).await?;
+    }
+
+    let model = site_routes::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        site_id: Set(id),
+        name: Set(name),
+        match_type: Set(match_type),
+        path: Set(path),
+        priority: Set(payload.priority),
+        enabled: Set(payload.enabled),
+        pool_id: Set(payload.pool_id),
+        ip_group_id: Set(payload.ip_group_id),
+        created_at: Set(Utc::now()),
+    }
+    .insert(&state.db)
+    .await?;
+
+    tracing::info!(site_id = %id, route = %model.id, "route added");
+    touch_site(&state, id).await?;
+    notify_config_changed(&state, id).await;
+
+    Ok((StatusCode::CREATED, Json(model)).into_response())
+}
+
+/// `PUT /api/v1/sites/{site_id}/routes/{route_id}`
+async fn update_route(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path((site_id, route_id)): Path<(String, String)>,
+    Json(payload): Json<UpdateRouteRequest>,
+) -> Result<Json<site_routes::Model>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let target = parse_uuid(&route_id, "route id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    let row = site_routes::Entity::find_by_id(target)
+        .filter(site_routes::Column::SiteId.eq(id))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("route {target} not found"))
+        })?;
+
+    if let Some(pool_id) = payload.pool_id {
+        ensure_pool_can_serve(&state, id, pool_id).await?;
+    }
+    if let Some(Some(group_id)) = payload.ip_group_id {
+        ensure_route_ip_group(&state, group_id).await?;
+    }
+
+    let mut active: site_routes::ActiveModel = row.into();
+    if let Some(name) = non_empty(&payload.name) {
+        active.name = Set(name);
+    }
+    if let Some(match_type) = non_empty(&payload.match_type) {
+        active.match_type = Set(match_type);
+    }
+    if let Some(path) = non_empty(&payload.path) {
+        active.path = Set(path);
+    }
+    if let Some(priority) = payload.priority {
+        // `0` is outside the valid range and means "back to auto weight".
+        active.priority = Set((priority > 0).then_some(priority));
+    }
+    if let Some(enabled) = payload.enabled {
+        active.enabled = Set(enabled);
+    }
+    if let Some(pool_id) = payload.pool_id {
+        active.pool_id = Set(pool_id);
+    }
+    if let Some(ip_group_id) = payload.ip_group_id {
+        active.ip_group_id = Set(ip_group_id);
+    }
+
+    let updated = active.update(&state.db).await?;
+    validate_route(
+        &updated.name,
+        &updated.match_type,
+        &updated.path,
+        updated.priority,
+    )?;
+
+    tracing::info!(site_id = %id, route = %target, "route updated");
+    touch_site(&state, id).await?;
+    notify_config_changed(&state, id).await;
+
+    Ok(Json(updated))
+}
+
+/// `DELETE /api/v1/sites/{site_id}/routes/{route_id}`
+async fn delete_route(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path((site_id, route_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let target = parse_uuid(&route_id, "route id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    let deleted = site_routes::Entity::delete_by_id(target)
+        .filter(site_routes::Column::SiteId.eq(id))
+        .exec(&state.db)
+        .await?;
+    if deleted.rows_affected == 0 {
+        return Err(ApiError::NotFound(format!("route {target} not found")));
+    }
+
+    tracing::info!(site_id = %id, route = %target, "route removed");
+    touch_site(&state, id).await?;
+    notify_config_changed(&state, id).await;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// `GET /api/v1/sites/{site_id}/ssl`
+async fn show_ssl(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+) -> Result<Json<Option<SslResponse>>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    load_site_read(&state.db, id, &current).await?;
+
+    let row = site_ssl::Entity::find()
+        .filter(site_ssl::Column::SiteId.eq(id))
+        .one(&state.db)
+        .await?;
+    Ok(Json(row.map(SslResponse::from)))
+}
+
+/// `PUT /api/v1/sites/{site_id}/ssl` — creates or replaces the site's TLS entry.
+async fn upsert_ssl(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+    Json(payload): Json<UpsertSslRequest>,
+) -> Result<Json<SslResponse>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let site = load_site_write(&state.db, id, &current).await?;
+
+    let domain = normalise_domain(&payload.domain)?;
+    if let Some(challenge) = non_empty(&payload.acme_challenge_type) {
+        if !acme_challenge::is_valid(&challenge) {
+            return Err(ApiError::BadRequest(format!(
+                "unknown ACME challenge type '{challenge}'"
+            )));
+        }
+    }
+    // An ACME order without an uploaded PEM is issued against the site's whole
+    // hostname set, which a wildcard may not contain under http-01.
+    let uploaded_cert = payload
+        .cert_pem
+        .as_deref()
+        .is_some_and(|pem| !pem.trim().is_empty());
+    if !uploaded_cert && non_empty(&payload.acme_email).is_some() {
+        ensure_acme_wildcard_supported(
+            &site,
+            &[],
+            payload.acme_challenge_type.as_deref(),
+        )?;
+    }
+    let expires_at = match non_empty(&payload.expires_at) {
+        Some(raw) => {
+            Some(crate::api::common::parse_datetime(&raw, "expires_at")?)
+        },
+        None => None,
+    };
+
+    // Uploading a certificate turns HTTPS on unless the caller said otherwise:
+    // a certificate nothing serves would otherwise look broken.
+    let mut tls = payload.tls;
+    if tls.https_enabled.is_none()
+        && payload.cert_pem.is_some()
+        && payload.key_pem.is_some()
+    {
+        tls.https_enabled = Some(true);
+    }
+    let posture = save_tls_posture(&state, &site, &tls).await?;
+
+    let existing = site_ssl::Entity::find()
+        .filter(site_ssl::Column::SiteId.eq(id))
+        .one(&state.db)
+        .await?;
+
+    let model = match existing {
+        Some(row) => {
+            let row_id = row.id;
+            let mut active: site_ssl::ActiveModel = row.into();
+            active.domain = Set(domain);
+            if let Some(cert) = payload.cert_pem {
+                active.cert_pem = Set(non_empty(&Some(cert)));
+            }
+            if let Some(key) = payload.key_pem {
+                active.key_pem = Set(non_empty(&Some(key)));
+            }
+            active.issuer = Set(payload.issuer);
+            active.expires_at = Set(expires_at);
+            active.auto_renew = Set(payload.auto_renew);
+            active.acme_email = Set(non_empty(&payload.acme_email));
+            active.acme_challenge_type =
+                Set(non_empty(&payload.acme_challenge_type));
+            active.acme_dns_provider =
+                Set(non_empty(&payload.acme_dns_provider));
+            if let Some(config) = payload.acme_dns_config {
+                active.acme_dns_config = Set(Some(config));
+            }
+            posture.apply_to(&mut active);
+            let updated = active.update(&state.db).await?;
+            tracing::info!(site_id = %id, ssl = %row_id, "SSL configuration updated");
+            updated
+        },
+        None => {
+            let row_id = Uuid::new_v4();
+            let mut active = site_ssl::ActiveModel {
+                id: Set(row_id),
+                site_id: Set(id),
+                cert_pem: Set(non_empty(&payload.cert_pem)),
+                key_pem: Set(non_empty(&payload.key_pem)),
+                issuer: Set(non_empty(&payload.issuer)),
+                domain: Set(domain),
+                expires_at: Set(expires_at),
+                auto_renew: Set(payload.auto_renew),
+                acme_email: Set(non_empty(&payload.acme_email)),
+                acme_challenge_type: Set(non_empty(
+                    &payload.acme_challenge_type,
+                )),
+                acme_dns_provider: Set(non_empty(&payload.acme_dns_provider)),
+                acme_dns_config: Set(payload.acme_dns_config),
+                https_enabled: Set(false),
+                min_tls_version: Set(tls_version::TLS_12.to_string()),
+                max_tls_version: Set(None),
+                self_signed: Set(false),
+                certificate_id: Set(None),
+                mtls_enabled: Set(false),
+                mtls_client_ca: Set(None),
+                mtls_organization: Set(None),
+                mtls_require_client_cert: Set(false),
+                hsts_enabled: Set(false),
+                hsts_max_age: Set(0),
+                always_use_https: Set(false),
+                created_at: Set(Utc::now()),
+            };
+            posture.apply_to(&mut active);
+            let inserted = active.insert(&state.db).await?;
+            tracing::info!(site_id = %id, ssl = %row_id, "SSL configuration created");
+            inserted
+        },
+    };
+
+    // Bump the site so that agents notice the configuration changed.
+    touch_site(&state, id).await?;
+    notify_config_changed(&state, id).await;
+
+    Ok(Json(model.into()))
+}
+
+/// `DELETE /api/v1/sites/{site_id}/ssl`
+async fn delete_ssl(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    site_ssl::Entity::delete_many()
+        .filter(site_ssl::Column::SiteId.eq(id))
+        .exec(&state.db)
+        .await?;
+
+    tracing::info!(site_id = %id, "SSL configuration removed");
+    touch_site(&state, id).await?;
+    notify_config_changed(&state, id).await;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// Canonicalizes an origin address to `host[:port]`.
+///
+/// Copy-pasting a URL is common, so a scheme is stripped. Anything beyond a
+/// trailing slash is rejected: a path would be silently dropped by the edge
+/// and would also poison the SNI derived from the host, which is worse than a
+/// 400 at save time.
+fn normalize_origin_address(raw: &str) -> Result<String, ApiError> {
+    let mut address = raw.trim().to_string();
+    for scheme in ["http://", "https://"] {
+        if let Some(rest) = address.strip_prefix(scheme) {
+            address = rest.to_string();
+            break;
+        }
+    }
+    while address.ends_with('/') {
+        address.pop();
+    }
+    if address.is_empty() || address.len() > 255 {
+        return Err(ApiError::BadRequest(
+            "upstream address must be 1-255 characters".to_string(),
+        ));
+    }
+    if address.contains('?') || address.contains('#') {
+        return Err(ApiError::BadRequest(
+            "upstream address must be host[:port] without query or fragment"
+                .to_string(),
+        ));
+    }
+    if address.contains('/') {
+        return Err(ApiError::BadRequest(
+            "upstream address must be host[:port] without a path".to_string(),
+        ));
+    }
+
+    let Some((host, port)) = split_origin_host_port(&address) else {
+        return Err(ApiError::BadRequest(
+            "upstream address must be host[:port]".to_string(),
+        ));
+    };
+    if port.is_some_and(|port| port.parse::<u16>().map_or(true, |p| p == 0)) {
+        return Err(ApiError::BadRequest(
+            "upstream port must be between 1 and 65535".to_string(),
+        ));
+    }
+    let host_ok = !host.is_empty()
+        && host.len() <= 253
+        && host.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || c == '.'
+                || c == '-'
+                || c == '_'
+                || c == ':'
+        });
+    if !host_ok {
+        return Err(ApiError::BadRequest(
+            "upstream host must be an IP address or hostname".to_string(),
+        ));
+    }
+
+    Ok(address)
+}
+
+/// Splits `host[:port]`, brackets included for IPv6. `None` when the address
+/// has more than one colon outside brackets (`::1` without brackets).
+fn split_origin_host_port(address: &str) -> Option<(&str, Option<&str>)> {
+    if let Some(rest) = address.strip_prefix('[') {
+        let (host, tail) = rest.split_once(']')?;
+        return match tail {
+            "" => Some((host, None)),
+            tail => Some((host, Some(tail.strip_prefix(':')?))),
+        };
+    }
+    match address.split_once(':') {
+        Some((host, port)) if !host.is_empty() && !port.is_empty() => {
+            Some((host, Some(port)))
+        },
+        Some(_) => None,
+        None => Some((address, None)),
+    }
+}
+
+/// Validates the fields shared by upstream create/update.
+///
+/// The address is expected to be canonical already — write paths run it
+/// through [`normalize_origin_address`] first.
+fn validate_upstream(
+    name: &str,
+    address: &str,
+    weight: i32,
+) -> Result<(), ApiError> {
+    if name.is_empty() || name.len() > 100 {
+        return Err(ApiError::BadRequest(
+            "upstream name must be 1-100 characters".to_string(),
+        ));
+    }
+    if address.is_empty() || address.len() > 255 {
+        return Err(ApiError::BadRequest(
+            "upstream address must be 1-255 characters".to_string(),
+        ));
+    }
+    if !(1..=10_000).contains(&weight) {
+        return Err(ApiError::BadRequest(
+            "upstream weight must be between 1 and 10000".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Validates a pingap load-balancing spec: `round_robin`, `random`,
+/// `least_connections`, or `hash:<type>` for ip/url/path and
+/// `hash:<type>:<key>` for header/cookie/query.
+fn is_valid_lb_algorithm(value: &str) -> bool {
+    if matches!(value, "round_robin" | "random" | "least_connections") {
+        return true;
+    }
+    let Some(rest) = value.strip_prefix("hash:") else {
+        return false;
+    };
+    let parts: Vec<&str> = rest.split(':').collect();
+    match parts.as_slice() {
+        [kind] => matches!(*kind, "ip" | "url" | "path"),
+        [kind, key] => {
+            matches!(*kind, "header" | "cookie" | "query")
+                && !key.is_empty()
+                && value.len() <= 64
+        },
+        _ => false,
+    }
+}
+
+/// Validates the fields shared by pool create/update.
+fn validate_pool(
+    name: &str,
+    lb_algorithm: &str,
+    sni: Option<&str>,
+) -> Result<(), ApiError> {
+    if name.is_empty() || name.len() > 100 {
+        return Err(ApiError::BadRequest(
+            "pool name must be 1-100 characters".to_string(),
+        ));
+    }
+    if lb_algorithm.len() > 64 || !is_valid_lb_algorithm(lb_algorithm) {
+        return Err(ApiError::BadRequest(format!(
+            "lb_algorithm '{lb_algorithm}' is invalid; expected round_robin, \
+             random, least_connections or hash:<type>[:<key>] with type in \
+             ip/url/path/header/cookie/query"
+        )));
+    }
+    if let Some(sni) = sni.filter(|s| !s.is_empty()) {
+        if sni.len() > 255 {
+            return Err(ApiError::BadRequest(
+                "sni must be at most 255 characters".to_string(),
+            ));
+        }
+        if sni == "$host" {
+            return Err(ApiError::BadRequest(
+                "sni cannot be '$host'; static origin pools need a concrete \
+                 hostname"
+                    .to_string(),
+            ));
+        }
+        if sni.contains("://") || sni.contains(':') {
+            return Err(ApiError::BadRequest(
+                "sni must be a bare hostname without scheme or port"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validates the fields shared by route create/update.
+fn validate_route(
+    name: &str,
+    match_type: &str,
+    path: &str,
+    priority: Option<i32>,
+) -> Result<(), ApiError> {
+    if name.is_empty() || name.len() > 100 {
+        return Err(ApiError::BadRequest(
+            "route name must be 1-100 characters".to_string(),
+        ));
+    }
+    if !route_match_type::is_valid(match_type) {
+        return Err(ApiError::BadRequest(format!(
+            "unknown route match type '{match_type}' (prefix, exact or regex)"
+        )));
+    }
+    if path.is_empty() || path.len() > 512 {
+        return Err(ApiError::BadRequest(
+            "route path must be 1-512 characters".to_string(),
+        ));
+    }
+    if match_type == route_match_type::REGEX {
+        regex::Regex::new(path).map(|_| ()).map_err(|err| {
+            ApiError::BadRequest(format!(
+                "route path is not a valid regex: {err}"
+            ))
+        })?;
+    } else {
+        if !path.starts_with('/') {
+            return Err(ApiError::BadRequest(
+                "route path must start with '/'".to_string(),
+            ));
+        }
+        if path.starts_with('=') || path.starts_with('~') {
+            return Err(ApiError::BadRequest(
+                "route path must not start with '=' or '~'".to_string(),
+            ));
+        }
+        if match_type == route_match_type::PREFIX && path == "/" {
+            return Err(ApiError::BadRequest(
+                "a prefix route on '/' conflicts with the default pool \
+                 fallback"
+                    .to_string(),
+            ));
+        }
+    }
+    if let Some(priority) = priority {
+        if !(1..=60_000).contains(&priority) {
+            return Err(ApiError::BadRequest(
+                "route priority must be between 1 and 60000".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Resolves the pool a new origin node belongs to: the given pool when
+/// specified, otherwise the site's default pool.
+async fn resolve_pool(
+    state: &AppState,
+    site_id: Uuid,
+    pool_id: Option<&Uuid>,
+) -> Result<Uuid, ApiError> {
+    match pool_id {
+        Some(pool_id) => {
+            ensure_pool_belongs_to_site(state, site_id, *pool_id).await?;
+            Ok(*pool_id)
+        },
+        None => {
+            let row = site_upstream_pools::Entity::find()
+                .filter(site_upstream_pools::Column::SiteId.eq(site_id))
+                .filter(site_upstream_pools::Column::IsDefault.eq(true))
+                .one(&state.db)
+                .await?
+                .ok_or_else(|| {
+                    ApiError::BadRequest(
+                        "site has no default origin pool".to_string(),
+                    )
+                })?;
+            Ok(row.id)
+        },
+    }
+}
+
+/// Fails unless the pool exists and belongs to the site.
+async fn ensure_pool_belongs_to_site(
+    state: &AppState,
+    site_id: Uuid,
+    pool_id: Uuid,
+) -> Result<(), ApiError> {
+    let owned = site_upstream_pools::Entity::find_by_id(pool_id)
+        .filter(site_upstream_pools::Column::SiteId.eq(site_id))
+        .one(&state.db)
+        .await?
+        .is_some();
+    if !owned {
+        return Err(ApiError::BadRequest(format!(
+            "pool {pool_id} does not belong to this site"
+        )));
+    }
+    Ok(())
+}
+
+/// Routes must target a pool that can actually receive traffic: a pool
+/// without origin nodes would make the route vanish from the data plane.
+async fn ensure_pool_can_serve(
+    state: &AppState,
+    site_id: Uuid,
+    pool_id: Uuid,
+) -> Result<(), ApiError> {
+    ensure_pool_belongs_to_site(state, site_id, pool_id).await?;
+    let peer_count = site_upstreams::Entity::find()
+        .filter(site_upstreams::Column::PoolId.eq(pool_id))
+        .count(&state.db)
+        .await?;
+    if peer_count == 0 {
+        return Err(ApiError::BadRequest(format!(
+            "pool {pool_id} has no origin nodes; add a node before routing traffic to it"
+        )));
+    }
+    Ok(())
+}
+
+/// A route gated on an IP group only serves when the data plane can expand the
+/// group: a missing, disabled or empty group would drop the gate entirely.
+async fn ensure_route_ip_group(
+    state: &AppState,
+    group_id: Uuid,
+) -> Result<(), ApiError> {
+    let group = ip_groups::Entity::find_by_id(group_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!("IP group {group_id} not found"))
+        })?;
+    if !group.enabled {
+        return Err(ApiError::BadRequest(format!(
+            "IP group '{}' is disabled; enable it or clear the route gate",
+            group.name
+        )));
+    }
+    if group.ip_ranges.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "IP group '{}' has no ranges; a route gated on it would never match",
+            group.name
+        )));
+    }
+    Ok(())
+}
+
+/// Host part of a `host:port` origin address, used to pre-fill the pool SNI.
+fn origin_host(address: &str) -> &str {
+    let host = match address.rsplit_once(':') {
+        Some((host, port)) if port.chars().all(|c| c.is_ascii_digit()) => host,
+        _ => address,
+    };
+    host.trim_start_matches('[').trim_end_matches(']')
+}
+
+/// Updates `sites.updated_at` so agents see a fresh configuration fingerprint.
+pub async fn touch_site(
+    state: &AppState,
+    site_id: Uuid,
+) -> Result<(), ApiError> {
+    site::Entity::update_many()
+        .col_expr(
+            site::Column::UpdatedAt,
+            sea_orm::sea_query::Expr::value(Utc::now()),
+        )
+        .filter(site::Column::Id.eq(site_id))
+        .exec(&state.db)
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn origin_addresses_are_normalized_to_host_port() {
+        assert_eq!(
+            normalize_origin_address(" 10.0.0.1:8080 ").unwrap(),
+            "10.0.0.1:8080"
+        );
+        assert_eq!(
+            normalize_origin_address("https://origin.example.com").unwrap(),
+            "origin.example.com"
+        );
+        assert_eq!(
+            normalize_origin_address("http://origin.example.com:8080/")
+                .unwrap(),
+            "origin.example.com:8080"
+        );
+        assert_eq!(
+            normalize_origin_address("[::1]:8443").unwrap(),
+            "[::1]:8443"
+        );
+    }
+
+    #[test]
+    fn origin_addresses_reject_paths_and_bad_ports() {
+        assert!(
+            normalize_origin_address("https://origin.example.com/api").is_err()
+        );
+        assert!(normalize_origin_address("origin.example.com?x=1").is_err());
+        assert!(normalize_origin_address("origin.example.com#frag").is_err());
+        assert!(normalize_origin_address("origin.example.com:0").is_err());
+        assert!(normalize_origin_address("origin.example.com:70000").is_err());
+        assert!(normalize_origin_address("::1").is_err());
+        assert!(normalize_origin_address("").is_err());
+    }
+
+    #[test]
+    fn split_origin_host_port_handles_ipv6() {
+        assert_eq!(
+            split_origin_host_port("example.com"),
+            Some(("example.com", None))
+        );
+        assert_eq!(
+            split_origin_host_port("example.com:443"),
+            Some(("example.com", Some("443")))
+        );
+        assert_eq!(
+            split_origin_host_port("[::1]:443"),
+            Some(("::1", Some("443")))
+        );
+        assert_eq!(split_origin_host_port("[::1]"), Some(("::1", None)));
+        assert_eq!(split_origin_host_port("::1"), None);
+    }
+}

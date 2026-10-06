@@ -1,0 +1,15 @@
+[default]
+extend-ignore-re = [
+    "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",
+    "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on",
+]
+# 'BA' is the ISO 3166-1 alpha-2 country code for Bosnia and Herzegovina
+# (web/src/api/geo.ts country table), not a typo for BY/BE.
+# 'COSE' is CBOR Object Signing and Encryption (RFC 9052), the key format
+# WebAuthn authenticators report (pingwaf-server/src/models/passkeys.rs).
+[default.extend-words]
+BA = "BA"
+COSE = "COSE"
+
+[files]
+extend-exclude = ["*.md", "*.toml"]

@@ -1,0 +1,195 @@
+# Pingap Proxy
+
+The HTTP proxy engine of [Pingap](https://github.com/vicanso/pingap). This crate
+implements pingora's `ProxyHttp` trait and is where routing, plugin dispatch,
+upstream selection, caching, tracing and access logging are actually wired
+together. Every other `pingap-*` crate feeds into it; the `pingap` binary is a
+thin shell that builds the configuration and hands it to this crate.
+
+## Responsibilities
+
+- Turn a `PingapConfig` into concrete listeners (`ServerConf`), including TLS
+  parameters, HTTP/2, TCP keepalive, `SO_REUSEPORT` and TCP Fast Open.
+- Match each request to a `Location` and, through it, to an `Upstream`.
+- Run plugins at the right lifecycle step and honour their decisions.
+- Own the per-request `Ctx`: timings, connection details, upstream state, cache
+  state and log variables.
+- Produce access logs, `Server-Timing` headers, Prometheus metrics and OpenTelemetry
+  spans.
+- Render error pages from a configurable HTML template.
+
+## Request lifecycle
+
+`server.rs` maps pingora's callbacks onto Pingap's `PluginStep` values:
+
+```
+                  ┌──────────────────────────────────────────┐
+   client ───────▶│ early_request_filter                     │  PluginStep::EarlyRequest
+                  ├──────────────────────────────────────────┤
+                  │ request_filter        (location matched) │  PluginStep::Request
+                  ├──────────────────────────────────────────┤
+                  │ proxy_upstream_filter                    │  PluginStep::ProxyUpstream
+                  ├──────────────────────────────────────────┤
+                  │ upstream_peer         (backend selected) │
+                  │ upstream_request_filter                  │
+                  ├──────────────────────────────────────────┤
+                  │ upstream_response_filter                 │  PluginStep::UpstreamResponse
+                  ├──────────────────────────────────────────┤
+                  │ response_filter / response_body_filter   │  PluginStep::Response
+                  ├──────────────────────────────────────────┤
+   client ◀───────│ logging                                  │
+                  └──────────────────────────────────────────┘
+```
+
+Additional hooks that are not plugin steps but matter operationally:
+
+| Callback | Role |
+| --- | --- |
+| `upstream_peer` | Chooses the backend and applies the location's retry budget (`max_retries`, `max_retry_window`) |
+| `connected_to_upstream` | Records reuse, TCP connect and TLS handshake timings |
+| `request_body_filter` | Enforces the location's `client_max_body_size` |
+| `fail_to_proxy` | Classifies the failure and renders the error page from the configured template (see [Error responses](#error-responses)) |
+
+A plugin runs at **exactly one** request step. Configuring a step a plugin does
+not implement is a silent no-op — see
+[pingap-plugin](../pingap-plugin/README.md#lifecycle-steps).
+
+A plugin that answers at `EarlyRequest` ends the request there. pingora only
+lets a request stop at `request_filter`, so that step recognises the response
+already sent and nothing later runs on top of it.
+
+## Routing
+
+Locations attached to a server are sorted once, by descending weight, and the
+first one whose host, path and match conditions all hold wins. Weight is either
+the explicit `weight` in `LocationConf` or derived:
+
+| Component | Weight |
+| --- | --- |
+| Exact path (`=/api`) | 1024 |
+| Prefix path (`/api`) | 512 |
+| Regex path (`~^/api`) | 256 |
+| Path length | + up to 64 |
+| Exact host | + 128 |
+| Regex host | + host string length |
+
+So `=/api/health` beats `/api` beats `~^/api/.*`, and a host-qualified location
+beats an otherwise identical one without a host.
+
+When nothing matches, the request is answered with `404` and the error `No matching location, host:<host>`.
+
+A matched location counts the request against its `max_processing` limit only
+after the `client_max_body_size` check has passed, and every request it counted
+is uncounted when it completes, a `429` included; a request rejected with `413`
+never touches the count.
+
+## Error responses
+
+`fail_to_proxy` turns a pingora error into a status and, when there is still
+someone to send it to, a page rendered from the error template:
+
+| Failure | Status | Page written |
+| --- | --- | --- |
+| A location or plugin rejected the request with a status | that status | yes |
+| Upstream connect, read or write failure | 502 | yes |
+| Downstream read timeout (`downstream_read_timeout`) | 408 | yes |
+| Malformed request header | 400 | yes |
+| Client closed the connection, the socket failed on a read or write, or a write timed out | 499 | no |
+| Anything else | 500 | yes |
+
+`499` is nginx's code for a client that went away. It is recorded for the
+access log and the metrics, but nothing is written to a connection that is dead
+or stuck, and the event is logged at `info` rather than `error` because there
+is nothing to fix on this side. Once a final response header has gone out, a
+later failure (an upstream dropping mid-body, say) keeps the status the client
+saw and appends nothing to the body, the same rule pingora's own error response
+follows.
+
+Each failure is logged once, by pingap, with the client address, method, host
+and path, the pingora error type and the status; pingora's own line for the
+same error is suppressed. The response headers for the statuses pingap raises
+itself are built once and cloned.
+
+## Server configuration
+
+```toml
+[servers.main]
+addr = "0.0.0.0:443,[::]:443"
+locations = ["api", "web"]
+threads = 4
+global_certificates = true
+enabled_h2 = true
+access_log = "combined"
+enable_server_timing = true
+tls_min_version = "TLSv1.2"
+tls_max_version = "TLSv1.3"
+tls_cipher_list = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+tls_ciphersuites = "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384"
+prometheus_metrics = "/metrics"
+otlp_exporter = "http://otel-collector:4317/pingap"
+reuse_port = true
+tcp_fastopen = 4096
+tcp_idle = "2m"
+tcp_interval = "1m"
+tcp_probe_count = 9
+downstream_read_timeout = "30s"
+downstream_write_timeout = "30s"
+modules = ["grpc-web"]
+```
+
+Notes on a few of these:
+
+- `addr` accepts several comma-separated listen addresses for one logical server.
+- `global_certificates = true` switches the listener to TLS using the dynamic,
+  SNI-driven certificate store from
+  [pingap-certificate](../pingap-certificate/README.md). Without it the listener
+  is plain HTTP, and `enabled_h2` then means h2c.
+- `tls_min_version` / `tls_max_version` / `tls_cipher_list` /
+  `tls_ciphersuites` apply only on an **OpenSSL** build. A `tls-rustls` build
+  always offers TLS 1.2/1.3 with rustls' default cipher suites; setting any of
+  those fields fails config validation at startup / `--test` / auto-restart
+  (see [pingap-certificate](../pingap-certificate/README.md)). The admin UI
+  disables the matching form fields on a rustls binary.
+- `h2_max_concurrent_streams`, `h2_max_header_list_size`,
+  `h2_initial_window_size`, `h2_initial_connection_window_size` and
+  `h2_idle_timeout` tune the downstream HTTP/2 SETTINGS of a listener. Unset
+  keeps pingora's bounded defaults (100 streams, 64 KiB header list), which cap
+  the memory one client connection can pin; raise them deliberately for gRPC
+  fan-in or large-header clients rather than removing the bound.
+- `prometheus_metrics` exposes the pull endpoint on this server; a URL value
+  instead configures push mode.
+- `enable_server_timing` adds a `Server-Timing` response header built from the
+  request's timing breakdown — useful when diagnosing where latency comes from.
+- `error_template` (under `[basic]`) replaces the built-in `error.html`. The
+  template is parsed once when the server starts, and three placeholders are
+  filled in per error:
+
+  ```text
+  {{version}}     the pingap version
+  {{error_type}}  the pingora error type, also sent as X-Pingap-EType
+  {{content}}     the error message
+  ```
+
+  Any other name in double braces is left as literal text, and a template
+  whose first character is `{` is served as `application/json`.
+
+## Per-request context
+
+`Ctx` carries everything the request accumulated and is what access log
+variables and `$`-substitutions read from. Timings recorded include upstream TCP
+connect, TLS handshake, upstream processing and response, cache lookup and lock,
+compression, and total service time. See
+[pingap-core](../pingap-core/README.md) and the access log tag table in
+[pingap-logger](../pingap-logger/README.md).
+
+## Features
+
+| Feature | Effect |
+| --- | --- |
+| `openssl` (default) | Terminate downstream TLS via pingora OpenSSL; honour per-server version/cipher settings |
+| `tls-rustls` | Terminate downstream TLS via pingora rustls; the `tls_*` fields above are rejected at config validation |
+| `tracing` | Enables the OpenTelemetry span integration in `tracing.rs` and cache metrics |
+
+## License
+
+Apache-2.0.

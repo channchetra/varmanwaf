@@ -1,0 +1,132 @@
+import {
+  createBrowserRouter,
+  Navigate,
+  useLocation,
+} from 'react-router-dom'
+import type { ReactElement } from 'react'
+import { AppLayout } from '@/layouts/AppLayout'
+import { useAuthStore } from '@/stores/authStore'
+
+import { LoginPage } from '@/pages/LoginPage'
+import { DashboardPage } from '@/pages/DashboardPage'
+import { SitesListPage } from '@/pages/SitesListPage'
+import { SiteDetailPage } from '@/pages/SiteDetailPage'
+import { RateLimitingPage } from '@/pages/RateLimitingPage'
+import { LogsPage } from '@/pages/LogsPage'
+import { AgentsPage } from '@/pages/AgentsPage'
+import { AssistantPage } from '@/pages/AssistantPage'
+import { SettingsPage } from '@/pages/SettingsPage'
+import { BotPage as BotProtectionPage } from '@/pages/sites/BotPage'
+import {
+  ProtectionPage,
+  LegacyProtectionRedirect,
+} from '@/pages/sites/ProtectionPage'
+import {
+  AccessControlPage,
+  LegacySecurityRedirect,
+} from '@/pages/sites/AccessControlPage'
+import { CachingPage } from '@/pages/sites/CachingPage'
+import { SslPage } from '@/pages/sites/SslPage'
+import { TrafficPage } from '@/pages/sites/TrafficPage'
+import { GlobalSslPage } from '@/pages/GlobalSslPage'
+import { GlobalTrafficPage } from '@/pages/GlobalTrafficPage'
+import { IpGroupsPage } from '@/pages/IpGroupsPage'
+import { RewritePage } from '@/pages/sites/RewritePage'
+import { OriginPage } from '@/pages/sites/OriginPage'
+import { LifecyclePage } from '@/pages/LifecyclePage'
+import { SiteSettingsPage } from '@/pages/placeholders'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { Button } from '@/components/ui/Button'
+
+/** Redirects unauthenticated users to the login page. */
+function RequireAuth({ children }: { children: ReactElement }) {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const location = useLocation()
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  }
+  return children
+}
+
+function NotFoundPage() {
+  return (
+    <EmptyState
+      title="Page not found"
+      description="The page you are looking for doesn't exist or has been moved."
+      action={
+        <Button variant="primary" onClick={() => (window.location.href = '/dashboard')}>
+          Back to dashboard
+        </Button>
+      }
+    />
+  )
+}
+
+export const router = createBrowserRouter([
+  {
+    path: '/login',
+    element: <LoginPage />,
+  },
+  {
+    path: '/',
+    element: (
+      <RequireAuth>
+        <AppLayout />
+      </RequireAuth>
+    ),
+    children: [
+      { index: true, element: <Navigate to="/dashboard" replace /> },
+      { path: 'dashboard', element: <DashboardPage /> },
+      { path: 'sites', element: <SitesListPage /> },
+      {
+        path: 'sites/:siteId',
+        element: <SiteDetailPage />,
+        children: [
+          { index: true, element: <Navigate to="origin" replace /> },
+          { path: 'origin', element: <OriginPage /> },
+          { path: 'security/protection', element: <ProtectionPage /> },
+          { path: 'security/rate-limiting', element: <RateLimitingPage /> },
+          { path: 'security/bot', element: <BotProtectionPage /> },
+          { path: 'security/access', element: <AccessControlPage /> },
+          // WAF and CC were separate tabs before they were merged; keep old
+          // links (including the `?rule=` deep link) working.
+          {
+            path: 'security/waf',
+            element: <LegacyProtectionRedirect tab="rules" />,
+          },
+          {
+            path: 'security/cc',
+            element: <LegacyProtectionRedirect tab="cc" />,
+          },
+          // IP rules and geo were separate tabs before they were merged; keep
+          // old links (including `?block=…` deep links) working.
+          {
+            path: 'security/ip-rules',
+            element: <LegacySecurityRedirect tab="ip" />,
+          },
+          {
+            path: 'security/geo',
+            element: <LegacySecurityRedirect tab="geo" />,
+          },
+          { path: 'caching', element: <CachingPage /> },
+          { path: 'ssl', element: <SslPage /> },
+          { path: 'traffic', element: <TrafficPage /> },
+          { path: 'rules/rewrite', element: <RewritePage /> },
+          { path: 'settings', element: <SiteSettingsPage /> },
+        ],
+      },
+      { path: 'logs', element: <LogsPage /> },
+      { path: 'assistant', element: <AssistantPage /> },
+      { path: 'agents', element: <AgentsPage /> },
+      { path: 'ip-groups', element: <IpGroupsPage /> },
+      { path: 'lifecycle', element: <LifecyclePage /> },
+      // Global surfaces. The per-site counterparts live under `/sites/:siteId`.
+      { path: 'ssl', element: <GlobalSslPage /> },
+      { path: 'traffic', element: <GlobalTrafficPage /> },
+      { path: 'settings', element: <SettingsPage /> },
+      { path: '*', element: <NotFoundPage /> },
+    ],
+  },
+])
+
+export default router

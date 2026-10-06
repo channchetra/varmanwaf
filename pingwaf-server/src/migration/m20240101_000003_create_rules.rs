@@ -1,0 +1,474 @@
+//! Creates the rule tables: `rule_groups`, `rules`, `rate_limit_rules` and
+//! `cache_rules`.
+//!
+//! Everything hangs off `sites.id` with `ON DELETE CASCADE` so removing a site
+//! also removes its policy. `rules.group_id` is nullable in spirit (a rule may
+//! live outside a group) but the group is always known in practice, so it stays
+//! `NOT NULL`-free here and cascades from the group.
+
+use sea_orm_migration::prelude::*;
+
+use super::m20240101_000002_create_sites::Sites;
+
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .create_table(
+                Table::create()
+                    .table(RuleGroups::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(RuleGroups::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(RuleGroups::SiteId).uuid().not_null())
+                    .col(
+                        ColumnDef::new(RuleGroups::Name)
+                            .string_len(100)
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(RuleGroups::Phase)
+                            .string_len(50)
+                            .not_null()
+                            .default("request"),
+                    )
+                    .col(
+                        ColumnDef::new(RuleGroups::Priority)
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
+                    .col(
+                        ColumnDef::new(RuleGroups::Enabled)
+                            .boolean()
+                            .not_null()
+                            .default(true),
+                    )
+                    .col(
+                        ColumnDef::new(RuleGroups::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(RuleGroups::UpdatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_rule_groups_site_id")
+                            .from(RuleGroups::Table, RuleGroups::SiteId)
+                            .to(Sites::Table, Sites::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_table(
+                Table::create()
+                    .table(Rules::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(Rules::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(Rules::GroupId).uuid().null())
+                    .col(ColumnDef::new(Rules::SiteId).uuid().not_null())
+                    .col(ColumnDef::new(Rules::Name).string_len(200).not_null())
+                    .col(ColumnDef::new(Rules::Description).text().null())
+                    .col(ColumnDef::new(Rules::Expression).text().not_null())
+                    .col(
+                        ColumnDef::new(Rules::Action)
+                            .string_len(30)
+                            .not_null()
+                            .default("block"),
+                    )
+                    .col(
+                        ColumnDef::new(Rules::Severity)
+                            .integer()
+                            .not_null()
+                            .default(3),
+                    )
+                    .col(
+                        ColumnDef::new(Rules::Tags)
+                            .array(ColumnType::Text)
+                            .not_null()
+                            .default(Expr::cust("'{}'::text[]")),
+                    )
+                    .col(
+                        ColumnDef::new(Rules::Enabled)
+                            .boolean()
+                            .not_null()
+                            .default(true),
+                    )
+                    .col(
+                        ColumnDef::new(Rules::Mode)
+                            .string_len(20)
+                            .not_null()
+                            .default("block"),
+                    )
+                    .col(
+                        ColumnDef::new(Rules::Priority)
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
+                    .col(
+                        ColumnDef::new(Rules::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Rules::UpdatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_rules_group_id")
+                            .from(Rules::Table, Rules::GroupId)
+                            .to(RuleGroups::Table, RuleGroups::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_rules_site_id")
+                            .from(Rules::Table, Rules::SiteId)
+                            .to(Sites::Table, Sites::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_table(
+                Table::create()
+                    .table(RateLimitRules::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(RateLimitRules::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(
+                        ColumnDef::new(RateLimitRules::SiteId)
+                            .uuid()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(RateLimitRules::Name)
+                            .string_len(200)
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(RateLimitRules::Expression)
+                            .text()
+                            .not_null()
+                            .default(""),
+                    )
+                    .col(
+                        ColumnDef::new(RateLimitRules::Characteristics)
+                            .array(ColumnType::Text)
+                            .not_null()
+                            .default(Expr::cust("'{ip}'::text[]")),
+                    )
+                    .col(
+                        ColumnDef::new(RateLimitRules::PeriodSeconds)
+                            .integer()
+                            .not_null()
+                            .default(60),
+                    )
+                    .col(
+                        ColumnDef::new(RateLimitRules::Threshold)
+                            .integer()
+                            .not_null()
+                            .default(100),
+                    )
+                    .col(
+                        ColumnDef::new(RateLimitRules::Action)
+                            .string_len(30)
+                            .not_null()
+                            .default("block"),
+                    )
+                    .col(
+                        ColumnDef::new(
+                            RateLimitRules::MitigationTimeoutSeconds,
+                        )
+                        .integer()
+                        .not_null()
+                        .default(300),
+                    )
+                    .col(
+                        ColumnDef::new(RateLimitRules::Enabled)
+                            .boolean()
+                            .not_null()
+                            .default(true),
+                    )
+                    .col(
+                        ColumnDef::new(RateLimitRules::Priority)
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
+                    .col(
+                        ColumnDef::new(RateLimitRules::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(RateLimitRules::UpdatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_rate_limit_rules_site_id")
+                            .from(RateLimitRules::Table, RateLimitRules::SiteId)
+                            .to(Sites::Table, Sites::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_table(
+                Table::create()
+                    .table(CacheRules::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(CacheRules::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(CacheRules::SiteId).uuid().not_null())
+                    .col(
+                        ColumnDef::new(CacheRules::Name)
+                            .string_len(200)
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(CacheRules::MatchExpression)
+                            .text()
+                            .not_null()
+                            .default(""),
+                    )
+                    .col(
+                        ColumnDef::new(CacheRules::EdgeTtlSeconds)
+                            .integer()
+                            .not_null()
+                            .default(3600),
+                    )
+                    .col(
+                        ColumnDef::new(CacheRules::BrowserTtlSeconds)
+                            .integer()
+                            .not_null()
+                            .default(300),
+                    )
+                    .col(
+                        ColumnDef::new(CacheRules::DiskQuotaMb)
+                            .integer()
+                            .not_null()
+                            .default(1024),
+                    )
+                    .col(
+                        ColumnDef::new(CacheRules::CacheEligible)
+                            .boolean()
+                            .not_null()
+                            .default(true),
+                    )
+                    .col(
+                        ColumnDef::new(CacheRules::RespectOrigin)
+                            .boolean()
+                            .not_null()
+                            .default(true),
+                    )
+                    .col(
+                        ColumnDef::new(CacheRules::Enabled)
+                            .boolean()
+                            .not_null()
+                            .default(true),
+                    )
+                    .col(
+                        ColumnDef::new(CacheRules::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_cache_rules_site_id")
+                            .from(CacheRules::Table, CacheRules::SiteId)
+                            .to(Sites::Table, Sites::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_rule_groups_site_id")
+                    .table(RuleGroups::Table)
+                    .col(RuleGroups::SiteId)
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_rules_site_id")
+                    .table(Rules::Table)
+                    .col(Rules::SiteId)
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_rules_group_id")
+                    .table(Rules::Table)
+                    .col(Rules::GroupId)
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_rate_limit_rules_site_id")
+                    .table(RateLimitRules::Table)
+                    .col(RateLimitRules::SiteId)
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_cache_rules_site_id")
+                    .table(CacheRules::Table)
+                    .col(CacheRules::SiteId)
+                    .to_owned(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(CacheRules::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(RateLimitRules::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop().table(Rules::Table).if_exists().to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(RuleGroups::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        Ok(())
+    }
+}
+
+#[derive(DeriveIden)]
+pub enum RuleGroups {
+    Table,
+    Id,
+    SiteId,
+    Name,
+    Phase,
+    Priority,
+    Enabled,
+    CreatedAt,
+    UpdatedAt,
+}
+
+#[derive(DeriveIden)]
+pub enum Rules {
+    Table,
+    Id,
+    GroupId,
+    SiteId,
+    Name,
+    Description,
+    Expression,
+    Action,
+    Severity,
+    Tags,
+    Enabled,
+    Mode,
+    Priority,
+    CreatedAt,
+    UpdatedAt,
+}
+
+#[derive(DeriveIden)]
+pub enum RateLimitRules {
+    Table,
+    Id,
+    SiteId,
+    Name,
+    Expression,
+    Characteristics,
+    PeriodSeconds,
+    Threshold,
+    Action,
+    MitigationTimeoutSeconds,
+    Enabled,
+    Priority,
+    CreatedAt,
+    UpdatedAt,
+}
+
+#[derive(DeriveIden)]
+pub enum CacheRules {
+    Table,
+    Id,
+    SiteId,
+    Name,
+    MatchExpression,
+    EdgeTtlSeconds,
+    BrowserTtlSeconds,
+    DiskQuotaMb,
+    CacheEligible,
+    RespectOrigin,
+    Enabled,
+    CreatedAt,
+}
