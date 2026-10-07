@@ -820,7 +820,9 @@ fn evaluate_group(
         txn.set_matched(hits.first().cloned());
         if rule.has_capture() {
             if let Some(first) = hits.first() {
-                rule.captures_into(&first.value, txn);
+                // Captures run on the transformed value: the regex matched
+                // it, not the original (ModSecurity captures post-transform).
+                rule.captures_into(&rule.transformed(&first.value), txn);
             }
         }
         // Chain-member actions run immediately: the next member can read
@@ -1475,6 +1477,22 @@ mod tests {
         )
         .expect_err("must fail");
         assert!(error.reason.contains("tag;target"), "{error}");
+    }
+
+    #[test]
+    fn captures_use_transformed_values() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@rx ^prefix-(.*)$\" \"id:1,t:lowercase,capture,chain,setvar:tx.got=%{tx.1}\"\n\
+             SecRule TX:got \"@streq value\" \"id:2,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=PREFIX-VALUE"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(txn.tx_get("got"), Some("value"));
     }
 
     #[test]

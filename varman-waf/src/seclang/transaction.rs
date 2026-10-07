@@ -112,6 +112,9 @@ struct ArgValue {
     name: String,
     value: String,
     invalid_utf8: bool,
+    /// `true` for query-string arguments (`ARGS_GET`), `false` for
+    /// body-derived arguments (`ARGS_POST`).
+    from_query: bool,
 }
 
 /// Request-scoped variable state.
@@ -181,6 +184,7 @@ fn form_arg(name_raw: &[u8], value_raw: &[u8]) -> ArgValue {
         name: crate::normalize::url::multi_decode(&name, 1),
         value: crate::normalize::url::multi_decode(&value, 1),
         invalid_utf8,
+        from_query: false,
     }
 }
 
@@ -204,6 +208,7 @@ impl SecLangTransaction {
                 name: param.name.clone(),
                 value: param.value.clone(),
                 invalid_utf8: param.invalid_utf8,
+                from_query: true,
             })
             .collect();
         // ModSecurity merges form-urlencoded body parameters into ARGS.
@@ -378,6 +383,7 @@ impl SecLangTransaction {
                 name,
                 value,
                 invalid_utf8: false,
+                from_query: false,
             });
         }
     }
@@ -508,6 +514,66 @@ impl SecLangTransaction {
                     invalid_utf8: arg.invalid_utf8,
                 })
                 .collect()),
+            ("ARGS_GET", None) => cap(self
+                .args
+                .iter()
+                .filter(|arg| arg.from_query)
+                .map(|arg| ResolvedValue {
+                    name: format!("ARGS_GET:{}", arg.name),
+                    value: arg.value.clone(),
+                    invalid_utf8: arg.invalid_utf8,
+                })
+                .collect()),
+            ("ARGS_GET", Some(selector)) => cap(self
+                .args
+                .iter()
+                .filter(|arg| arg.from_query && arg.name == selector)
+                .map(|arg| ResolvedValue {
+                    name: format!("ARGS_GET:{}", arg.name),
+                    value: arg.value.clone(),
+                    invalid_utf8: arg.invalid_utf8,
+                })
+                .collect()),
+            ("ARGS_GET_NAMES", _) => cap(self
+                .args
+                .iter()
+                .filter(|arg| arg.from_query)
+                .map(|arg| ResolvedValue {
+                    name: "ARGS_GET_NAMES".to_string(),
+                    value: arg.name.clone(),
+                    invalid_utf8: arg.invalid_utf8,
+                })
+                .collect()),
+            ("ARGS_POST", None) => cap(self
+                .args
+                .iter()
+                .filter(|arg| !arg.from_query)
+                .map(|arg| ResolvedValue {
+                    name: format!("ARGS_POST:{}", arg.name),
+                    value: arg.value.clone(),
+                    invalid_utf8: arg.invalid_utf8,
+                })
+                .collect()),
+            ("ARGS_POST", Some(selector)) => cap(self
+                .args
+                .iter()
+                .filter(|arg| !arg.from_query && arg.name == selector)
+                .map(|arg| ResolvedValue {
+                    name: format!("ARGS_POST:{}", arg.name),
+                    value: arg.value.clone(),
+                    invalid_utf8: arg.invalid_utf8,
+                })
+                .collect()),
+            ("ARGS_POST_NAMES", _) => cap(self
+                .args
+                .iter()
+                .filter(|arg| !arg.from_query)
+                .map(|arg| ResolvedValue {
+                    name: "ARGS_POST_NAMES".to_string(),
+                    value: arg.name.clone(),
+                    invalid_utf8: arg.invalid_utf8,
+                })
+                .collect()),
             ("REQUEST_HEADERS", None) => cap(self
                 .headers
                 .iter()
@@ -568,6 +634,16 @@ impl SecLangTransaction {
             ("REQUEST_FILENAME", _) => cap(vec![ResolvedValue {
                 name: "REQUEST_FILENAME".to_string(),
                 value: self.uri.clone(),
+                invalid_utf8: self.path_invalid_utf8,
+            }]),
+            ("REQUEST_BASENAME", _) => cap(vec![ResolvedValue {
+                name: "REQUEST_BASENAME".to_string(),
+                value: self
+                    .uri
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
                 invalid_utf8: self.path_invalid_utf8,
             }]),
             ("QUERY_STRING", _) => cap(vec![ResolvedValue {
@@ -692,7 +768,7 @@ impl SecLangTransaction {
             ("MULTIPART_PART_HEADERS", Some(selector)) => cap(self
                 .part_headers
                 .iter()
-                .filter(|(name, _)| name.eq_ignore_ascii_case(selector))
+                .filter(|(name, _)| name == selector)
                 .map(|(name, value)| ResolvedValue {
                     name: format!("MULTIPART_PART_HEADERS:{name}"),
                     value: value.clone(),
@@ -716,7 +792,10 @@ impl SecLangTransaction {
                     .strip_prefix('/')
                     .and_then(|rest| rest.strip_suffix('/'))
                 {
-                    let Ok(regex) = Regex::new(regex_body) else {
+                    // TX names are case-insensitive, so the selector regex
+                    // is too (CRS mixes cases: `TX:/MULTIPART_HEADERS_…/`).
+                    let Ok(regex) = Regex::new(&format!("(?i){regex_body}"))
+                    else {
                         return Vec::new();
                     };
                     cap(self
@@ -1720,6 +1799,7 @@ fn parse_multipart(
         };
         let mut field = None;
         let mut filename = None;
+        let mut header_lines: Vec<String> = Vec::new();
         for line in header_block.split('\n') {
             let line = line.trim_end_matches('\r');
             let Some((name, value)) = line.split_once(':') else {
@@ -1727,11 +1807,17 @@ fn parse_multipart(
             };
             let name = name.trim();
             let value = value.trim();
-            part_headers.push((name.to_string(), value.to_string()));
+            header_lines.push(format!("{name}: {value}"));
             if name.eq_ignore_ascii_case("content-disposition") {
                 field = quoted_param(value, "name");
                 filename = quoted_param(value, "filename");
             }
+        }
+        // ModSecurity keys part headers by the part's `name` and stores the
+        // full header line as the value (922150's regex depends on it).
+        let part_name = field.clone().unwrap_or_default();
+        for line in header_lines {
+            part_headers.push((part_name.clone(), line));
         }
         match (field, filename) {
             (Some(field), Some(file)) => files.push((field, file)),
@@ -1739,6 +1825,7 @@ fn parse_multipart(
                 name: field,
                 value: part_body.to_string(),
                 invalid_utf8: false,
+                from_query: false,
             }),
             (None, _) => {},
         }
@@ -2501,6 +2588,24 @@ mod tests {
     }
 
     #[test]
+    fn args_get_post_and_basename_resolve() {
+        let request = Canonicalizer::default().canonicalize(
+            RequestParts::new("POST", "example.com", "/dir/file.bak?q=1")
+                .with_header(
+                    "Content-Type",
+                    "application/x-www-form-urlencoded",
+                )
+                .with_body(b"b=2".to_vec()),
+        );
+        let txn = SecLangTransaction::from_request(&request);
+        assert_eq!(txn.resolve("ARGS_GET:q")[0].value, "1");
+        assert_eq!(txn.resolve("ARGS_POST:b")[0].value, "2");
+        assert_eq!(txn.resolve("ARGS_GET_NAMES")[0].value, "q");
+        assert_eq!(txn.resolve("ARGS_POST_NAMES")[0].value, "b");
+        assert_eq!(txn.resolve("REQUEST_BASENAME")[0].value, "file.bak");
+    }
+
+    #[test]
     fn multipart_bodies_populate_args_and_files() {
         let body = "------Boundary\r\n\
                     Content-Disposition: form-data; name=\"fileRap\"; filename=\"file=.txt\"\r\n\
@@ -2524,9 +2629,12 @@ mod tests {
         assert_eq!(txn.resolve("FILES")[0].value, "file=.txt");
         assert_eq!(txn.resolve("FILES_NAMES")[0].value, "fileRap");
         assert_eq!(txn.resolve("ARGS:field")[0].value, "value");
-        assert_eq!(
-            txn.resolve("MULTIPART_PART_HEADERS:Content-Type")[0].value,
-            "text/plain"
+        let part_headers = txn.resolve("MULTIPART_PART_HEADERS:fileRap");
+        assert!(
+            part_headers
+                .iter()
+                .any(|value| value.value == "Content-Type: text/plain"),
+            "{part_headers:?}"
         );
     }
 

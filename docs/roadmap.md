@@ -326,13 +326,13 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Fourteenth slice: case-insensitive `@pm`/`@pmFromFile` (ModSecurity's
-      ACMP semantics), multipart parser (`FILES`, `FILES_NAMES`,
-      `MULTIPART_PART_HEADERS`, field → `ARGS`), default JSON processor for
-      `application/json`. Regression: **4981/5155** (96.6%).
-- [ ] Remaining regression classes: `922110`/`922100` (multipart TX
-      pipeline) → long tail (`920440`, `921160`, `942130`, `920200`,
-      `920450`, `920640`, `934120`, `941100`, `941310`, `943110`).
+- [x] Fifteenth slice: captures on transformed values (922110's
+      `t:lowercase`+capture pipeline), `ARGS_GET`/`ARGS_POST`(+`_NAMES`),
+      `REQUEST_BASENAME`. Regression: **5029/5155** (97.6%) — the failure
+      histogram is now a long tail (≤6 per class).
+- [ ] Remaining tail: `942130`, `920450`, `920640`, `922110` (forbid),
+      `934120`, `941100`, `941310`, `forbid [943110]`, `920170`, `930110`,
+      `920180`, `920260`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
