@@ -200,17 +200,30 @@ pub fn resolve_mode(site: Option<&str>) -> EngineMode {
 }
 
 /// Run the pipeline for one inspected request and return its verdict in the
-/// engine shape. Records the shadow comparison counters so telemetry stays
+/// engine shape. `monitored` is the site's monitor-only category list
+/// (`waf_settings.monitor_categories`); matching findings are downgraded
+/// before the verdict is compared and returned, so both engines agree on the
+/// site's policy. Records the shadow comparison counters so telemetry stays
 /// valid in every mode. `None` when the mode is [`EngineMode::Legacy`].
 pub fn analyze(
     request: &RequestData,
     legacy: &WafVerdict,
     mode: EngineMode,
+    monitored: &[String],
 ) -> Option<WafVerdict> {
     if mode == EngineMode::Legacy {
         return None;
     }
-    Some(analyze_with(&SHADOW.pipeline, &SHADOW.counters, request, legacy).1)
+    Some(
+        analyze_with(
+            &SHADOW.pipeline,
+            &SHADOW.counters,
+            request,
+            legacy,
+            monitored,
+        )
+        .1,
+    )
 }
 
 /// Run the shadow comparison for one inspected request.
@@ -218,7 +231,7 @@ pub fn analyze(
 /// No-op unless the pipeline runs; never affects the returned verdict or any
 /// response.
 pub fn observe(request: &RequestData, legacy: &WafVerdict) {
-    let _ = analyze(request, legacy, engine_mode());
+    let _ = analyze(request, legacy, engine_mode(), &[]);
 }
 
 /// The enforcing verdict in [`EngineMode::Varman`] mode: the stronger of the
@@ -252,9 +265,11 @@ fn analyze_with(
     counters: &ShadowCounters,
     request: &RequestData,
     legacy: &WafVerdict,
+    monitored: &[String],
 ) -> (ShadowComparison, WafVerdict) {
     let canonical = canonicalize(request);
-    let verdict = pipeline.inspect(&canonical);
+    let mut verdict = pipeline.inspect(&canonical);
+    varman_waf::pipeline::policy::downgrade_monitored(&mut verdict, monitored);
     let comparison = shadow::compare(legacy, &verdict);
     counters.record(&comparison);
 
@@ -423,6 +438,7 @@ mod tests {
             &counters,
             &request("/a/b", ""),
             &verdict(WafAction::Pass),
+            &[],
         )
         .0;
         assert_eq!(comparison.agreement, Agreement::Agree);
@@ -444,6 +460,7 @@ mod tests {
             &counters,
             &request("/%2e%2e/etc/passwd", ""),
             &verdict(WafAction::Block),
+            &[],
         )
         .0;
         assert_eq!(comparison.agreement, Agreement::PipelineWeaker);
@@ -461,14 +478,20 @@ mod tests {
         // Same request through both classes: the pipeline verdict is a fact
         // about the request, the comparison is a fact about the pair.
         let req = request("/a/../b", "");
-        let against_pass =
-            analyze_with(&pipeline, &counters, &req, &verdict(WafAction::Pass))
-                .0;
+        let against_pass = analyze_with(
+            &pipeline,
+            &counters,
+            &req,
+            &verdict(WafAction::Pass),
+            &[],
+        )
+        .0;
         let against_monitor = analyze_with(
             &pipeline,
             &counters,
             &req,
             &verdict(WafAction::Monitor),
+            &[],
         )
         .0;
         assert_eq!(against_pass.agreement, Agreement::PipelineStricter);
@@ -477,5 +500,41 @@ mod tests {
             counters.checked.load(std::sync::atomic::Ordering::Relaxed),
             2
         );
+    }
+
+    #[test]
+    fn site_monitor_categories_downgrade_the_pipeline_verdict() {
+        use varman_waf::pipeline::Action;
+        use varman_waf::pipeline::semantic::SqlStructuralDetector;
+
+        let counters = ShadowCounters::default();
+        let pipeline =
+            SecurityPipeline::new(vec![Box::new(SqlStructuralDetector::new())]);
+        let req = request("/page", "id=1;xp_cmdshell('whoami')");
+
+        // Without a monitor list the pipeline blocks the stacked command.
+        let (_, converted) = analyze_with(
+            &pipeline,
+            &counters,
+            &req,
+            &verdict(WafAction::Pass),
+            &[],
+        );
+        assert_eq!(converted.action, WafAction::Block);
+
+        // The site's monitor list downgrades it to monitor-only — both the
+        // comparison and the enforcing verdict.
+        let monitored = vec!["sqli".to_string()];
+        let (comparison, converted) = analyze_with(
+            &pipeline,
+            &counters,
+            &req,
+            &verdict(WafAction::Pass),
+            &monitored,
+        );
+        assert_eq!(comparison.pipeline_action, Action::Monitor);
+        assert_eq!(converted.action, WafAction::Monitor);
+        // The score is kept for the event.
+        assert!(converted.score > 0);
     }
 }

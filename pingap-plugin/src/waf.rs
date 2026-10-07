@@ -284,6 +284,10 @@ struct SiteContext {
     /// Per-site WAF engine mode from `waf_settings.engine_mode`: empty or
     /// `inherit` follows the process-wide `VARMAN_WAF_ENGINE`.
     engine_mode: String,
+    /// Per-site monitor-only categories (`waf_settings.monitor_categories`),
+    /// applied to the Varman pipeline so both engines agree on the site's
+    /// policy.
+    monitor_categories: Vec<String>,
 }
 
 impl SiteContext {
@@ -328,6 +332,9 @@ impl SiteContext {
                 .is_some_and(|cfg| cfg.advanced_mode),
             engine_mode: waf_cfg
                 .map(|cfg| cfg.engine_mode.clone())
+                .unwrap_or_default(),
+            monitor_categories: waf_cfg
+                .map(|cfg| cfg.monitor_categories.clone())
                 .unwrap_or_default(),
         }
     }
@@ -2787,15 +2794,23 @@ impl Plugin for WafPlugin {
                 .map(|site| site.engine_mode.as_str())
                 .filter(|mode| !mode.is_empty()),
         );
-        let verdict =
-            match crate::waf_shadow::analyze(&request_data, &verdict, engine) {
-                Some(pipeline)
-                    if engine == crate::waf_shadow::EngineMode::Varman =>
-                {
-                    crate::waf_shadow::effective_verdict(&verdict, &pipeline)
-                },
-                _ => verdict,
-            };
+        let monitored = context
+            .as_ref()
+            .map(|site| site.monitor_categories.as_slice())
+            .unwrap_or_default();
+        let verdict = match crate::waf_shadow::analyze(
+            &request_data,
+            &verdict,
+            engine,
+            monitored,
+        ) {
+            Some(pipeline)
+                if engine == crate::waf_shadow::EngineMode::Varman =>
+            {
+                crate::waf_shadow::effective_verdict(&verdict, &pipeline)
+            },
+            _ => verdict,
+        };
 
         // Custom rule ids carry no name of their own; the site context maps
         // the one that fired back to its configured name.

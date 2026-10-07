@@ -52,6 +52,7 @@ pub mod category;
 pub mod detector;
 pub mod fast;
 pub mod finding;
+pub mod policy;
 pub mod semantic;
 pub mod shadow;
 pub mod snapshot;

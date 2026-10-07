@@ -213,7 +213,10 @@ values override it, and an invalid per-site value logs and falls back to the
 process mode. `waf_shadow::stats()` exposes checked/agree/stricter/weaker
 counters for metrics, and every comparison is logged at `debug` with the
 canonical path. In `shadow` mode no response is ever influenced; in `varman`
-mode the pipeline can only escalate, never weaken.
+mode the pipeline can only escalate, never weaken. A site's monitor-only
+category list (`waf_settings.monitor_categories`) is applied to the pipeline
+verdict as well (`pipeline::policy::downgrade_monitored`), so a family the
+dashboard marks monitor-only records without blocking in either engine.
 
 Replacement requires corpus evidence: zero `PipelineWeaker` results on the
 attack corpus and zero new blocks on the benign corpus, with performance

@@ -136,6 +136,13 @@ a working VarmanWAF with unchanged behaviour.
       `varman` the probe blocked again with `legacy=monitor pipeline=block`
       in the logs and `sig.sqli.tautology` (`varman-pipeline: 2 finding(s)`)
       in the security event.
+- [x] **Per-site monitor downgrades in the pipeline**: the site's
+      `waf_settings.monitor_categories` now applies to the Varman pipeline
+      (`pipeline::policy::downgrade_monitored`) before the verdict is compared
+      and enforced, so an attack family a site marked monitor-only never
+      blocks in either engine. The score is kept for the event, weaker hints
+      are never escalated, and categories outside the dashboard list
+      (credential abuse, DLP, bot activity) cannot be downgraded.
 - [ ] Benchmarks: pipeline overhead vs legacy on the request corpus.
 
 Exit: both engines run side by side; shadow results measurable; no behaviour
