@@ -116,6 +116,87 @@ impl PipelineVerdict {
             degraded: Vec::new(),
         }
     }
+
+    /// Convert into the proxy-facing [`crate::WafVerdict`] shape so an
+    /// enforcing caller can apply the pipeline's verdict with the same
+    /// response mapping the legacy engine uses.
+    ///
+    /// `Log` and `Monitor` both map to [`crate::WafAction::Monitor`]: the
+    /// event is recorded and the request proceeds. The score breakdown is
+    /// rebuilt from the findings' categories so event/dashboard consumers see
+    /// the same shape they see from the legacy engine.
+    pub fn to_waf_verdict(&self) -> crate::WafVerdict {
+        use crate::{ScoreBreakdown, ScoreClass, WafAction, WafVerdict};
+
+        let action = match self.action {
+            Action::Pass => WafAction::Pass,
+            Action::Log | Action::Monitor => WafAction::Monitor,
+            Action::Challenge => WafAction::Challenge,
+            Action::Block => WafAction::Block,
+        };
+
+        let mut breakdown = ScoreBreakdown::clean();
+        for finding in &self.findings {
+            let score = u8::try_from(finding.score.min(99)).unwrap_or(99);
+            match finding.category {
+                AttackCategory::SqlInjection => {
+                    breakdown.sqli_score =
+                        breakdown.sqli_score.saturating_add(score).min(99);
+                },
+                AttackCategory::Xss => {
+                    breakdown.xss_score =
+                        breakdown.xss_score.saturating_add(score).min(99);
+                },
+                AttackCategory::CommandInjection => {
+                    breakdown.rce_score =
+                        breakdown.rce_score.saturating_add(score).min(99);
+                },
+                _ => {},
+            }
+        }
+        breakdown.total = self.score;
+        breakdown.block_total = self.score;
+        breakdown.block_sqli_score = breakdown.sqli_score;
+        breakdown.block_xss_score = breakdown.xss_score;
+        breakdown.block_rce_score = breakdown.rce_score;
+        breakdown.overall_class = match self.action {
+            Action::Pass => ScoreClass::Clean,
+            Action::Log => ScoreClass::LikelyClean,
+            Action::Monitor => ScoreClass::LikelyAttack,
+            Action::Challenge | Action::Block => ScoreClass::Attack,
+        };
+
+        let matched_rules = self
+            .findings
+            .iter()
+            .map(|finding| finding.rule_id.to_string())
+            .collect();
+        let details = if self.findings.is_empty() {
+            String::new()
+        } else {
+            let mut details = format!(
+                "varman-pipeline: {} finding(s), score {}",
+                self.findings.len(),
+                self.score
+            );
+            for finding in self.findings.iter().take(4) {
+                details.push_str(&format!(
+                    "; {} {}",
+                    finding.detector.as_str(),
+                    finding.rule_id
+                ));
+            }
+            details
+        };
+
+        WafVerdict {
+            action,
+            score: u8::try_from(self.score).unwrap_or(u8::MAX),
+            matched_rules,
+            details,
+            breakdown,
+        }
+    }
 }
 
 /// Ordered collection of detectors.
@@ -391,5 +472,52 @@ mod tests {
         assert_eq!(verdict.score, 0);
         assert!(verdict.findings.is_empty());
         assert!(verdict.degraded.is_empty());
+    }
+
+    #[test]
+    fn to_waf_verdict_maps_actions_scores_and_rules() {
+        use super::PipelineVerdict;
+        use crate::{ScoreClass, WafAction};
+
+        let mut verdict = PipelineVerdict {
+            action: Action::Block,
+            score: 40,
+            findings: vec![
+                Finding::new(
+                    DetectorId("sql"),
+                    "sql-1",
+                    AttackCategory::SqlInjection,
+                )
+                .score(40)
+                .action(Action::Block),
+                Finding::new(DetectorId("xss"), "xss-1", AttackCategory::Xss)
+                    .score(25)
+                    .action(Action::Log),
+            ],
+            degraded: Vec::new(),
+        };
+        let mapped = verdict.to_waf_verdict();
+        assert_eq!(mapped.action, WafAction::Block);
+        assert_eq!(mapped.score, 40);
+        assert_eq!(mapped.matched_rules, vec!["sql-1", "xss-1"]);
+        assert_eq!(mapped.breakdown.sqli_score, 40);
+        assert_eq!(mapped.breakdown.xss_score, 25);
+        assert_eq!(mapped.breakdown.total, 40);
+        assert_eq!(mapped.breakdown.overall_class, ScoreClass::Attack);
+        assert!(mapped.details.contains("varman-pipeline"));
+
+        // Log/Monitor hints map to Monitor; the score saturates at u8::MAX.
+        verdict.action = Action::Monitor;
+        verdict.score = 1000;
+        let mapped = verdict.to_waf_verdict();
+        assert_eq!(mapped.action, WafAction::Monitor);
+        assert_eq!(mapped.score, u8::MAX);
+        assert_eq!(mapped.breakdown.overall_class, ScoreClass::LikelyAttack);
+
+        let clean = PipelineVerdict::pass().to_waf_verdict();
+        assert_eq!(clean.action, WafAction::Pass);
+        assert_eq!(clean.breakdown.overall_class, ScoreClass::Clean);
+        assert!(clean.matched_rules.is_empty());
+        assert!(clean.details.is_empty());
     }
 }

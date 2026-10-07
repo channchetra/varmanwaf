@@ -1,19 +1,21 @@
 //! Shadow execution of the Varman detection pipeline next to the legacy
-//! engine (Phase 2 wiring).
+//! engine (Phase 2 wiring), and the engine switch.
 //!
-//! With `VARMAN_WAF_SHADOW=1` set, every inspected request is canonicalized
-//! and run through the Varman pipeline; the result is compared against the
-//! legacy verdict and recorded. **Enforcement never changes** — the legacy
-//! verdict stays authoritative until corpus evidence says otherwise
-//! (mandate §34). With the flag unset (default) the only cost is one cached
-//! boolean read.
+//! Three modes, selected with `VARMAN_WAF_ENGINE` (`legacy` default):
+//! * `legacy` — the pipeline does not run; the legacy engine is authoritative.
+//! * `shadow` — every inspected request is canonicalized and run through the
+//!   Varman pipeline; the result is compared against the legacy verdict and
+//!   recorded. **Enforcement never changes.** Also enabled by the older
+//!   `VARMAN_WAF_SHADOW=1`.
+//! * `varman` — the pipeline's verdict is enforced: it escalates with the
+//!   legacy verdict (the stronger action wins), so dashboard-configured
+//!   custom rules stay effective and the new engine can only add protection.
 //!
 //! Comparison classes (see `varman_waf::pipeline::shadow`):
 //! - `Agree` — same effective strength;
 //! - `PipelineStricter` — the pipeline sees more than the legacy engine;
 //! - `PipelineWeaker` — the pipeline would allow something the legacy engine
-//!   refuses. Expected during construction; the counter exists to drive it
-//!   to zero before any switch.
+//!   refuses; counted in every mode as the switch's evidence trail.
 
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,10 +32,65 @@ use varman_waf::pipeline::semantic::{
     SstiDetector, XxeDetector,
 };
 use varman_waf::pipeline::shadow::{self, Agreement, ShadowComparison};
-use varman_waf::{RequestData, WafVerdict};
+use varman_waf::{RequestData, WafAction, WafVerdict};
 
 /// Environment variable that turns shadow execution on.
 pub const SHADOW_ENV: &str = "VARMAN_WAF_SHADOW";
+
+/// Environment variable that selects how the pipeline participates in
+/// enforcement (`legacy` | `shadow` | `varman`).
+pub const ENGINE_ENV: &str = "VARMAN_WAF_ENGINE";
+
+/// How the Varman pipeline participates in request handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineMode {
+    /// Legacy engine only; the pipeline does not run (default).
+    Legacy,
+    /// Legacy engine enforces; the pipeline runs and is compared.
+    Shadow,
+    /// The pipeline's verdict is enforced, escalated with the legacy verdict.
+    Varman,
+}
+
+/// Parse the engine mode from the environment values.
+///
+/// `VARMAN_WAF_ENGINE` wins when set; otherwise `VARMAN_WAF_SHADOW=1`
+/// upgrades the default to [`EngineMode::Shadow`]. Unknown values are an
+/// error (the caller logs and falls back to the safe default).
+fn parse_engine_mode(
+    engine: Option<&str>,
+    shadow: bool,
+) -> Result<EngineMode, String> {
+    let Some(value) = engine else {
+        return Ok(if shadow {
+            EngineMode::Shadow
+        } else {
+            EngineMode::Legacy
+        });
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "legacy" | "base" => Ok(EngineMode::Legacy),
+        "shadow" | "observe" => Ok(EngineMode::Shadow),
+        "varman" | "enforce" => Ok(EngineMode::Varman),
+        other => Err(format!(
+            "unsupported {ENGINE_ENV} value {other:?} (expected legacy|shadow|varman)"
+        )),
+    }
+}
+
+fn engine_mode_from_env() -> EngineMode {
+    let shadow = shadow_enabled_from_env();
+    match parse_engine_mode(std::env::var(ENGINE_ENV).ok().as_deref(), shadow) {
+        Ok(mode) => mode,
+        Err(error) => {
+            tracing::error!(
+                %error,
+                "invalid WAF engine mode; falling back to legacy enforcement"
+            );
+            EngineMode::Legacy
+        },
+    }
+}
 
 /// Counters for the shadow comparison. Atomic so the request path never
 /// takes a lock; a read for metrics/telemetry is lock-free too.
@@ -67,13 +124,13 @@ pub struct ShadowStats {
 }
 
 struct ShadowRuntime {
-    enabled: bool,
+    mode: EngineMode,
     pipeline: SecurityPipeline,
     counters: ShadowCounters,
 }
 
 static SHADOW: LazyLock<ShadowRuntime> = LazyLock::new(|| ShadowRuntime {
-    enabled: shadow_enabled_from_env(),
+    mode: engine_mode_from_env(),
     // Lane ordering is detector list order: cheapest protocol checks first,
     // then signatures, then raw-path evidence, then semantic analysis.
     pipeline: SecurityPipeline::new(vec![
@@ -101,9 +158,14 @@ fn shadow_enabled_from_env() -> bool {
         .unwrap_or(false)
 }
 
-/// `true` when shadow execution is enabled for this process.
+/// `true` when the pipeline runs (shadow or enforce mode).
 pub fn is_enabled() -> bool {
-    SHADOW.enabled
+    SHADOW.mode != EngineMode::Legacy
+}
+
+/// The engine mode this process was started with.
+pub fn engine_mode() -> EngineMode {
+    SHADOW.mode
 }
 
 /// Current counter values.
@@ -117,22 +179,59 @@ pub fn stats() -> ShadowStats {
     }
 }
 
+/// Run the pipeline for one inspected request and return its verdict in the
+/// engine shape. Records the shadow comparison counters so telemetry stays
+/// valid in every mode. `None` when the mode is [`EngineMode::Legacy`].
+pub fn analyze(
+    request: &RequestData,
+    legacy: &WafVerdict,
+) -> Option<WafVerdict> {
+    if SHADOW.mode == EngineMode::Legacy {
+        return None;
+    }
+    Some(analyze_with(&SHADOW.pipeline, &SHADOW.counters, request, legacy).1)
+}
+
 /// Run the shadow comparison for one inspected request.
 ///
-/// No-op unless `VARMAN_WAF_SHADOW` enabled the runtime; never affects the
-/// returned verdict or any response.
+/// No-op unless the pipeline runs; never affects the returned verdict or any
+/// response.
 pub fn observe(request: &RequestData, legacy: &WafVerdict) {
-    if SHADOW.enabled {
-        observe_with(&SHADOW.pipeline, &SHADOW.counters, request, legacy);
+    let _ = analyze(request, legacy);
+}
+
+/// The enforcing verdict in [`EngineMode::Varman`] mode: the stronger of the
+/// legacy and pipeline actions.
+///
+/// The pipeline can only escalate, never weaken — ties keep the legacy
+/// verdict (richer custom-rule attribution), so dashboard-configured rules
+/// stay effective alongside the new engine.
+pub fn effective_verdict(
+    legacy: &WafVerdict,
+    pipeline: &WafVerdict,
+) -> WafVerdict {
+    if action_rank(pipeline.action) > action_rank(legacy.action) {
+        pipeline.clone()
+    } else {
+        legacy.clone()
     }
 }
 
-fn observe_with(
+const fn action_rank(action: WafAction) -> u8 {
+    match action {
+        WafAction::Pass => 0,
+        WafAction::Monitor => 1,
+        WafAction::Challenge => 2,
+        WafAction::Block => 3,
+    }
+}
+
+fn analyze_with(
     pipeline: &SecurityPipeline,
     counters: &ShadowCounters,
     request: &RequestData,
     legacy: &WafVerdict,
-) -> ShadowComparison {
+) -> (ShadowComparison, WafVerdict) {
     let canonical = canonicalize(request);
     let verdict = pipeline.inspect(&canonical);
     let comparison = shadow::compare(legacy, &verdict);
@@ -147,7 +246,7 @@ fn observe_with(
         path = %request.path,
         "[shadow] varman pipeline verdict"
     );
-    comparison
+    (comparison, verdict.to_waf_verdict())
 }
 
 /// Build the canonical request from the data the legacy engine received.
@@ -186,7 +285,7 @@ fn canonicalize(
 
 #[cfg(test)]
 mod tests {
-    use super::{ShadowCounters, canonicalize, observe_with};
+    use super::{ShadowCounters, analyze_with, canonicalize};
     use varman_waf::pipeline::SecurityPipeline;
     use varman_waf::pipeline::fast::RawPathTraversalDetector;
     use varman_waf::pipeline::shadow::Agreement;
@@ -218,6 +317,55 @@ mod tests {
     }
 
     #[test]
+    fn engine_mode_parsing() {
+        use super::{EngineMode, parse_engine_mode};
+
+        assert_eq!(parse_engine_mode(None, false).unwrap(), EngineMode::Legacy);
+        assert_eq!(parse_engine_mode(None, true).unwrap(), EngineMode::Shadow);
+        assert_eq!(
+            parse_engine_mode(Some("varman"), false).unwrap(),
+            EngineMode::Varman
+        );
+        // Explicit engine selection wins over the shadow flag.
+        assert_eq!(
+            parse_engine_mode(Some("legacy"), true).unwrap(),
+            EngineMode::Legacy
+        );
+        assert_eq!(
+            parse_engine_mode(Some(" SHADOW "), false).unwrap(),
+            EngineMode::Shadow
+        );
+        assert!(parse_engine_mode(Some("bogus"), false).is_err());
+    }
+
+    #[test]
+    fn effective_verdict_escalates_only() {
+        use super::effective_verdict;
+
+        let pass = verdict(WafAction::Pass);
+        let block = verdict(WafAction::Block);
+        let monitor = verdict(WafAction::Monitor);
+
+        // Pipeline stricter: the pipeline verdict wins.
+        assert_eq!(effective_verdict(&pass, &block).action, WafAction::Block);
+        // Legacy stricter: the legacy verdict wins (no downgrade).
+        assert_eq!(
+            effective_verdict(&block, &monitor).action,
+            WafAction::Block
+        );
+        // Tie: the legacy verdict stays (custom-rule attribution).
+        let legacy = WafVerdict {
+            details: "legacy".into(),
+            ..verdict(WafAction::Block)
+        };
+        let pipeline = WafVerdict {
+            details: "pipeline".into(),
+            ..verdict(WafAction::Block)
+        };
+        assert_eq!(effective_verdict(&legacy, &pipeline).details, "legacy");
+    }
+
+    #[test]
     fn canonicalize_maps_request_data_onto_the_model() {
         let req = request("/a/../b", "id=1+OR+1%3D1");
         let canonical = canonicalize(&req);
@@ -234,12 +382,13 @@ mod tests {
     #[test]
     fn clean_request_agrees_with_a_clean_legacy_verdict() {
         let counters = ShadowCounters::default();
-        let comparison = observe_with(
+        let comparison = analyze_with(
             &pipeline(),
             &counters,
             &request("/a/b", ""),
             &verdict(WafAction::Pass),
-        );
+        )
+        .0;
         assert_eq!(comparison.agreement, Agreement::Agree);
         assert_eq!(
             counters.checked.load(std::sync::atomic::Ordering::Relaxed),
@@ -254,12 +403,13 @@ mod tests {
     #[test]
     fn legacy_block_with_shadow_log_is_classified_weaker() {
         let counters = ShadowCounters::default();
-        let comparison = observe_with(
+        let comparison = analyze_with(
             &pipeline(),
             &counters,
             &request("/%2e%2e/etc/passwd", ""),
             &verdict(WafAction::Block),
-        );
+        )
+        .0;
         assert_eq!(comparison.agreement, Agreement::PipelineWeaker);
         assert!(comparison.is_downgrade());
         assert_eq!(
@@ -276,13 +426,15 @@ mod tests {
         // about the request, the comparison is a fact about the pair.
         let req = request("/a/../b", "");
         let against_pass =
-            observe_with(&pipeline, &counters, &req, &verdict(WafAction::Pass));
-        let against_monitor = observe_with(
+            analyze_with(&pipeline, &counters, &req, &verdict(WafAction::Pass))
+                .0;
+        let against_monitor = analyze_with(
             &pipeline,
             &counters,
             &req,
             &verdict(WafAction::Monitor),
-        );
+        )
+        .0;
         assert_eq!(against_pass.agreement, Agreement::PipelineStricter);
         assert_eq!(against_monitor.agreement, Agreement::PipelineWeaker);
         assert_eq!(

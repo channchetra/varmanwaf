@@ -9,7 +9,7 @@
 |---|---|---|
 | 0 | Repository understanding | ✅ Complete (2026-10-06) |
 | 1 | VarmanWAF bootstrap (rename, keep behaviour) | 🚧 In progress |
-| 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | 🚧 In progress — types, pipeline and shadow wiring landed and verified E2E; snapshot/benchmarks pending |
+| 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | 🚧 In progress — types, pipeline, shadow wiring and the `legacy|shadow|varman` engine switch landed and verified E2E; snapshot/benchmarks pending |
 | 3 | Canonicalization (stable normalization + bypass tests) | 🚧 In progress — canonicalizer core landed (authority, profiles, idempotence); plugin wiring pending |
 | 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | 🚧 In progress — signature scanner + corpora landed and verified live in shadow mode; protocol checks pending |
 | 5 | Streaming body engine (bounded windows, limits) | ⏳ Planned |
@@ -113,6 +113,16 @@ a working VarmanWAF with unchanged behaviour.
       tracking. Wiring per-site compiled pipelines from the agent rule cache
       is the next step, together with the desired/active/last-good version
       handshake.
+- [x] **Engine switch (shadow→enforce)**: `VARMAN_WAF_ENGINE=legacy|shadow|varman`
+      (`VARMAN_WAF_SHADOW=1` still selects shadow; unknown values error-log and
+      fall back to legacy). In `varman` mode the pipeline verdict escalates
+      with the legacy verdict — the stronger action wins, ties keep the legacy
+      verdict — so dashboard-configured custom rules stay effective and the
+      new engine can only add protection. `PipelineVerdict::to_waf_verdict`
+      maps the pipeline outcome onto the proxy verdict shape (action,
+      saturating score, per-category breakdown, matched rule ids). Verified
+      end-to-end: SQLi/XSS/traversal probes blocked in `varman` mode while
+      benign traffic passes.
 - [ ] Benchmarks: pipeline overhead vs legacy on the request corpus.
 
 Exit: both engines run side by side; shadow results measurable; no behaviour

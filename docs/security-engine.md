@@ -12,15 +12,18 @@
 | Legacy engine (`varman-waf/src/{engine,normalize,rules,score}`) | Imported baseline; signature + expression rules + anomaly scoring | **Yes** |
 | Canonical model (`varman-waf/src/canonical`) | Canonicalizer landed (Phase 3 first slice): bounded decode layers, path collapse, query/cookie/header policy + bypass tests | No |
 | Pipeline (`varman-waf/src/pipeline`) | Skeleton landed: detector contract, findings, monotonic actions, bounded context, shadow comparison; first fast detector (raw-path traversal evidence) | No |
-| Shadow wiring (`pingap-plugin/src/waf_shadow.rs`) | Landed: opt-in with `VARMAN_WAF_SHADOW=1`; compares pipeline vs legacy per request, records counters, never changes enforcement | Observational only |
+| Shadow wiring + engine switch (`pingap-plugin/src/waf_shadow.rs`) | Landed: `VARMAN_WAF_ENGINE=legacy|shadow|varman`; shadow compares pipeline vs legacy per request and records counters; `varman` enforces the pipeline verdict escalated with the legacy verdict | Yes (`varman` mode) |
 | Lane 1 fast detectors | Started: protocol checks + Aho-Corasick signature scanner (starter table, tiered) + raw-path traversal evidence; corpora in `varman-waf/tests/corpus` | No (shadow only) |
 | Streaming body engine | Pending (Phase 5) | No |
 | Lane 2 semantic detectors | SQL, HTML/XSS, shell/command, SSRF, NoSQL, SSTI, XXE, deserialization, prototype-pollution, LDAP/XPath, GraphQL structural detectors; covered by the corpora | No (shadow only) |
 | SecLang / OWASP CRS (Lane 3) | Pending (Phase 7); tracked in `docs/compatibility.md` | No |
 
-The pipeline is deliberately **not wired into the proxy**: `pingap-plugin/src/waf.rs`
-still calls the legacy `WafEngine::inspect`. Phase 2's exit criterion is shadow
-comparison evidence, not enforcement.
+The pipeline is wired into the proxy through `pingap-plugin/src/waf_shadow.rs`.
+The default mode is still the legacy engine; `VARMAN_WAF_ENGINE=shadow` compares
+both engines per request, and `VARMAN_WAF_ENGINE=varman` enforces the pipeline
+verdict **escalated with** the legacy verdict (the stronger action wins), so
+dashboard-configured custom rules stay effective and the new engine can only
+add protection. The switch's evidence trail is the comparison counters.
 
 ## 2. Target architecture (mandate §6)
 
@@ -172,18 +175,22 @@ During the transition both engines can process the same request:
 
 ```text
 pingap-plugin/src/waf.rs
-  ├─ legacy WafEngine::inspect  → enforced verdict (unchanged)
-  └─ waf_shadow::observe        → runs only when VARMAN_WAF_SHADOW=1
+  ├─ legacy WafEngine::inspect  → legacy verdict
+  └─ waf_shadow::analyze        → runs in shadow/varman modes
        ├─ Canonicalizer          (the one decoding policy)
        ├─ SecurityPipeline       (fast lane first; detectors appended over time)
-       └─ shadow::compare(legacy, pipeline)
-            → Agree / PipelineStricter / PipelineWeaker counters
+       ├─ shadow::compare(legacy, pipeline)
+       │    → Agree / PipelineStricter / PipelineWeaker counters
+       └─ effective_verdict(legacy, pipeline)   [varman mode only]
+            → the stronger action wins; ties keep the legacy verdict
 ```
 
-`VARMAN_WAF_SHADOW=1` (or `=true`) enables shadow execution; unset means the
-only cost is one cached boolean read. `waf_shadow::stats()` exposes
+`VARMAN_WAF_ENGINE` selects the mode: `legacy` (default), `shadow`
+(`VARMAN_WAF_SHADOW=1` also works) and `varman`. Unknown values are logged at
+`error` and fall back to `legacy`. `waf_shadow::stats()` exposes
 checked/agree/stricter/weaker counters for metrics, and every comparison is
-logged at `debug` with the canonical path. No response is ever influenced.
+logged at `debug` with the canonical path. In `shadow` mode no response is ever
+influenced; in `varman` mode the pipeline can only escalate, never weaken.
 
 Replacement requires corpus evidence: zero `PipelineWeaker` results on the
 attack corpus and zero new blocks on the benign corpus, with performance

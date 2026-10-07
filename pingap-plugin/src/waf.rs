@@ -2769,11 +2769,19 @@ impl Plugin for WafPlugin {
             EngineChoice::Disabled => unreachable!("handled above"),
         };
 
-        // ── Shadow (Phase 2): run the Varman pipeline beside the legacy
-        // engine and record how the two verdicts compare. The legacy verdict
-        // below stays authoritative; observe() is a no-op unless
-        // VARMAN_WAF_SHADOW=1. ──
-        crate::waf_shadow::observe(&request_data, &verdict);
+        // ── Varman pipeline: shadow comparison, or enforcement when the
+        // engine mode is `varman`. The pipeline can only escalate the legacy
+        // action, so dashboard-configured custom rules stay effective. ──
+        let verdict = match crate::waf_shadow::analyze(&request_data, &verdict)
+        {
+            Some(pipeline)
+                if crate::waf_shadow::engine_mode()
+                    == crate::waf_shadow::EngineMode::Varman =>
+            {
+                crate::waf_shadow::effective_verdict(&verdict, &pipeline)
+            },
+            _ => verdict,
+        };
 
         // Custom rule ids carry no name of their own; the site context maps
         // the one that fired back to its configured name.
