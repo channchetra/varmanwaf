@@ -83,7 +83,12 @@ fn crs_root() -> Option<PathBuf> {
         Some(dir) => vec![PathBuf::from(dir)],
         None => {
             let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-            vec![manifest.join("../../references/coreruleset")]
+            vec![
+                // Container-local clone first: the host copy may be locked
+                // by Windows Defender (web-shells-php.data quarantine).
+                PathBuf::from("/opt/crs-conformance"),
+                manifest.join("../../references/coreruleset"),
+            ]
         },
     };
     candidates.into_iter().find(|root| {
@@ -202,6 +207,38 @@ fn fired_ids(
         .flat_map(|hit| hit.rule_ids)
         .flatten()
         .collect()
+}
+
+#[test]
+fn targeted_942210_fires() {
+    let Some(root) = crs_root() else {
+        return;
+    };
+    let engine = compile_full_set(&root.join("rules"));
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Host".to_string(),
+        serde_yaml::Value::String("localhost".to_string()),
+    );
+    headers.insert(
+        "Content-Type".to_string(),
+        serde_yaml::Value::String(
+            "application/x-www-form-urlencoded".to_string(),
+        ),
+    );
+    let input = Input {
+        method: Some("POST".to_string()),
+        uri: Some("/post".to_string()),
+        headers: Some(headers),
+        data: Some("var%3d%20@.%3d%20%28%20SELECT".to_string()),
+        encoded_request: None,
+    };
+    // 942210 is tagged `paranoia-level/2`.
+    let fired = fired_ids(&engine, &input, 2);
+    assert!(
+        fired.contains(&942210),
+        "942210 did not fire at PL2; got {fired:?}"
+    );
 }
 
 #[test]
@@ -376,7 +413,8 @@ fn crs_regression_corpus() {
                 *failed_by_expect.entry(expected_key).or_default() += 1;
                 let fired_sorted: Vec<u64> = fired.iter().copied().collect();
                 failed.push(format!(
-                    "{name} test {test_id}: expected={expected:?} contains={contains:?} forbidden={forbidden:?} fired={fired_sorted:?}"
+                    "{name} test {test_id}: method={:?} uri={:?} data={:?} expected={expected:?} contains={contains:?} forbidden={forbidden:?} fired={fired_sorted:?}",
+                    stage.input.method, stage.input.uri, stage.input.data
                 ));
             }
         }
@@ -385,7 +423,7 @@ fn crs_regression_corpus() {
     eprintln!("=== CRS behavioural regression (full set, in-process) ===");
     let mut histogram: Vec<(String, usize)> =
         failed_by_expect.into_iter().collect();
-    histogram.sort_by(|a, b| b.1.cmp(&a.1));
+    histogram.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     for (key, count) in histogram.iter().take(15) {
         eprintln!("  fails {count:5}  {key}");
     }
@@ -400,7 +438,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 3317,
-        "CRS regression regressed: {passed} passed (baseline 3317)"
+        passed >= 3453,
+        "CRS regression regressed: {passed} passed (baseline 3453)"
     );
 }

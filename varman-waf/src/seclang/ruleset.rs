@@ -699,7 +699,15 @@ fn evaluate_group(
     txn: &mut SecLangTransaction,
 ) -> Option<Vec<ResolvedValue>> {
     let mut all = Vec::new();
-    for rule in &group.rules {
+    let mut previous: Vec<ResolvedValue> = Vec::new();
+    for (index, rule) in group.rules.iter().enumerate() {
+        // Chain semantics: each member sees the previous member's matches
+        // through `MATCHED_VARS`.
+        txn.set_matched_vars(if index == 0 {
+            Vec::new()
+        } else {
+            previous.clone()
+        });
         let hits = rule.matches(txn);
         if hits.is_empty() {
             return None;
@@ -709,6 +717,16 @@ fn evaluate_group(
                 rule.captures_into(&first.value, txn);
             }
         }
+        // The next chain member sees transformed values (ModSecurity binds
+        // the post-transform match into `MATCHED_VARS`).
+        previous = hits
+            .iter()
+            .map(|hit| ResolvedValue {
+                name: hit.name.clone(),
+                value: rule.transformed(&hit.value),
+                invalid_utf8: hit.invalid_utf8,
+            })
+            .collect();
         all.extend(hits);
     }
     Some(all)
@@ -1223,6 +1241,31 @@ mod tests {
         )
         .expect_err("must fail");
         assert!(error.reason.contains("initcol"), "{error}");
+    }
+
+    #[test]
+    fn chains_bind_matched_vars_between_members() {
+        // Mirrors CRS 944120's shape: the first member matches the payload,
+        // the second member matches the previous member's `MATCHED_VARS`.
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS \"@rx clonetransformer\" \"id:1,chain\"\n\
+             SecRule MATCHED_VARS \"@rx processbuilder\" \"id:2,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=evilprocessbuilder_clonetransformer"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].rule_ids, vec![Some(1), Some(2)]);
+
+        // Without the second keyword in the matched value the chain fails.
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=justclonetransformer"),
+            );
+        assert!(ruleset.evaluate(&mut txn).is_empty());
     }
 
     #[test]

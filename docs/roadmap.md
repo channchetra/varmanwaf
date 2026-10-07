@@ -326,9 +326,14 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [ ] Drive the regression histogram to zero: biggest classes
-      `944120`, `942210`, `942410`, `942151`, `932236`, `942380` — inspect
-      each rule's targets/transforms against engine behaviour.
+- [x] Ninth slice: `MATCHED_VARS` chain binding (transformed values, CRS
+      944120-style chains), `urlDecodeUni` with `%uXXXX`/full-width handling,
+      container-local CRS fallback for the Defender-locked file. Regression:
+      **3453/5155**.
+- [ ] Next: `ctl:requestBodyProcessor=JSON` (currently accepted-but-ignored —
+      must become a real JSON body processor feeding ARGS, or error
+      observably) → scanner-detection class (913100) → remaining SQLi
+      detector-quality classes (942xxx).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

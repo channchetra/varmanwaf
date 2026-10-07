@@ -16,7 +16,12 @@ fn crs_rules_dir() -> Option<PathBuf> {
         Some(dir) => vec![PathBuf::from(dir)],
         None => {
             let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-            vec![manifest.join("../../references/coreruleset")]
+            vec![
+                // Container-local clone first: the host copy may be locked
+                // by Windows Defender (web-shells-php.data quarantine).
+                PathBuf::from("/opt/crs-conformance"),
+                manifest.join("../../references/coreruleset"),
+            ]
         },
     };
     candidates.into_iter().find_map(|root| {

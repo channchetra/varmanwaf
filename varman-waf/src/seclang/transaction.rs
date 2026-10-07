@@ -66,6 +66,8 @@ pub struct SecLangTransaction {
     /// Variable that most recently matched, for `MATCHED_VAR` /
     /// `MATCHED_VAR_NAME`.
     matched: Option<ResolvedValue>,
+    /// Values matched by the previous chain member, for `MATCHED_VARS`.
+    matched_vars: Vec<ResolvedValue>,
 }
 
 /// Decode one form-urlencoded pair while keeping its wire-byte validity.
@@ -152,6 +154,7 @@ impl SecLangTransaction {
             collections: BTreeMap::new(),
             http_version: request.http_version().to_string(),
             matched: None,
+            matched_vars: Vec::new(),
         }
     }
 
@@ -169,6 +172,12 @@ impl SecLangTransaction {
     /// `MATCHED_VAR_NAME` macros.
     pub(crate) fn set_matched(&mut self, matched: Option<ResolvedValue>) {
         self.matched = matched;
+    }
+
+    /// Bind the values matched by the previous chain member, for the
+    /// `MATCHED_VARS` collection (ModSecurity chain semantics).
+    pub(crate) fn set_matched_vars(&mut self, vars: Vec<ResolvedValue>) {
+        self.matched_vars = vars;
     }
 
     /// Register a collection instance created by `initcol`.
@@ -319,6 +328,7 @@ impl SecLangTransaction {
                 value: self.remote_addr.clone(),
                 invalid_utf8: false,
             }]),
+            ("MATCHED_VARS", _) => cap(self.matched_vars.clone()),
             ("TX", Some(selector)) => cap(self
                 .tx
                 .get(&selector.to_ascii_lowercase())
@@ -355,6 +365,7 @@ pub enum Transform {
     CompressWhitespace,
     RemoveNulls,
     UrlDecode,
+    UrlDecodeUni,
     HtmlEntityDecode,
     Base64Decode,
     RemoveWhitespace,
@@ -379,10 +390,12 @@ impl Transform {
             "trim" => Some(Self::Trim),
             "compresswhitespace" => Some(Self::CompressWhitespace),
             "removenulls" => Some(Self::RemoveNulls),
-            // `urlDecodeUni` decodes one percent layer here; the canonical
+            // `urlDecode` decodes one percent layer here; the canonical
             // request already applied the shared bounded decoding, and a
             // second layer is intentionally left to the rule author.
-            "urldecode" | "urldecodeuni" => Some(Self::UrlDecode),
+            "urldecode" => Some(Self::UrlDecode),
+            // `urlDecodeUni` also decodes IIS `%uXXXX` escapes and `+`.
+            "urldecodeuni" => Some(Self::UrlDecodeUni),
             "htmlentitydecode" => Some(Self::HtmlEntityDecode),
             "base64decode" => Some(Self::Base64Decode),
             "removewhitespace" => Some(Self::RemoveWhitespace),
@@ -411,6 +424,7 @@ impl Transform {
             },
             Self::RemoveNulls => value.replace('\0', ""),
             Self::UrlDecode => crate::normalize::url::multi_decode(value, 1),
+            Self::UrlDecodeUni => url_decode_uni(value),
             Self::HtmlEntityDecode => {
                 crate::normalize::html::decode_entities(value)
             },
@@ -559,6 +573,64 @@ fn js_decode(value: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).to_string()
+}
+
+/// ModSecurity `urlDecodeUni`: single-pass decode of `%XX`, IIS-style
+/// `%uXXXX` (lower byte with a full-width ASCII adjustment), and `+` as
+/// space. Invalid or truncated escapes stay literal.
+fn url_decode_uni(value: &str) -> String {
+    let input = value.as_bytes();
+    let len = input.len();
+    let mut out: Vec<u8> = Vec::with_capacity(len);
+    let mut i = 0;
+    while i < len {
+        if input[i] != b'%' {
+            if input[i] == b'+' {
+                out.push(b' ');
+            } else {
+                out.push(input[i]);
+            }
+            i += 1;
+            continue;
+        }
+        if i + 1 < len && (input[i + 1] == b'u' || input[i + 1] == b'U') {
+            if i + 5 < len
+                && input[i + 2].is_ascii_hexdigit()
+                && input[i + 3].is_ascii_hexdigit()
+                && input[i + 4].is_ascii_hexdigit()
+                && input[i + 5].is_ascii_hexdigit()
+            {
+                let mut byte = hex_byte(input[i + 4], input[i + 5]);
+                // Full width ASCII (ff01 - ff5e) needs 0x20 added.
+                if byte > 0x00
+                    && byte < 0x5f
+                    && (input[i + 2] == b'f' || input[i + 2] == b'F')
+                    && (input[i + 3] == b'f' || input[i + 3] == b'F')
+                {
+                    byte += 0x20;
+                }
+                out.push(byte);
+                i += 6;
+            } else {
+                // Invalid or truncated `%u`: keep it literal.
+                out.push(input[i]);
+                out.push(input[i + 1]);
+                i += 2;
+            }
+        } else if i + 2 < len
+            && input[i + 1].is_ascii_hexdigit()
+            && input[i + 2].is_ascii_hexdigit()
+        {
+            out.push(hex_byte(input[i + 1], input[i + 2]));
+            i += 3;
+        } else {
+            out.push(input[i]);
+            i += 1;
+        }
+    }
+    // Latin-1 mapping keeps high bytes scannable (mirrors the bounded
+    // decoder used by the canonical request).
+    out.iter().map(|&byte| byte as char).collect()
 }
 
 fn hex_byte(high: u8, low: u8) -> u8 {
@@ -1360,6 +1432,12 @@ impl CompiledSecRule {
         current
     }
 
+    /// Apply this rule's transforms to a value (used to bind `MATCHED_VARS`
+    /// for the next chain member, which sees transformed values).
+    pub(crate) fn transformed(&self, value: &str) -> String {
+        self.apply_transforms(value)
+    }
+
     /// `true` when the rule's actions include `capture`.
     pub(crate) fn has_capture(&self) -> bool {
         self.line
@@ -1749,6 +1827,20 @@ mod tests {
         assert_eq!(css.apply("\\z"), "z");
         assert_eq!(css.apply("\\"), "");
         assert_eq!(css.apply("\\\n"), "");
+    }
+
+    #[test]
+    fn url_decode_uni_transform() {
+        let uni = Transform::parse("urlDecodeUni").expect("parse");
+        assert_eq!(uni.apply("%u0041"), "A");
+        // Full-width ASCII (ff01-ff5e) shifts down by 0x20.
+        assert_eq!(uni.apply("%uFF41"), "a");
+        assert_eq!(uni.apply("%41"), "A");
+        assert_eq!(uni.apply("a+b"), "a b");
+        // Invalid or truncated escapes stay literal.
+        assert_eq!(uni.apply("%uZZZZ"), "%uZZZZ");
+        assert_eq!(uni.apply("abc%"), "abc%");
+        assert_eq!(uni.apply("%zz"), "%zz");
     }
 
     #[test]
