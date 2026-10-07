@@ -785,6 +785,36 @@ export interface AgentListQuery extends PaginationQuery {
   search?: string
 }
 
+/** Query for `GET /agents/{id}/metrics` (bucketed edge-metric history). */
+export interface AgentMetricsQuery {
+  name: string
+  from?: string
+  to?: string
+  step?: number
+}
+
+export interface AgentMetricPoint {
+  t: string
+  avg: number
+  min: number
+  max: number
+  count: number
+}
+
+export interface AgentMetricSeries {
+  labels: Record<string, string> | null
+  metric_type: number
+  points: AgentMetricPoint[]
+}
+
+export interface AgentMetricsResponse {
+  name: string
+  from: string
+  to: string
+  step: number
+  series: AgentMetricSeries[]
+}
+
 /**
  * `models::host_samples::Model` — one point of the agent's 5-second host probe.
  *

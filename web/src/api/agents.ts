@@ -6,6 +6,8 @@ import type {
   AgentEnrollRequest,
   AgentEnrollResponse,
   AgentListQuery,
+  AgentMetricsQuery,
+  AgentMetricsResponse,
   AgentSamplesQuery,
   HostSample,
   Page,
@@ -35,10 +37,17 @@ export const agentsApi = {
       query: { page_size: 200, ...query },
     }),
 
+  /**
+   * Bucketed edge-metric history for one metric name, grouped by label set.
+   * Engine telemetry (`varman_waf_shadow_total`,
+   * `varman_waf_processor_calls_total`, …) ships through the same pipeline.
+   */
+  metrics: (id: string, query: AgentMetricsQuery) =>
+    apiClient.get<AgentMetricsResponse>(`/agents/${id}/metrics`, { query }),
+
   remove: (id: string) => apiClient.delete<void>(`/agents/${id}`),
 
-  /** Mints an agent key and returns the command that brings a node online. */
-  enroll: (data: AgentEnrollRequest = {}) =>
+  /** Mints an agent key and returns the command that brings a node online. */  enroll: (data: AgentEnrollRequest = {}) =>
     apiClient.post<AgentEnrollResponse>('/agents/enroll', data),
 
   /**

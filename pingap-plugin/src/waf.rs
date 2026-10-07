@@ -2798,11 +2798,14 @@ impl Plugin for WafPlugin {
             .as_ref()
             .map(|site| site.monitor_categories.as_slice())
             .unwrap_or_default();
+        // Engine telemetry sink: only meaningful when an agent reports it.
+        let metrics = agent.as_ref().map(|agent| agent.metrics.as_ref());
         let mut verdict = match crate::waf_shadow::analyze(
             &request_data,
             &verdict,
             engine,
             monitored,
+            metrics,
         ) {
             Some(pipeline)
                 if engine == crate::waf_shadow::EngineMode::Varman =>
@@ -2816,9 +2819,10 @@ impl Plugin for WafPlugin {
         // additive. The processor can only escalate the verdict; a failure
         // resolves through its configured policy. ──
         if crate::waf_processor::is_enabled() {
-            let findings = crate::waf_processor::evaluate(&request_data)
-                .await
-                .filter(|findings| !findings.is_empty());
+            let findings =
+                crate::waf_processor::evaluate(&request_data, metrics)
+                    .await
+                    .filter(|findings| !findings.is_empty());
             if let Some(findings) = findings {
                 let processor_verdict =
                     crate::waf_processor::to_waf_verdict(&findings);

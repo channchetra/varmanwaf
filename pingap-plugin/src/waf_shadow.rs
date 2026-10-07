@@ -20,6 +20,7 @@
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use varman_agent::heartbeat::{MetricsCollector, ShadowResult};
 use varman_waf::canonical::{Canonicalizer, ClientIdentity, RequestParts};
 use varman_waf::pipeline::SecurityPipeline;
 use varman_waf::pipeline::fast::{
@@ -203,27 +204,35 @@ pub fn resolve_mode(site: Option<&str>) -> EngineMode {
 /// engine shape. `monitored` is the site's monitor-only category list
 /// (`waf_settings.monitor_categories`); matching findings are downgraded
 /// before the verdict is compared and returned, so both engines agree on the
-/// site's policy. Records the shadow comparison counters so telemetry stays
-/// valid in every mode. `None` when the mode is [`EngineMode::Legacy`].
+/// site's policy. `metrics` receives the comparison class for the control
+/// plane's engine telemetry. Records the shadow comparison counters so
+/// telemetry stays valid in every mode. `None` when the mode is
+/// [`EngineMode::Legacy`].
 pub fn analyze(
     request: &RequestData,
     legacy: &WafVerdict,
     mode: EngineMode,
     monitored: &[String],
+    metrics: Option<&MetricsCollector>,
 ) -> Option<WafVerdict> {
     if mode == EngineMode::Legacy {
         return None;
     }
-    Some(
-        analyze_with(
-            &SHADOW.pipeline,
-            &SHADOW.counters,
-            request,
-            legacy,
-            monitored,
-        )
-        .1,
-    )
+    let (comparison, verdict) = analyze_with(
+        &SHADOW.pipeline,
+        &SHADOW.counters,
+        request,
+        legacy,
+        monitored,
+    );
+    if let Some(metrics) = metrics {
+        metrics.record_shadow(match comparison.agreement {
+            Agreement::Agree => ShadowResult::Agree,
+            Agreement::PipelineStricter => ShadowResult::Stricter,
+            Agreement::PipelineWeaker => ShadowResult::Weaker,
+        });
+    }
+    Some(verdict)
 }
 
 /// Run the shadow comparison for one inspected request.
@@ -231,7 +240,7 @@ pub fn analyze(
 /// No-op unless the pipeline runs; never affects the returned verdict or any
 /// response.
 pub fn observe(request: &RequestData, legacy: &WafVerdict) {
-    let _ = analyze(request, legacy, engine_mode(), &[]);
+    let _ = analyze(request, legacy, engine_mode(), &[], None);
 }
 
 /// The enforcing verdict in [`EngineMode::Varman`] mode: the stronger of the
@@ -500,6 +509,34 @@ mod tests {
             counters.checked.load(std::sync::atomic::Ordering::Relaxed),
             2
         );
+    }
+
+    #[test]
+    fn analyze_records_engine_telemetry() {
+        use varman_agent::heartbeat::MetricsCollector;
+
+        let metrics = MetricsCollector::new();
+        let result = super::analyze(
+            &request("/a/b", ""),
+            &verdict(WafAction::Pass),
+            super::EngineMode::Shadow,
+            &[],
+            Some(&metrics),
+        );
+        assert!(result.is_some());
+        assert_eq!(metrics.shadow_checked(), 1);
+        assert_eq!(metrics.shadow_agree(), 1);
+
+        // Legacy mode does not run the pipeline and records nothing.
+        let result = super::analyze(
+            &request("/a/b", ""),
+            &verdict(WafAction::Pass),
+            super::EngineMode::Legacy,
+            &[],
+            Some(&metrics),
+        );
+        assert!(result.is_none());
+        assert_eq!(metrics.shadow_checked(), 1);
     }
 
     #[test]

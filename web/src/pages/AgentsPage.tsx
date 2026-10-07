@@ -25,6 +25,7 @@ import { Table, type Column } from '@/components/ui/Table'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { AgentProbePanel } from '@/components/agents/AgentProbePanel'
+import { EngineTelemetryPanel } from '@/components/agents/EngineTelemetryPanel'
 import { SkeletonRows } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
@@ -580,6 +581,8 @@ export function AgentsPage() {
               <DetailRow label={t('pages.agents.configHash')} value={detail.config_hash} mono />
               <DetailRow label={t('pages.agents.apiKeyId')} value={detail.api_key_id} mono />
             </dl>
+
+            <EngineTelemetryPanel agentId={detail.id} />
 
             <div className="border-t border-line pt-4">
               <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">

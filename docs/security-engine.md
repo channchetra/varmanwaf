@@ -228,6 +228,10 @@ mode the pipeline can only escalate, never weaken. A site's monitor-only
 category list (`waf_settings.monitor_categories`) is applied to the pipeline
 verdict as well (`pipeline::policy::downgrade_monitored`), so a family the
 dashboard marks monitor-only records without blocking in either engine.
+Engine telemetry ships with the heartbeat: shadow-comparison classes
+(`varman_waf_shadow_total{agreement=…}`) and processor outcomes
+(`varman_waf_processor_calls_total{outcome=…}`) land in `agent_metrics` and
+render in the dashboard's agent detail (**Engine telemetry**).
 
 Replacement requires corpus evidence: zero `PipelineWeaker` results on the
 attack corpus and zero new blocks on the benign corpus, with performance

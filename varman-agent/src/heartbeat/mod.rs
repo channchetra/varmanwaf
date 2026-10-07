@@ -12,6 +12,29 @@ pub struct SystemMetrics {
     pub requests_total: u64,
 }
 
+/// Outcome class of one shadow comparison between the pipeline and the
+/// legacy engine (mirrors the plugin's `Agreement`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShadowResult {
+    /// Same effective strength.
+    Agree,
+    /// The pipeline is stricter than the legacy engine.
+    Stricter,
+    /// The pipeline is weaker — the alertable class.
+    Weaker,
+}
+
+/// Outcome class of one external-processor call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessorResult {
+    /// The processor answered.
+    Ok,
+    /// The call exceeded its timeout.
+    Timeout,
+    /// The call failed (connection, framing, invalid response).
+    Failed,
+}
+
 /// Collects system and application metrics for the agent heartbeat.
 ///
 /// Uses lock-free atomic counters for the hot path (request recording)
@@ -23,6 +46,20 @@ pub struct MetricsCollector {
     blocked_requests_total: AtomicU64,
     /// Current active connections (can go negative briefly during cleanup)
     active_connections: AtomicI64,
+    /// Shadow comparisons run (pipeline vs legacy engine).
+    shadow_checked: AtomicU64,
+    /// Shadow comparisons that agreed.
+    shadow_agree: AtomicU64,
+    /// Shadow comparisons where the pipeline was stricter.
+    shadow_stricter: AtomicU64,
+    /// Shadow comparisons where the pipeline was weaker (alertable).
+    shadow_weaker: AtomicU64,
+    /// External-processor calls that answered.
+    processor_ok: AtomicU64,
+    /// External-processor calls that timed out.
+    processor_timeout: AtomicU64,
+    /// External-processor calls that failed.
+    processor_failed: AtomicU64,
     /// Timestamp of last RPS calculation
     last_rps_time: std::sync::Mutex<Instant>,
     /// Requests count at last RPS calculation
@@ -38,10 +75,82 @@ impl MetricsCollector {
             requests_total: AtomicU64::new(0),
             blocked_requests_total: AtomicU64::new(0),
             active_connections: AtomicI64::new(0),
+            shadow_checked: AtomicU64::new(0),
+            shadow_agree: AtomicU64::new(0),
+            shadow_stricter: AtomicU64::new(0),
+            shadow_weaker: AtomicU64::new(0),
+            processor_ok: AtomicU64::new(0),
+            processor_timeout: AtomicU64::new(0),
+            processor_failed: AtomicU64::new(0),
             last_rps_time: std::sync::Mutex::new(Instant::now()),
             last_rps_count: AtomicU64::new(0),
             cached_rps: AtomicU64::new(0),
         }
+    }
+
+    /// Record one shadow comparison result (pipeline vs legacy engine).
+    #[inline]
+    pub fn record_shadow(&self, result: ShadowResult) {
+        self.shadow_checked.fetch_add(1, Ordering::Relaxed);
+        let bucket = match result {
+            ShadowResult::Agree => &self.shadow_agree,
+            ShadowResult::Stricter => &self.shadow_stricter,
+            ShadowResult::Weaker => &self.shadow_weaker,
+        };
+        bucket.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record one external-processor call outcome.
+    #[inline]
+    pub fn record_processor(&self, result: ProcessorResult) {
+        let bucket = match result {
+            ProcessorResult::Ok => &self.processor_ok,
+            ProcessorResult::Timeout => &self.processor_timeout,
+            ProcessorResult::Failed => &self.processor_failed,
+        };
+        bucket.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Shadow comparisons run.
+    #[inline]
+    pub fn shadow_checked(&self) -> u64 {
+        self.shadow_checked.load(Ordering::Relaxed)
+    }
+
+    /// Shadow comparisons that agreed.
+    #[inline]
+    pub fn shadow_agree(&self) -> u64 {
+        self.shadow_agree.load(Ordering::Relaxed)
+    }
+
+    /// Shadow comparisons where the pipeline was stricter.
+    #[inline]
+    pub fn shadow_stricter(&self) -> u64 {
+        self.shadow_stricter.load(Ordering::Relaxed)
+    }
+
+    /// Shadow comparisons where the pipeline was weaker (alertable).
+    #[inline]
+    pub fn shadow_weaker(&self) -> u64 {
+        self.shadow_weaker.load(Ordering::Relaxed)
+    }
+
+    /// External-processor calls that answered.
+    #[inline]
+    pub fn processor_ok(&self) -> u64 {
+        self.processor_ok.load(Ordering::Relaxed)
+    }
+
+    /// External-processor calls that timed out.
+    #[inline]
+    pub fn processor_timeout(&self) -> u64 {
+        self.processor_timeout.load(Ordering::Relaxed)
+    }
+
+    /// External-processor calls that failed.
+    #[inline]
+    pub fn processor_failed(&self) -> u64 {
+        self.processor_failed.load(Ordering::Relaxed)
     }
 
     /// Record a request (called on every proxied request).
@@ -332,5 +441,26 @@ mod tests {
         assert_eq!(metrics.blocked_requests_total, 0);
         // CPU and memory may be 0 in test environments
         debug!("Collected metrics: {:?}", metrics);
+    }
+
+    #[test]
+    fn test_engine_telemetry_counters() {
+        let collector = MetricsCollector::new();
+        assert_eq!(collector.shadow_checked(), 0);
+
+        collector.record_shadow(ShadowResult::Agree);
+        collector.record_shadow(ShadowResult::Stricter);
+        collector.record_shadow(ShadowResult::Weaker);
+        assert_eq!(collector.shadow_checked(), 3);
+        assert_eq!(collector.shadow_agree(), 1);
+        assert_eq!(collector.shadow_stricter(), 1);
+        assert_eq!(collector.shadow_weaker(), 1);
+
+        collector.record_processor(ProcessorResult::Ok);
+        collector.record_processor(ProcessorResult::Timeout);
+        collector.record_processor(ProcessorResult::Failed);
+        assert_eq!(collector.processor_ok(), 1);
+        assert_eq!(collector.processor_timeout(), 1);
+        assert_eq!(collector.processor_failed(), 1);
     }
 }

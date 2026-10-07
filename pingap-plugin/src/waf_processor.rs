@@ -26,6 +26,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
+use varman_agent::heartbeat::{MetricsCollector, ProcessorResult};
 use varman_waf::processor::{
     FailurePolicy, ProcessorFinding, ProcessorOutcome, ProcessorRequest,
     ProcessorResponse,
@@ -146,11 +147,22 @@ pub fn name() -> &'static str {
 }
 
 /// Call the configured processor for one request and resolve its outcome
-/// under the failure policy. `None` when no processor is configured.
-pub async fn evaluate(request: &RequestData) -> Option<Vec<ProcessorFinding>> {
+/// under the failure policy. `metrics` receives the call outcome for the
+/// control plane's engine telemetry. `None` when no processor is configured.
+pub async fn evaluate(
+    request: &RequestData,
+    metrics: Option<&MetricsCollector>,
+) -> Option<Vec<ProcessorFinding>> {
     let endpoint = PROCESSOR.endpoint.as_ref()?;
     let summary = summary(request);
     let outcome = invoke(endpoint, &summary, PROCESSOR.timeout).await;
+    if let Some(metrics) = metrics {
+        metrics.record_processor(match &outcome {
+            ProcessorOutcome::Responded(_) => ProcessorResult::Ok,
+            ProcessorOutcome::TimedOut => ProcessorResult::Timeout,
+            ProcessorOutcome::Failed(_) => ProcessorResult::Failed,
+        });
+    }
     Some(outcome.findings(&PROCESSOR.name, PROCESSOR.policy))
 }
 

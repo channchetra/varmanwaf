@@ -502,6 +502,45 @@ impl ControlPlaneClient {
                 r#type: proto::MetricType::MetricGauge as i32,
             },
         ];
+        // Engine telemetry: shadow comparisons (pipeline vs legacy) and
+        // external-processor outcomes, so the switch's evidence trail and the
+        // processor's health are visible on the control plane.
+        metrics_list.push(proto::Metric {
+            name: "varman_waf_shadow_checked_total".to_string(),
+            labels: HashMap::new(),
+            value: metrics.shadow_checked() as f64,
+            r#type: proto::MetricType::MetricCounter as i32,
+        });
+        for (agreement, value) in [
+            ("agree", metrics.shadow_agree()),
+            ("stricter", metrics.shadow_stricter()),
+            ("weaker", metrics.shadow_weaker()),
+        ] {
+            metrics_list.push(proto::Metric {
+                name: "varman_waf_shadow_total".to_string(),
+                labels: HashMap::from([(
+                    "agreement".to_string(),
+                    agreement.to_string(),
+                )]),
+                value: value as f64,
+                r#type: proto::MetricType::MetricCounter as i32,
+            });
+        }
+        for (outcome, value) in [
+            ("ok", metrics.processor_ok()),
+            ("timeout", metrics.processor_timeout()),
+            ("failed", metrics.processor_failed()),
+        ] {
+            metrics_list.push(proto::Metric {
+                name: "varman_waf_processor_calls_total".to_string(),
+                labels: HashMap::from([(
+                    "outcome".to_string(),
+                    outcome.to_string(),
+                )]),
+                value: value as f64,
+                r#type: proto::MetricType::MetricCounter as i32,
+            });
+        }
         for status in self.rule_cache.cache_statuses() {
             metrics_list.push(proto::Metric {
                 name: "varman_site_cache_used_bytes".to_string(),
@@ -1240,13 +1279,43 @@ mod tests {
         assert!(names.contains(&"varman_requests_total"));
         assert!(names.contains(&"varman_blocked_requests_total"));
         assert!(names.contains(&"varman_active_connections"));
+        assert!(names.contains(&"varman_waf_shadow_checked_total"));
         for metric in &batch.metrics {
-            assert!(
-                metric.labels.is_empty(),
-                "global counters carry no labels"
-            );
             assert!(metric.value.is_finite());
         }
+        // Global counters carry no labels.
+        for name in [
+            "varman_requests_total",
+            "varman_blocked_requests_total",
+            "varman_active_connections",
+        ] {
+            let metric = batch
+                .metrics
+                .iter()
+                .find(|m| m.name == name)
+                .expect("global counter");
+            assert!(metric.labels.is_empty(), "{name} must be unlabelled");
+        }
+        // Engine telemetry carries its class label and starts at zero.
+        let shadow = batch
+            .metrics
+            .iter()
+            .find(|m| {
+                m.name == "varman_waf_shadow_total"
+                    && m.labels.get("agreement").map(String::as_str)
+                        == Some("weaker")
+            })
+            .expect("shadow series");
+        assert_eq!(shadow.value, 0.0);
+        let processor = batch
+            .metrics
+            .iter()
+            .find(|m| {
+                m.name == "varman_waf_processor_calls_total"
+                    && m.labels.get("outcome").map(String::as_str) == Some("ok")
+            })
+            .expect("processor series");
+        assert_eq!(processor.value, 0.0);
     }
 
     #[tokio::test]

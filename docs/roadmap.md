@@ -444,7 +444,7 @@ report against the existing engine.
       with the mock stopped, the same traffic returned 200 with
       `ext.processor.unavailable | monitor | 10` (the `monitor_only` failure
       policy); restarting the mock restored the block.
-- [ ] Capability negotiation, processor health/metrics, UDS client pooling.
+- [ ] Capability negotiation, UDS client pooling.
 - Exit: processors cannot destabilize the core; native engine remains the
   authority.
 

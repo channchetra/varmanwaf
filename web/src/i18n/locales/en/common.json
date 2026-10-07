@@ -1219,6 +1219,20 @@
       "copyFailed": "Failed to copy — please copy manually",
       "enrollNeverExpires": "The token has no expiry — whoever holds it can register a node. Delete the key to revoke it.",
       "done": "Done",
+      "engine": {
+        "title": "Engine telemetry",
+        "cadence": "Shipped with the heartbeat - 30s cadence",
+        "noData": "No engine telemetry yet - it arrives with the next metric shipment.",
+        "shadowChecked": "Comparisons",
+        "shadowAgree": "Agreed",
+        "shadowStricter": "Stricter",
+        "shadowWeaker": "Weaker",
+        "processorOk": "Processor ok",
+        "processorTimeout": "Processor timeout",
+        "processorFailed": "Processor failed",
+        "hint": "Shadow comparisons run the Varman pipeline beside the legacy engine; Weaker is the class that needs review.",
+        "processorHint": "External-processor call outcomes, resolved through the configured failure policy."
+      },
       "probe": {
         "title": "Host probe",
         "cadence": "Sampled every 5s · last 24h retained",
