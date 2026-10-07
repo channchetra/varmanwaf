@@ -393,6 +393,12 @@ report against the existing engine.
       (clients authenticate there), AWS access-key ids never flagged
       (presigned URLs). Attack corpus `sensitive_data_exposure.txt`
       (10 payloads, ratcheted to ≥ Monitor) + benign `dlp.txt` guards.
+      **Verified live**: credentialed connection string → 200 +
+      `sem.dlp.credentialed_url` Monitor event; PEM private key → 403 with
+      `sem.dlp.private_key` (`varman-pipeline: 1 finding(s), score 40`).
+      Corpus files use `${…}` placeholders expanded at read time so the
+      repository never contains token-shaped literals (GitHub push
+      protection).
 - [ ] API security/OpenAPI validation, ATO, threat intelligence,
       virtual patching, WebSocket inspection.
 - Exit: each feature has corpora + FP controls + monitoring; security events
