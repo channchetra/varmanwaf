@@ -200,8 +200,18 @@ impl SecLangTransaction {
         }
     }
 
-    /// Resolve one variable reference (`NAME` or `NAME:selector`).
+    /// Resolve one variable reference (`NAME` or `NAME:selector`). A leading
+    /// `&` requests the instance count (`&TX:foo` → `0`/`1`), mirroring
+    /// ModSecurity.
     pub fn resolve(&self, reference: &str) -> Vec<ResolvedValue> {
+        if let Some(inner) = reference.strip_prefix('&') {
+            let count = self.resolve(inner).len();
+            return vec![ResolvedValue {
+                name: format!("&{inner}"),
+                value: count.to_string(),
+                invalid_utf8: false,
+            }];
+        }
         let (name, selector) = match reference.split_once(':') {
             Some((name, selector)) => (name, Some(selector)),
             None => (reference, None),
@@ -1305,8 +1315,11 @@ impl CompiledSecRule {
                 value.is_empty() || expand_macros(list, txn).contains(value)
             },
             SecOperator::ValidateByteRange(ranges) => {
-                value.bytes().all(|byte| {
-                    ranges
+                // Matches when any byte falls OUTSIDE the ranges: the
+                // operator detects invalid characters (ModSecurity
+                // semantics), it does not validate conformity.
+                value.bytes().any(|byte| {
+                    !ranges
                         .iter()
                         .any(|(start, end)| byte >= *start && byte <= *end)
                 })
@@ -1812,10 +1825,33 @@ mod tests {
     #[test]
     fn validate_byte_range_operator() {
         let txn = SecLangTransaction::from_request(&request());
-        let ok = rule("SecRule ARGS:q \"@validateByteRange 97-122\" \"id:1\"");
-        assert_eq!(ok.matches(&txn).len(), 1);
-        let bad = rule("SecRule ARGS:q \"@validateByteRange 97-104\" \"id:2\"");
-        assert!(bad.matches(&txn).is_empty());
+        // `hello` is fully inside 97-122: no invalid characters, no match.
+        let inside =
+            rule("SecRule ARGS:q \"@validateByteRange 97-122\" \"id:1\"");
+        assert!(inside.matches(&txn).is_empty());
+        // `l` (108) falls outside 97-104: match.
+        let outside =
+            rule("SecRule ARGS:q \"@validateByteRange 97-104\" \"id:2\"");
+        assert_eq!(outside.matches(&txn).len(), 1);
+        // A NUL byte falls outside 1-255: match.
+        let mut txn = SecLangTransaction::from_request(&request());
+        txn.tx_set("raw", "a\u{0}b");
+        let nul = rule("SecRule TX:raw \"@validateByteRange 1-255\" \"id:3\"");
+        assert_eq!(nul.matches(&txn).len(), 1);
+    }
+
+    #[test]
+    fn ampersand_variables_count_instances() {
+        let mut txn = SecLangTransaction::from_request(&request());
+        let unset = rule("SecRule &TX:missing \"@eq 0\" \"id:1\"");
+        assert_eq!(unset.matches(&txn).len(), 1);
+        txn.tx_set("present", "x");
+        let set = rule("SecRule &TX:present \"@eq 1\" \"id:2\"");
+        assert_eq!(set.matches(&txn).len(), 1);
+        // Collections count instances too (`request()` carries two query
+        // parameters plus two form-urlencoded body parameters).
+        let args = rule("SecRule &ARGS \"@eq 4\" \"id:3\"");
+        assert_eq!(args.matches(&txn).len(), 1);
     }
 
     #[test]

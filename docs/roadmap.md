@@ -321,8 +321,14 @@ report against the existing engine.
       artifact). Environment note: Windows Defender locks
       `web-shells-php.data`; use `CRS_DIR=/opt/crs-conformance` (container
       clone) or add an exclusion.
-- [ ] Next: run CRS regression tests (go-ftw corpus) against the engine —
-      load conformance is proven, behavioural conformance is next.
+- [x] Eighth slice — **behavioural conformance harness** landed:
+      `varman-waf/tests/crs_regression.rs` runs the go-ftw corpus in-process,
+      at each expected rule's declared paranoia level. Score: **3317/5155
+      checked expectations pass**. Engine fixes found by it: `&VAR` instance
+      counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
+- [ ] Drive the regression histogram to zero: biggest classes
+      `944120`, `942210`, `942410`, `942151`, `932236`, `942380` — inspect
+      each rule's targets/transforms against engine behaviour.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
