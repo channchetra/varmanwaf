@@ -330,9 +330,17 @@ report against the existing engine.
       decoded once at parse with `+`→space; the transform handles the
       second layer) — resolves the 941350-vs-932200 contradiction.
       Regression: **5135/5155** (99.6%).
-- [ ] Remaining 20: `931131`, `941100`, `942100`, `942500` (2 each) plus
-      singles (`920390`, `920410`, `920430`, `930110`, `932190`, `934100`,
-      `934160`, `941101`, `942101`, `950100`, …).
+- [x] Thirtieth slice: **phase-ordered response evaluation** (phase 3
+      before 4/5 with per-phase `skipAfter`), **`ARGS_COMBINED_SIZE` /
+      `FILES_COMBINED_SIZE` / `FILES_SIZES`** variables, `t:cmdLine`
+      backslash→slash with `;` preserved, XSS guillemet normalization and
+      quote-prefixed event handlers, Apache semantics in the harness
+      (Transfer-Encoding unsets Content-Length, bodiless requests without
+      Content-Length/Transfer-Encoding, versionless request lines =
+      HTTP/0.9). Regression: **5144/5155** (99.8%).
+- [ ] Remaining 11: `931131`, `941100`, `942100`, `942500` (2 each) plus
+      `934100`, `934160`, `942101` — libinjection-quality vectors,
+      double-encoded `REQUEST_FILENAME`, and the documented `+` conflicts.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

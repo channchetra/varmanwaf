@@ -196,10 +196,19 @@ fn fired_ids(
 ) -> BTreeSet<u64> {
     let method = input.method.clone().unwrap_or_else(|| "GET".into());
     let uri = input.uri.clone().unwrap_or_else(|| "/".into());
-    let mut parts = RequestParts::new(method, "localhost", uri)
-        .with_http_version(
-            input.version.clone().unwrap_or_else(|| "HTTP/1.1".into()),
-        );
+    // A versionless request line is interpreted as HTTP/0.9 (920430 t5).
+    let version = match input.version.as_deref() {
+        None => "HTTP/1.1".to_string(),
+        Some("") => "HTTP/0.9".to_string(),
+        Some(version) => version.to_string(),
+    };
+    let mut parts =
+        RequestParts::new(method, "localhost", uri).with_http_version(version);
+    let has_te = input.headers.as_ref().is_some_and(|headers| {
+        headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("transfer-encoding"))
+    });
     if let Some(headers) = &input.headers {
         for (name, value) in headers {
             let text = scalar(value);
@@ -211,6 +220,11 @@ fn fired_ids(
                 || name.contains('\n')
             {
                 return BTreeSet::new();
+            }
+            // Apache unsets Content-Length when Transfer-Encoding is
+            // present (CRS 920181's expectation).
+            if has_te && name.eq_ignore_ascii_case("content-length") {
+                continue;
             }
             parts = parts.with_header(name.clone(), text);
         }
@@ -224,10 +238,15 @@ fn fired_ids(
                 .keys()
                 .any(|name| name.eq_ignore_ascii_case("content-length"))
         });
-        if autocomplete && !has_length {
+        if autocomplete && !has_length && !has_te {
             parts = parts.with_header("Content-Length", data.len().to_string());
         }
-        parts = parts.with_body(data.clone().into_bytes());
+        // HTTP/1.1 delivers a body only with Content-Length or
+        // Transfer-Encoding; without either the data is ignored
+        // (CRS 920640 test 5).
+        if has_length || has_te || autocomplete {
+            parts = parts.with_body(data.clone().into_bytes());
+        }
     }
     let request = Canonicalizer::default().canonicalize(parts);
     let mut txn = SecLangTransaction::from_request(&request);
@@ -311,6 +330,38 @@ fn extract_rule_statement(source: &str, id: u64) -> String {
 }
 
 #[test]
+fn targeted_950100_fires() {
+    let Some(root) = crs_root() else {
+        return;
+    };
+    let engine = compile_full_set(&root.join("rules"));
+    let request = Canonicalizer::default().canonicalize(RequestParts::new(
+        "POST",
+        "localhost",
+        "/reflect",
+    ));
+    let mut txn = SecLangTransaction::from_request(&request);
+    txn.set_response(
+        500,
+        vec![("Content-Encoding".to_string(), "gzip".to_string())],
+        b"body".to_vec(),
+    );
+    txn.tx_set("detection_paranoia_level", "2");
+    txn.tx_set("executing_paranoia_level", "2");
+    txn.tx_set("paranoia_level", "2");
+    let fired: BTreeSet<u64> = engine
+        .evaluate(&mut txn)
+        .into_iter()
+        .flat_map(|hit| hit.rule_ids)
+        .flatten()
+        .collect();
+    assert!(
+        fired.contains(&950100),
+        "950100 did not fire; got {fired:?}"
+    );
+}
+
+#[test]
 fn targeted_singles_introspection() {
     let Some(root) = crs_root() else {
         return;
@@ -344,6 +395,7 @@ fn targeted_singles_introspection() {
         assert!(!statement.is_empty(), "rule {id} not found");
         let mini = SecRuleSet::from_source(&statement)
             .unwrap_or_else(|error| panic!("mini {id}: {error}"));
+        eprintln!("{id}: statement={}", &statement[..statement.len().min(220)]);
         let request = Canonicalizer::default().canonicalize(RequestParts::new(
             "GET",
             "localhost",
@@ -363,7 +415,41 @@ fn targeted_singles_introspection() {
                 .chain(txn.resolve("REQUEST_URI_RAW"))
                 .map(|value| format!("{}={}", value.name, value.value))
                 .collect();
+            for value in txn
+                .resolve("ARGS")
+                .into_iter()
+                .chain(txn.resolve("REQUEST_FILENAME"))
+            {
+                let (is_xss, fingerprint) =
+                    varman_waf::rules::signatures::detect_xss(&value.value);
+                if is_xss {
+                    eprintln!("{id}: detect_xss({})={fingerprint}", value.name);
+                }
+            }
             eprintln!("{id}: values={values:?}");
+            if let Ok(varman_waf::seclang::parser::SecLangLine::Rule(parsed)) =
+                varman_waf::seclang::parser::parse_line(&statement)
+            {
+                if let varman_waf::seclang::parser::SecOperator::Rx(pattern) =
+                    &parsed.operator
+                {
+                    if let Ok(regex) = regex::Regex::new(pattern) {
+                        for candidate in [
+                            "new Function (",
+                            "newFunction(",
+                            "new+Function+(",
+                            "..;.\\.;\\. ",
+                            ".. .\\. \\.",
+                            ".. . . .",
+                        ] {
+                            eprintln!(
+                                "{id}: regex({candidate:?})={}",
+                                regex.is_match(candidate)
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -877,7 +963,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5135,
-        "CRS regression regressed: {passed} passed (baseline 5135)"
+        passed >= 5144,
+        "CRS regression regressed: {passed} passed (baseline 5144)"
     );
 }

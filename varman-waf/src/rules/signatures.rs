@@ -2597,7 +2597,7 @@ static XSS_SCRIPT_TAG: Lazy<Regex> = Lazy::new(|| {
 // (`<xss+onafterscriptexecute=…>` in a Referer query) — browsers reflect
 // query strings with `+` for space into Referer URLs verbatim.
 static XSS_EVENT_HANDLER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)(?:\s|\+)on[a-z]+\s*=").unwrap());
+    Lazy::new(|| Regex::new(r#"(?i)(?:[\s\+"'`]|^)on[a-z]+\s*="#).unwrap());
 static XSS_JS_URI: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(?:javascript|vbscript|livescript|mocha)\s*:").unwrap()
 });
@@ -2674,6 +2674,15 @@ pub fn detect_xss(input: &str) -> (bool, String) {
     if input.len() < 3 {
         return (false, String::new());
     }
+    // libinjection treats the guillemet angle quotation marks as tag
+    // delimiters (`«script»` — CRS 941100 tests 8/9).
+    let normalized;
+    let input: &str = if input.contains(['«', '‹', '»', '›']) {
+        normalized = input.replace(['«', '‹'], "<").replace(['»', '›'], ">");
+        &normalized
+    } else {
+        input
+    };
     // See `detect_sqli` for why non-ASCII input bypasses the prefilter.
     if input.is_ascii() && !XSS_PREFILTER.is_match(input) {
         return (false, String::new());

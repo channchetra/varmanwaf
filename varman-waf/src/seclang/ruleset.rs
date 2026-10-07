@@ -181,6 +181,21 @@ fn strip_action_prefix<'a>(action: &'a str, prefix: &str) -> Option<&'a str> {
         .then(|| &action[prefix.len()..])
 }
 
+/// The `phase:` action of a group's leading rule (default phase 2).
+fn group_phase(group: &SecRuleGroup) -> u8 {
+    group
+        .rules
+        .first()
+        .and_then(|rule| {
+            rule.line.actions.iter().find_map(|action| {
+                strip_action_prefix(action, "phase:").and_then(|rest| {
+                    rest.trim().trim_end_matches(',').parse::<u8>().ok()
+                })
+            })
+        })
+        .unwrap_or(2)
+}
+
 fn parse_initcol(spec: &str) -> Result<InitCol, SecLangError> {
     let spec = spec.trim().trim_matches('\'').trim_matches('"');
     let Some((collection, key)) = spec.split_once('=') else {
@@ -608,6 +623,37 @@ impl SecRuleSet {
             }
             groups.retain(|group| !group.rules.is_empty());
         }
+        // ModSecurity evaluates rules phase by phase: response rules run in
+        // phase order (3 before 4/5) regardless of file order — CRS places
+        // the phase-4 "skip when compressed" rule (950020) before the
+        // phase-3 status rules (950100). Request phases keep their stream.
+        // Original stream positions travel with the groups so markers and
+        // `skipAfter` resolve within the current phase section.
+        let mut sections: Vec<u8> = Vec::with_capacity(groups.len());
+        let mut orig_starts: Vec<usize> = Vec::with_capacity(groups.len());
+        let mut cursor = 0usize;
+        for group in &groups {
+            let phase = group_phase(group);
+            sections.push(if phase >= 3 { phase } else { 0 });
+            orig_starts.push(cursor);
+            cursor += group.rules.len();
+        }
+        let mut zipped: Vec<(u8, usize, SecRuleGroup)> = groups
+            .into_iter()
+            .enumerate()
+            .map(|(index, group)| (sections[index], orig_starts[index], group))
+            .collect();
+        zipped.sort_by_key(|(section, _, _)| *section);
+        let mut groups = Vec::with_capacity(zipped.len());
+        let mut sections_out = Vec::with_capacity(zipped.len());
+        let mut starts_out = Vec::with_capacity(zipped.len());
+        for (section, start, group) in zipped {
+            sections_out.push(section);
+            starts_out.push(start);
+            groups.push(group);
+        }
+        let sections = sections_out;
+        let orig_starts = starts_out;
         let mut setvars: Vec<Vec<Vec<SetVar>>> =
             Vec::with_capacity(groups.len());
         let mut initcols: Vec<Vec<InitCol>> = Vec::with_capacity(groups.len());
@@ -633,12 +679,6 @@ impl SecRuleSet {
             initcols.push(cols);
         }
         // Group start positions in the rule stream, for marker resolution.
-        let mut starts = Vec::with_capacity(groups.len());
-        let mut cursor = 0usize;
-        for group in &groups {
-            starts.push(cursor);
-            cursor += group.rules.len();
-        }
         let mut skip_groups = Vec::with_capacity(groups.len());
         let mut skip_after = Vec::with_capacity(groups.len());
         let mut ctl_ops: Vec<Vec<CtlOp>> = Vec::with_capacity(groups.len());
@@ -683,9 +723,19 @@ impl SecRuleSet {
                             ),
                         });
                     };
-                    let position = starts
+                    // `skipAfter` is bounded by the current phase section,
+                    // like ModSecurity's per-phase rule streams.
+                    let section = sections[index];
+                    let position = orig_starts
                         .iter()
-                        .position(|start| start >= marker_pos)
+                        .enumerate()
+                        .filter(|(candidate, start)| {
+                            sections[*candidate] == section
+                                && **start >= *marker_pos
+                        })
+                        .map(|(candidate, _)| candidate)
+                        .next()
+                        .or_else(|| sections.iter().position(|s| *s > section))
                         .unwrap_or(groups.len());
                     if position <= index {
                         return Err(SecLangError {

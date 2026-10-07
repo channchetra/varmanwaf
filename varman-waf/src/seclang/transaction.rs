@@ -140,6 +140,8 @@ pub struct SecLangTransaction {
     xml_attributes: Vec<String>,
     /// Multipart uploads: `(field name, filename)`.
     files: Vec<(String, String)>,
+    /// Multipart upload sizes: `(field name, content length)`.
+    file_sizes: Vec<(String, usize)>,
     /// Multipart part headers across all parts (name, value).
     part_headers: Vec<(String, String)>,
     remote_addr: String,
@@ -274,6 +276,7 @@ impl SecLangTransaction {
             (Vec::new(), Vec::new())
         };
         let mut files: Vec<(String, String)> = Vec::new();
+        let mut file_sizes: Vec<(String, usize)> = Vec::new();
         let mut part_headers: Vec<(String, String)> = Vec::new();
         if body_processor == "MULTIPART" {
             if let (Some(bytes), Some(boundary)) =
@@ -284,6 +287,7 @@ impl SecLangTransaction {
                     &boundary,
                     &mut args,
                     &mut files,
+                    &mut file_sizes,
                     &mut part_headers,
                 );
             }
@@ -323,6 +327,7 @@ impl SecLangTransaction {
             xml_texts,
             xml_attributes,
             files,
+            file_sizes,
             part_headers,
             remote_addr: request
                 .client()
@@ -824,6 +829,36 @@ impl SecLangTransaction {
                     invalid_utf8: false,
                 })
                 .collect()),
+            ("FILES_COMBINED_SIZE", _) => cap(vec![ResolvedValue {
+                name: "FILES_COMBINED_SIZE".to_string(),
+                value: self
+                    .file_sizes
+                    .iter()
+                    .map(|(_, size)| *size)
+                    .sum::<usize>()
+                    .to_string(),
+                invalid_utf8: false,
+            }]),
+            ("FILES_SIZES", Some(selector)) => cap(self
+                .file_sizes
+                .iter()
+                .filter(|(field, _)| field == selector)
+                .map(|(field, size)| ResolvedValue {
+                    name: format!("FILES_SIZES:{field}"),
+                    value: size.to_string(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("ARGS_COMBINED_SIZE", _) => cap(vec![ResolvedValue {
+                name: "ARGS_COMBINED_SIZE".to_string(),
+                value: self
+                    .args
+                    .iter()
+                    .map(|arg| arg.name.len() + arg.value.len())
+                    .sum::<usize>()
+                    .to_string(),
+                invalid_utf8: false,
+            }]),
             ("MULTIPART_PART_HEADERS", None) => cap(self
                 .part_headers
                 .iter()
@@ -1035,17 +1070,22 @@ impl Transform {
     }
 }
 
-/// ModSecurity `cmdLine`: drops quotes/carets, collapses separators to one
-/// space, removes the space before `/` or `(`, lowercases. **Deviation:**
-/// backslashes are preserved (CRS's traversal corpus expects `..\` to remain
-/// matchable after this transform; ModSecurity v3 removes them).
+/// ModSecurity `cmdLine`: drops quotes/carets, converts backslashes to
+/// forward slashes, collapses separators to one space, removes the space
+/// before `/` or `(`, lowercases. Semicolons are preserved — CRS's
+/// `;..;` traversal corpus (930110 t12) expects them to remain matchable
+/// (see `docs/compatibility.md`).
 fn cmd_line(value: &str) -> String {
     let mut out: Vec<char> = Vec::with_capacity(value.len());
     let mut space = false;
     for c in value.chars() {
         match c {
             '"' | '\'' | '^' => {},
-            ' ' | ',' | ';' | '\t' | '\r' | '\n' => {
+            '\\' => {
+                out.push('/');
+                space = false;
+            },
+            ' ' | ',' | '\t' | '\r' | '\n' => {
                 if !space {
                     out.push(' ');
                     space = true;
@@ -1874,6 +1914,7 @@ fn parse_multipart(
     boundary: &str,
     args: &mut Vec<ArgValue>,
     files: &mut Vec<(String, String)>,
+    file_sizes: &mut Vec<(String, usize)>,
     part_headers: &mut Vec<(String, String)>,
 ) {
     let text = String::from_utf8_lossy(body);
@@ -1925,7 +1966,10 @@ fn parse_multipart(
             part_headers.push((part_name.clone(), line));
         }
         match (field, filename) {
-            (Some(field), Some(file)) => files.push((field, file)),
+            (Some(field), Some(file)) => {
+                file_sizes.push((field.clone(), part_body.len()));
+                files.push((field, file));
+            },
             (Some(field), None) => args.push(ArgValue {
                 name: field,
                 value: part_body.to_string(),
@@ -2655,8 +2699,10 @@ mod tests {
         let cmdline = Transform::parse("cmdLine").expect("cmdLine");
         assert_eq!(
             cmdline.apply("cmd.exe /c \"dir\" C:\\temp"),
-            "cmd.exe/c dir c:\\temp"
+            "cmd.exe/c dir c:/temp"
         );
+        // Semicolons survive (CRS 930110 t12); backslashes become slashes.
+        assert_eq!(cmdline.apply("..;.\\.;\\. "), "..;./.;/. ");
         let js = Transform::parse("jsDecode").expect("jsDecode");
         assert_eq!(js.apply("\\u0041\\x42\\103\\n"), "ABC\n");
         assert_eq!(js.apply("\\uFF21"), "A");
