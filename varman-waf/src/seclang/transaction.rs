@@ -1945,7 +1945,10 @@ fn xml_texts_and_attributes(body: &[u8]) -> (Vec<String>, Vec<String>) {
             let Some(end) = text[i..].find('>') else {
                 break;
             };
-            attributes.extend(xml_attribute_values(&text[i + 1..i + end]));
+            for value in xml_attribute_values(&text[i + 1..i + end]) {
+                attributes
+                    .push(crate::normalize::html::decode_entities(&value));
+            }
             i += end + 1;
         } else {
             let next = text[i..]
@@ -1954,7 +1957,8 @@ fn xml_texts_and_attributes(body: &[u8]) -> (Vec<String>, Vec<String>) {
                 .unwrap_or(text.len());
             let chunk = text[i..next].trim();
             if !chunk.is_empty() {
-                texts.push(chunk.to_string());
+                // libxml2 decodes entities in text nodes too.
+                texts.push(crate::normalize::html::decode_entities(chunk));
             }
             i = next;
         }

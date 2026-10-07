@@ -225,12 +225,8 @@ fn fired_ids(
     // rules (950–959 families) evaluate against that reflection. A JSON body
     // of `{"status": N}` / `{"body": "…"}` controls the reflected response.
     if let Some(data) = &input.data {
-        let (status, body) = reflect_response(data);
-        txn.set_response(
-            status,
-            vec![("Content-Type".to_string(), "text/html".to_string())],
-            body.into_bytes(),
-        );
+        let (status, headers, body) = reflect_response(data);
+        txn.set_response(status, headers, body.into_bytes());
     }
     // Run at the paranoia level the expected rule declares, mirroring CRS's
     // per-level CI runs; 901's default-setting rules skip pre-set values.
@@ -247,8 +243,10 @@ fn fired_ids(
 }
 
 /// The CRS `/reflect` test application: a JSON body may set the response
-/// status and/or body; anything else is reflected verbatim.
-fn reflect_response(data: &str) -> (u16, String) {
+/// status, headers and/or body; anything else is reflected verbatim.
+fn reflect_response(data: &str) -> (u16, Vec<(String, String)>, String) {
+    let mut headers =
+        vec![("Content-Type".to_string(), "text/html".to_string())];
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
         if let Some(object) = value.as_object() {
             let status = object
@@ -256,15 +254,26 @@ fn reflect_response(data: &str) -> (u16, String) {
                 .and_then(serde_json::Value::as_u64)
                 .and_then(|status| u16::try_from(status).ok())
                 .unwrap_or(200);
+            if let Some(extra) =
+                object.get("headers").and_then(|h| h.as_object())
+            {
+                for (name, value) in extra {
+                    let value = match value {
+                        serde_json::Value::String(value) => value.clone(),
+                        other => other.to_string(),
+                    };
+                    headers.push((name.clone(), value));
+                }
+            }
             let body = match object.get("body") {
                 Some(serde_json::Value::String(body)) => body.clone(),
                 Some(other) => other.to_string(),
                 None => data.to_string(),
             };
-            return (status, body);
+            return (status, headers, body);
         }
     }
-    (200, data.to_string())
+    (200, headers, data.to_string())
 }
 
 #[test]
@@ -776,7 +785,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5102,
-        "CRS regression regressed: {passed} passed (baseline 5102)"
+        passed >= 5128,
+        "CRS regression regressed: {passed} passed (baseline 5128)"
     );
 }

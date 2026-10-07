@@ -326,12 +326,12 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Twenty-sixth slice: `MATCHED_VAR`/`MATCHED_VAR_NAME` as rule
-      **variables** (not just macros) — CRS chains target them directly
-      (932207). Regression: **5102/5155** (99.0%).
+- [x] Twenty-seventh slice: XML entities decoded in the XML processor
+      (libxml2 semantics — attribute/text values) and `/reflect` response
+      **headers** support. Regression: **5128/5155** (99.5%).
 - [ ] Remaining tail: `931131`, `941100`, `942100`, `942500` (2 each) plus
-      1s (`920230`, `920390`, `920410`, `920430`, `921120`, `930110`,
-      `932190`, `932220`, …).
+      1s (`920230`, `920390`, `920410`, `920430`, `930110`, `932190`,
+      `934100`, `934160`, `941101`, `941350`, …).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
