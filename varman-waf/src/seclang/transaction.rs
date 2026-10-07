@@ -14,7 +14,7 @@
 //! Execution is bounded: variable resolution caps value counts and value
 //! length, and a rule reports its first matching values only.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use regex::Regex;
 
@@ -36,6 +36,74 @@ pub struct ResolvedValue {
     /// `true` when the underlying wire bytes were not valid UTF-8 (used by
     /// `@validateUtf8Encoding`; only body/args/path values can be flagged).
     pub invalid_utf8: bool,
+}
+
+/// One JSON container while flattening (mirrors ModSecurity's stack).
+struct JsonContainer {
+    name: String,
+    array: bool,
+    counter: usize,
+}
+
+/// Flatten JSON into `ARGS` names exactly like ModSecurity's processor:
+/// object members contribute `key.`, array elements `.array_N`, and scalar
+/// leaves become `path + key` (or just the path under an array).
+fn flatten_json(
+    value: &serde_json::Value,
+    key: Option<&str>,
+    containers: &mut Vec<JsonContainer>,
+    out: &mut Vec<(String, String)>,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            containers.push(JsonContainer {
+                name: key.unwrap_or("").to_string(),
+                array: false,
+                counter: 0,
+            });
+            for (member, child) in map {
+                flatten_json(child, Some(member), containers, out);
+            }
+            containers.pop();
+        },
+        serde_json::Value::Array(items) => {
+            containers.push(JsonContainer {
+                name: key.unwrap_or("").to_string(),
+                array: true,
+                counter: 0,
+            });
+            for child in items {
+                flatten_json(child, None, containers, out);
+            }
+            containers.pop();
+        },
+        scalar => {
+            let mut path = String::new();
+            for container in containers.iter() {
+                path.push_str(&container.name);
+                if container.array {
+                    path.push_str(&format!(".array_{}", container.counter));
+                } else {
+                    path.push('.');
+                }
+            }
+            let mut data = String::new();
+            if let Some(last) = containers.last_mut() {
+                if last.array {
+                    last.counter += 1;
+                } else {
+                    data = key.unwrap_or("").to_string();
+                }
+            } else {
+                data = key.unwrap_or("").to_string();
+            }
+            let text = match scalar {
+                serde_json::Value::String(text) => text.clone(),
+                other => other.to_string(),
+            };
+            out.push((format!("{path}{data}"), text));
+        },
+    }
 }
 
 /// One decoded argument with its wire-byte validity.
@@ -68,6 +136,15 @@ pub struct SecLangTransaction {
     matched: Option<ResolvedValue>,
     /// Values matched by the previous chain member, for `MATCHED_VARS`.
     matched_vars: Vec<ResolvedValue>,
+    /// Body processor in effect (`URLENCODED` by default; `JSON` after
+    /// `ctl:requestBodyProcessor=JSON`), exposed as `REQBODY_PROCESSOR`.
+    body_processor: String,
+    /// `ctl:ruleRemoveById` ids for the rest of the transaction.
+    removed_rule_ids: BTreeSet<u64>,
+    /// `ctl:ruleRemoveByTag` tags for the rest of the transaction.
+    removed_tags: BTreeSet<String>,
+    /// `ctl:ruleRemoveTargetByTag` entries: `(tag, target)`.
+    removed_targets: Vec<(String, String)>,
 }
 
 /// Decode one form-urlencoded pair while keeping its wire-byte validity.
@@ -155,6 +232,10 @@ impl SecLangTransaction {
             http_version: request.http_version().to_string(),
             matched: None,
             matched_vars: Vec::new(),
+            body_processor: "URLENCODED".to_string(),
+            removed_rule_ids: BTreeSet::new(),
+            removed_tags: BTreeSet::new(),
+            removed_targets: Vec::new(),
         }
     }
 
@@ -178,6 +259,69 @@ impl SecLangTransaction {
     /// `MATCHED_VARS` collection (ModSecurity chain semantics).
     pub(crate) fn set_matched_vars(&mut self, vars: Vec<ResolvedValue>) {
         self.matched_vars = vars;
+    }
+
+    /// Record the active body processor (`ctl:requestBodyProcessor`).
+    pub(crate) fn set_body_processor(&mut self, processor: &str) {
+        self.body_processor = processor.to_string();
+    }
+
+    /// Parse the request body as JSON and flatten it into `ARGS`, mirroring
+    /// ModSecurity's JSON processor naming (`key.`, `.array_N`, dotted
+    /// paths). Invalid JSON leaves `ARGS` untouched (the processor failed).
+    pub(crate) fn parse_json_body(&mut self) {
+        let Some(bytes) = &self.body else {
+            return;
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes)
+        else {
+            return;
+        };
+        let mut flattened = Vec::new();
+        flatten_json(&value, None, &mut Vec::new(), &mut flattened);
+        for (name, value) in flattened {
+            self.args.push(ArgValue {
+                name,
+                value,
+                invalid_utf8: false,
+            });
+        }
+    }
+
+    /// `ctl:ruleRemoveById`.
+    pub(crate) fn remove_rule_id(&mut self, id: u64) {
+        self.removed_rule_ids.insert(id);
+    }
+
+    /// `ctl:ruleRemoveByTag`.
+    pub(crate) fn remove_rule_tag(&mut self, tag: &str) {
+        self.removed_tags.insert(tag.to_string());
+    }
+
+    /// `ctl:ruleRemoveTargetByTag`.
+    pub(crate) fn remove_rule_target(&mut self, tag: &str, target: &str) {
+        self.removed_targets
+            .push((tag.to_string(), target.to_string()));
+    }
+
+    /// `true` when `ctl:ruleRemoveById` disabled this rule.
+    pub(crate) fn is_rule_removed(&self, id: u64) -> bool {
+        self.removed_rule_ids.contains(&id)
+    }
+
+    /// `true` when `ctl:ruleRemoveByTag` disabled this tag.
+    pub(crate) fn is_tag_removed(&self, tag: &str) -> bool {
+        self.removed_tags.contains(tag)
+    }
+
+    /// Targets excluded from a rule carrying any of `tags`
+    /// (`ctl:ruleRemoveTargetByTag`).
+    pub(crate) fn removed_targets_for(&self, tags: &[String]) -> Vec<String> {
+        self.removed_targets
+            .iter()
+            .filter(|(tag, _)| tags.iter().any(|t| t == tag))
+            .map(|(_, target)| target.clone())
+            .collect()
     }
 
     /// Register a collection instance created by `initcol`.
@@ -329,6 +473,11 @@ impl SecLangTransaction {
                 invalid_utf8: false,
             }]),
             ("MATCHED_VARS", _) => cap(self.matched_vars.clone()),
+            ("REQBODY_PROCESSOR", _) => cap(vec![ResolvedValue {
+                name: "REQBODY_PROCESSOR".to_string(),
+                value: self.body_processor.clone(),
+                invalid_utf8: false,
+            }]),
             ("TX", Some(selector)) => cap(self
                 .tx
                 .get(&selector.to_ascii_lowercase())
@@ -1312,6 +1461,16 @@ impl CompiledSecRule {
     /// Returns the matching values (first match per variable stops that
     /// variable, mirroring ModSecurity's per-variable short-circuit).
     pub fn matches(&self, txn: &SecLangTransaction) -> Vec<ResolvedValue> {
+        self.matches_excluding(txn, &[])
+    }
+
+    /// Like [`Self::matches`], with targets excluded from evaluation
+    /// (`ctl:ruleRemoveTargetByTag`).
+    pub fn matches_excluding(
+        &self,
+        txn: &SecLangTransaction,
+        excluded: &[String],
+    ) -> Vec<ResolvedValue> {
         if matches!(self.line.operator, SecOperator::AlwaysMatch) {
             // `SecAction`: unconditional, no variables.
             return vec![ResolvedValue {
@@ -1322,6 +1481,9 @@ impl CompiledSecRule {
         }
         let mut hits = Vec::new();
         for reference in &self.line.variables {
+            if excluded.iter().any(|target| target == reference) {
+                continue;
+            }
             for value in txn.resolve(reference) {
                 if self.operator_matches(&value, txn) != self.line.negated {
                     hits.push(value);
@@ -1332,6 +1494,24 @@ impl CompiledSecRule {
             }
         }
         hits
+    }
+
+    /// `tag:'…'` values on this rule.
+    pub(crate) fn tags(&self) -> Vec<String> {
+        self.line
+            .actions
+            .iter()
+            .filter_map(|action| {
+                let value = strip_prefix_ignore_case(action.trim(), "tag:")?;
+                Some(
+                    value
+                        .trim()
+                        .trim_matches('\'')
+                        .trim_matches('"')
+                        .to_string(),
+                )
+            })
+            .collect()
     }
 
     fn operator_matches(
@@ -1827,6 +2007,30 @@ mod tests {
         assert_eq!(css.apply("\\z"), "z");
         assert_eq!(css.apply("\\"), "");
         assert_eq!(css.apply("\\\n"), "");
+    }
+
+    #[test]
+    fn json_body_flattens_like_modsecurity() {
+        let request = Canonicalizer::default().canonicalize(
+            RequestParts::new("POST", "example.com", "/")
+                .with_body(br#"{"a":{"b":"c"},"arr":[1,2]}"#.to_vec()),
+        );
+        let mut txn = SecLangTransaction::from_request(&request);
+        txn.parse_json_body();
+        let names: Vec<String> = txn
+            .resolve("ARGS")
+            .into_iter()
+            .map(|value| value.name)
+            .collect();
+        assert!(names.contains(&"ARGS:.a.b".to_string()), "{names:?}");
+        assert!(
+            names.contains(&"ARGS:.arr.array_0".to_string()),
+            "{names:?}"
+        );
+        assert!(
+            names.contains(&"ARGS:.arr.array_1".to_string()),
+            "{names:?}"
+        );
     }
 
     #[test]

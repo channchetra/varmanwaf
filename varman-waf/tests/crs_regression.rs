@@ -185,10 +185,19 @@ fn fired_ids(
     let method = input.method.clone().unwrap_or_else(|| "GET".into());
     let uri = input.uri.clone().unwrap_or_else(|| "/".into());
     let mut parts = RequestParts::new(method, "localhost", uri);
+    let mut has_content_type = false;
     if let Some(headers) = &input.headers {
         for (name, value) in headers {
+            if name.eq_ignore_ascii_case("content-type") {
+                has_content_type = true;
+            }
             parts = parts.with_header(name.clone(), scalar(value));
         }
+    }
+    if input.data.is_some() && !has_content_type {
+        // go-ftw defaults `data` to a form-urlencoded body.
+        parts = parts
+            .with_header("Content-Type", "application/x-www-form-urlencoded");
     }
     if let Some(data) = &input.data {
         parts = parts.with_body(data.clone().into_bytes());
@@ -427,7 +436,8 @@ fn crs_regression_corpus() {
     for (key, count) in histogram.iter().take(15) {
         eprintln!("  fails {count:5}  {key}");
     }
-    for line in failed.iter().take(10) {
+    let dump_all = std::env::var_os("CRS_DUMP").is_some();
+    for line in failed.iter().take(if dump_all { failed.len() } else { 10 }) {
         eprintln!("  FAIL {line}");
     }
     eprintln!(
@@ -438,7 +448,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 3453,
-        "CRS regression regressed: {passed} passed (baseline 3453)"
+        passed >= 4212,
+        "CRS regression regressed: {passed} passed (baseline 4212)"
     );
 }

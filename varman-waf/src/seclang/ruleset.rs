@@ -296,8 +296,8 @@ pub struct SecRuleSet {
     skip_groups: Vec<Option<u64>>,
     /// `skipAfter:NAME` per group: resolved index to continue at.
     skip_after: Vec<Option<usize>>,
-    /// `ctl:ruleEngine=…` per group.
-    ctl_modes: Vec<Option<CtlMode>>,
+    /// `ctl:` operations per group.
+    ctl_ops: Vec<Vec<CtlOp>>,
     /// `initcol` operations per group.
     initcols: Vec<Vec<InitCol>>,
 }
@@ -309,6 +309,83 @@ enum CtlMode {
     On,
     DetectionOnly,
     Off,
+}
+
+/// A validated `ctl:` operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CtlOp {
+    RuleEngine(CtlMode),
+    BodyProcessor(String),
+    RemoveById(u64),
+    RemoveByTag(String),
+    RemoveTargetByTag(String, String),
+    AuditEngine,
+    ForceRequestBody,
+}
+
+fn parse_ctl(spec: &str) -> Result<CtlOp, SecLangError> {
+    let spec = spec.trim().trim_matches('\'').trim_matches('"');
+    let Some((name, value)) = spec.split_once('=') else {
+        return Err(SecLangError {
+            reason: format!("ctl without '=': {spec:?}"),
+        });
+    };
+    let name = name.trim().to_ascii_lowercase();
+    let value = value.trim();
+    match name.as_str() {
+        "ruleengine" => Ok(CtlOp::RuleEngine(
+            match value.to_ascii_lowercase().as_str() {
+                "on" => CtlMode::On,
+                "detectiononly" => CtlMode::DetectionOnly,
+                "off" => CtlMode::Off,
+                other => {
+                    return Err(SecLangError {
+                        reason: format!(
+                            "unsupported ctl:ruleEngine value {other:?}"
+                        ),
+                    });
+                },
+            },
+        )),
+        "requestbodyprocessor" => {
+            let processor = value.to_ascii_uppercase();
+            match processor.as_str() {
+                "JSON" | "URLENCODED" => Ok(CtlOp::BodyProcessor(processor)),
+                other => Err(SecLangError {
+                    reason: format!(
+                        "unsupported ctl:requestBodyProcessor {other:?}"
+                    ),
+                }),
+            }
+        },
+        "ruleremovebyid" => value
+            .parse::<u64>()
+            .map(CtlOp::RemoveById)
+            .map_err(|_| SecLangError {
+                reason: format!(
+                    "ctl:ruleRemoveById id {value:?} is not a number"
+                ),
+            }),
+        "ruleremovebytag" => Ok(CtlOp::RemoveByTag(value.to_string())),
+        "ruleremovetargetbytag" => {
+            let Some((tag, target)) = value.split_once(';') else {
+                return Err(SecLangError {
+                    reason: format!(
+                        "ctl:ruleRemoveTargetByTag needs 'tag;target': {value:?}"
+                    ),
+                });
+            };
+            Ok(CtlOp::RemoveTargetByTag(
+                tag.trim().to_string(),
+                target.trim().to_string(),
+            ))
+        },
+        "auditengine" => Ok(CtlOp::AuditEngine),
+        "forcerequestbodyvariable" => Ok(CtlOp::ForceRequestBody),
+        other => Err(SecLangError {
+            reason: format!("unsupported ctl option {other:?}"),
+        }),
+    }
 }
 
 impl SecRuleSet {
@@ -548,8 +625,7 @@ impl SecRuleSet {
         }
         let mut skip_groups = Vec::with_capacity(groups.len());
         let mut skip_after = Vec::with_capacity(groups.len());
-        let mut ctl_modes: Vec<Option<CtlMode>> =
-            Vec::with_capacity(groups.len());
+        let mut ctl_ops: Vec<Vec<CtlOp>> = Vec::with_capacity(groups.len());
         for (index, group) in groups.iter().enumerate() {
             let actions = group
                 .rules
@@ -558,7 +634,7 @@ impl SecRuleSet {
                 .unwrap_or_default();
             let mut skip_count: Option<u64> = None;
             let mut after_name: Option<String> = None;
-            let mut ctl_mode: Option<CtlMode> = None;
+            let mut ctl_ops_for_group: Vec<CtlOp> = Vec::new();
             for action in &actions {
                 let action = action.trim();
                 if let Some(rest) = strip_action_prefix(action, "skip:") {
@@ -574,26 +650,12 @@ impl SecRuleSet {
                     strip_action_prefix(action, "skipafter:")
                 {
                     after_name = Some(name.trim().to_string());
-                } else if let Some(spec) =
-                    strip_action_prefix(action, "ctl:ruleengine=")
-                {
-                    ctl_mode =
-                        Some(match spec.trim().to_ascii_lowercase().as_str() {
-                            "on" => CtlMode::On,
-                            "detectiononly" => CtlMode::DetectionOnly,
-                            "off" => CtlMode::Off,
-                            other => {
-                                return Err(SecLangError {
-                                    reason: format!(
-                                    "unsupported ctl:ruleEngine value {other:?}"
-                                ),
-                                });
-                            },
-                        });
+                } else if let Some(spec) = strip_action_prefix(action, "ctl:") {
+                    ctl_ops_for_group.push(parse_ctl(spec)?);
                 }
             }
             skip_groups.push(skip_count);
-            ctl_modes.push(ctl_mode);
+            ctl_ops.push(ctl_ops_for_group);
             let resolved = match after_name {
                 Some(name) => {
                     let Some((_, marker_pos)) =
@@ -627,7 +689,7 @@ impl SecRuleSet {
             setvars,
             skip_groups,
             skip_after,
-            ctl_modes,
+            ctl_ops,
             initcols,
         })
     }
@@ -645,6 +707,15 @@ impl SecRuleSet {
         let mut mode = CtlMode::On;
         while index < self.groups.len() {
             let group = &self.groups[index];
+            // Dynamic removal (`ctl:ruleRemoveById` / `ctl:ruleRemoveByTag`).
+            let removed = group.rules.iter().any(|rule| {
+                rule.rule_id().is_some_and(|id| txn.is_rule_removed(id))
+                    || rule.tags().iter().any(|tag| txn.is_tag_removed(tag))
+            });
+            if removed {
+                index += 1;
+                continue;
+            }
             let Some(variables_hit) = evaluate_group(group, txn) else {
                 index += 1;
                 continue;
@@ -662,8 +733,25 @@ impl SecRuleSet {
                 .last()
                 .map(|rule| rule.line.actions.clone())
                 .unwrap_or_default();
-            if let Some(new_mode) = self.ctl_modes[index] {
-                mode = new_mode;
+            for op in &self.ctl_ops[index] {
+                match op {
+                    CtlOp::RuleEngine(new_mode) => mode = *new_mode,
+                    CtlOp::BodyProcessor(processor) => {
+                        txn.set_body_processor(processor);
+                        if processor == "JSON" {
+                            txn.parse_json_body();
+                        }
+                    },
+                    CtlOp::RemoveById(id) => txn.remove_rule_id(*id),
+                    CtlOp::RemoveByTag(tag) => txn.remove_rule_tag(tag),
+                    CtlOp::RemoveTargetByTag(tag, target) => {
+                        txn.remove_rule_target(tag, target)
+                    },
+                    // Accepted and documented: there is no audit subsystem
+                    // yet, and the raw body is always exposed as
+                    // `REQUEST_BODY`.
+                    CtlOp::AuditEngine | CtlOp::ForceRequestBody => {},
+                }
             }
             if mode == CtlMode::DetectionOnly {
                 actions
@@ -708,7 +796,8 @@ fn evaluate_group(
         } else {
             previous.clone()
         });
-        let hits = rule.matches(txn);
+        let excluded = txn.removed_targets_for(&rule.tags());
+        let hits = rule.matches_excluding(txn, &excluded);
         if hits.is_empty() {
             return None;
         }
@@ -1266,6 +1355,85 @@ mod tests {
                 &request("/?a=justclonetransformer"),
             );
         assert!(ruleset.evaluate(&mut txn).is_empty());
+    }
+
+    #[test]
+    fn ctl_json_body_processor_populates_args() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule REQUEST_HEADERS:Content-Type \"@contains json\" \"id:1,ctl:requestBodyProcessor=JSON\"\n\
+             SecRule ARGS:.var \"@contains OR 1=1\" \"id:2,block\"\n",
+        )
+        .expect("compile");
+        let request = Canonicalizer::default().canonicalize(
+            RequestParts::new("POST", "example.com", "/")
+                .with_header("Content-Type", "application/json")
+                .with_body(br#"{"var":"1234 OR 1=1"}"#.to_vec()),
+        );
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request,
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert!(
+            hits.iter().any(|hit| hit.rule_ids == vec![Some(2)]),
+            "{hits:?}"
+        );
+        assert_eq!(txn.resolve("REQBODY_PROCESSOR")[0].value, "JSON");
+    }
+
+    #[test]
+    fn ctl_rule_removal_and_unknown_options() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,ctl:ruleRemoveById=2\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:2,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].rule_ids, vec![Some(1)]);
+
+        let by_tag = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,ctl:ruleRemoveByTag=attack\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:2,tag:'attack',block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        assert_eq!(by_tag.evaluate(&mut txn).len(), 1);
+
+        let error = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,ctl:wat=1\"\n",
+        )
+        .expect_err("must fail");
+        assert!(error.reason.contains("unsupported ctl option"), "{error}");
+    }
+
+    #[test]
+    fn ctl_rule_remove_target_by_tag_filters_variables() {
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:skip \"@streq evil\" \"id:1,ctl:ruleRemoveTargetByTag=xss-perf-disable;ARGS:skip\"\n\
+             SecRule ARGS:skip \"@streq evil\" \"id:2,tag:'xss-perf-disable',block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?skip=evil"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].rule_ids, vec![Some(1)]);
+
+        let error = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,ctl:ruleRemoveTargetByTag=notag\"\n",
+        )
+        .expect_err("must fail");
+        assert!(error.reason.contains("tag;target"), "{error}");
     }
 
     #[test]
