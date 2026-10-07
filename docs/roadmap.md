@@ -439,6 +439,11 @@ report against the existing engine.
       explicit failure policies; configured with `VARMAN_WAF_PROCESSOR_*` and
       wired after the pipeline merge (escalate-only). Reference processor in
       `examples/processor/mock_processor.py` + a `processor` compose profile.
+      **Verified live**: with the mock running, `GET /fraud/claim` → 403 with
+      `ext.processor.fraud_path | block | 35` (processor-driven enforcement);
+      with the mock stopped, the same traffic returned 200 with
+      `ext.processor.unavailable | monitor | 10` (the `monitor_only` failure
+      policy); restarting the mock restored the block.
 - [ ] Capability negotiation, processor health/metrics, UDS client pooling.
 - Exit: processors cannot destabilize the core; native engine remains the
   authority.
