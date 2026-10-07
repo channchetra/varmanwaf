@@ -2252,6 +2252,7 @@ impl CompiledSecRule {
                     invalid
                 }
             },
+            SecOperator::UnconditionalMatch => true,
             SecOperator::AlwaysMatch => true,
         }
     }

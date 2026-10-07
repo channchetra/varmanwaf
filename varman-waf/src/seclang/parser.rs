@@ -64,8 +64,11 @@ pub enum SecOperator {
     /// `@validateUrlEncoding`: matches malformed percent sequences
     /// (non-hex digits or truncated triplets); empty values never match.
     ValidateUrlEncoding,
-    /// `SecAction` / `@unconditionalMatch`: matches unconditionally.
+    /// `SecAction` rules match unconditionally and take no variables.
     AlwaysMatch,
+    /// `@unconditionalMatch`: resolves variables normally (so
+    /// `MATCHED_VAR` binds) but always matches.
+    UnconditionalMatch,
     /// `@within`: argument list is scanned for the value (substring search,
     /// mirroring ModSecurity's implementation; empty values match).
     Within(String),
@@ -95,6 +98,7 @@ impl SecOperator {
             Self::ValidateUtf8Encoding => "@validateUtf8Encoding",
             Self::ValidateUrlEncoding => "@validateUrlEncoding",
             Self::AlwaysMatch => "@alwaysMatch",
+            Self::UnconditionalMatch => "@unconditionalMatch",
             Self::Within(_) => "@within",
         }
     }
@@ -233,7 +237,7 @@ fn parse_operator(raw: &str) -> Result<SecOperator, SecLangError> {
                 .collect(),
         ),
         "@within" => SecOperator::Within(argument.to_string()),
-        "@unconditionalMatch" => SecOperator::AlwaysMatch,
+        "@unconditionalMatch" => SecOperator::UnconditionalMatch,
         "@eq" => SecOperator::Eq(numeric_argument(name, argument)?),
         "@ne" => SecOperator::Ne(numeric_argument(name, argument)?),
         "@lt" => SecOperator::Lt(numeric_argument(name, argument)?),
@@ -551,7 +555,7 @@ mod tests {
         );
         let unconditional =
             rule("SecRule ARGS \"@unconditionalMatch\" \"id:2\"");
-        assert_eq!(unconditional.operator, SecOperator::AlwaysMatch);
+        assert_eq!(unconditional.operator, SecOperator::UnconditionalMatch);
         let macro_pattern = rule("SecRule ARGS \"@rx %{tx.foo}\" \"id:3\"");
         assert_eq!(macro_pattern.operator, SecOperator::Rx("%{tx.foo}".into()));
         let utf8 = rule("SecRule ARGS \"@validateUtf8Encoding\" \"id:9\"");

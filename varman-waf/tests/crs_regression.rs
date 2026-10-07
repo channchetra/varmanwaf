@@ -202,7 +202,17 @@ fn fired_ids(
         );
     if let Some(headers) = &input.headers {
         for (name, value) in headers {
-            parts = parts.with_header(name.clone(), scalar(value));
+            let text = scalar(value);
+            // Apache rejects header names/values containing CR/LF before
+            // ModSecurity ever runs (CRS 921140's expectation).
+            if text.contains('\r')
+                || text.contains('\n')
+                || name.contains('\r')
+                || name.contains('\n')
+            {
+                return BTreeSet::new();
+            }
+            parts = parts.with_header(name.clone(), text);
         }
     }
     if let Some(data) = &input.data {
@@ -785,7 +795,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5128,
-        "CRS regression regressed: {passed} passed (baseline 5128)"
+        passed >= 5133,
+        "CRS regression regressed: {passed} passed (baseline 5133)"
     );
 }

@@ -326,12 +326,14 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Twenty-seventh slice: XML entities decoded in the XML processor
-      (libxml2 semantics — attribute/text values) and `/reflect` response
-      **headers** support. Regression: **5128/5155** (99.5%).
-- [ ] Remaining tail: `931131`, `941100`, `942100`, `942500` (2 each) plus
-      1s (`920230`, `920390`, `920410`, `920430`, `930110`, `932190`,
-      `934100`, `934160`, `941101`, `941350`, …).
+- [x] Twenty-eighth slice: `@unconditionalMatch` resolves variables (so
+      `MATCHED_VAR` binds — 922100), entity scanner accepts zero-padded
+      numeric entities (944150-152 t23), Apache CR/LF-header pre-rejection
+      in the harness (921140), reflect status/headers. Regression:
+      **5133/5155** (99.6%).
+- [ ] Remaining 22: `931131`, `941100`, `942100`, `942500` (2 each) plus
+      singles (`920181`, `920230`, `920390`, `920410`, `920430`, `930110`,
+      `932190`, `934100`, `934160`, `941101`, `941350`, …).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

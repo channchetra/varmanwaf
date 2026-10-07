@@ -119,8 +119,9 @@ pub fn decode_entities(input: &str) -> String {
 /// Returns the decoded character plus how many bytes of `after` it consumed.
 fn try_decode_entity(after: &str) -> Option<(char, usize)> {
     let bytes = after.as_bytes();
-    // Semicolon form, up to 10 chars (e.g. `&#x10FFFF;`).
-    let scan_end = bytes.len().min(10);
+    // Semicolon form, up to 64 chars (e.g. `&#0000000000000123;` — CRS
+    // tests zero-pad entities heavily).
+    let scan_end = bytes.len().min(64);
     for j in 0..scan_end {
         if bytes[j] == b';' {
             if let Some(c) = decode_entity_body(&after[..j]) {
