@@ -33,6 +33,10 @@ pub use canonicalizer::{
 pub struct QueryParam {
     pub name: String,
     pub value: String,
+    /// Component text exactly as received (no percent or `+` decoding);
+    /// the SecLang engine resolves ARGS from this, like ModSecurity.
+    pub raw_name: String,
+    pub raw_value: String,
     /// `true` when the decoded wire bytes were not valid UTF-8.
     pub invalid_utf8: bool,
 }
@@ -245,6 +249,8 @@ impl CanonicalRequest {
         self.query.push(QueryParam {
             name: name.into(),
             value: value.into(),
+            raw_name: String::new(),
+            raw_value: String::new(),
             invalid_utf8: false,
         });
         self

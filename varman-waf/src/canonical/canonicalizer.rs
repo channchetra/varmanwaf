@@ -260,6 +260,8 @@ fn parse_query(raw_query: &str, layers: u8) -> Vec<QueryParam> {
         params.push(QueryParam {
             name: decode_query_component(name, layers),
             value: decode_query_component(value, layers),
+            raw_name: name.to_string(),
+            raw_value: value.to_string(),
             invalid_utf8: name_invalid || value_invalid,
         });
     }
@@ -527,9 +529,18 @@ mod tests {
                 once.path(),
                 "path not idempotent for {target}"
             );
+            let once_query: Vec<(String, String)> = once
+                .query()
+                .iter()
+                .map(|param| (param.name.clone(), param.value.clone()))
+                .collect();
+            let twice_query: Vec<(String, String)> = twice
+                .query()
+                .iter()
+                .map(|param| (param.name.clone(), param.value.clone()))
+                .collect();
             assert_eq!(
-                twice.query(),
-                once.query(),
+                twice_query, once_query,
                 "query not idempotent for {target}"
             );
         }

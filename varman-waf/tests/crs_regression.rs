@@ -26,8 +26,6 @@ use varman_waf::seclang::transaction::SecLangTransaction;
 
 #[derive(Debug, Deserialize)]
 struct TestFile {
-    #[serde(default)]
-    rule_id: Option<serde_yaml::Value>,
     tests: Vec<TestCase>,
 }
 
@@ -670,8 +668,6 @@ fn crs_regression_corpus() {
             eprintln!("crs_regression: unparsable {name}");
             continue;
         };
-        let file_rule_id =
-            parsed.rule_id.as_ref().map(scalar).unwrap_or_default();
         for case in parsed.tests {
             total += 1;
             if case.stages.len() != 1 {
