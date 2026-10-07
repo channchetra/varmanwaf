@@ -879,6 +879,9 @@ pub struct CompiledSecRule {
     regex: Option<Regex>,
     ips: Vec<ipnet::IpNet>,
     transforms: Vec<Transform>,
+    /// Pattern contains `\xHH` escapes: evaluate against a Latin-1 rendering
+    /// of the value's UTF-8 bytes (ModSecurity regexes are byte-oriented).
+    byte_mode: bool,
 }
 
 /// ModSecurity transformation applied to a value before the operator runs.
@@ -2015,11 +2018,16 @@ impl CompiledSecRule {
             _ => {},
         }
         let transforms = parse_transforms(&line.actions)?;
+        let byte_mode = match &line.operator {
+            SecOperator::Rx(pattern) => pattern.contains("\\x"),
+            _ => false,
+        };
         Ok(Self {
             line,
             regex,
             ips,
             transforms,
+            byte_mode,
         })
     }
 
@@ -2110,15 +2118,18 @@ impl CompiledSecRule {
         let transformed = self.apply_transforms(&resolved.value);
         let value = transformed.as_str();
         match &self.line.operator {
-            SecOperator::Rx(pattern) => match &self.regex {
-                Some(regex) => regex.is_match(value),
-                None => {
-                    // Macro pattern: expand against the transaction and
-                    // compile per evaluation.
-                    let expanded = expand_macros(pattern, txn);
-                    Regex::new(&expanded)
-                        .is_ok_and(|regex| regex.is_match(value))
-                },
+            SecOperator::Rx(pattern) => {
+                let target = self.regex_target(value);
+                match &self.regex {
+                    Some(regex) => regex.is_match(&target),
+                    None => {
+                        // Macro pattern: expand against the transaction and
+                        // compile per evaluation.
+                        let expanded = expand_macros(pattern, txn);
+                        Regex::new(&expanded)
+                            .is_ok_and(|regex| regex.is_match(&target))
+                    },
+                }
             },
             SecOperator::Pm(needles) => {
                 // ModSecurity's ACMP matcher is case-insensitive
@@ -2219,6 +2230,29 @@ impl CompiledSecRule {
         self.apply_transforms(value)
     }
 
+    /// The string the regex runs against: byte-escaped patterns see a
+    /// byte-faithful rendering of the value. Chars at or below U+00FF are
+    /// already byte-faithful (the canonicalizer maps stray bytes through
+    /// Latin-1); chars above are expanded to their UTF-8 bytes so CRS's
+    /// `\xHH`-encoded sequences match (ModSecurity matches bytes).
+    fn regex_target(&self, value: &str) -> String {
+        if !self.byte_mode {
+            return value.to_string();
+        }
+        let mut out = String::with_capacity(value.len());
+        for c in value.chars() {
+            if (c as u32) <= 0xFF {
+                out.push(c);
+            } else {
+                let mut buffer = [0u8; 4];
+                for byte in c.encode_utf8(&mut buffer).bytes() {
+                    out.push(byte as char);
+                }
+            }
+        }
+        out
+    }
+
     /// `true` when the rule's actions include `capture`.
     pub(crate) fn has_capture(&self) -> bool {
         self.line
@@ -2240,7 +2274,8 @@ impl CompiledSecRule {
         else {
             return;
         };
-        let Some(captures) = regex.captures(value) else {
+        let target = self.regex_target(value);
+        let Some(captures) = regex.captures(&target) else {
             return;
         };
         txn.tx_set("0", captures.get(0).map(|m| m.as_str()).unwrap_or(""));
@@ -2755,6 +2790,19 @@ mod tests {
             names.contains(&"ARGS:json.arr.array_1".to_string()),
             "{names:?}"
         );
+    }
+
+    #[test]
+    fn byte_escape_patterns_match_utf8_sequences() {
+        // `①` is E2 91 A0 in UTF-8; CRS writes such sequences as
+        // `\x{e2}\x91[\xa0-\xbf]` (ModSecurity matches bytes).
+        let matcher =
+            rule("SecRule TX:raw \"@rx \\x{e2}\\x91[\\xa0-\\xbf]\" \"id:1\"");
+        let mut txn = SecLangTransaction::from_request(&request());
+        txn.tx_set("raw", "①");
+        assert_eq!(matcher.matches(&txn).len(), 1);
+        txn.tx_set("raw", "ascii");
+        assert!(matcher.matches(&txn).is_empty());
     }
 
     #[test]

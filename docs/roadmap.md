@@ -326,13 +326,14 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Eighteenth slice: `cmdLine` backslash preservation (CRS traversal
-      corpus; documented deviation), `REQUEST_PROTOCOL`, harness
-      `autocomplete_headers: false` support. Regression: **5073/5155**
-      (98.4%) — 930110 and 920180 classes cleared.
-- [ ] Remaining tail: `934120` (5), `941100`/`941310` (4 each, XSS detector
-      quality), then a flat tail of 2s (`920260`, `920430`, `921250`,
-      `931131`, `932207`, `942100`, `942500`, …).
+- [x] Nineteenth slice: **byte-mode regex** — patterns containing `\xHH`
+      escapes evaluate against a byte-faithful rendering (chars ≤ U+00FF
+      as-is, higher chars expanded to UTF-8 bytes), matching ModSecurity's
+      byte semantics; CRS's Unicode-evasion branches (e.g. 934120's circled
+      digits) now match. Regression: **5079/5155** (98.5%).
+- [ ] Remaining tail: `941100`/`941310` (XSS detector quality) and a flat
+      tail of ≤2 failures per class (`920260`, `920430`, `921250`, `931131`,
+      `932207`, `942100`, `942500`, `950100`, `955120`, …).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
