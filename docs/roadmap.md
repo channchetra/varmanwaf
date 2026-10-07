@@ -382,7 +382,10 @@ report against the existing engine.
       separators/traversal **Monitor**, signature-less shapes **Log**.
       Missing `exp`, opaque tokens and non-JSON payloads stay clean
       (benign-corpus guard). Attack corpus `credential_abuse.txt` (8 payloads,
-      ratcheted to ≥ Monitor) + benign JWT samples.
+      ratcheted to ≥ Monitor) + benign JWT samples. **Verified live**: valid
+      JWT → 200, `kid` traversal → 200 + `sem.jwt.kid_traversal` Monitor
+      event, `alg: none` → 403 with `sem.jwt.alg_none` (`varman-pipeline: 1
+      finding(s), score 40`).
 - [ ] API security/OpenAPI validation, ATO, threat intelligence, DLP,
       virtual patching, WebSocket inspection.
 - Exit: each feature has corpora + FP controls + monitoring; security events
