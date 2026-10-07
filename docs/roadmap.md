@@ -129,7 +129,13 @@ a working VarmanWAF with unchanged behaviour.
       site. Full chain: migration `000031` → settings API (validated) →
       gRPC `WafConfig.engine_mode` → agent cache → plugin `resolve_mode`;
       an explicit mode also opts the site into inspection. Invalid values are
-      rejected by the API; stale caches default to `inherit`.
+      rejected by the API; stale caches default to `inherit`. **Verified
+      end-to-end**: with the process default `shadow` the SQLi probe passed
+      (200); switching the site to `varman` blocked it (403) while the process
+      default stayed shadow; back to `inherit` with the process default
+      `varman` the probe blocked again with `legacy=monitor pipeline=block`
+      in the logs and `sig.sqli.tautology` (`varman-pipeline: 2 finding(s)`)
+      in the security event.
 - [ ] Benchmarks: pipeline overhead vs legacy on the request corpus.
 
 Exit: both engines run side by side; shadow results measurable; no behaviour

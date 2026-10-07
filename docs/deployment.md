@@ -388,6 +388,20 @@ Database migrations run automatically on startup.
 
 ## Troubleshooting
 
+### Test client blocked after attack probes
+
+The edge auto-blocks a source IP for a window after repeated WAF blocks. The
+block is stored twice — `agent_blocked_ips` in PostgreSQL and
+`/var/lib/varman/data/cache/blocked_ips.json` on the agent — and expires by
+design (`expires_at`). To reset a test environment immediately, clear both and
+restart the container:
+
+```bash
+docker exec varman-postgres psql -U varman -d varman -c "delete from agent_blocked_ips;"
+docker exec -u root varman sh -c 'rm -f /var/lib/varman/data/cache/blocked_ips.json'
+docker restart varman
+```
+
 ### Service won't start
 
 ```bash
