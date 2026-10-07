@@ -211,11 +211,33 @@ impl SecLangTransaction {
         let mut args: Vec<ArgValue> = request
             .query()
             .iter()
-            .map(|param| ArgValue {
-                name: param.name.clone(),
-                value: param.value.clone(),
-                invalid_utf8: param.invalid_utf8,
-                from_query: true,
+            .map(|param| {
+                // Model A′: decode exactly ONE layer at parse time (with
+                // `+`→space); the rule's `t:urlDecodeUni` then handles a
+                // second layer, and a `+` it decodes from `%2B` is not
+                // reprocessed (CRS 941350 vs 932200).
+                let raw_name = if param.raw_name.is_empty() {
+                    &param.name
+                } else {
+                    &param.raw_name
+                };
+                let raw_value = if param.raw_value.is_empty() {
+                    &param.value
+                } else {
+                    &param.raw_value
+                };
+                ArgValue {
+                    name: crate::normalize::url::multi_decode(
+                        &raw_name.replace('+', " "),
+                        1,
+                    ),
+                    value: crate::normalize::url::multi_decode(
+                        &raw_value.replace('+', " "),
+                        1,
+                    ),
+                    invalid_utf8: param.invalid_utf8,
+                    from_query: true,
+                }
             })
             .collect();
         // ModSecurity merges form-urlencoded body parameters into ARGS.

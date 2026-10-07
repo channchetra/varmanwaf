@@ -286,6 +286,88 @@ fn reflect_response(data: &str) -> (u16, Vec<(String, String)>, String) {
     (200, headers, data.to_string())
 }
 
+/// Join `\`-continuations and return the statement containing `id:<id>,`.
+fn extract_rule_statement(source: &str, id: u64) -> String {
+    let mut logical: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for line in source.lines() {
+        let trimmed_end = line.trim_end();
+        if trimmed_end.ends_with('\\') {
+            current.push_str(trimmed_end.trim_end_matches('\\'));
+            current.push(' ');
+            continue;
+        }
+        current.push_str(trimmed_end);
+        logical.push(std::mem::take(&mut current));
+    }
+    if !current.is_empty() {
+        logical.push(current);
+    }
+    let marker = format!("id:{id},");
+    logical
+        .into_iter()
+        .find(|line| line.contains(&marker))
+        .unwrap_or_default()
+}
+
+#[test]
+fn targeted_singles_introspection() {
+    let Some(root) = crs_root() else {
+        return;
+    };
+    let cases: &[(&str, u64, &str)] = &[
+        (
+            "REQUEST-941-APPLICATION-ATTACK-XSS.conf",
+            941350,
+            "/get/xx?id=%252bADw-script%252bAD4-",
+        ),
+        (
+            "REQUEST-941-APPLICATION-ATTACK-XSS.conf",
+            941101,
+            "/get/\"onmouseover='prompt(document.cookie)'\"",
+        ),
+        (
+            "REQUEST-934-APPLICATION-ATTACK-GENERIC.conf",
+            934100,
+            "/get?foo=new+Function+%28",
+        ),
+        (
+            "REQUEST-930-APPLICATION-ATTACK-LFI.conf",
+            930110,
+            "/get?a=..;.\\.;\\.",
+        ),
+    ];
+    for (file, id, uri) in cases {
+        let source =
+            fs::read_to_string(root.join("rules").join(file)).expect("read");
+        let statement = extract_rule_statement(&source, *id);
+        assert!(!statement.is_empty(), "rule {id} not found");
+        let mini = SecRuleSet::from_source(&statement)
+            .unwrap_or_else(|error| panic!("mini {id}: {error}"));
+        let request = Canonicalizer::default().canonicalize(RequestParts::new(
+            "GET",
+            "localhost",
+            *uri,
+        ));
+        let mut txn = SecLangTransaction::from_request(&request);
+        txn.tx_set("detection_paranoia_level", "1");
+        txn.tx_set("executing_paranoia_level", "1");
+        txn.tx_set("paranoia_level", "1");
+        let hits = mini.evaluate(&mut txn);
+        eprintln!("{id}: mini hits={}", hits.len());
+        if hits.is_empty() {
+            let values: Vec<String> = txn
+                .resolve("ARGS")
+                .into_iter()
+                .chain(txn.resolve("REQUEST_FILENAME"))
+                .chain(txn.resolve("REQUEST_URI_RAW"))
+                .map(|value| format!("{}={}", value.name, value.value))
+                .collect();
+            eprintln!("{id}: values={values:?}");
+        }
+    }
+}
+
 #[test]
 fn targeted_920450_fires() {
     let Some(root) = crs_root() else {
@@ -795,7 +877,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5133,
-        "CRS regression regressed: {passed} passed (baseline 5133)"
+        passed >= 5135,
+        "CRS regression regressed: {passed} passed (baseline 5135)"
     );
 }
