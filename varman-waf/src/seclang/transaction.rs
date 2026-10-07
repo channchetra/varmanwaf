@@ -128,6 +128,10 @@ pub struct SecLangTransaction {
     xml_texts: Vec<String>,
     /// `XML://@*` values (attribute values) when the XML processor is active.
     xml_attributes: Vec<String>,
+    /// Multipart uploads: `(field name, filename)`.
+    files: Vec<(String, String)>,
+    /// Multipart part headers across all parts (name, value).
+    part_headers: Vec<(String, String)>,
     remote_addr: String,
     path_invalid_utf8: bool,
     tx: BTreeMap<String, String>,
@@ -203,11 +207,12 @@ impl SecLangTransaction {
             })
             .collect();
         // ModSecurity merges form-urlencoded body parameters into ARGS.
-        let content_type = headers
+        let raw_content_type = headers
             .iter()
             .find(|(n, _)| n.eq_ignore_ascii_case("content-type"))
-            .map(|(_, v)| v.to_ascii_lowercase())
+            .map(|(_, v)| v.clone())
             .unwrap_or_default();
+        let content_type = raw_content_type.to_ascii_lowercase();
         // Processor selection mirrors ModSecurity: the raw body is consumed
         // by the processor and only re-exposed by
         // `ctl:forceRequestBodyVariable=On`.
@@ -218,6 +223,11 @@ impl SecLangTransaction {
                 "MULTIPART"
             } else if content_type.contains("xml") {
                 "XML"
+            } else if content_type.contains("json") {
+                // CRS deployments enable the JSON processor for
+                // `application/json` in their setup; VarmanWAF enables it by
+                // default (documented).
+                "JSON"
             } else {
                 "URLENCODED"
             };
@@ -229,6 +239,21 @@ impl SecLangTransaction {
         } else {
             (Vec::new(), Vec::new())
         };
+        let mut files: Vec<(String, String)> = Vec::new();
+        let mut part_headers: Vec<(String, String)> = Vec::new();
+        if body_processor == "MULTIPART" {
+            if let (Some(bytes), Some(boundary)) =
+                (&body, multipart_boundary(&raw_content_type))
+            {
+                parse_multipart(
+                    bytes,
+                    &boundary,
+                    &mut args,
+                    &mut files,
+                    &mut part_headers,
+                );
+            }
+        }
         if content_type.contains("application/x-www-form-urlencoded") {
             if let Some(bytes) = &body {
                 for pair in bytes.split(|&byte| byte == b'&') {
@@ -246,7 +271,7 @@ impl SecLangTransaction {
                 }
             }
         }
-        Self {
+        let mut txn = Self {
             args,
             headers,
             cookies: request
@@ -260,6 +285,8 @@ impl SecLangTransaction {
             body,
             xml_texts,
             xml_attributes,
+            files,
+            part_headers,
             remote_addr: request
                 .client()
                 .ip
@@ -279,7 +306,11 @@ impl SecLangTransaction {
             response_status: None,
             response_headers: Vec::new(),
             response_body: None,
+        };
+        if body_processor == "JSON" {
+            txn.parse_json_body();
         }
+        txn
     }
 
     /// TX names are case-insensitive (ModSecurity behaviour; CRS mixes
@@ -618,6 +649,53 @@ impl SecLangTransaction {
                 .map(|text| ResolvedValue {
                     name: "XML://@*".to_string(),
                     value: text.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("FILES", None) => cap(self
+                .files
+                .iter()
+                .map(|(field, filename)| ResolvedValue {
+                    name: format!("FILES:{field}"),
+                    value: filename.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("FILES", Some(selector)) => cap(self
+                .files
+                .iter()
+                .filter(|(field, _)| field == selector)
+                .map(|(field, filename)| ResolvedValue {
+                    name: format!("FILES:{field}"),
+                    value: filename.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("FILES_NAMES", _) => cap(self
+                .files
+                .iter()
+                .map(|(field, _)| ResolvedValue {
+                    name: "FILES_NAMES".to_string(),
+                    value: field.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("MULTIPART_PART_HEADERS", None) => cap(self
+                .part_headers
+                .iter()
+                .map(|(name, value)| ResolvedValue {
+                    name: format!("MULTIPART_PART_HEADERS:{name}"),
+                    value: value.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("MULTIPART_PART_HEADERS", Some(selector)) => cap(self
+                .part_headers
+                .iter()
+                .filter(|(name, _)| name.eq_ignore_ascii_case(selector))
+                .map(|(name, value)| ResolvedValue {
+                    name: format!("MULTIPART_PART_HEADERS:{name}"),
+                    value: value.clone(),
                     invalid_utf8: false,
                 })
                 .collect()),
@@ -1591,6 +1669,99 @@ fn matches_exclusion(exclusion: &str, name: &str) -> bool {
     name_collection == collection && regex.is_match(name_selector)
 }
 
+/// Boundary parameter from a `multipart/form-data` content type.
+fn multipart_boundary(content_type: &str) -> Option<String> {
+    let at = content_type.find("boundary=")?;
+    let rest = content_type[at + "boundary=".len()..].trim();
+    let value = rest.trim_matches('"');
+    let value = value.split(';').next().unwrap_or(value).trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+/// Parse a `multipart/form-data` body: regular fields feed `ARGS`, file
+/// parts feed `FILES`/`FILES_NAMES`, and every part header is collected for
+/// `MULTIPART_PART_HEADERS`.
+fn parse_multipart(
+    body: &[u8],
+    boundary: &str,
+    args: &mut Vec<ArgValue>,
+    files: &mut Vec<(String, String)>,
+    part_headers: &mut Vec<(String, String)>,
+) {
+    let text = String::from_utf8_lossy(body);
+    let marker = format!("--{boundary}");
+    let mut rest = text.as_ref();
+    while let Some(start) = rest.find(&marker) {
+        let after = &rest[start + marker.len()..];
+        if after.starts_with("--") {
+            break;
+        }
+        let after = after
+            .strip_prefix("\r\n")
+            .or_else(|| after.strip_prefix('\n'))
+            .unwrap_or(after);
+        let next_crlf = format!("\r\n{marker}");
+        let next_lf = format!("\n{marker}");
+        let end = after.find(&next_crlf).or_else(|| after.find(&next_lf));
+        let part = match end {
+            Some(end) => &after[..end],
+            None => after,
+        };
+        let (header_block, part_body) = match part.find("\r\n\r\n") {
+            Some(at) => (&part[..at], &part[at + 4..]),
+            None => match part.find("\n\n") {
+                Some(at) => (&part[..at], &part[at + 2..]),
+                None => (part, ""),
+            },
+        };
+        let mut field = None;
+        let mut filename = None;
+        for line in header_block.split('\n') {
+            let line = line.trim_end_matches('\r');
+            let Some((name, value)) = line.split_once(':') else {
+                continue;
+            };
+            let name = name.trim();
+            let value = value.trim();
+            part_headers.push((name.to_string(), value.to_string()));
+            if name.eq_ignore_ascii_case("content-disposition") {
+                field = quoted_param(value, "name");
+                filename = quoted_param(value, "filename");
+            }
+        }
+        match (field, filename) {
+            (Some(field), Some(file)) => files.push((field, file)),
+            (Some(field), None) => args.push(ArgValue {
+                name: field,
+                value: part_body.to_string(),
+                invalid_utf8: false,
+            }),
+            (None, _) => {},
+        }
+        rest = match end {
+            Some(end) => &after[end..],
+            None => "",
+        };
+    }
+}
+
+/// `name="value"` (or bare `name=value`) parameter from a header value.
+fn quoted_param(value: &str, param: &str) -> Option<String> {
+    let at = value.find(&format!("{param}="))?;
+    let rest = &value[at + param.len() + 1..];
+    if let Some(inner) = rest.strip_prefix('"') {
+        let end = inner.find('"')?;
+        Some(inner[..end].to_string())
+    } else {
+        let end = rest.find(';').unwrap_or(rest.len());
+        Some(rest[..end].trim().to_string())
+    }
+}
+
 /// Minimal XML scan for the `XML:/*` (element text) and `XML://@*`
 /// (attribute value) collections: element and attribute *names* are never
 /// values, mirroring ModSecurity's processor.
@@ -1825,7 +1996,12 @@ impl CompiledSecRule {
                 },
             },
             SecOperator::Pm(needles) => {
-                needles.iter().any(|needle| value.contains(needle))
+                // ModSecurity's ACMP matcher is case-insensitive
+                // (`acmp_create(0)` clears the case-sensitive flag).
+                let lowered = value.to_lowercase();
+                needles
+                    .iter()
+                    .any(|needle| lowered.contains(&needle.to_lowercase()))
             },
             SecOperator::Contains(needle) => value.contains(needle),
             SecOperator::Streq(expected) => value == expected,
@@ -2118,6 +2294,7 @@ mod tests {
             ("@endsWith llo", true),
             ("@pm nope hello", true),
             ("@pm nope nada", false),
+            ("@pm HELLO", true),
         ];
         let txn = SecLangTransaction::from_request(&request());
         for (operator, expected) in cases {
@@ -2321,6 +2498,36 @@ mod tests {
             "SecRule REQUEST_COOKIES|!REQUEST_COOKIES:/^sess/ \"@streq evil\" \"id:2\"",
         );
         assert!(second.matches(&txn).is_empty());
+    }
+
+    #[test]
+    fn multipart_bodies_populate_args_and_files() {
+        let body = "------Boundary\r\n\
+                    Content-Disposition: form-data; name=\"fileRap\"; filename=\"file=.txt\"\r\n\
+                    Content-Type: text/plain\r\n\
+                    \r\n\
+                    555-555-0199@example.com\r\n\
+                    ------Boundary\r\n\
+                    Content-Disposition: form-data; name=\"field\"\r\n\
+                    \r\n\
+                    value\r\n\
+                    ------Boundary--\r\n";
+        let request = Canonicalizer::default().canonicalize(
+            RequestParts::new("POST", "example.com", "/")
+                .with_header(
+                    "Content-Type",
+                    "multipart/form-data; boundary=----Boundary",
+                )
+                .with_body(body.as_bytes().to_vec()),
+        );
+        let txn = SecLangTransaction::from_request(&request);
+        assert_eq!(txn.resolve("FILES")[0].value, "file=.txt");
+        assert_eq!(txn.resolve("FILES_NAMES")[0].value, "fileRap");
+        assert_eq!(txn.resolve("ARGS:field")[0].value, "value");
+        assert_eq!(
+            txn.resolve("MULTIPART_PART_HEADERS:Content-Type")[0].value,
+            "text/plain"
+        );
     }
 
     #[test]
