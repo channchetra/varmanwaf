@@ -26,7 +26,24 @@ use varman_waf::seclang::transaction::SecLangTransaction;
 
 #[derive(Debug, Deserialize)]
 struct TestFile {
+    #[serde(default)]
+    rule_id: Option<serde_yaml::Value>,
     tests: Vec<TestCase>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OverridesFile {
+    #[serde(default)]
+    test_overrides: Vec<OverrideEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OverrideEntry {
+    rule_id: serde_yaml::Value,
+    #[serde(default)]
+    test_ids: Vec<serde_yaml::Value>,
+    #[serde(default)]
+    output: Output,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,7 +83,7 @@ struct Input {
     version: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 struct Output {
     #[serde(default)]
     log: Option<LogExpect>,
@@ -76,7 +93,7 @@ struct Output {
     status: Option<u16>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 struct LogExpect {
     #[serde(default)]
     expect_ids: Option<Vec<u64>>,
@@ -625,6 +642,37 @@ fn crs_regression_corpus() {
     let combined = combined_source(&rules_dir);
     let levels = paranoia_levels(&combined);
 
+    // Canonical platform overrides (httpd/ModSecurity v2) replace
+    // expectations for tests that need non-default configuration
+    // (ARG_NAME_LENGTH, …). nginx/coraza overrides are platform-capability
+    // notes for other engines and are deliberately not applied.
+    let mut overrides: BTreeMap<String, Output> = BTreeMap::new();
+    if let Ok(entries) = fs::read_dir(root.join("tests/regression")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name != "httpd-overrides.yaml" {
+                continue;
+            }
+            let Ok(source) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(parsed) = serde_yaml::from_str::<OverridesFile>(&source)
+            else {
+                continue;
+            };
+            for entry in parsed.test_overrides {
+                let rule = scalar(&entry.rule_id);
+                for test_id in &entry.test_ids {
+                    overrides.insert(
+                        format!("{rule}:{}", scalar(test_id)),
+                        entry.output.clone(),
+                    );
+                }
+            }
+        }
+    }
+
     let mut yaml_files: Vec<PathBuf> = Vec::new();
     for group in fs::read_dir(&tests_root).expect("read regression tests") {
         let group = group.expect("dir entry").path();
@@ -647,6 +695,7 @@ fn crs_regression_corpus() {
     let mut failed_by_expect: BTreeMap<String, usize> = BTreeMap::new();
     let mut skipped_raw = 0usize;
     let mut skipped_multistage = 0usize;
+    let mut overridden = 0usize;
     let mut status_only = 0usize;
     let mut unchecked = 0usize;
 
@@ -662,6 +711,8 @@ fn crs_regression_corpus() {
             eprintln!("crs_regression: unparsable {name}");
             continue;
         };
+        let file_rule_id =
+            parsed.rule_id.as_ref().map(scalar).unwrap_or_default();
         for case in parsed.tests {
             total += 1;
             if case.stages.len() != 1 {
@@ -674,20 +725,26 @@ fn crs_regression_corpus() {
                 continue;
             }
 
-            let expected: Vec<u64> = stage
-                .output
+            // Platform overrides replace the test's own expectation.
+            let test_id = case.test_id.as_ref().map(scalar).unwrap_or_default();
+            let override_output =
+                overrides.get(&format!("{file_rule_id}:{test_id}"));
+            let output = override_output.unwrap_or(&stage.output);
+            if override_output.is_some() {
+                overridden += 1;
+            }
+
+            let expected: Vec<u64> = output
                 .log
                 .as_ref()
                 .and_then(|log| log.expect_ids.clone())
                 .unwrap_or_default();
-            let forbidden: Vec<u64> = stage
-                .output
+            let forbidden: Vec<u64> = output
                 .log
                 .as_ref()
                 .and_then(|log| log.no_expect_ids.clone())
                 .unwrap_or_default();
-            let contains: Vec<u64> = stage
-                .output
+            let contains: Vec<u64> = output
                 .log_contains
                 .as_deref()
                 .and_then(extract_id)
@@ -707,7 +764,7 @@ fn crs_regression_corpus() {
                 && forbidden.is_empty()
                 && contains.is_empty()
             {
-                if stage.output.status.is_some() {
+                if output.status.is_some() {
                     status_only += 1;
                 } else {
                     unchecked += 1;
@@ -763,14 +820,14 @@ fn crs_regression_corpus() {
         eprintln!("  FAIL {line}");
     }
     eprintln!(
-        "regression: files={} tests={total} checked={checked} passed={passed} failed={} skipped_raw={skipped_raw} skipped_multistage={skipped_multistage} status_only={status_only} unchecked={unchecked}",
+        "regression: files={} tests={total} checked={checked} passed={passed} failed={} skipped_raw={skipped_raw} skipped_multistage={skipped_multistage} overridden={overridden} status_only={status_only} unchecked={unchecked}",
         yaml_files.len(),
         failed.len()
     );
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5094,
-        "CRS regression regressed: {passed} passed (baseline 5094)"
+        passed >= 5096,
+        "CRS regression regressed: {passed} passed (baseline 5096)"
     );
 }

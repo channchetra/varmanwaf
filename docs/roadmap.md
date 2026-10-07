@@ -326,12 +326,13 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Twenty-first slice: harness HTTP `version` plumbing (920430),
-      `/reflect` semantics (`{"status": N}` / `{"body": "…"}` → 950100,
-      955120), `REQUEST_URI` includes the query string (ModSecurity
-      semantics — 920260). Regression: **5094/5155** (98.8%).
-- [ ] Remaining tail: `921250`, `931131`, `932207`, `941100`, `942100`,
-      `942500` (2 each) plus 1s (`920230`, `920360`–`920400`, …).
+- [x] Twenty-second slice: canonical httpd/ModSecurity test overrides applied
+      (config-dependent tests like `ARG_NAME_LENGTH`), with a deliberate
+      decision not to apply nginx/coraza platform-capability overrides.
+      Regression: **5096/5155** (98.8%).
+- [ ] Remaining tail: `921250` (cookie regex selectors), `931131`, `932207`,
+      `941100`, `942100`, `942500` (2 each) plus 1s (`920230`, `920370`,
+      `920390`–`920430`, …).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
