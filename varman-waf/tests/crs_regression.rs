@@ -400,6 +400,12 @@ fn targeted_singles_introspection() {
         "probe detect_sqli(/*/*/2 union all/bar)={:?}",
         varman_waf::rules::signatures::detect_sqli("/*/*/2 union all/bar")
     );
+    eprintln!(
+        "probe detect_sqli(var pipe type)={:?}",
+        varman_waf::rules::signatures::detect_sqli(
+            "var=\" | type %SystemDrive%\\config.ini | \""
+        )
+    );
     for (file, id, uri) in cases {
         let source =
             fs::read_to_string(root.join("rules").join(file)).expect("read");
@@ -975,7 +981,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5149,
-        "CRS regression regressed: {passed} passed (baseline 5149)"
+        passed >= 5150,
+        "CRS regression regressed: {passed} passed (baseline 5150)"
     );
 }

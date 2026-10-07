@@ -2312,6 +2312,10 @@ fn fingerprint_sql(lower: &str) -> String {
 static SQLI_UNION_SELECT: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\bunion\b[\s/*!]+(?:\ball\b[\s/*!]+)?\bselect\b").unwrap()
 });
+/// `union all` with no following `select` (`2 union all/bar`) — libinjection
+/// flags the `UNION ALL` keyword phrase on its own (CRS 942101 test 9).
+static SQLI_UNION_ALL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\bunion\b[\s/*!+(]+all\b").unwrap());
 /// Comment-glued union/select split: `unION#filler\nselECT`,
 /// `union--filler\nselect`. The `#`/`--` must sit *glued* to `union` —
 /// honest prose and teaching SQL always keep whitespace before a comment, so
@@ -2468,6 +2472,9 @@ fn sqli_strong_checks(lower: &str) -> Vec<&'static str> {
     let mut strong: Vec<&'static str> = Vec::with_capacity(4);
     if SQLI_UNION_SELECT.is_match(lower) {
         strong.push("union-select");
+    }
+    if SQLI_UNION_ALL.is_match(lower) {
+        strong.push("union-all");
     }
     // `unION#filler\nselECT` / `union--filler select`: a row comment glued
     // straight onto `union` with `select` behind the filler words. Honest SQL

@@ -338,15 +338,15 @@ report against the existing engine.
       (Transfer-Encoding unsets Content-Length, bodiless requests without
       Content-Length/Transfer-Encoding, versionless request lines =
       HTTP/0.9). Regression: **5144/5155** (99.8%).
-- [x] Thirty-first slice: **UTF-8-preserving decoders** (`jsDecode`,
-      `cssDecode`, `escapeSeqDecode`, `base64Decode` no longer re-encode
-      valid UTF-8 as Latin-1), **codepage-20127 best-fit folding** for
-      `%uXXXX` (ModSecurity's `unicode.mapping`, 370 entries), and
-      **`REQUEST_FILENAME` v3 semantics** (one-layer decoded raw path).
-      Regression: **5149/5155** (99.88%).
-- [ ] Remaining 6: `934100` t5 and `934160` t4 (transform-order edge
-      cases), `942100` t13 and `942101` t9 (libinjection-quality
-      vectors), `942500` t3/t4 (documented `+` divergence).
+- [x] Thirty-second slice: **`union all` signature** (libinjection flags the
+      bare `UNION ALL` phrase; CRS 942101 t9). Regression: **5150/5155**
+      (99.90%).
+- [ ] Final residual (5, all genuine engine divergences):
+      `934100` t5 (`removeWhitespace` erases the space the pattern needs),
+      `934160` t4 + `942500` t3/t4 (`%2B`-derived `+` handling — our model
+      is required by seven `932200` tests), `942100` t13 (libinjection
+      tokenizer quirk our signature prefilter does not reach). Documented
+      in `docs/compatibility.md`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
