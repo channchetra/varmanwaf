@@ -142,7 +142,11 @@ a working VarmanWAF with unchanged behaviour.
       and enforced, so an attack family a site marked monitor-only never
       blocks in either engine. The score is kept for the event, weaker hints
       are never escalated, and categories outside the dashboard list
-      (credential abuse, DLP, bot activity) cannot be downgraded.
+      (credential abuse, DLP, bot activity) cannot be downgraded. **Verified
+      live**: with `["sqli"]` the SQLi probe returned 200 with a monitor event
+      and the log showed `legacy=monitor pipeline=monitor agreement=Agree`
+      (previously `pipeline=block`); a JWT `alg:none` probe still blocked
+      (`legacy=pass pipeline=block`); clearing the list restored the 403.
 - [ ] Benchmarks: pipeline overhead vs legacy on the request corpus.
 
 Exit: both engines run side by side; shadow results measurable; no behaviour
