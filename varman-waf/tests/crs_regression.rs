@@ -32,21 +32,6 @@ struct TestFile {
 }
 
 #[derive(Debug, Deserialize)]
-struct OverridesFile {
-    #[serde(default)]
-    test_overrides: Vec<OverrideEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OverrideEntry {
-    rule_id: serde_yaml::Value,
-    #[serde(default)]
-    test_ids: Vec<serde_yaml::Value>,
-    #[serde(default)]
-    output: Output,
-}
-
-#[derive(Debug, Deserialize)]
 struct TestCase {
     #[serde(default)]
     test_id: Option<serde_yaml::Value>,
@@ -158,9 +143,16 @@ fn combined_source(rules_dir: &Path) -> String {
     combined
 }
 
-/// Compile the full CRS rule set (all files concatenated in include order).
+/// Official go-ftw test configuration from CRS
+/// `tests/regression/README.md` (added to `crs-setup.conf` when running the
+/// regression suite): enables the argument-limit checks and UTF-8
+/// validation the tests assume.
+const CRS_TEST_CONFIG: &str = "SecAction \"id:900005,phase:1,nolog,pass,ctl:ruleEngine=DetectionOnly,ctl:ruleRemoveById=910000,setvar:tx.blocking_paranoia_level=4,setvar:tx.crs_validate_utf8_encoding=1,setvar:tx.arg_name_length=100,setvar:tx.arg_length=400,setvar:tx.total_arg_length=64000,setvar:tx.max_num_args=255,setvar:tx.max_file_size=64100,setvar:tx.combined_file_sizes=65535\"";
+
+/// Compile the full CRS rule set (test configuration + all files concatenated
+/// in include order).
 fn compile_full_set(rules_dir: &Path) -> SecRuleSet {
-    let combined = combined_source(rules_dir);
+    let combined = format!("{CRS_TEST_CONFIG}\n{}", combined_source(rules_dir));
     SecRuleSet::from_source_with_base(&combined, Some(rules_dir))
         .unwrap_or_else(|error| {
             panic!("full CRS rule set failed to compile: {}", error.reason)
@@ -641,37 +633,6 @@ fn crs_regression_corpus() {
     let combined = combined_source(&rules_dir);
     let levels = paranoia_levels(&combined);
 
-    // Canonical platform overrides (httpd/ModSecurity v2) replace
-    // expectations for tests that need non-default configuration
-    // (ARG_NAME_LENGTH, …). nginx/coraza overrides are platform-capability
-    // notes for other engines and are deliberately not applied.
-    let mut overrides: BTreeMap<String, Output> = BTreeMap::new();
-    if let Ok(entries) = fs::read_dir(root.join("tests/regression")) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name != "httpd-overrides.yaml" {
-                continue;
-            }
-            let Ok(source) = fs::read_to_string(&path) else {
-                continue;
-            };
-            let Ok(parsed) = serde_yaml::from_str::<OverridesFile>(&source)
-            else {
-                continue;
-            };
-            for entry in parsed.test_overrides {
-                let rule = scalar(&entry.rule_id);
-                for test_id in &entry.test_ids {
-                    overrides.insert(
-                        format!("{rule}:{}", scalar(test_id)),
-                        entry.output.clone(),
-                    );
-                }
-            }
-        }
-    }
-
     let mut yaml_files: Vec<PathBuf> = Vec::new();
     for group in fs::read_dir(&tests_root).expect("read regression tests") {
         let group = group.expect("dir entry").path();
@@ -694,7 +655,6 @@ fn crs_regression_corpus() {
     let mut failed_by_expect: BTreeMap<String, usize> = BTreeMap::new();
     let mut skipped_raw = 0usize;
     let mut skipped_multistage = 0usize;
-    let mut overridden = 0usize;
     let mut status_only = 0usize;
     let mut unchecked = 0usize;
 
@@ -724,26 +684,20 @@ fn crs_regression_corpus() {
                 continue;
             }
 
-            // Platform overrides replace the test's own expectation.
-            let test_id = case.test_id.as_ref().map(scalar).unwrap_or_default();
-            let override_output =
-                overrides.get(&format!("{file_rule_id}:{test_id}"));
-            let output = override_output.unwrap_or(&stage.output);
-            if override_output.is_some() {
-                overridden += 1;
-            }
-
-            let expected: Vec<u64> = output
+            let expected: Vec<u64> = stage
+                .output
                 .log
                 .as_ref()
                 .and_then(|log| log.expect_ids.clone())
                 .unwrap_or_default();
-            let forbidden: Vec<u64> = output
+            let forbidden: Vec<u64> = stage
+                .output
                 .log
                 .as_ref()
                 .and_then(|log| log.no_expect_ids.clone())
                 .unwrap_or_default();
-            let contains: Vec<u64> = output
+            let contains: Vec<u64> = stage
+                .output
                 .log_contains
                 .as_deref()
                 .and_then(extract_id)
@@ -763,7 +717,7 @@ fn crs_regression_corpus() {
                 && forbidden.is_empty()
                 && contains.is_empty()
             {
-                if output.status.is_some() {
+                if stage.output.status.is_some() {
                     status_only += 1;
                 } else {
                     unchecked += 1;
@@ -819,14 +773,14 @@ fn crs_regression_corpus() {
         eprintln!("  FAIL {line}");
     }
     eprintln!(
-        "regression: files={} tests={total} checked={checked} passed={passed} failed={} skipped_raw={skipped_raw} skipped_multistage={skipped_multistage} overridden={overridden} status_only={status_only} unchecked={unchecked}",
+        "regression: files={} tests={total} checked={checked} passed={passed} failed={} skipped_raw={skipped_raw} skipped_multistage={skipped_multistage} status_only={status_only} unchecked={unchecked}",
         yaml_files.len(),
         failed.len()
     );
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5098,
-        "CRS regression regressed: {passed} passed (baseline 5098)"
+        passed >= 5100,
+        "CRS regression regressed: {passed} passed (baseline 5100)"
     );
 }
