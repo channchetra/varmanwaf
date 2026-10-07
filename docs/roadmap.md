@@ -344,9 +344,9 @@ report against the existing engine.
 - [ ] Final residual (5, all genuine engine divergences):
       `934100` t5 (`removeWhitespace` erases the space the pattern needs),
       `934160` t4 + `942500` t3/t4 (`%2B`-derived `+` handling — our model
-      is required by seven `932200` tests), `942100` t13 (libinjection
-      tokenizer quirk our signature prefilter does not reach). Documented
-      in `docs/compatibility.md`.
+      is required by seven `932200` tests), `942100` t13 (libinjection's
+      internal `sos` fingerprint pass — verified with the reference C
+      library). Documented in `docs/compatibility.md`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
