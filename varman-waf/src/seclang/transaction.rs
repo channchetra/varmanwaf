@@ -607,7 +607,10 @@ impl SecLangTransaction {
             ("REQUEST_HEADERS", Some(selector)) => cap(self
                 .headers
                 .iter()
-                .filter(|(n, _)| n.eq_ignore_ascii_case(selector))
+                .filter(|(n, _)| {
+                    regex_selector_matches(selector, n)
+                        .unwrap_or_else(|| n.eq_ignore_ascii_case(selector))
+                })
                 .map(|(n, v)| ResolvedValue {
                     name: format!("REQUEST_HEADERS:{n}"),
                     value: v.clone(),
@@ -626,7 +629,10 @@ impl SecLangTransaction {
             ("REQUEST_COOKIES", Some(selector)) => cap(self
                 .cookies
                 .iter()
-                .filter(|(n, _)| n == selector)
+                .filter(|(n, _)| {
+                    regex_selector_matches(selector, n)
+                        .unwrap_or_else(|| n == selector)
+                })
                 .map(|(n, v)| ResolvedValue {
                     name: format!("REQUEST_COOKIES:{n}"),
                     value: v.clone(),
@@ -1781,6 +1787,16 @@ fn compare_numbers(
     compare(value, expected)
 }
 
+/// `/regex/` selector matching (ModSecurity collection selectors); `None`
+/// when the selector is not a regex form.
+fn regex_selector_matches(selector: &str, name: &str) -> Option<bool> {
+    let regex_body = selector
+        .strip_prefix('/')
+        .and_then(|rest| rest.strip_suffix('/'))?;
+    let regex = Regex::new(regex_body).ok()?;
+    Some(regex.is_match(name))
+}
+
 /// `!VAR`, `!VAR:selector`, or `!VAR:/regex/` exclusion against a resolved
 /// value name (`ARGS:name`, `REQUEST_COOKIES:name`, …).
 fn matches_exclusion(exclusion: &str, name: &str) -> bool {
@@ -2657,6 +2673,23 @@ mod tests {
         assert_eq!(css.apply("\\z"), "z");
         assert_eq!(css.apply("\\"), "");
         assert_eq!(css.apply("\\\n"), "");
+    }
+
+    #[test]
+    fn cookie_regex_selectors_match() {
+        let request = Canonicalizer::default().canonicalize(
+            RequestParts::new("GET", "example.com", "/")
+                .with_header("Cookie", "$Version=1; sess=evil"),
+        );
+        let txn = SecLangTransaction::from_request(&request);
+        // CRS 921250: `REQUEST_COOKIES:/\x22?\x24Version/`.
+        let version = txn.resolve(r"REQUEST_COOKIES:/\x22?\x24Version/");
+        assert_eq!(version.len(), 1, "{version:?}");
+        assert_eq!(version[0].value, "1");
+        let rule = rule(
+            r#"SecRule REQUEST_COOKIES:/\x22?\x24Version/ "@streq 1" "id:1""#,
+        );
+        assert_eq!(rule.matches(&txn).len(), 1);
     }
 
     #[test]

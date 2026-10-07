@@ -181,10 +181,9 @@ fn paranoia_levels(source: &str) -> BTreeMap<u64, u8> {
         }
         let id: u64 = digits.parse().unwrap_or(0);
         // Stay inside this rule's quoted action list: the first `"` closes it.
-        let window = &after[..after.len().min(1000)];
-        let limit = match window.find('"') {
-            Some(position) => &window[..position],
-            None => window,
+        let limit = match after.find('"') {
+            Some(position) => &after[..position],
+            None => after,
         };
         if let Some(tag_at) = limit.find("paranoia-level/") {
             let tail = &limit[tag_at + "paranoia-level/".len()..];
@@ -827,7 +826,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5096,
-        "CRS regression regressed: {passed} passed (baseline 5096)"
+        passed >= 5098,
+        "CRS regression regressed: {passed} passed (baseline 5098)"
     );
 }

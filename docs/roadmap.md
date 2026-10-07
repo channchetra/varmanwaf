@@ -326,13 +326,17 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Twenty-second slice: canonical httpd/ModSecurity test overrides applied
-      (config-dependent tests like `ARG_NAME_LENGTH`), with a deliberate
-      decision not to apply nginx/coraza platform-capability overrides.
-      Regression: **5096/5155** (98.8%).
-- [ ] Remaining tail: `921250` (cookie regex selectors), `931131`, `932207`,
-      `941100`, `942100`, `942500` (2 each) plus 1s (`920230`, `920370`,
-      `920390`–`920430`, …).
+- [x] Twenty-third slice: regex selectors on collections
+      (`REQUEST_COOKIES:/regex/`, `REQUEST_HEADERS:/regex/` — CRS 921250),
+      level-extractor window fix. Regression: **5098/5155** (98.9%).
+- [ ] **Next major investigation — raw ARGS semantics:** ModSecurity stores
+      request arguments raw and CRS rules decode them via `t:urlDecodeUni`;
+      our engine pre-decodes at ingestion and decodes again in rules, which
+      breaks `%2B`-style vectors (942500). Resolving this likely shifts
+      several remaining tail classes both ways and must be done with the
+      full corpus as the referee.
+- [ ] Remaining tail: `931131`, `932207`, `941100`, `942100`, `942500`
+      (2 each) plus 1s (`920230`, `920370`–`920430`, `921120`, …).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
