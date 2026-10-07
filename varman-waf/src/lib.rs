@@ -22,6 +22,7 @@ pub mod canonical;
 pub mod engine;
 pub mod normalize;
 pub mod pipeline;
+pub mod processor;
 pub mod rules;
 pub mod score;
 pub mod seclang;

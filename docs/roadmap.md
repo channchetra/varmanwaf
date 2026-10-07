@@ -16,7 +16,7 @@
 | 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, …) | 🚧 In progress — SQL structural, HTML/XSS structural and shell/command detectors landed, corpus-covered and live-verified in shadow; AST, SSRF, XXE, SSTI, NoSQL, deserialization, GraphQL pending |
 | 7 | Native SecLang core + OWASP CRS conformance | 🚧 In progress — SecRule parser landed (structured AST, unsupported directives observable); execution engine next |
 | 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | 🚧 In progress — JWT analysis and DLP detectors landed with corpora; API security, ATO, TI and virtual patching pending |
-| 9 | Optional External Processor API | ⏳ Planned |
+| 9 | Optional External Processor API | 🚧 In progress — processor contract (trait, DTOs, failure policies, bounded monotonic merge) landed; UDS/gRPC transport and plugin wiring pending |
 
 ---
 
@@ -423,10 +423,18 @@ report against the existing engine.
 - Exit: each feature has corpora + FP controls + monitoring; security events
   explain what fired.
 
-## Phase 9 — Optional External Processor API
+## Phase 9 - Optional External Processor API
 
-- Zentinel-inspired UDS/gRPC external processors, capability negotiation,
-  timeout/failure policies (`fail_open`/`fail_closed`/`monitor_only`).
+- [x] Processor contract first slice (`varman-waf/src/processor.rs`) — the
+      Zentinel-inspired external-processor API: `ExternalProcessor` trait,
+      `ProcessorRequest`/`ProcessorResponse` DTOs (owned, transport-ready),
+      explicit `FailurePolicy` (`fail_open` / `monitor_only` / `fail_closed`),
+      bounded contribution (16 findings, 40/finding, 60/processor) and a
+      monotonic merge that can only escalate the native verdict. The transport
+      (UDS/gRPC client) stays a thin adapter over the trait; the caller owns
+      the async timeout.
+- [ ] UDS/gRPC transport + plugin wiring (`VARMAN_WAF_PROCESSOR_*`), capability
+      negotiation, processor health/metrics.
 - Exit: processors cannot destabilize the core; native engine remains the
   authority.
 

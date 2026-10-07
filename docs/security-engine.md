@@ -113,6 +113,14 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   (presigned URLs carry them by design), and public keys, test-mode keys and
   credential-free connection strings stay clean — all locked in by the benign
   corpus.
+- **`processor`** (Phase 9) — the optional external-processor contract:
+  out-of-process components inspect a request and *add* findings. The native
+  engine stays the authority: merging is monotonic (a processor can escalate,
+  never weaken), contributions are bounded (16 findings, 40/finding, 60 per
+  processor) and a timed-out or failed call resolves through an explicit
+  `FailurePolicy` (`fail_open` / `monitor_only` / `fail_closed`) — never
+  silently. The transport (UDS/gRPC) is a thin adapter over the
+  `ExternalProcessor` trait; the caller owns the async timeout.
 - **`pipeline::fast::ProtocolDetector`** (Phase 4) — framing and header
   sanity: conflicting duplicate `Content-Length`, `Content-Length` +
   `Transfer-Encoding` together, unsupported transfer codings (RFC 9112
