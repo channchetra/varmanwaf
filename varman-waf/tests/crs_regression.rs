@@ -58,6 +58,9 @@ struct Input {
     data: Option<String>,
     #[serde(default)]
     encoded_request: Option<String>,
+    /// go-ftw: `false` disables client-added headers (Content-Length).
+    #[serde(default)]
+    autocomplete_headers: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -191,6 +194,17 @@ fn fired_ids(
         }
     }
     if let Some(data) = &input.data {
+        // Real HTTP clients send Content-Length with bodies, unless the test
+        // opts out (`autocomplete_headers: false`).
+        let autocomplete = input.autocomplete_headers.unwrap_or(true);
+        let has_length = input.headers.as_ref().is_some_and(|headers| {
+            headers
+                .keys()
+                .any(|name| name.eq_ignore_ascii_case("content-length"))
+        });
+        if autocomplete && !has_length {
+            parts = parts.with_header("Content-Length", data.len().to_string());
+        }
         parts = parts.with_body(data.clone().into_bytes());
     }
     let request = Canonicalizer::default().canonicalize(parts);
@@ -250,6 +264,7 @@ fn targeted_920450_fires() {
         headers: Some(headers),
         data: None,
         encoded_request: None,
+        autocomplete_headers: None,
     };
     // Introspect the chain's TX state.
     let mut parts = RequestParts::new("GET", "localhost", "/");
@@ -308,6 +323,7 @@ fn targeted_943110_chain() {
         headers: Some(headers),
         data: None,
         encoded_request: None,
+        autocomplete_headers: None,
     };
     let fired = fired_ids(&engine, &input, 1);
     assert!(
@@ -335,6 +351,7 @@ fn targeted_943110_chain() {
         headers: Some(headers),
         data: Some("{ \"phpsession\":\"foo\" }".to_string()),
         encoded_request: None,
+        autocomplete_headers: None,
     };
     let fired = fired_ids(&engine, &input, 1);
     assert!(
@@ -371,6 +388,7 @@ fn targeted_944150_json_evasion_fires() {
                 .to_string(),
         ),
         encoded_request: None,
+        autocomplete_headers: None,
     };
     // Introspect what the engine sees before asserting.
     let mut parts = RequestParts::new("POST", "localhost", "/post");
@@ -420,6 +438,7 @@ fn targeted_933150_mixed_case_fires() {
         headers: Some(headers),
         data: None,
         encoded_request: None,
+        autocomplete_headers: None,
     };
     let fired = fired_ids(&engine, &input, 1);
     assert!(
@@ -465,6 +484,7 @@ fn targeted_942410_regex_matches() {
         headers: Some(headers),
         data: Some("ABS(".to_string()),
         encoded_request: None,
+        autocomplete_headers: None,
     };
     let fired = fired_ids(&mini, &input, 2);
     assert!(
@@ -504,6 +524,7 @@ fn targeted_942210_fires() {
         headers: Some(headers),
         data: Some("var%3d%20@.%3d%20%28%20SELECT".to_string()),
         encoded_request: None,
+        autocomplete_headers: None,
     };
     // 942210 is tagged `paranoia-level/2`.
     let fired = fired_ids(&engine, &input, 2);
@@ -543,6 +564,7 @@ fn targeted_944300_fires() {
         headers: Some(headers),
         data: Some("test=cnVudGltZQ".to_string()),
         encoded_request: None,
+        autocomplete_headers: None,
     };
     // 944300 is tagged `paranoia-level/3`.
     let fired = fired_ids(&engine, &input, 3);
@@ -711,7 +733,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5068,
-        "CRS regression regressed: {passed} passed (baseline 5068)"
+        passed >= 5073,
+        "CRS regression regressed: {passed} passed (baseline 5073)"
     );
 }

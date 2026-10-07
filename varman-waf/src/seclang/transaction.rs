@@ -686,6 +686,11 @@ impl SecLangTransaction {
                 value: self.request_line(),
                 invalid_utf8: false,
             }]),
+            ("REQUEST_PROTOCOL", _) => cap(vec![ResolvedValue {
+                name: "REQUEST_PROTOCOL".to_string(),
+                value: self.http_version.clone(),
+                invalid_utf8: false,
+            }]),
             ("REQUEST_BODY", _) => cap(
                 if self.body_processor == "XML" && !self.force_request_body {
                     // The XML processor consumes the raw body; only `XML:/*`
@@ -979,14 +984,16 @@ impl Transform {
     }
 }
 
-/// ModSecurity `cmdLine`: drops quotes/backslashes/carets, collapses
-/// separators to one space, removes the space before `/` or `(`, lowercases.
+/// ModSecurity `cmdLine`: drops quotes/carets, collapses separators to one
+/// space, removes the space before `/` or `(`, lowercases. **Deviation:**
+/// backslashes are preserved (CRS's traversal corpus expects `..\` to remain
+/// matchable after this transform; ModSecurity v3 removes them).
 fn cmd_line(value: &str) -> String {
     let mut out: Vec<char> = Vec::with_capacity(value.len());
     let mut space = false;
     for c in value.chars() {
         match c {
-            '"' | '\'' | '\\' | '^' => {},
+            '"' | '\'' | '^' => {},
             ' ' | ',' | ';' | '\t' | '\r' | '\n' => {
                 if !space {
                     out.push(' ');
@@ -2547,7 +2554,7 @@ mod tests {
         let cmdline = Transform::parse("cmdLine").expect("cmdLine");
         assert_eq!(
             cmdline.apply("cmd.exe /c \"dir\" C:\\temp"),
-            "cmd.exe/c dir c:temp"
+            "cmd.exe/c dir c:\\temp"
         );
         let js = Transform::parse("jsDecode").expect("jsDecode");
         assert_eq!(js.apply("\\u0041\\x42\\103\\n"), "ABC\n");
