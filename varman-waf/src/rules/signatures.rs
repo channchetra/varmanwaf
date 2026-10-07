@@ -2589,8 +2589,9 @@ pub fn detect_sqli(input: &str) -> (bool, String) {
 // libinjection-style XSS detection
 // ---------------------------------------------------------------------------
 
-static XSS_SCRIPT_TAG: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)<\s*/?\s*script\b").unwrap());
+static XSS_SCRIPT_TAG: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)<\s*/?\s*(?:[a-z0-9_-]{1,32}:)?script\b").unwrap()
+});
 // Event handler opener. The `\s` arm matches real markup (` on…=`); the
 // `+` arm covers URL-encoded headers/paths where the space stayed literal
 // (`<xss+onafterscriptexecute=…>` in a Referer query) — browsers reflect

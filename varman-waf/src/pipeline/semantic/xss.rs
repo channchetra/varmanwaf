@@ -68,7 +68,31 @@ impl Default for HtmlXssDetector {
 }
 
 fn first_dangerous_tag(low: &str) -> Option<&'static str> {
-    DANGEROUS_TAGS.iter().copied().find(|tag| low.contains(tag))
+    for tag in DANGEROUS_TAGS {
+        if low.contains(tag) {
+            return Some(tag);
+        }
+        // Namespaced tags execute like their bare form (`<x:script …>` —
+        // CRS 941100's XML-namespace vector).
+        let name = tag.trim_start_matches('<');
+        let mut rest = low;
+        while let Some(open) = rest.find('<') {
+            let candidate = &rest[open + 1..];
+            if let Some(colon) = candidate.find(':') {
+                let prefix = &candidate[..colon];
+                let valid_prefix = !prefix.is_empty()
+                    && prefix.len() <= 32
+                    && prefix.chars().all(|c| {
+                        c.is_ascii_alphanumeric() || c == '-' || c == '_'
+                    });
+                if valid_prefix && candidate[colon + 1..].starts_with(name) {
+                    return Some(tag);
+                }
+            }
+            rest = &rest[open + 1..];
+        }
+    }
+    None
 }
 
 fn contains_call(window: &str) -> bool {

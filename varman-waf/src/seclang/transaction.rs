@@ -959,7 +959,12 @@ impl Transform {
                 use base64::Engine as _;
                 base64::engine::general_purpose::STANDARD
                     .decode(value.trim())
-                    .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+                    .map(|bytes| {
+                        bytes
+                            .iter()
+                            .map(|&byte| byte as char)
+                            .collect::<String>()
+                    })
                     // ModSecurity leaves a value unchanged when base64
                     // decoding fails; mirror that instead of erroring.
                     .unwrap_or_else(|_| value.to_string())
@@ -1101,7 +1106,7 @@ fn js_decode(value: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&out).to_string()
+    out.iter().map(|&byte| byte as char).collect()
 }
 
 /// ModSecurity `urlDecodeUni`: single-pass decode of `%XX`, IIS-style
@@ -1576,7 +1581,7 @@ fn escape_seq_decode(value: &str) -> String {
             },
         }
     }
-    String::from_utf8_lossy(&out).to_string()
+    out.iter().map(|&byte| byte as char).collect()
 }
 
 fn single_hex(byte: u8) -> u8 {
@@ -1660,7 +1665,7 @@ fn css_decode(value: &str) -> String {
             i += 1;
         }
     }
-    String::from_utf8_lossy(&out).to_string()
+    out.iter().map(|&byte| byte as char).collect()
 }
 
 /// Case-insensitive action prefix stripping (`t:`, `setvar:`, …): the
@@ -2632,7 +2637,7 @@ mod tests {
         assert_eq!(strip.apply("#hash"), "hash");
 
         let escape = Transform::parse("escapeSeqDecode").expect("parse");
-        assert_eq!(escape.apply("\\n\\x41\\101\\777"), "\nAA\u{fffd}");
+        assert_eq!(escape.apply("\\n\\x41\\101\\777"), "\nAA\u{ff}");
         assert_eq!(escape.apply("\\xzz"), "xzz");
         assert_eq!(escape.apply("\\q"), "q");
 
