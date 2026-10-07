@@ -776,7 +776,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5100,
-        "CRS regression regressed: {passed} passed (baseline 5100)"
+        passed >= 5102,
+        "CRS regression regressed: {passed} passed (baseline 5102)"
     );
 }

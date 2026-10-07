@@ -326,17 +326,12 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Twenty-fifth slice: raw-ARGS investigation **concluded with data** —
-      the "ModSecurity stores raw args" hypothesis was tested three ways
-      (raw args / no-`+` transform / Model C) against the full corpus:
-      4466, 5092, and 4944 passed vs **5100 for the current model** (parse
-      decodes `%XX` and `+`; `t:urlDecodeUni` converts `+`). The `942500`
-      pair is a genuine platform divergence in `urlDecodeUni`'s `+`
-      handling and stays documented. No behavior change; regression
-      **5100/5155** (99.0%).
-- [ ] Remaining tail: `931131`, `932207`, `941100`, `942100`, `942500`
-      (2 each) plus 1s (`920230`, `920390`, `920410`, `920430`, `921120`,
-      `930110`, `932190`, …).
+- [x] Twenty-sixth slice: `MATCHED_VAR`/`MATCHED_VAR_NAME` as rule
+      **variables** (not just macros) — CRS chains target them directly
+      (932207). Regression: **5102/5155** (99.0%).
+- [ ] Remaining tail: `931131`, `941100`, `942100`, `942500` (2 each) plus
+      1s (`920230`, `920390`, `920410`, `920430`, `921120`, `930110`,
+      `932190`, `932220`, …).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

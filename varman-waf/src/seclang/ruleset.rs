@@ -1377,6 +1377,24 @@ mod tests {
     }
 
     #[test]
+    fn matched_var_is_a_variable_in_chains() {
+        // CRS 932207's chain shape: later members target `MATCHED_VAR`.
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@rx ^prefix:.*$\" \"id:1,capture,chain\"\n\
+             SecRule MATCHED_VAR \"@contains :\" \"id:2,chain\"\n\
+             SecRule MATCHED_VAR \"!@beginsWith #\" \"id:3,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=prefix:value"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].rule_ids, vec![Some(1), Some(2), Some(3)]);
+    }
+
+    #[test]
     fn chains_bind_matched_vars_between_members() {
         // Mirrors CRS 944120's shape: the first member matches the payload,
         // the second member matches the previous member's `MATCHED_VARS`.

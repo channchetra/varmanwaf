@@ -837,6 +837,16 @@ impl SecLangTransaction {
                 invalid_utf8: false,
             }]),
             ("MATCHED_VARS", _) => cap(self.matched_vars.clone()),
+            ("MATCHED_VAR", _) => cap(self.matched.iter().cloned().collect()),
+            ("MATCHED_VAR_NAME", _) => cap(self
+                .matched
+                .iter()
+                .map(|matched| ResolvedValue {
+                    name: "MATCHED_VAR_NAME".to_string(),
+                    value: matched.name.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
             ("REQBODY_PROCESSOR", _) => cap(vec![ResolvedValue {
                 name: "REQBODY_PROCESSOR".to_string(),
                 value: self.body_processor.clone(),
