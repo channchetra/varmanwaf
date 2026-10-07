@@ -219,6 +219,59 @@ fn fired_ids(
 }
 
 #[test]
+fn targeted_942410_regex_matches() {
+    let Some(root) = crs_root() else {
+        return;
+    };
+    let source = fs::read_to_string(
+        root.join("rules/REQUEST-942-APPLICATION-ATTACK-SQLI.conf"),
+    )
+    .expect("read rules file");
+    let marker = source.find("id:942410,").expect("rule present");
+    let before = &source[..marker];
+    let rx_at = before.rfind("\"@rx ").expect("operator") + 5;
+    let rx_end = before[rx_at..].find("\" \\").expect("operator end");
+    let pattern = &before[rx_at..rx_at + rx_end];
+    let regex = regex::Regex::new(pattern).expect("pattern compiles");
+    assert!(
+        regex.is_match("ABS("),
+        "raw regex does not match ABS( (pattern len {})",
+        pattern.len()
+    );
+
+    // Isolation: the same rule compiled alone, against the same request.
+    let rule_line = format!(
+        "SecRule ARGS_NAMES|ARGS \"@rx {pattern}\" \"id:942410,phase:2,block,t:none,t:urlDecodeUni\""
+    );
+    let mini = SecRuleSet::from_source(&rule_line).expect("mini compile");
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Host".to_string(),
+        serde_yaml::Value::String("localhost".to_string()),
+    );
+    let input = Input {
+        method: Some("POST".to_string()),
+        uri: Some("/post".to_string()),
+        headers: Some(headers),
+        data: Some("ABS(".to_string()),
+        encoded_request: None,
+    };
+    let fired = fired_ids(&mini, &input, 2);
+    assert!(
+        fired.contains(&942410),
+        "isolated rule did not fire; got {fired:?}"
+    );
+
+    // And the full set at PL2.
+    let engine = compile_full_set(&root.join("rules"));
+    let fired = fired_ids(&engine, &input, 2);
+    assert!(
+        fired.contains(&942410),
+        "full set did not fire 942410; got {fired:?}"
+    );
+}
+
+#[test]
 fn targeted_942210_fires() {
     let Some(root) = crs_root() else {
         return;
@@ -448,7 +501,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 4212,
-        "CRS regression regressed: {passed} passed (baseline 4212)"
+        passed >= 4568,
+        "CRS regression regressed: {passed} passed (baseline 4568)"
     );
 }

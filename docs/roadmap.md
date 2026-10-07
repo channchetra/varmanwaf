@@ -326,14 +326,15 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Tenth slice: full `ctl:` surface — `requestBodyProcessor=JSON` (real
-      JSON body processor with ModSecurity's flattening scheme),
-      `ruleRemoveById`, `ruleRemoveByTag`, `ruleRemoveTargetByTag`,
-      `REQBODY_PROCESSOR`; unknown options error observably. Harness fix:
-      go-ftw's default form content type. Regression: **4212/5155** (81.7%).
-- [ ] Remaining regression classes: `942410/942380/942550/942390` (SQLi
-      detector quality), `920120/920420`, `931130`, `944150-152`, `922110`,
-      `932240`, and `forbid [944120]` false positives.
+- [x] Eleventh slice: `SecRuleUpdateTargetById` exclusions done right (quoted
+      `!` targets append instead of replacing; CRS 999's 55 cookie exclusions
+      were silently clobbering the top failure classes), `REQUEST_COOKIES` /
+      `REQUEST_COOKIES_NAMES` resolution, negated target references
+      (`!VAR`, `!VAR:/regex/`) in the evaluator. Regression: **4568/5155**
+      (88.6%).
+- [ ] Remaining regression classes: `920120/920420/920480/920440` (protocol),
+      `931130`, `944150-152`, `922110`, `forbid [944120]` false positives,
+      `933150`, `956100`, `950150`, `952110`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

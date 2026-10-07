@@ -477,6 +477,7 @@ impl SecRuleSet {
                         "SecRuleUpdateTargetById id {id_raw:?} is not a number"
                     ),
                 })?;
+                let variables_raw = variables_raw.trim().trim_matches('"');
                 let variables: Vec<String> = variables_raw
                     .split('|')
                     .map(str::trim)
@@ -487,13 +488,6 @@ impl SecRuleSet {
                     return Err(SecLangError {
                         reason:
                             "SecRuleUpdateTargetById without target variables"
-                                .to_string(),
-                    });
-                }
-                if variables.iter().any(|v| v.starts_with('!')) {
-                    return Err(SecLangError {
-                        reason:
-                            "SecRuleUpdateTargetById exclusions (!VAR) are not supported"
                                 .to_string(),
                     });
                 }
@@ -538,11 +532,28 @@ impl SecRuleSet {
                         .strip_prefix("id:")
                         .and_then(|id| id.trim().parse::<u64>().ok())
                 });
-                if let Some(id) = rule_id {
-                    if let Some((_, variables)) =
-                        retargets.iter().find(|(target, _)| *target == id)
+                let Some(id) = rule_id else { continue };
+                for (target, entries) in &retargets {
+                    if *target != id {
+                        continue;
+                    }
+                    // A non-negated target list replaces the rule's targets;
+                    // `!VAR` entries are exclusions appended to the list (the
+                    // evaluator filters matching resolved values).
+                    let positives: Vec<String> = entries
+                        .iter()
+                        .filter(|entry| !entry.starts_with('!'))
+                        .cloned()
+                        .collect();
+                    if !positives.is_empty() {
+                        rule.variables = positives;
+                    }
+                    for entry in
+                        entries.iter().filter(|entry| entry.starts_with('!'))
                     {
-                        rule.variables = variables.clone();
+                        if !rule.variables.iter().any(|v| v == entry) {
+                            rule.variables.push(entry.clone());
+                        }
                     }
                 }
             }
@@ -1017,10 +1028,25 @@ mod tests {
             SecRuleSet::from_source("SecRuleUpdateTargetById abc ARGS\n")
                 .expect_err("must fail");
         assert!(error.reason.contains("not a number"), "{error}");
-        let error =
-            SecRuleSet::from_source("SecRuleUpdateTargetById 2001 !ARGS:id\n")
-                .expect_err("must fail");
-        assert!(error.reason.contains("not supported"), "{error}");
+    }
+
+    #[test]
+    fn update_target_exclusions_keep_other_targets() {
+        // Mirrors CRS 999: quoted `!`-exclusions must not clobber the rule's
+        // other targets (ARGS/ARGS_NAMES here).
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS|ARGS_NAMES|REQUEST_COOKIES \"@streq evil\" \"id:100,block\"\n\
+             SecRuleUpdateTargetById 100 \"!REQUEST_COOKIES:/^_ga(?:_\\w+)?$/\"\n\
+             SecRuleUpdateTargetById 100 \"!REQUEST_COOKIES:__gads\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=evil"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].rule_ids, vec![Some(100)]);
     }
 
     #[test]

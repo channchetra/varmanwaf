@@ -119,6 +119,7 @@ struct ArgValue {
 pub struct SecLangTransaction {
     args: Vec<ArgValue>,
     headers: Vec<(String, String)>,
+    cookies: Vec<(String, String)>,
     method: String,
     uri: String,
     query_string: String,
@@ -217,6 +218,11 @@ impl SecLangTransaction {
         Self {
             args,
             headers,
+            cookies: request
+                .cookies()
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
             method: request.method().to_string(),
             uri: request.path().to_string(),
             query_string: request.raw_query().to_string(),
@@ -430,6 +436,34 @@ impl SecLangTransaction {
                 .map(|(n, v)| ResolvedValue {
                     name: format!("REQUEST_HEADERS:{n}"),
                     value: v.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("REQUEST_COOKIES", None) => cap(self
+                .cookies
+                .iter()
+                .map(|(n, v)| ResolvedValue {
+                    name: format!("REQUEST_COOKIES:{n}"),
+                    value: v.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("REQUEST_COOKIES", Some(selector)) => cap(self
+                .cookies
+                .iter()
+                .filter(|(n, _)| n == selector)
+                .map(|(n, v)| ResolvedValue {
+                    name: format!("REQUEST_COOKIES:{n}"),
+                    value: v.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("REQUEST_COOKIES_NAMES", _) => cap(self
+                .cookies
+                .iter()
+                .map(|(n, _)| ResolvedValue {
+                    name: "REQUEST_COOKIES_NAMES".to_string(),
+                    value: n.clone(),
                     invalid_utf8: false,
                 })
                 .collect()),
@@ -1391,6 +1425,30 @@ fn compare_numbers(
     compare(value, expected)
 }
 
+/// `!VAR`, `!VAR:selector`, or `!VAR:/regex/` exclusion against a resolved
+/// value name (`ARGS:name`, `REQUEST_COOKIES:name`, …).
+fn matches_exclusion(exclusion: &str, name: &str) -> bool {
+    let Some(pattern) = exclusion.strip_prefix('!') else {
+        return false;
+    };
+    let Some((collection, selector)) = pattern.split_once(':') else {
+        return name == pattern;
+    };
+    let Some(regex_body) = selector
+        .strip_prefix('/')
+        .and_then(|rest| rest.strip_suffix('/'))
+    else {
+        return name == pattern;
+    };
+    let Ok(regex) = Regex::new(regex_body) else {
+        return name == pattern;
+    };
+    let Some((name_collection, name_selector)) = name.split_once(':') else {
+        return false;
+    };
+    name_collection == collection && regex.is_match(name_selector)
+}
+
 /// Numeric value of a resolved string, for the numeric comparison operators.
 /// Non-numeric values never match (documented in `docs/compatibility.md`).
 fn number(value: &str) -> Option<i64> {
@@ -1479,12 +1537,27 @@ impl CompiledSecRule {
                 invalid_utf8: false,
             }];
         }
+        let exclusions: Vec<&String> = self
+            .line
+            .variables
+            .iter()
+            .filter(|reference| reference.starts_with('!'))
+            .collect();
         let mut hits = Vec::new();
         for reference in &self.line.variables {
+            if reference.starts_with('!') {
+                continue;
+            }
             if excluded.iter().any(|target| target == reference) {
                 continue;
             }
             for value in txn.resolve(reference) {
+                if exclusions
+                    .iter()
+                    .any(|exclusion| matches_exclusion(exclusion, &value.name))
+                {
+                    continue;
+                }
                 if self.operator_matches(&value, txn) != self.line.negated {
                     hits.push(value);
                     if !self.multi_match {
@@ -2007,6 +2080,28 @@ mod tests {
         assert_eq!(css.apply("\\z"), "z");
         assert_eq!(css.apply("\\"), "");
         assert_eq!(css.apply("\\\n"), "");
+    }
+
+    #[test]
+    fn cookies_resolve_and_exclusions_filter_values() {
+        let request = Canonicalizer::default().canonicalize(
+            RequestParts::new("GET", "example.com", "/")
+                .with_header("Cookie", "_ga=tracker; sess=evil"),
+        );
+        let txn = SecLangTransaction::from_request(&request);
+        assert_eq!(txn.resolve("REQUEST_COOKIES:sess")[0].value, "evil");
+        assert_eq!(txn.resolve("REQUEST_COOKIES_NAMES").len(), 2);
+
+        // `sess` matches; the `_ga` exclusion only removes the tracker.
+        let first = rule(
+            "SecRule REQUEST_COOKIES|!REQUEST_COOKIES:/^_ga/ \"@streq evil\" \"id:1\"",
+        );
+        assert_eq!(first.matches(&txn).len(), 1);
+        // Excluding `sess` leaves only the tracker, which does not match.
+        let second = rule(
+            "SecRule REQUEST_COOKIES|!REQUEST_COOKIES:/^sess/ \"@streq evil\" \"id:2\"",
+        );
+        assert!(second.matches(&txn).is_empty());
     }
 
     #[test]
