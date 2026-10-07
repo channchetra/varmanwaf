@@ -15,7 +15,7 @@
 | 5 | Streaming body engine (bounded windows, limits) | ⏳ Planned |
 | 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, …) | 🚧 In progress — SQL structural, HTML/XSS structural and shell/command detectors landed, corpus-covered and live-verified in shadow; AST, SSRF, XXE, SSTI, NoSQL, deserialization, GraphQL pending |
 | 7 | Native SecLang core + OWASP CRS conformance | 🚧 In progress — SecRule parser landed (structured AST, unsupported directives observable); execution engine next |
-| 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | ⏳ Planned |
+| 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | 🚧 In progress - JWT analysis detector landed with corpora; API security, ATO, TI, DLP and virtual patching pending |
 | 9 | Optional External Processor API | ⏳ Planned |
 
 ---
@@ -373,10 +373,18 @@ report against the existing engine.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
-## Phase 8 — Advanced security
+## Phase 8 - Advanced security
 
-- API security/OpenAPI validation, JWT analysis, bot detection, ATO, threat
-  intelligence, DLP, virtual patching, WebSocket inspection.
+- [x] JWT analysis detector (`semantic::jwt`, Phase 8 first slice) — finds
+      JWT-shaped tokens in headers, cookies, query values and bodies;
+      `alg: none` / empty-signature tokens **Block** (`CredentialAbuse`),
+      `jku`/`x5u` external key URLs, embedded `jwk` and `kid`
+      separators/traversal **Monitor**, signature-less shapes **Log**.
+      Missing `exp`, opaque tokens and non-JSON payloads stay clean
+      (benign-corpus guard). Attack corpus `credential_abuse.txt` (8 payloads,
+      ratcheted to ≥ Monitor) + benign JWT samples.
+- [ ] API security/OpenAPI validation, ATO, threat intelligence, DLP,
+      virtual patching, WebSocket inspection.
 - Exit: each feature has corpora + FP controls + monitoring; security events
   explain what fired.
 

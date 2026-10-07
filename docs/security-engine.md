@@ -15,7 +15,7 @@
 | Shadow wiring + engine switch (`pingap-plugin/src/waf_shadow.rs`) | Landed: `VARMAN_WAF_ENGINE=legacy|shadow|varman`; shadow compares pipeline vs legacy per request and records counters; `varman` enforces the pipeline verdict escalated with the legacy verdict | Yes (`varman` mode) |
 | Lane 1 fast detectors | Started: protocol checks + Aho-Corasick signature scanner (starter table, tiered) + raw-path traversal evidence; corpora in `varman-waf/tests/corpus` | No (shadow only) |
 | Streaming body engine | Pending (Phase 5) | No |
-| Lane 2 semantic detectors | SQL, HTML/XSS, shell/command, SSRF, NoSQL, SSTI, XXE, deserialization, prototype-pollution, LDAP/XPath, GraphQL structural detectors; covered by the corpora | No (shadow only) |
+| Lane 2 semantic detectors | SQL, HTML/XSS, shell/command, SSRF, NoSQL, SSTI, XXE, deserialization, prototype-pollution, LDAP/XPath, GraphQL, JWT (Phase 8) structural detectors; covered by the corpora | No (shadow only) |
 | SecLang / OWASP CRS (Lane 3) | Pending (Phase 7); tracked in `docs/compatibility.md` | No |
 
 The pipeline is wired into the proxy through `pingap-plugin/src/waf_shadow.rs`.
@@ -94,6 +94,15 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   prose that merely mentions SQL keywords stays at Log tier — the benign
   corpus asserts it never reaches Monitor/Block. Values above the semantic
   budget degrade instead of being partially parsed.
+- **`pipeline::semantic::JwtDetector`** (Phase 8, first advanced-security
+  detector) — finds JWT-shaped tokens (`eyJ…` base64url runs) in headers,
+  cookies, query values and bodies, decodes the header and flags the
+  verification-bypass family: `alg: none` and non-`none` algorithms with an
+  empty signature **Block** (`CredentialAbuse`); `jku`/`x5u` external key
+  URLs, embedded `jwk` keys and `kid` path separators/traversal **Monitor**;
+  a JWT-shaped token without a signature segment stays **Log**. Missing
+  `exp`, opaque bearer tokens and JWTs whose payload is not JSON stay clean —
+  the benign corpus carries real-world samples of all three.
 - **`pipeline::fast::ProtocolDetector`** (Phase 4) — framing and header
   sanity: conflicting duplicate `Content-Length`, `Content-Length` +
   `Transfer-Encoding` together, unsupported transfer codings (RFC 9112

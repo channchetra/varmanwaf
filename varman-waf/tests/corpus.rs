@@ -18,7 +18,7 @@ use varman_waf::canonical::{Canonicalizer, RequestParts};
 use varman_waf::pipeline::fast::{RawPathTraversalDetector, SignatureDetector};
 use varman_waf::pipeline::semantic::{
     CommandInjectionDetector, DeserializationDetector, GraphqlAbuseDetector,
-    HtmlXssDetector, LdapXPathDetector, NosqlInjectionDetector,
+    HtmlXssDetector, JwtDetector, LdapXPathDetector, NosqlInjectionDetector,
     PrototypePollutionDetector, SqlStructuralDetector, SsrfStructuralDetector,
     SstiDetector, XxeDetector,
 };
@@ -40,6 +40,7 @@ const MUST_REACH_MONITOR: &[&str] = &[
     "crlf_injection",
     "deserialization",
     "lfi_rfi",
+    "credential_abuse",
 ];
 
 fn corpus_dir(kind: &str) -> PathBuf {
@@ -64,6 +65,7 @@ fn pipeline() -> SecurityPipeline {
         Box::new(PrototypePollutionDetector::new()),
         Box::new(LdapXPathDetector::new()),
         Box::new(GraphqlAbuseDetector::new()),
+        Box::new(JwtDetector::new()),
     ])
 }
 
