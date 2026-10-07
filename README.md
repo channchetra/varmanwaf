@@ -149,6 +149,7 @@ cargo fmt --all -- --check
 | [`docs/roadmap.md`](./docs/roadmap.md) | Phase-by-phase status (what is done, in progress, next) |
 | [`docs/compatibility.md`](./docs/compatibility.md) | SecLang / OWASP CRS compatibility tracking |
 | [`docs/deployment.md`](./docs/deployment.md) | Deployment, operations and the verification smoke test |
+| [`docs/performance.md`](./docs/performance.md) | Lane-cost measurements, methodology and hardware |
 
 ## Project status
 

@@ -147,7 +147,13 @@ a working VarmanWAF with unchanged behaviour.
       and the log showed `legacy=monitor pipeline=monitor agreement=Agree`
       (previously `pipeline=block`); a JWT `alg:none` probe still blocked
       (`legacy=pass pipeline=block`); clearing the list restored the 403.
-- [ ] Benchmarks: pipeline overhead vs legacy on the request corpus.
+- [x] Benchmarks: pipeline overhead vs legacy on the request corpus.
+      `varman-waf/tests/lane_cost.rs` measures both engines over the attack +
+      benign corpora (2,640 requests/lane) and prints the lane-cost table;
+      methodology and numbers in `docs/performance.md`. **Measured
+      2026-10-07: full pipeline 88.23 µs/request vs legacy 445.69 µs
+      (ratio 0.20, ~5x faster); fast lane 2.51 µs; canonicalize 4.80 µs.**
+      Loose sanity bounds asserted (10x+ headroom) so CI cannot flake.
 
 Exit: both engines run side by side; shadow results measurable; no behaviour
 change in enforcement.
@@ -193,7 +199,9 @@ independently.
       target, invalid header-name/method token bytes, header-count ceiling.
       Structured `HttpSmuggling`/`CrlfInjection`/`ProtocolViolation` findings.
 - [ ] Expand signatures with per-pattern bypass cases and FP tuning.
-- [ ] Fast-lane benchmarks vs the legacy engine (lane-cost report).
+- [x] Fast-lane benchmarks vs the legacy engine (lane-cost report):
+      `docs/performance.md` — fast lane 2.51 µs/request, full pipeline
+      88.23 µs, legacy 445.69 µs (ratio 0.20).
 
 Exit: fast lane alone detects the high-confidence attack corpus with zero
 benign-corpus blocks; benchmarked cost documented.
