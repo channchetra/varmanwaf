@@ -12,6 +12,7 @@
 
 pub mod html;
 pub mod path;
+pub mod unicode_bestfit;
 pub mod url;
 
 use std::borrow::Cow;

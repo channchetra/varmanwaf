@@ -369,25 +369,37 @@ fn targeted_singles_introspection() {
     let cases: &[(&str, u64, &str)] = &[
         (
             "REQUEST-941-APPLICATION-ATTACK-XSS.conf",
-            941350,
-            "/get/xx?id=%252bADw-script%252bAD4-",
+            941100,
+            "/?id=%u00abscript%u00bballert(1)%u00ab/script%u00bb",
         ),
         (
-            "REQUEST-941-APPLICATION-ATTACK-XSS.conf",
-            941101,
-            "/get/\"onmouseover='prompt(document.cookie)'\"",
+            "REQUEST-931-APPLICATION-ATTACK-RFI.conf",
+            931131,
+            "/get/file:%2f%2f/usr/src/blog/app/assets/javascripts/%252e%252e/%252e%252e/etc/passwd",
+        ),
+        (
+            "REQUEST-942-APPLICATION-ATTACK-SQLI.conf",
+            942101,
+            "/post/%2A/%2A/2+union+all/bar",
         ),
         (
             "REQUEST-934-APPLICATION-ATTACK-GENERIC.conf",
-            934100,
-            "/get?foo=new+Function+%28",
-        ),
-        (
-            "REQUEST-930-APPLICATION-ATTACK-LFI.conf",
-            930110,
-            "/get?a=..;.\\.;\\.",
+            934160,
+            "/get?eval=while(!%2B0);",
         ),
     ];
+    eprintln!(
+        "probe detect_xss(«script»allert(1)«/script»)={:?}",
+        varman_waf::rules::signatures::detect_xss("«script»allert(1)«/script»")
+    );
+    eprintln!(
+        "probe detect_sqli(’ or ’a’=’a)={:?}",
+        varman_waf::rules::signatures::detect_sqli("’ or ’a’=’a")
+    );
+    eprintln!(
+        "probe detect_sqli(/*/*/2 union all/bar)={:?}",
+        varman_waf::rules::signatures::detect_sqli("/*/*/2 union all/bar")
+    );
     for (file, id, uri) in cases {
         let source =
             fs::read_to_string(root.join("rules").join(file)).expect("read");
@@ -963,7 +975,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5144,
-        "CRS regression regressed: {passed} passed (baseline 5144)"
+        passed >= 5149,
+        "CRS regression regressed: {passed} passed (baseline 5149)"
     );
 }

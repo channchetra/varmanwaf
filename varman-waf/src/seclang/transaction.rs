@@ -133,6 +133,9 @@ pub struct SecLangTransaction {
     uri: String,
     query_string: String,
     raw_path: String,
+    /// `REQUEST_FILENAME`: one-layer percent-decoded raw path (ModSecurity
+    /// v3 decodes the path exactly once; dot segments are not resolved).
+    filename: String,
     body: Option<Vec<u8>>,
     /// `XML:/*` values (element text nodes) when the XML processor is active.
     xml_texts: Vec<String>,
@@ -323,6 +326,10 @@ impl SecLangTransaction {
             uri: request.path().to_string(),
             query_string: request.raw_query().to_string(),
             raw_path: request.raw_path().to_string(),
+            filename: crate::normalize::url::multi_decode(
+                request.raw_path(),
+                1,
+            ),
             body,
             xml_texts,
             xml_attributes,
@@ -701,14 +708,14 @@ impl SecLangTransaction {
             }]),
             ("REQUEST_FILENAME", _) => cap(vec![ResolvedValue {
                 name: "REQUEST_FILENAME".to_string(),
-                value: self.uri.clone(),
+                value: self.filename.clone(),
                 invalid_utf8: self.path_invalid_utf8,
             }]),
             ("REQUEST_BASENAME", _) => cap(vec![ResolvedValue {
                 name: "REQUEST_BASENAME".to_string(),
                 value: self
-                    .uri
-                    .rsplit('/')
+                    .filename
+                    .rsplit(['/', '\\'])
                     .next()
                     .unwrap_or_default()
                     .to_string(),
@@ -1038,10 +1045,7 @@ impl Transform {
                 base64::engine::general_purpose::STANDARD
                     .decode(value.trim())
                     .map(|bytes| {
-                        bytes
-                            .iter()
-                            .map(|&byte| byte as char)
-                            .collect::<String>()
+                        crate::normalize::url::bytes_to_scannable(&bytes)
                     })
                     // ModSecurity leaves a value unchanged when base64
                     // decoding fails; mirror that instead of erroring.
@@ -1189,7 +1193,7 @@ fn js_decode(value: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    out.iter().map(|&byte| byte as char).collect()
+    crate::normalize::url::bytes_to_scannable(&out)
 }
 
 /// ModSecurity `urlDecodeUni`: single-pass decode of `%XX`, IIS-style
@@ -1217,6 +1221,18 @@ fn url_decode_uni(value: &str) -> String {
                 && input[i + 4].is_ascii_hexdigit()
                 && input[i + 5].is_ascii_hexdigit()
             {
+                let code = (u32::from(hex_byte(input[i + 2], input[i + 3]))
+                    << 8)
+                    | u32::from(hex_byte(input[i + 4], input[i + 5]));
+                // Codepage-20127 best-fit folding first (CRS's reference
+                // containers load ModSecurity's `unicode.mapping`).
+                if let Some(byte) =
+                    crate::normalize::unicode_bestfit::best_fit(code)
+                {
+                    out.push(byte);
+                    i += 6;
+                    continue;
+                }
                 let mut byte = hex_byte(input[i + 4], input[i + 5]);
                 // Full width ASCII (ff01 - ff5e) needs 0x20 added.
                 if byte > 0x00
@@ -1664,7 +1680,7 @@ fn escape_seq_decode(value: &str) -> String {
             },
         }
     }
-    out.iter().map(|&byte| byte as char).collect()
+    crate::normalize::url::bytes_to_scannable(&out)
 }
 
 fn single_hex(byte: u8) -> u8 {
@@ -1748,7 +1764,7 @@ fn css_decode(value: &str) -> String {
             i += 1;
         }
     }
-    out.iter().map(|&byte| byte as char).collect()
+    crate::normalize::url::bytes_to_scannable(&out)
 }
 
 /// Case-insensitive action prefix stripping (`t:`, `setvar:`, …): the
@@ -2489,6 +2505,43 @@ mod tests {
             },
             SecLangLine::Ignored => panic!("expected rule"),
         }
+    }
+
+    #[test]
+    fn guillemet_xss_rule_probe() {
+        let uni = Transform::parse("urlDecodeUni").expect("uni");
+        // Codepage-20127 best-fit folding: the guillemets become angle
+        // brackets (CRS loads ModSecurity's `unicode.mapping`).
+        assert_eq!(
+            uni.apply("%u00abscript%u00bballert(1)%u00ab/script%u00bb"),
+            "<script>allert(1)</script>"
+        );
+        let request = Canonicalizer::default().canonicalize(RequestParts::new(
+            "GET",
+            "localhost",
+            "/?id=%u00abscript%u00bballert(1)%u00ab/script%u00bb",
+        ));
+        let txn = SecLangTransaction::from_request(&request);
+        let xss = rule(
+            "SecRule ARGS \"@detectXSS\" \"id:1,t:none,t:utf8toUnicode,t:urlDecodeUni,t:htmlEntityDecode,t:jsDecode,t:cssDecode,t:removeNulls\"",
+        );
+        eprintln!("op: {:?}", xss.line.operator);
+        eprintln!("transforms: {:?}", xss.transforms);
+        eprintln!(
+            "transformed: {:?}",
+            xss.apply_transforms(
+                "%u00abscript%u00bballert(1)%u00ab/script%u00bb"
+            )
+        );
+        assert_eq!(
+            xss.matches(&txn).len(),
+            1,
+            "args: {:?}",
+            txn.resolve("ARGS")
+                .iter()
+                .map(|v| v.value.clone())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

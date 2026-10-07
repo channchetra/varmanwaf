@@ -338,9 +338,15 @@ report against the existing engine.
       (Transfer-Encoding unsets Content-Length, bodiless requests without
       Content-Length/Transfer-Encoding, versionless request lines =
       HTTP/0.9). Regression: **5144/5155** (99.8%).
-- [ ] Remaining 11: `931131`, `941100`, `942100`, `942500` (2 each) plus
-      `934100`, `934160`, `942101` — libinjection-quality vectors,
-      double-encoded `REQUEST_FILENAME`, and the documented `+` conflicts.
+- [x] Thirty-first slice: **UTF-8-preserving decoders** (`jsDecode`,
+      `cssDecode`, `escapeSeqDecode`, `base64Decode` no longer re-encode
+      valid UTF-8 as Latin-1), **codepage-20127 best-fit folding** for
+      `%uXXXX` (ModSecurity's `unicode.mapping`, 370 entries), and
+      **`REQUEST_FILENAME` v3 semantics** (one-layer decoded raw path).
+      Regression: **5149/5155** (99.88%).
+- [ ] Remaining 6: `934100` t5 and `934160` t4 (transform-order edge
+      cases), `942100` t13 and `942101` t9 (libinjection-quality
+      vectors), `942500` t3/t4 (documented `+` divergence).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
