@@ -33,6 +33,8 @@ pub use canonicalizer::{
 pub struct QueryParam {
     pub name: String,
     pub value: String,
+    /// `true` when the decoded wire bytes were not valid UTF-8.
+    pub invalid_utf8: bool,
 }
 
 /// Verified client identity.
@@ -64,6 +66,8 @@ pub struct CanonicalRequest {
     /// HTTP version as reported by the data plane (`"HTTP/1.1"` when the
     /// caller did not provide one).
     http_version: String,
+    /// `true` when the percent-decoded path bytes were not valid UTF-8.
+    path_invalid_utf8: bool,
 }
 
 impl CanonicalRequest {
@@ -90,6 +94,7 @@ impl CanonicalRequest {
             body: None,
             client: ClientIdentity::default(),
             http_version: "HTTP/1.1".to_string(),
+            path_invalid_utf8: false,
         }
     }
 
@@ -109,6 +114,7 @@ impl CanonicalRequest {
         body: Option<Vec<u8>>,
         client: ClientIdentity,
         http_version: String,
+        path_invalid_utf8: bool,
     ) -> Self {
         Self {
             method,
@@ -122,6 +128,7 @@ impl CanonicalRequest {
             body,
             client,
             http_version,
+            path_invalid_utf8,
         }
     }
 
@@ -174,6 +181,11 @@ impl CanonicalRequest {
     /// caller did not provide one).
     pub fn http_version(&self) -> &str {
         &self.http_version
+    }
+
+    /// `true` when the percent-decoded path bytes were not valid UTF-8.
+    pub fn path_invalid_utf8(&self) -> bool {
+        self.path_invalid_utf8
     }
 
     /// First header value for `name` (case-insensitive; names are stored
@@ -233,6 +245,7 @@ impl CanonicalRequest {
         self.query.push(QueryParam {
             name: name.into(),
             value: value.into(),
+            invalid_utf8: false,
         });
         self
     }

@@ -312,15 +312,17 @@ report against the existing engine.
       `t:hexEncode`, `initcol` collection registry (per-transaction,
       documented), case-insensitive action dispatch. **CRS load: 24/27 files,
       538 rules** (ratcheted in the harness).
-- [x] Sixth CRS slice: **full-set harness mode** (all rule files concatenated
-      in include order — the way CRS actually loads). Result: 693 rule
-      statements, failing only at `@validateUtf8Encoding` (920). 950's
-      standalone failure is confirmed as a harness-mode artifact, not an
-      engine gap.
-- [ ] Last engine gap: byte-preserving value plumbing
-      (`@validateUtf8Encoding`, 920) — after which the full-set pass should go
-      green → host-environment fix for the Defender-quarantined
-      `web-shells-php.data` (955).
+- [x] **Seventh CRS slice — the CRS milestone is reached: the full OWASP Core
+      Rule Set compiles.** Byte-preserving decode (`multi_decode_bytes`) with
+      `invalid_utf8` flags on resolved values (body, args, filename),
+      `@validateUtf8Encoding`, `@validateUrlEncoding`, `t:length`, and the
+      documented `REQUEST_FILENAME` variable. **Full-set: OK, 693 rule
+      statements across 27 files**; per-file 26/27 (950 is a standalone-compile
+      artifact). Environment note: Windows Defender locks
+      `web-shells-php.data`; use `CRS_DIR=/opt/crs-conformance` (container
+      clone) or add an exclusion.
+- [ ] Next: run CRS regression tests (go-ftw corpus) against the engine —
+      load conformance is proven, behavioural conformance is next.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

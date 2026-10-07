@@ -83,6 +83,33 @@ pub fn multi_decode(input: &str, max_layers: usize) -> String {
     current
 }
 
+/// Like [`multi_decode`], but returns the raw decoded bytes of the last
+/// decoding layer (before `bytes_to_scannable` restoration) so callers can
+/// tell whether the wire value was valid UTF-8. Used by
+/// `@validateUtf8Encoding`.
+pub fn multi_decode_bytes(input: &str, max_layers: usize) -> Vec<u8> {
+    if max_layers == 0 || !input.contains('%') {
+        return input.as_bytes().to_vec();
+    }
+    let mut current = input.to_string();
+    let mut current_bytes = input.as_bytes().to_vec();
+    for _ in 0..max_layers {
+        let Some(bytes) = percent_to_bytes(&current) else {
+            break;
+        };
+        let decoded = bytes_to_scannable(&bytes);
+        if decoded == current {
+            break;
+        }
+        current_bytes = bytes;
+        current = decoded;
+        if !current.contains('%') {
+            break;
+        }
+    }
+    current_bytes
+}
+
 /// Lower-case every percent-encoded triplet in `input` so that `%2E` and `%2e`
 /// compare equal in subsequent signature matching. Does NOT decode anything.
 pub fn normalize_percent_case(input: &str) -> String {

@@ -58,6 +58,12 @@ pub enum SecOperator {
     /// `@pmFromFile`: data file resolved against the rule-set base
     /// directory; expanded to `Pm` at rule-set build time.
     PmFromFile(String),
+    /// `@validateUtf8Encoding`: matches values whose wire bytes were not
+    /// valid UTF-8.
+    ValidateUtf8Encoding,
+    /// `@validateUrlEncoding`: matches malformed percent sequences
+    /// (non-hex digits or truncated triplets); empty values never match.
+    ValidateUrlEncoding,
     /// `SecAction` / `@unconditionalMatch`: matches unconditionally.
     AlwaysMatch,
     /// `@within`: argument list is scanned for the value (substring search,
@@ -86,6 +92,8 @@ impl SecOperator {
             Self::Ge(_) => "@ge",
             Self::ValidateByteRange(_) => "@validateByteRange",
             Self::PmFromFile(_) => "@pmFromFile",
+            Self::ValidateUtf8Encoding => "@validateUtf8Encoding",
+            Self::ValidateUrlEncoding => "@validateUrlEncoding",
             Self::AlwaysMatch => "@alwaysMatch",
             Self::Within(_) => "@within",
         }
@@ -209,6 +217,8 @@ fn parse_operator(raw: &str) -> Result<SecOperator, SecLangError> {
             }
             SecOperator::PmFromFile(path.to_string())
         },
+        "@validateUtf8Encoding" => SecOperator::ValidateUtf8Encoding,
+        "@validateUrlEncoding" => SecOperator::ValidateUrlEncoding,
         "@contains" => SecOperator::Contains(argument.to_string()),
         "@streq" => SecOperator::Streq(argument.to_string()),
         "@beginsWith" => SecOperator::BeginsWith(argument.to_string()),
@@ -544,6 +554,10 @@ mod tests {
         assert_eq!(unconditional.operator, SecOperator::AlwaysMatch);
         let macro_pattern = rule("SecRule ARGS \"@rx %{tx.foo}\" \"id:3\"");
         assert_eq!(macro_pattern.operator, SecOperator::Rx("%{tx.foo}".into()));
+        let utf8 = rule("SecRule ARGS \"@validateUtf8Encoding\" \"id:9\"");
+        assert_eq!(utf8.operator, SecOperator::ValidateUtf8Encoding);
+        let url = rule("SecRule ARGS \"@validateUrlEncoding\" \"id:10\"");
+        assert_eq!(url.operator, SecOperator::ValidateUrlEncoding);
     }
 
     #[test]

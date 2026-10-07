@@ -33,18 +33,30 @@ pub struct ResolvedValue {
     /// Variable name with selector, e.g. `ARGS:id`.
     pub name: String,
     pub value: String,
+    /// `true` when the underlying wire bytes were not valid UTF-8 (used by
+    /// `@validateUtf8Encoding`; only body/args/path values can be flagged).
+    pub invalid_utf8: bool,
+}
+
+/// One decoded argument with its wire-byte validity.
+#[derive(Debug, Clone)]
+struct ArgValue {
+    name: String,
+    value: String,
+    invalid_utf8: bool,
 }
 
 /// Request-scoped variable state.
 #[derive(Debug)]
 pub struct SecLangTransaction {
-    args: Vec<(String, String)>,
+    args: Vec<ArgValue>,
     headers: Vec<(String, String)>,
     method: String,
     uri: String,
     query_string: String,
-    body: Option<String>,
+    body: Option<Vec<u8>>,
     remote_addr: String,
+    path_invalid_utf8: bool,
     tx: BTreeMap<String, String>,
     /// `initcol` collection instances: collection name → instance key →
     /// value. Per-transaction storage; cross-request persistence is not
@@ -54,6 +66,27 @@ pub struct SecLangTransaction {
     /// Variable that most recently matched, for `MATCHED_VAR` /
     /// `MATCHED_VAR_NAME`.
     matched: Option<ResolvedValue>,
+}
+
+/// Decode one form-urlencoded pair while keeping its wire-byte validity.
+fn form_arg(name_raw: &[u8], value_raw: &[u8]) -> ArgValue {
+    let name = String::from_utf8_lossy(name_raw).replace('+', " ");
+    let value = String::from_utf8_lossy(value_raw).replace('+', " ");
+    let invalid_utf8 = std::str::from_utf8(name_raw).is_err()
+        || std::str::from_utf8(value_raw).is_err()
+        || std::str::from_utf8(&crate::normalize::url::multi_decode_bytes(
+            &name, 1,
+        ))
+        .is_err()
+        || std::str::from_utf8(&crate::normalize::url::multi_decode_bytes(
+            &value, 1,
+        ))
+        .is_err();
+    ArgValue {
+        name: crate::normalize::url::multi_decode(&name, 1),
+        value: crate::normalize::url::multi_decode(&value, 1),
+        invalid_utf8,
+    }
 }
 
 impl SecLangTransaction {
@@ -69,10 +102,14 @@ impl SecLangTransaction {
             .iter()
             .map(|(n, v)| (n.clone(), v.clone()))
             .collect();
-        let mut args: Vec<(String, String)> = request
+        let mut args: Vec<ArgValue> = request
             .query()
             .iter()
-            .map(|p| (p.name.clone(), p.value.clone()))
+            .map(|param| ArgValue {
+                name: param.name.clone(),
+                value: param.value.clone(),
+                invalid_utf8: param.invalid_utf8,
+            })
             .collect();
         // ModSecurity merges form-urlencoded body parameters into ARGS.
         let content_type = headers
@@ -80,24 +117,21 @@ impl SecLangTransaction {
             .find(|(n, _)| n.eq_ignore_ascii_case("content-type"))
             .map(|(_, v)| v.to_ascii_lowercase())
             .unwrap_or_default();
-        let body_text = request
-            .body()
-            .and_then(|b| std::str::from_utf8(b).ok())
-            .map(str::to_string);
+        let body = request.body().map(<[u8]>::to_vec);
         if content_type.contains("application/x-www-form-urlencoded") {
-            if let Some(text) = &body_text {
-                for pair in text.split('&') {
+            if let Some(bytes) = &body {
+                for pair in bytes.split(|&byte| byte == b'&') {
                     if pair.is_empty() {
                         continue;
                     }
-                    let (name, value) = match pair.split_once('=') {
-                        Some((name, value)) => (name, value),
-                        None => (pair, ""),
-                    };
-                    args.push((
-                        crate::normalize::url::multi_decode(name, 1),
-                        crate::normalize::url::multi_decode(value, 1),
-                    ));
+                    let (name_raw, value_raw) =
+                        match pair.iter().position(|&byte| byte == b'=') {
+                            Some(position) => {
+                                (&pair[..position], &pair[position + 1..])
+                            },
+                            None => (pair, &[][..]),
+                        };
+                    args.push(form_arg(name_raw, value_raw));
                 }
             }
         }
@@ -107,12 +141,13 @@ impl SecLangTransaction {
             method: request.method().to_string(),
             uri: request.path().to_string(),
             query_string: request.raw_query().to_string(),
-            body: body_text,
+            body,
             remote_addr: request
                 .client()
                 .ip
                 .map(|ip| ip.to_string())
                 .unwrap_or_default(),
+            path_invalid_utf8: request.path_invalid_utf8(),
             tx: BTreeMap::new(),
             collections: BTreeMap::new(),
             http_version: request.http_version().to_string(),
@@ -191,26 +226,29 @@ impl SecLangTransaction {
             ("ARGS", None) => cap(self
                 .args
                 .iter()
-                .map(|(n, v)| ResolvedValue {
-                    name: format!("ARGS:{n}"),
-                    value: v.clone(),
+                .map(|arg| ResolvedValue {
+                    name: format!("ARGS:{}", arg.name),
+                    value: arg.value.clone(),
+                    invalid_utf8: arg.invalid_utf8,
                 })
                 .collect()),
             ("ARGS", Some(selector)) => cap(self
                 .args
                 .iter()
-                .filter(|(n, _)| n == selector)
-                .map(|(n, v)| ResolvedValue {
-                    name: format!("ARGS:{n}"),
-                    value: v.clone(),
+                .filter(|arg| arg.name == selector)
+                .map(|arg| ResolvedValue {
+                    name: format!("ARGS:{}", arg.name),
+                    value: arg.value.clone(),
+                    invalid_utf8: arg.invalid_utf8,
                 })
                 .collect()),
             ("ARGS_NAMES", _) => cap(self
                 .args
                 .iter()
-                .map(|(n, _)| ResolvedValue {
+                .map(|arg| ResolvedValue {
                     name: "ARGS_NAMES".to_string(),
-                    value: n.clone(),
+                    value: arg.name.clone(),
+                    invalid_utf8: arg.invalid_utf8,
                 })
                 .collect()),
             ("REQUEST_HEADERS", None) => cap(self
@@ -219,6 +257,7 @@ impl SecLangTransaction {
                 .map(|(n, v)| ResolvedValue {
                     name: format!("REQUEST_HEADERS:{n}"),
                     value: v.clone(),
+                    invalid_utf8: false,
                 })
                 .collect()),
             ("REQUEST_HEADERS", Some(selector)) => cap(self
@@ -228,35 +267,47 @@ impl SecLangTransaction {
                 .map(|(n, v)| ResolvedValue {
                     name: format!("REQUEST_HEADERS:{n}"),
                     value: v.clone(),
+                    invalid_utf8: false,
                 })
                 .collect()),
             ("REQUEST_METHOD", _) => cap(vec![ResolvedValue {
                 name: "REQUEST_METHOD".to_string(),
                 value: self.method.clone(),
+                invalid_utf8: false,
             }]),
             ("REQUEST_URI", _) => cap(vec![ResolvedValue {
                 name: "REQUEST_URI".to_string(),
                 value: self.uri.clone(),
+                invalid_utf8: false,
+            }]),
+            ("REQUEST_FILENAME", _) => cap(vec![ResolvedValue {
+                name: "REQUEST_FILENAME".to_string(),
+                value: self.uri.clone(),
+                invalid_utf8: self.path_invalid_utf8,
             }]),
             ("QUERY_STRING", _) => cap(vec![ResolvedValue {
                 name: "QUERY_STRING".to_string(),
                 value: self.query_string.clone(),
+                invalid_utf8: false,
             }]),
             ("REQUEST_LINE", _) => cap(vec![ResolvedValue {
                 name: "REQUEST_LINE".to_string(),
                 value: self.request_line(),
+                invalid_utf8: false,
             }]),
             ("REQUEST_BODY", _) => cap(self
                 .body
                 .iter()
                 .map(|body| ResolvedValue {
                     name: "REQUEST_BODY".to_string(),
-                    value: body.clone(),
+                    value: String::from_utf8_lossy(body).into_owned(),
+                    invalid_utf8: std::str::from_utf8(body).is_err(),
                 })
                 .collect()),
             ("REMOTE_ADDR", _) => cap(vec![ResolvedValue {
                 name: "REMOTE_ADDR".to_string(),
                 value: self.remote_addr.clone(),
+                invalid_utf8: false,
             }]),
             ("TX", Some(selector)) => cap(self
                 .tx
@@ -265,6 +316,7 @@ impl SecLangTransaction {
                     vec![ResolvedValue {
                         name: format!("TX:{selector}"),
                         value: value.clone(),
+                        invalid_utf8: false,
                     }]
                 })
                 .unwrap_or_default()),
@@ -307,6 +359,7 @@ pub enum Transform {
     CssDecode,
     Sha1,
     HexEncode,
+    Length,
 }
 
 impl Transform {
@@ -333,6 +386,7 @@ impl Transform {
             "cssdecode" => Some(Self::CssDecode),
             "sha1" => Some(Self::Sha1),
             "hexencode" => Some(Self::HexEncode),
+            "length" => Some(Self::Length),
             "utf8tounicode" => Some(Self::Utf8ToUnicode),
             _ => None,
         }
@@ -375,6 +429,8 @@ impl Transform {
             // `docs/compatibility.md`).
             Self::Sha1 => sha1_hex(value),
             Self::HexEncode => hex_encode(value),
+            // ModSecurity `length`: byte length as a decimal string.
+            Self::Length => value.len().to_string(),
             Self::Utf8ToUnicode => utf8_to_unicode(value),
         }
     }
@@ -1179,13 +1235,13 @@ impl CompiledSecRule {
             return vec![ResolvedValue {
                 name: "ACTION".to_string(),
                 value: String::new(),
+                invalid_utf8: false,
             }];
         }
         let mut hits = Vec::new();
         for reference in &self.line.variables {
             for value in txn.resolve(reference) {
-                if self.operator_matches(&value.value, txn) != self.line.negated
-                {
+                if self.operator_matches(&value, txn) != self.line.negated {
                     hits.push(value);
                     if !self.multi_match {
                         break;
@@ -1196,8 +1252,12 @@ impl CompiledSecRule {
         hits
     }
 
-    fn operator_matches(&self, value: &str, txn: &SecLangTransaction) -> bool {
-        let transformed = self.apply_transforms(value);
+    fn operator_matches(
+        &self,
+        resolved: &ResolvedValue,
+        txn: &SecLangTransaction,
+    ) -> bool {
+        let transformed = self.apply_transforms(&resolved.value);
         let value = transformed.as_str();
         match &self.line.operator {
             SecOperator::Rx(pattern) => match &self.regex {
@@ -1252,6 +1312,29 @@ impl CompiledSecRule {
                 })
             },
             SecOperator::PmFromFile(_) => false,
+            SecOperator::ValidateUtf8Encoding => resolved.invalid_utf8,
+            SecOperator::ValidateUrlEncoding => {
+                !value.is_empty() && {
+                    let bytes = value.as_bytes();
+                    let mut index = 0;
+                    let mut invalid = false;
+                    while index < bytes.len() {
+                        if bytes[index] != b'%' {
+                            index += 1;
+                            continue;
+                        }
+                        if index + 2 >= bytes.len()
+                            || !bytes[index + 1].is_ascii_hexdigit()
+                            || !bytes[index + 2].is_ascii_hexdigit()
+                        {
+                            invalid = true;
+                            break;
+                        }
+                        index += 3;
+                    }
+                    invalid
+                }
+            },
             SecOperator::AlwaysMatch => true,
         }
     }
@@ -1543,6 +1626,7 @@ mod tests {
         txn.set_matched(Some(ResolvedValue {
             name: "ARGS:id".to_string(),
             value: "42".to_string(),
+            invalid_utf8: false,
         }));
         assert_eq!(
             expand_macros("%{MATCHED_VAR_NAME}=%{MATCHED_VAR}", &txn),
@@ -1676,6 +1760,53 @@ mod tests {
         // Case-insensitive action names must still resolve.
         assert!(Transform::parse("HexEncode").is_some());
         assert!(Transform::parse("SHA1").is_some());
+        let length = Transform::parse("length").expect("parse");
+        assert_eq!(length.apply("abcd"), "4");
+        assert_eq!(length.apply("é"), "2");
+    }
+
+    #[test]
+    fn validate_utf8_encoding_detects_invalid_bytes() {
+        // `%FF` decodes to a byte that is not valid UTF-8.
+        let request = Canonicalizer::default().canonicalize(RequestParts::new(
+            "GET",
+            "example.com",
+            "/?a=%FF",
+        ));
+        let txn = SecLangTransaction::from_request(&request);
+        let invalid = rule("SecRule ARGS:a \"@validateUtf8Encoding\" \"id:1\"");
+        assert_eq!(invalid.matches(&txn).len(), 1);
+        let negation =
+            rule("SecRule ARGS:a \"!@validateUtf8Encoding\" \"id:2\"");
+        assert!(negation.matches(&txn).is_empty());
+
+        // Invalid UTF-8 request bodies are flagged too.
+        let request = Canonicalizer::default().canonicalize(
+            RequestParts::new("POST", "example.com", "/")
+                .with_header("Content-Type", "application/octet-stream")
+                .with_body(vec![0xFF, 0xFE]),
+        );
+        let txn = SecLangTransaction::from_request(&request);
+        let body =
+            rule("SecRule REQUEST_BODY \"@validateUtf8Encoding\" \"id:3\"");
+        assert_eq!(body.matches(&txn).len(), 1);
+    }
+
+    #[test]
+    fn validate_url_encoding_operator() {
+        let txn = SecLangTransaction::from_request(&request());
+        // `q=hello` has no percent sequences: valid, never matches.
+        let valid = rule("SecRule ARGS:q \"@validateUrlEncoding\" \"id:1\"");
+        assert!(valid.matches(&txn).is_empty());
+
+        let mut txn = SecLangTransaction::from_request(&request());
+        txn.tx_set("raw", "abc%zz");
+        let bad_hex = rule("SecRule TX:raw \"@validateUrlEncoding\" \"id:2\"");
+        assert_eq!(bad_hex.matches(&txn).len(), 1);
+        txn.tx_set("raw", "abc%41");
+        assert!(bad_hex.matches(&txn).is_empty());
+        txn.tx_set("raw", "trailing%");
+        assert_eq!(bad_hex.matches(&txn).len(), 1);
     }
 
     #[test]

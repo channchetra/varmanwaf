@@ -129,14 +129,16 @@ fn crs_rulesets_load_and_report() {
         rules_dir.display()
     );
     // Ratchet: never regress below the recorded baseline
-    // (`docs/compatibility.md`, 2026-10-07: 24 files / 538 rules).
+    // (`docs/compatibility.md`, 2026-10-07: 26 files / 678 rules with a clean
+    // clone via `CRS_DIR`; 25 / 643 when the Windows host has quarantined
+    // `web-shells-php.data`). The conservative floor passes on both.
     assert!(
-        ok_files.len() >= 24,
-        "CRS load regressed: {} files (baseline 24)",
+        ok_files.len() >= 25,
+        "CRS load regressed: {} files (baseline 25)",
         ok_files.len()
     );
     assert!(
-        rules_loaded >= 538,
-        "CRS load regressed: {rules_loaded} rules (baseline 538)"
+        rules_loaded >= 643,
+        "CRS load regressed: {rules_loaded} rules (baseline 643)"
     );
 }

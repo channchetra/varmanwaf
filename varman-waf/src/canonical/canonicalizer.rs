@@ -155,6 +155,12 @@ impl Canonicalizer {
         let (raw_path, raw_query) = split_target(&target);
         let authority = canonical_authority(&authority);
         let headers = normalize_headers(headers);
+        let path_invalid_utf8 =
+            std::str::from_utf8(&crate::normalize::url::multi_decode_bytes(
+                raw_path,
+                self.max_decode_layers as usize,
+            ))
+            .is_err();
         let path = canonical_path(raw_path, self.max_decode_layers);
         let query = parse_query(raw_query, self.max_decode_layers);
         let cookies = parse_cookies(&headers, self.max_decode_layers);
@@ -171,6 +177,7 @@ impl Canonicalizer {
             body,
             client,
             http_version.unwrap_or_else(|| "HTTP/1.1".to_string()),
+            path_invalid_utf8,
         )
     }
 }
@@ -238,9 +245,22 @@ fn parse_query(raw_query: &str, layers: u8) -> Vec<QueryParam> {
             Some((name, value)) => (name, value),
             None => (pair, ""),
         };
+        let name_invalid =
+            std::str::from_utf8(&crate::normalize::url::multi_decode_bytes(
+                &name.replace('+', " "),
+                layers as usize,
+            ))
+            .is_err();
+        let value_invalid =
+            std::str::from_utf8(&crate::normalize::url::multi_decode_bytes(
+                &value.replace('+', " "),
+                layers as usize,
+            ))
+            .is_err();
         params.push(QueryParam {
             name: decode_query_component(name, layers),
             value: decode_query_component(value, layers),
+            invalid_utf8: name_invalid || value_invalid,
         });
     }
     params
