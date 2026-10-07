@@ -124,6 +124,10 @@ pub struct SecLangTransaction {
     uri: String,
     query_string: String,
     body: Option<Vec<u8>>,
+    /// `XML:/*` values (element text nodes) when the XML processor is active.
+    xml_texts: Vec<String>,
+    /// `XML://@*` values (attribute values) when the XML processor is active.
+    xml_attributes: Vec<String>,
     remote_addr: String,
     path_invalid_utf8: bool,
     tx: BTreeMap<String, String>,
@@ -140,6 +144,9 @@ pub struct SecLangTransaction {
     /// Body processor in effect (`URLENCODED` by default; `JSON` after
     /// `ctl:requestBodyProcessor=JSON`), exposed as `REQBODY_PROCESSOR`.
     body_processor: String,
+    /// `ctl:forceRequestBodyVariable=On`: expose the raw body even when a
+    /// processor consumes it.
+    force_request_body: bool,
     /// `ctl:ruleRemoveById` ids for the rest of the transaction.
     removed_rule_ids: BTreeSet<u64>,
     /// `ctl:ruleRemoveByTag` tags for the rest of the transaction.
@@ -201,7 +208,27 @@ impl SecLangTransaction {
             .find(|(n, _)| n.eq_ignore_ascii_case("content-type"))
             .map(|(_, v)| v.to_ascii_lowercase())
             .unwrap_or_default();
+        // Processor selection mirrors ModSecurity: the raw body is consumed
+        // by the processor and only re-exposed by
+        // `ctl:forceRequestBodyVariable=On`.
+        let body_processor =
+            if content_type.contains("application/x-www-form-urlencoded") {
+                "URLENCODED"
+            } else if content_type.contains("multipart/form-data") {
+                "MULTIPART"
+            } else if content_type.contains("xml") {
+                "XML"
+            } else {
+                "URLENCODED"
+            };
         let body = request.body().map(<[u8]>::to_vec);
+        let (xml_texts, xml_attributes) = if body_processor == "XML" {
+            body.as_deref()
+                .map(xml_texts_and_attributes)
+                .unwrap_or_default()
+        } else {
+            (Vec::new(), Vec::new())
+        };
         if content_type.contains("application/x-www-form-urlencoded") {
             if let Some(bytes) = &body {
                 for pair in bytes.split(|&byte| byte == b'&') {
@@ -231,6 +258,8 @@ impl SecLangTransaction {
             uri: request.path().to_string(),
             query_string: request.raw_query().to_string(),
             body,
+            xml_texts,
+            xml_attributes,
             remote_addr: request
                 .client()
                 .ip
@@ -242,7 +271,8 @@ impl SecLangTransaction {
             http_version: request.http_version().to_string(),
             matched: None,
             matched_vars: Vec::new(),
-            body_processor: "URLENCODED".to_string(),
+            body_processor: body_processor.to_string(),
+            force_request_body: false,
             removed_rule_ids: BTreeSet::new(),
             removed_tags: BTreeSet::new(),
             removed_targets: Vec::new(),
@@ -277,6 +307,12 @@ impl SecLangTransaction {
     /// Record the active body processor (`ctl:requestBodyProcessor`).
     pub(crate) fn set_body_processor(&mut self, processor: &str) {
         self.body_processor = processor.to_string();
+    }
+
+    /// `ctl:forceRequestBodyVariable=On`: expose the raw body even when a
+    /// processor consumes it.
+    pub(crate) fn set_force_request_body(&mut self, force: bool) {
+        self.force_request_body = force;
     }
 
     /// Attach response data for phase-3/4 rules (`RESPONSE_STATUS`,
@@ -513,15 +549,23 @@ impl SecLangTransaction {
                 value: self.request_line(),
                 invalid_utf8: false,
             }]),
-            ("REQUEST_BODY", _) => cap(self
-                .body
-                .iter()
-                .map(|body| ResolvedValue {
-                    name: "REQUEST_BODY".to_string(),
-                    value: String::from_utf8_lossy(body).into_owned(),
-                    invalid_utf8: std::str::from_utf8(body).is_err(),
-                })
-                .collect()),
+            ("REQUEST_BODY", _) => cap(
+                if self.body_processor == "XML" && !self.force_request_body {
+                    // The XML processor consumes the raw body; only `XML:/*`
+                    // values would carry its text, and the raw bytes are not
+                    // exposed unless forced.
+                    Vec::new()
+                } else {
+                    self.body
+                        .iter()
+                        .map(|body| ResolvedValue {
+                            name: "REQUEST_BODY".to_string(),
+                            value: String::from_utf8_lossy(body).into_owned(),
+                            invalid_utf8: std::str::from_utf8(body).is_err(),
+                        })
+                        .collect()
+                },
+            ),
             ("RESPONSE_STATUS", _) => cap(self
                 .response_status
                 .map(|status| ResolvedValue {
@@ -559,6 +603,24 @@ impl SecLangTransaction {
                     invalid_utf8: std::str::from_utf8(body).is_err(),
                 })
                 .collect()),
+            ("XML", Some("/*")) => cap(self
+                .xml_texts
+                .iter()
+                .map(|text| ResolvedValue {
+                    name: "XML:/*".to_string(),
+                    value: text.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("XML", Some("//@*")) => cap(self
+                .xml_attributes
+                .iter()
+                .map(|text| ResolvedValue {
+                    name: "XML://@*".to_string(),
+                    value: text.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
             ("REMOTE_ADDR", _) => cap(vec![ResolvedValue {
                 name: "REMOTE_ADDR".to_string(),
                 value: self.remote_addr.clone(),
@@ -570,17 +632,39 @@ impl SecLangTransaction {
                 value: self.body_processor.clone(),
                 invalid_utf8: false,
             }]),
-            ("TX", Some(selector)) => cap(self
-                .tx
-                .get(&selector.to_ascii_lowercase())
-                .map(|value| {
-                    vec![ResolvedValue {
-                        name: format!("TX:{selector}"),
-                        value: value.clone(),
-                        invalid_utf8: false,
-                    }]
-                })
-                .unwrap_or_default()),
+            ("TX", Some(selector)) => {
+                // `TX:/regex/` selects variables by name (ModSecurity).
+                if let Some(regex_body) = selector
+                    .strip_prefix('/')
+                    .and_then(|rest| rest.strip_suffix('/'))
+                {
+                    let Ok(regex) = Regex::new(regex_body) else {
+                        return Vec::new();
+                    };
+                    cap(self
+                        .tx
+                        .iter()
+                        .filter(|(name, _)| regex.is_match(name))
+                        .map(|(name, value)| ResolvedValue {
+                            name: format!("TX:{name}"),
+                            value: value.clone(),
+                            invalid_utf8: false,
+                        })
+                        .collect())
+                } else {
+                    cap(self
+                        .tx
+                        .get(&selector.to_ascii_lowercase())
+                        .map(|value| {
+                            vec![ResolvedValue {
+                                name: format!("TX:{selector}"),
+                                value: value.clone(),
+                                invalid_utf8: false,
+                            }]
+                        })
+                        .unwrap_or_default())
+                }
+            },
             _ => Vec::new(),
         }
     }
@@ -1507,6 +1591,83 @@ fn matches_exclusion(exclusion: &str, name: &str) -> bool {
     name_collection == collection && regex.is_match(name_selector)
 }
 
+/// Minimal XML scan for the `XML:/*` (element text) and `XML://@*`
+/// (attribute value) collections: element and attribute *names* are never
+/// values, mirroring ModSecurity's processor.
+fn xml_texts_and_attributes(body: &[u8]) -> (Vec<String>, Vec<String>) {
+    let text = String::from_utf8_lossy(body);
+    let mut texts = Vec::new();
+    let mut attributes = Vec::new();
+    let mut i = 0;
+    while i < text.len() {
+        if text.as_bytes()[i] == b'<' {
+            let Some(end) = text[i..].find('>') else {
+                break;
+            };
+            attributes.extend(xml_attribute_values(&text[i + 1..i + end]));
+            i += end + 1;
+        } else {
+            let next = text[i..]
+                .find('<')
+                .map(|offset| i + offset)
+                .unwrap_or(text.len());
+            let chunk = text[i..next].trim();
+            if !chunk.is_empty() {
+                texts.push(chunk.to_string());
+            }
+            i = next;
+        }
+    }
+    (texts, attributes)
+}
+
+/// Attribute values inside one tag body (`name="value"` / `name='value'`).
+fn xml_attribute_values(tag: &str) -> Vec<String> {
+    let bytes = tag.as_bytes();
+    let mut values = Vec::new();
+    let mut i = 0;
+    // Skip the element name (and any namespace prefix separator).
+    while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'/'
+    {
+        i += 1;
+    }
+    while i < bytes.len() {
+        while i < bytes.len()
+            && (bytes[i].is_ascii_whitespace() || bytes[i] == b'/')
+        {
+            i += 1;
+        }
+        while i < bytes.len()
+            && bytes[i] != b'='
+            && !bytes[i].is_ascii_whitespace()
+        {
+            i += 1;
+        }
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() || bytes[i] != b'=' {
+            continue;
+        }
+        i += 1;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() || (bytes[i] != b'"' && bytes[i] != b'\'') {
+            continue;
+        }
+        let quote = bytes[i];
+        i += 1;
+        let start = i;
+        while i < bytes.len() && bytes[i] != quote {
+            i += 1;
+        }
+        values.push(tag[start..i].to_string());
+        i += 1;
+    }
+    values
+}
+
 /// Numeric value of a resolved string, for the numeric comparison operators.
 /// Non-numeric values never match (documented in `docs/compatibility.md`).
 fn number(value: &str) -> Option<i64> {
@@ -2160,6 +2321,36 @@ mod tests {
             "SecRule REQUEST_COOKIES|!REQUEST_COOKIES:/^sess/ \"@streq evil\" \"id:2\"",
         );
         assert!(second.matches(&txn).is_empty());
+    }
+
+    #[test]
+    fn xml_bodies_are_consumed_by_the_processor() {
+        let request = Canonicalizer::default().canonicalize(
+            RequestParts::new("POST", "example.com", "/")
+                .with_header("Content-Type", "application/xml")
+                .with_body(
+                    b"<xml><ProcessBuilder.evil.clonetransformer/></xml>"
+                        .to_vec(),
+                ),
+        );
+        let txn = SecLangTransaction::from_request(&request);
+        assert!(txn.resolve("REQUEST_BODY").is_empty());
+        assert_eq!(txn.resolve("REQBODY_PROCESSOR")[0].value, "XML");
+        // The payload is an element *name*: no text nodes, no attributes.
+        assert!(txn.resolve("XML:/*").is_empty());
+        assert!(txn.resolve("XML://@*").is_empty());
+        let request = Canonicalizer::default().canonicalize(
+            RequestParts::new("POST", "example.com", "/")
+                .with_header("Content-Type", "application/xml")
+                .with_body(b"<tag attr=\"value\">text content</tag>".to_vec()),
+        );
+        let txn = SecLangTransaction::from_request(&request);
+        assert_eq!(txn.resolve("XML:/*")[0].value, "text content");
+        assert_eq!(txn.resolve("XML://@*")[0].value, "value");
+        // `ctl:forceRequestBodyVariable=On` restores the raw body.
+        let mut txn = SecLangTransaction::from_request(&request);
+        txn.set_force_request_body(true);
+        assert_eq!(txn.resolve("REQUEST_BODY").len(), 1);
     }
 
     #[test]

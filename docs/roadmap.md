@@ -326,14 +326,13 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Twelfth slice: response-phase variables (`RESPONSE_STATUS`,
-      `RESPONSE_HEADERS`, `RESPONSE_BODY`) + harness reflection of `data`
-      payloads (CRS `/reflect` semantics) — the 950–959 families collapsed.
-      Regression: **4642/5155** (90.0%).
+- [x] Thirteenth slice: chain-member action timing (a member's `setvar`
+      runs before the next member evaluates — CRS 920420/931130) and
+      `TX:/regex/` selectors. Regression: **4854/5155** (94.2%).
 - [ ] Remaining regression classes: multipart `FILES`/`FILES_NAMES`
-      (920120/920121/922110) → Log4Shell transform chain
-      (944150-152) → `forbid [944120]` false positives → `931130`, `920420`,
-      `920480`, `920440`, `933150`, `942290`, `921160`, `934120`.
+      (920120/920121/922110) → Log4Shell obfuscation chain (944150-152) →
+      `@pmFromFile` case semantics (933150) → long tail (920440, 921160,
+      942130, 942290, 920200, 920450, 920640).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

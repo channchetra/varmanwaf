@@ -291,7 +291,9 @@ pub struct RuleHit {
 #[derive(Debug)]
 pub struct SecRuleSet {
     groups: Vec<SecRuleGroup>,
-    setvars: Vec<Vec<SetVar>>,
+    /// `setvar` operations per group, then per chain member: a member's
+    /// actions run before the next member evaluates.
+    setvars: Vec<Vec<Vec<SetVar>>>,
     /// `skip:N` per group: skip the next N groups after a match.
     skip_groups: Vec<Option<u64>>,
     /// `skipAfter:NAME` per group: resolved index to continue at.
@@ -606,25 +608,28 @@ impl SecRuleSet {
             }
             groups.retain(|group| !group.rules.is_empty());
         }
-        let mut setvars = Vec::with_capacity(groups.len());
+        let mut setvars: Vec<Vec<Vec<SetVar>>> =
+            Vec::with_capacity(groups.len());
         let mut initcols: Vec<Vec<InitCol>> = Vec::with_capacity(groups.len());
         for group in &groups {
             validate_actions(group)?;
-            let mut ops = Vec::new();
+            let mut group_ops = Vec::with_capacity(group.rules.len());
             let mut cols = Vec::new();
             for rule in &group.rules {
+                let mut rule_ops = Vec::new();
                 for action in &rule.line.actions {
                     let action = action.trim();
                     if let Some(spec) = strip_action_prefix(action, "setvar:") {
-                        ops.push(parse_setvar(spec)?);
+                        rule_ops.push(parse_setvar(spec)?);
                     } else if let Some(spec) =
                         strip_action_prefix(action, "initcol:")
                     {
                         cols.push(parse_initcol(spec)?);
                     }
                 }
+                group_ops.push(rule_ops);
             }
-            setvars.push(ops);
+            setvars.push(group_ops);
             initcols.push(cols);
         }
         // Group start positions in the rule stream, for marker resolution.
@@ -727,17 +732,15 @@ impl SecRuleSet {
                 index += 1;
                 continue;
             }
-            let Some(variables_hit) = evaluate_group(group, txn) else {
+            let Some(variables_hit) =
+                evaluate_group(group, txn, &self.setvars[index])
+            else {
                 index += 1;
                 continue;
             };
-            txn.set_matched(variables_hit.first().cloned());
             for collection in &self.initcols[index] {
                 let key = expand_macros(&collection.key, txn);
                 txn.register_collection(&collection.collection, &key);
-            }
-            for op in &self.setvars[index] {
-                apply_setvar(txn, op);
             }
             let mut actions = group
                 .rules
@@ -761,7 +764,8 @@ impl SecRuleSet {
                     // Accepted and documented: there is no audit subsystem
                     // yet, and the raw body is always exposed as
                     // `REQUEST_BODY`.
-                    CtlOp::AuditEngine | CtlOp::ForceRequestBody => {},
+                    CtlOp::ForceRequestBody => txn.set_force_request_body(true),
+                    CtlOp::AuditEngine => {},
                 }
             }
             if mode == CtlMode::DetectionOnly {
@@ -796,6 +800,7 @@ impl SecRuleSet {
 fn evaluate_group(
     group: &SecRuleGroup,
     txn: &mut SecLangTransaction,
+    setvars: &[Vec<SetVar>],
 ) -> Option<Vec<ResolvedValue>> {
     let mut all = Vec::new();
     let mut previous: Vec<ResolvedValue> = Vec::new();
@@ -812,9 +817,17 @@ fn evaluate_group(
         if hits.is_empty() {
             return None;
         }
+        txn.set_matched(hits.first().cloned());
         if rule.has_capture() {
             if let Some(first) = hits.first() {
                 rule.captures_into(&first.value, txn);
+            }
+        }
+        // Chain-member actions run immediately: the next member can read
+        // TX variables this member sets (CRS 920420, 931130 rely on this).
+        if let Some(ops) = setvars.get(index) {
+            for op in ops {
+                apply_setvar(txn, op);
             }
         }
         // The next chain member sees transformed values (ModSecurity binds
@@ -917,13 +930,15 @@ mod tests {
         assert_eq!(hits[0].rule_ids, vec![Some(1), Some(2)]);
         assert_eq!(txn.tx_get("n"), Some("2"));
 
-        // Second member failing means no hit and no setvar at all.
+        // Second member failing means no hit; earlier members' `setvar`
+        // effects remain (ModSecurity has no rollback; CRS 920420 relies
+        // on member actions running before the next member evaluates).
         let mut partial =
             crate::seclang::transaction::SecLangTransaction::from_request(
                 &request("/?a=1&b=9"),
             );
         assert!(ruleset.evaluate(&mut partial).is_empty());
-        assert!(partial.tx_get("n").is_none());
+        assert_eq!(partial.tx_get("n"), Some("1"));
     }
 
     #[test]
