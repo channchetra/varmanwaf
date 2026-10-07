@@ -147,6 +147,13 @@ a working VarmanWAF with unchanged behaviour.
       and the log showed `legacy=monitor pipeline=monitor agreement=Agree`
       (previously `pipeline=block`); a JWT `alg:none` probe still blocked
       (`legacy=pass pipeline=block`); clearing the list restored the 403.
+- [x] **Engine telemetry to the control plane**: `MetricsCollector` carries
+      shadow-comparison classes (`varman_waf_shadow_total{agreement=…}` +
+      `varman_waf_shadow_checked_total`) and processor outcomes
+      (`varman_waf_processor_calls_total{outcome=…}`); the plugin records them
+      per inspected request and the metric shipper (30s cadence) stores them
+      in `agent_metrics`. Surfaced in the dashboard's agent detail as an
+      **Engine telemetry** panel via `GET /agents/{id}/metrics`.
 - [x] Benchmarks: pipeline overhead vs legacy on the request corpus.
       `varman-waf/tests/lane_cost.rs` measures both engines over the attack +
       benign corpora (2,640 requests/lane) and prints the lane-cost table;
