@@ -1,0 +1,16 @@
+# Sensitive data exposure (Phase 8 DLP): secrets with no legitimate place in a request payload.
+# Provider tokens use ${…} placeholders expanded by the harness, so the
+# repository never contains literal token-shaped secrets.
+# PEM private keys - Block
+-----BEGIN RSA PRIVATE KEY-----MIIEowIBAAKCAQEAyQ
+-----BEGIN OPENSSH PRIVATE KEY-----b3BlbnNzaC1rZXktdjEAAAAABG5vbmU
+-----BEGIN PGP PRIVATE KEY BLOCK-----lQOYBG
+# Credentialed URLs / connection strings - Monitor
+postgres://admin:s3cr3t@db.internal:5432/app
+https://deploy:s3cr3t@ci.example.com/run
+mysql://root:hunter2@10.0.0.5:3306/orders
+# Provider tokens in payloads - Monitor
+${GH_TOKEN}
+${SLACK_TOKEN}
+${STRIPE_LIVE_KEY}
+${GOOGLE_KEY}

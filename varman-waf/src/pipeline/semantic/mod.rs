@@ -7,6 +7,7 @@
 
 pub mod command;
 pub mod deser;
+pub mod dlp;
 pub mod graphql;
 pub mod jwt;
 pub mod ldap_xpath;
@@ -20,6 +21,7 @@ pub mod xxe;
 
 pub use command::CommandInjectionDetector;
 pub use deser::DeserializationDetector;
+pub use dlp::DlpDetector;
 pub use graphql::GraphqlAbuseDetector;
 pub use jwt::JwtDetector;
 pub use ldap_xpath::LdapXPathDetector;

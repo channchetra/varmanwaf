@@ -26,10 +26,10 @@ use varman_waf::pipeline::fast::{
     ProtocolDetector, RawPathTraversalDetector, SignatureDetector,
 };
 use varman_waf::pipeline::semantic::{
-    CommandInjectionDetector, DeserializationDetector, GraphqlAbuseDetector,
-    HtmlXssDetector, JwtDetector, LdapXPathDetector, NosqlInjectionDetector,
-    PrototypePollutionDetector, SqlStructuralDetector, SsrfStructuralDetector,
-    SstiDetector, XxeDetector,
+    CommandInjectionDetector, DeserializationDetector, DlpDetector,
+    GraphqlAbuseDetector, HtmlXssDetector, JwtDetector, LdapXPathDetector,
+    NosqlInjectionDetector, PrototypePollutionDetector, SqlStructuralDetector,
+    SsrfStructuralDetector, SstiDetector, XxeDetector,
 };
 use varman_waf::pipeline::shadow::{self, Agreement, ShadowComparison};
 use varman_waf::{RequestData, WafAction, WafVerdict};
@@ -149,6 +149,7 @@ static SHADOW: LazyLock<ShadowRuntime> = LazyLock::new(|| ShadowRuntime {
         Box::new(LdapXPathDetector::new()),
         Box::new(GraphqlAbuseDetector::new()),
         Box::new(JwtDetector::new()),
+        Box::new(DlpDetector::new()),
     ]),
     counters: ShadowCounters::default(),
 });

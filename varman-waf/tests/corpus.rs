@@ -17,10 +17,10 @@ use std::path::{Path, PathBuf};
 use varman_waf::canonical::{Canonicalizer, RequestParts};
 use varman_waf::pipeline::fast::{RawPathTraversalDetector, SignatureDetector};
 use varman_waf::pipeline::semantic::{
-    CommandInjectionDetector, DeserializationDetector, GraphqlAbuseDetector,
-    HtmlXssDetector, JwtDetector, LdapXPathDetector, NosqlInjectionDetector,
-    PrototypePollutionDetector, SqlStructuralDetector, SsrfStructuralDetector,
-    SstiDetector, XxeDetector,
+    CommandInjectionDetector, DeserializationDetector, DlpDetector,
+    GraphqlAbuseDetector, HtmlXssDetector, JwtDetector, LdapXPathDetector,
+    NosqlInjectionDetector, PrototypePollutionDetector, SqlStructuralDetector,
+    SsrfStructuralDetector, SstiDetector, XxeDetector,
 };
 use varman_waf::pipeline::{
     Action, AttackCategory, PipelineVerdict, SecurityPipeline,
@@ -41,6 +41,7 @@ const MUST_REACH_MONITOR: &[&str] = &[
     "deserialization",
     "lfi_rfi",
     "credential_abuse",
+    "sensitive_data_exposure",
 ];
 
 fn corpus_dir(kind: &str) -> PathBuf {
@@ -66,6 +67,7 @@ fn pipeline() -> SecurityPipeline {
         Box::new(LdapXPathDetector::new()),
         Box::new(GraphqlAbuseDetector::new()),
         Box::new(JwtDetector::new()),
+        Box::new(DlpDetector::new()),
     ])
 }
 
@@ -104,9 +106,29 @@ fn read_cases(path: &Path) -> Vec<(usize, String)> {
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
     text.lines()
         .enumerate()
-        .map(|(i, line)| (i + 1, line.trim().to_string()))
+        .map(|(i, line)| (i + 1, expand_placeholders(line.trim())))
         .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
         .collect()
+}
+
+/// Corpus files must never contain literal provider tokens (GitHub push
+/// protection flags them as secrets). Placeholders expand at read time into
+/// values that match the detectors' patterns.
+fn expand_placeholders(line: &str) -> String {
+    let mut out = line.to_string();
+    for (name, value) in [
+        ("${GH_TOKEN}", format!("ghp_{}", "A".repeat(36))),
+        (
+            "${SLACK_TOKEN}",
+            format!("xoxb-{}-{}", "1".repeat(12), "a".repeat(16)),
+        ),
+        ("${STRIPE_LIVE_KEY}", format!("sk_live_{}", "S".repeat(24))),
+        ("${STRIPE_TEST_KEY}", format!("sk_test_{}", "T".repeat(24))),
+        ("${GOOGLE_KEY}", format!("AIza{}", "B".repeat(35))),
+    ] {
+        out = out.replace(name, &value);
+    }
+    out
 }
 
 fn category_files(dir: &Path) -> Vec<PathBuf> {

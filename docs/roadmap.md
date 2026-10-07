@@ -15,7 +15,7 @@
 | 5 | Streaming body engine (bounded windows, limits) | ⏳ Planned |
 | 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, …) | 🚧 In progress — SQL structural, HTML/XSS structural and shell/command detectors landed, corpus-covered and live-verified in shadow; AST, SSRF, XXE, SSTI, NoSQL, deserialization, GraphQL pending |
 | 7 | Native SecLang core + OWASP CRS conformance | 🚧 In progress — SecRule parser landed (structured AST, unsupported directives observable); execution engine next |
-| 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | 🚧 In progress - JWT analysis detector landed with corpora; API security, ATO, TI, DLP and virtual patching pending |
+| 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | 🚧 In progress — JWT analysis and DLP detectors landed with corpora; API security, ATO, TI and virtual patching pending |
 | 9 | Optional External Processor API | ⏳ Planned |
 
 ---
@@ -386,7 +386,14 @@ report against the existing engine.
       JWT → 200, `kid` traversal → 200 + `sem.jwt.kid_traversal` Monitor
       event, `alg: none` → 403 with `sem.jwt.alg_none` (`varman-pipeline: 1
       finding(s), score 40`).
-- [ ] API security/OpenAPI validation, ATO, threat intelligence, DLP,
+- [x] DLP / sensitive-data-exposure detector (`semantic::dlp`, Phase 8) —
+      PEM private keys **Block**; credentialed URLs/connection strings and
+      provider tokens (GitHub/Slack/Stripe-live/Google/npm/SendGrid) in
+      query/cookie/body **Monitor**. Headers exempt from token checks
+      (clients authenticate there), AWS access-key ids never flagged
+      (presigned URLs). Attack corpus `sensitive_data_exposure.txt`
+      (10 payloads, ratcheted to ≥ Monitor) + benign `dlp.txt` guards.
+- [ ] API security/OpenAPI validation, ATO, threat intelligence,
       virtual patching, WebSocket inspection.
 - Exit: each feature has corpora + FP controls + monitoring; security events
   explain what fired.

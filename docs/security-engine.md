@@ -15,7 +15,7 @@
 | Shadow wiring + engine switch (`pingap-plugin/src/waf_shadow.rs`) | Landed: `VARMAN_WAF_ENGINE=legacy|shadow|varman`; shadow compares pipeline vs legacy per request and records counters; `varman` enforces the pipeline verdict escalated with the legacy verdict | Yes (`varman` mode) |
 | Lane 1 fast detectors | Started: protocol checks + Aho-Corasick signature scanner (starter table, tiered) + raw-path traversal evidence; corpora in `varman-waf/tests/corpus` | No (shadow only) |
 | Streaming body engine | Pending (Phase 5) | No |
-| Lane 2 semantic detectors | SQL, HTML/XSS, shell/command, SSRF, NoSQL, SSTI, XXE, deserialization, prototype-pollution, LDAP/XPath, GraphQL, JWT (Phase 8) structural detectors; covered by the corpora | No (shadow only) |
+| Lane 2 semantic detectors | SQL, HTML/XSS, shell/command, SSRF, NoSQL, SSTI, XXE, deserialization, prototype-pollution, LDAP/XPath, GraphQL, JWT, DLP (Phase 8) structural detectors; covered by the corpora | No (shadow only) |
 | SecLang / OWASP CRS (Lane 3) | Pending (Phase 7); tracked in `docs/compatibility.md` | No |
 
 The pipeline is wired into the proxy through `pingap-plugin/src/waf_shadow.rs`.
@@ -103,6 +103,16 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   a JWT-shaped token without a signature segment stays **Log**. Missing
   `exp`, opaque bearer tokens and JWTs whose payload is not JSON stay clean —
   the benign corpus carries real-world samples of all three.
+- **`pipeline::semantic::DlpDetector`** (Phase 8, DLP) — request-side secret
+  exposure: PEM private-key blocks **Block** (`sem.dlp.private_key`);
+  URLs/connection strings with embedded credentials (`scheme://user:pass@`)
+  and provider tokens (GitHub, Slack, Stripe live, Google, npm, SendGrid) in
+  query/cookie/body **Monitor**. Headers are exempt from provider-token
+  checks (clients authenticate there with `Authorization: Bearer ghp_…`,
+  `X-Api-Key: AIza…`, SigV4), AWS access-key ids are never flagged
+  (presigned URLs carry them by design), and public keys, test-mode keys and
+  credential-free connection strings stay clean — all locked in by the benign
+  corpus.
 - **`pipeline::fast::ProtocolDetector`** (Phase 4) — framing and header
   sanity: conflicting duplicate `Content-Length`, `Content-Length` +
   `Transfer-Encoding` together, unsupported transfer codings (RFC 9112

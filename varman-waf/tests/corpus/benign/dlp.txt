@@ -1,0 +1,9 @@
+# DLP false-positive guards: credential-shaped but legitimate traffic.
+https://api.example.com/v1/items?page=2
+postgres://db.internal:5432/app
+mysql://db.internal:3306/orders
+AKIAIOSFODNN7EXAMPLE
+-----BEGIN PUBLIC KEY-----MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE
+${STRIPE_TEST_KEY}
+ghp_short
+SG.short.short
