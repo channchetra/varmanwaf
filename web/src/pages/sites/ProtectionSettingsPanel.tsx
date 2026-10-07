@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Gauge, Lightning, ShieldWarning } from '@phosphor-icons/react'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { Select } from '@/components/ui/Select'
 import { Switch } from '@/components/ui/Switch'
 import { SkeletonCard } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
@@ -12,6 +13,7 @@ import { useCanWrite } from '@/hooks'
 import { cn } from '@/lib/utils'
 import {
   WAF_CATEGORIES,
+  WAF_ENGINE_MODES,
   WAF_STACKS,
   type UpdateWafSettingsRequest,
   type WafSettings,
@@ -54,6 +56,9 @@ export function ProtectionSettingsPanel() {
                 ...prev,
                 ...(payload.advanced_mode !== undefined && {
                   advanced_mode: payload.advanced_mode,
+                }),
+                ...(payload.engine_mode !== undefined && {
+                  engine_mode: payload.engine_mode,
                 }),
                 ...(payload.monitor_categories !== undefined && {
                   monitor_categories: payload.monitor_categories,
@@ -162,6 +167,29 @@ export function ProtectionSettingsPanel() {
             aria-label={t('pages.protection.advancedMode')}
             onCheckedChange={(advanced_mode) =>
               update.mutate({ advanced_mode })
+            }
+          />
+        </CardBody>
+      </Card>
+
+      {/* ── Detection engine ──────────────────────────────────────────── */}
+      <Card>
+        <CardHeader
+          title={t('pages.protection.engineTitle')}
+          description={t('pages.protection.engineHint')}
+        />
+        <CardBody>
+          <Select
+            className="max-w-md"
+            value={(settings.engine_mode ?? 'inherit') as string}
+            disabled={!canWrite || busy}
+            aria-label={t('pages.protection.engineTitle')}
+            options={WAF_ENGINE_MODES.map((mode) => ({
+              value: mode,
+              label: t(`pages.protection.engine_${mode}`),
+            }))}
+            onChange={(event) =>
+              update.mutate({ engine_mode: event.target.value })
             }
           />
         </CardBody>

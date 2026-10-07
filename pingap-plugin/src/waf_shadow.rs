@@ -179,14 +179,33 @@ pub fn stats() -> ShadowStats {
     }
 }
 
+/// Resolve the engine mode for one request: an explicit per-site value wins
+/// over the process-wide `VARMAN_WAF_ENGINE`; `inherit`/empty follow it, and
+/// an invalid value logs and falls back to it.
+pub fn resolve_mode(site: Option<&str>) -> EngineMode {
+    match site.map(str::trim) {
+        None | Some("") | Some("inherit") => engine_mode(),
+        Some(value) => {
+            parse_engine_mode(Some(value), false).unwrap_or_else(|error| {
+                tracing::error!(
+                    %error,
+                    "invalid per-site WAF engine mode; using process default"
+                );
+                engine_mode()
+            })
+        },
+    }
+}
+
 /// Run the pipeline for one inspected request and return its verdict in the
 /// engine shape. Records the shadow comparison counters so telemetry stays
 /// valid in every mode. `None` when the mode is [`EngineMode::Legacy`].
 pub fn analyze(
     request: &RequestData,
     legacy: &WafVerdict,
+    mode: EngineMode,
 ) -> Option<WafVerdict> {
-    if SHADOW.mode == EngineMode::Legacy {
+    if mode == EngineMode::Legacy {
         return None;
     }
     Some(analyze_with(&SHADOW.pipeline, &SHADOW.counters, request, legacy).1)
@@ -197,7 +216,7 @@ pub fn analyze(
 /// No-op unless the pipeline runs; never affects the returned verdict or any
 /// response.
 pub fn observe(request: &RequestData, legacy: &WafVerdict) {
-    let _ = analyze(request, legacy);
+    let _ = analyze(request, legacy, engine_mode());
 }
 
 /// The enforcing verdict in [`EngineMode::Varman`] mode: the stronger of the
@@ -336,6 +355,21 @@ mod tests {
             EngineMode::Shadow
         );
         assert!(parse_engine_mode(Some("bogus"), false).is_err());
+    }
+
+    #[test]
+    fn resolve_mode_prefers_the_site_value() {
+        use super::{EngineMode, resolve_mode};
+
+        // `inherit`/empty/absent follow the process mode; explicit values win.
+        let process = super::engine_mode();
+        assert_eq!(resolve_mode(None), process);
+        assert_eq!(resolve_mode(Some("inherit")), process);
+        assert_eq!(resolve_mode(Some("")), process);
+        assert_eq!(resolve_mode(Some("varman")), EngineMode::Varman);
+        assert_eq!(resolve_mode(Some("legacy")), EngineMode::Legacy);
+        // Invalid values fall back to the process mode.
+        assert_eq!(resolve_mode(Some("bogus")), process);
     }
 
     #[test]

@@ -19,6 +19,9 @@ pub struct Model {
     #[sea_orm(unique)]
     pub site_id: Uuid,
     pub advanced_mode: bool,
+    /// Per-site engine mode: `inherit` (process default), `legacy`, `shadow`
+    /// or `varman`.
+    pub engine_mode: String,
     pub monitor_categories: Vec<String>,
     pub monitor_stacks: Vec<String>,
     pub created_at: DateTimeUtc,

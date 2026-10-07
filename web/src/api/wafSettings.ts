@@ -22,6 +22,7 @@ export function defaultWafSettings(): WafSettings {
     id: '',
     site_id: '',
     advanced_mode: false,
+    engine_mode: 'inherit',
     monitor_categories: [],
     monitor_stacks: [],
     created_at: '',

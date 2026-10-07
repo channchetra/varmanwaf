@@ -314,6 +314,10 @@ message WafConfig {
   bool advanced_mode = 41;
   repeated string monitor_categories = 42;  // "sqli"…"ssti"; unknown ignored
   repeated string monitor_stacks = 43;      // "java"|"php"|"python"|"node"
+
+  // Per-site engine selection: "inherit" (process-wide VARMAN_WAF_ENGINE),
+  // "legacy", "shadow" or "varman".
+  string engine_mode = 44;
 }
 
 enum WafMode {

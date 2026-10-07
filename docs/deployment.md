@@ -164,7 +164,7 @@ and therefore no file key:
 | `VARMAN_PASSKEY_RP_ID` | derived from the request | Relying party ID, i.e. the effective domain |
 | `VARMAN_PASSKEY_ORIGIN` | derived from the request | Origin the dashboard is served from |
 | `VARMAN_PASSKEY_TRUST_FORWARDED_PROTO` | `false` | Believe `X-Forwarded-Proto` when deriving the origin |
-| `VARMAN_WAF_ENGINE` | `legacy` (compose: `shadow`) | WAF engine mode: `legacy` (only the imported engine), `shadow` (run the Varman pipeline beside it and compare) or `varman` (enforce the pipeline verdict escalated with the legacy verdict; custom rules stay effective) |
+| `VARMAN_WAF_ENGINE` | `legacy` (compose: `shadow`) | WAF engine mode: `legacy` (only the imported engine), `shadow` (run the Varman pipeline beside it and compare) or `varman` (enforce the pipeline verdict escalated with the legacy verdict; custom rules stay effective). Per-site override: dashboard **Settings → Protection → Detection engine** (`waf_settings.engine_mode`) |
 | `VARMAN_WAF_SHADOW` | `0` | Legacy switch: `1`/`true` selects `shadow` when `VARMAN_WAF_ENGINE` is unset |
 
 The refresh-token lifetime (30 days), the minimum pool size (`1`) and the

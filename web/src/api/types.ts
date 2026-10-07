@@ -409,20 +409,27 @@ export const WAF_CATEGORIES: WafCategory[] = [
 
 export const WAF_STACKS: WafStack[] = ['java', 'php', 'python', 'node']
 
-/** `models::waf_settings::Model` — the persisted site-level grading knobs. */
+/** `models::waf_settings::Model` - the persisted site-level grading knobs. */
 export interface WafSettings {
   id: string
   site_id: string
   advanced_mode: boolean
+  engine_mode: WafEngineMode | string
   monitor_categories: WafCategory[] | string[]
   monitor_stacks: WafStack[] | string[]
   created_at: string
   updated_at: string
 }
 
+/** Per-site WAF engine selection (`waf_settings.engine_mode`). */
+export type WafEngineMode = 'inherit' | 'legacy' | 'shadow' | 'varman'
+
+export const WAF_ENGINE_MODES: WafEngineMode[] = ['inherit', 'legacy', 'shadow', 'varman']
+
 /** Patch semantics: omitted fields keep their current value. */
 export interface UpdateWafSettingsRequest {
   advanced_mode?: boolean
+  engine_mode?: WafEngineMode | string
   monitor_categories?: string[]
   monitor_stacks?: string[]
 }

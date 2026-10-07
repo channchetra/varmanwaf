@@ -123,6 +123,13 @@ a working VarmanWAF with unchanged behaviour.
       saturating score, per-category breakdown, matched rule ids). Verified
       end-to-end: SQLi/XSS/traversal probes blocked in `varman` mode while
       benign traffic passes.
+- [x] **Per-site engine selection**: `waf_settings.engine_mode`
+      (`inherit|legacy|shadow|varman`, dashboard **Settings → Protection →
+      Detection engine**) overrides the process-wide `VARMAN_WAF_ENGINE` per
+      site. Full chain: migration `000031` → settings API (validated) →
+      gRPC `WafConfig.engine_mode` → agent cache → plugin `resolve_mode`;
+      an explicit mode also opts the site into inspection. Invalid values are
+      rejected by the API; stale caches default to `inherit`.
 - [ ] Benchmarks: pipeline overhead vs legacy on the request corpus.
 
 Exit: both engines run side by side; shadow results measurable; no behaviour

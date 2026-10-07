@@ -690,13 +690,20 @@ fn waf_config_to_proto(
         })
         .unwrap_or_else(|| (false, Vec::new(), Vec::new()));
 
+    let engine_mode = settings
+        .map(|s| s.engine_mode.clone())
+        .filter(|mode| !mode.is_empty())
+        .unwrap_or_else(|| "inherit".to_string());
+
     // Advanced mode (strict + body inspection) and monitor downgrades are
     // meaningful only with the WAF on; a site with no custom rules but an
-    // explicit posture still gets the managed ruleset.
+    // explicit posture still gets the managed ruleset. An explicit engine
+    // mode likewise opts the site into inspection.
     let enabled = (!active.is_empty()
         || advanced_mode
         || !monitor_categories.is_empty()
-        || !monitor_stacks.is_empty())
+        || !monitor_stacks.is_empty()
+        || engine_mode != "inherit")
         && any_group_enabled;
 
     WafConfig {
@@ -725,6 +732,7 @@ fn waf_config_to_proto(
         advanced_mode,
         monitor_categories,
         monitor_stacks,
+        engine_mode,
     }
 }
 
@@ -1238,6 +1246,7 @@ mod tests {
             id: Uuid::new_v4(),
             site_id,
             advanced_mode,
+            engine_mode: "inherit".into(),
             monitor_categories: categories,
             monitor_stacks: stacks,
             created_at: Utc::now(),
@@ -1286,6 +1295,18 @@ mod tests {
         assert!(!config.advanced_mode);
         assert_eq!(config.monitor_categories, vec!["sqli", "ssti"]);
         assert_eq!(config.monitor_stacks, vec!["java"]);
+
+        // An explicit engine mode flows through and opts the site into
+        // inspection even without rules.
+        let mut enforcing =
+            waf_settings_row(Uuid::nil(), false, vec![], vec![]);
+        enforcing.engine_mode = "varman".into();
+        let config = waf_config_to_proto(&[], &[], Some(&enforcing));
+        assert!(config.enabled);
+        assert_eq!(config.engine_mode, "varman");
+        // Absent settings default to `inherit` (process-wide mode).
+        let config = waf_config_to_proto(&rules, &[], None);
+        assert_eq!(config.engine_mode, "inherit");
 
         // No rules and no settings row: the pre-existing disabled default.
         let config = waf_config_to_proto(&[], &[], None);

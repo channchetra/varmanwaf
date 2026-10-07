@@ -281,6 +281,9 @@ struct SiteContext {
     /// Site-level deep body inspection (advanced mode): inspect request
     /// bodies even when the plugin-level `inspect_body` switch is off.
     inspect_body: bool,
+    /// Per-site WAF engine mode from `waf_settings.engine_mode`: empty or
+    /// `inherit` follows the process-wide `VARMAN_WAF_ENGINE`.
+    engine_mode: String,
 }
 
 impl SiteContext {
@@ -323,6 +326,9 @@ impl SiteContext {
             inspect_body: waf_cfg
                 .filter(|cfg| cfg.enabled)
                 .is_some_and(|cfg| cfg.advanced_mode),
+            engine_mode: waf_cfg
+                .map(|cfg| cfg.engine_mode.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -2771,17 +2777,25 @@ impl Plugin for WafPlugin {
 
         // ── Varman pipeline: shadow comparison, or enforcement when the
         // engine mode is `varman`. The pipeline can only escalate the legacy
-        // action, so dashboard-configured custom rules stay effective. ──
-        let verdict = match crate::waf_shadow::analyze(&request_data, &verdict)
-        {
-            Some(pipeline)
-                if crate::waf_shadow::engine_mode()
-                    == crate::waf_shadow::EngineMode::Varman =>
-            {
-                crate::waf_shadow::effective_verdict(&verdict, &pipeline)
-            },
-            _ => verdict,
-        };
+        // action, so dashboard-configured custom rules stay effective. The
+        // mode comes from the site's `waf_settings.engine_mode` (when it is
+        // not `inherit`) and falls back to the process-wide
+        // `VARMAN_WAF_ENGINE`. ──
+        let engine = crate::waf_shadow::resolve_mode(
+            context
+                .as_ref()
+                .map(|site| site.engine_mode.as_str())
+                .filter(|mode| !mode.is_empty()),
+        );
+        let verdict =
+            match crate::waf_shadow::analyze(&request_data, &verdict, engine) {
+                Some(pipeline)
+                    if engine == crate::waf_shadow::EngineMode::Varman =>
+                {
+                    crate::waf_shadow::effective_verdict(&verdict, &pipeline)
+                },
+                _ => verdict,
+            };
 
         // Custom rule ids carry no name of their own; the site context maps
         // the one that fired back to its configured name.
@@ -3064,6 +3078,7 @@ ml_threshold = 0.75
             ml_threshold: 0.0,
             anomaly_threshold: 0,
             advanced_mode,
+            engine_mode: "inherit".into(),
             monitor_categories,
             monitor_stacks,
         }

@@ -187,10 +187,14 @@ pingap-plugin/src/waf.rs
 
 `VARMAN_WAF_ENGINE` selects the mode: `legacy` (default), `shadow`
 (`VARMAN_WAF_SHADOW=1` also works) and `varman`. Unknown values are logged at
-`error` and fall back to `legacy`. `waf_shadow::stats()` exposes
-checked/agree/stricter/weaker counters for metrics, and every comparison is
-logged at `debug` with the canonical path. In `shadow` mode no response is ever
-influenced; in `varman` mode the pipeline can only escalate, never weaken.
+`error` and fall back to `legacy`. Each site can override the process default
+from the dashboard (**Settings → Protection → Detection engine**,
+`waf_settings.engine_mode`): `inherit` follows the process mode, the other
+values override it, and an invalid per-site value logs and falls back to the
+process mode. `waf_shadow::stats()` exposes checked/agree/stricter/weaker
+counters for metrics, and every comparison is logged at `debug` with the
+canonical path. In `shadow` mode no response is ever influenced; in `varman`
+mode the pipeline can only escalate, never weaken.
 
 Replacement requires corpus evidence: zero `PipelineWeaker` results on the
 attack corpus and zero new blocks on the benign corpus, with performance

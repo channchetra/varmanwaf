@@ -27,10 +27,16 @@ pub const CATEGORIES: [&str; 9] = [
 /// with `StackSet::parse_name` in `varman-waf`.
 pub const STACKS: [&str; 4] = ["java", "php", "python", "node"];
 
+/// Engine modes a site can select. `inherit` keeps the process-wide
+/// `VARMAN_WAF_ENGINE`; the others override it for this site.
+pub const ENGINE_MODES: [&str; 4] = ["inherit", "legacy", "shadow", "varman"];
+
 #[derive(Debug, Deserialize)]
 pub struct UpdateWafSettingsRequest {
     #[serde(default)]
     pub advanced_mode: Option<bool>,
+    #[serde(default)]
+    pub engine_mode: Option<String>,
     #[serde(default)]
     pub monitor_categories: Option<Vec<String>>,
     #[serde(default)]
@@ -75,6 +81,16 @@ async fn update_waf_settings(
 
     if let Some(advanced) = payload.advanced_mode {
         active.advanced_mode = Set(advanced);
+    }
+    if let Some(engine_mode) = payload.engine_mode {
+        let engine_mode = engine_mode.trim().to_ascii_lowercase();
+        if !ENGINE_MODES.contains(&engine_mode.as_str()) {
+            return Err(ApiError::BadRequest(format!(
+                "unknown engine_mode value '{engine_mode}'; allowed: {}",
+                ENGINE_MODES.join(", ")
+            )));
+        }
+        active.engine_mode = Set(engine_mode);
     }
     if let Some(categories) = payload.monitor_categories {
         active.monitor_categories = Set(normalise_list(
@@ -143,6 +159,7 @@ async fn find_or_create(
         id: Set(Uuid::new_v4()),
         site_id: Set(site_id),
         advanced_mode: Set(false),
+        engine_mode: Set("inherit".to_string()),
         monitor_categories: Set(Vec::new()),
         monitor_stacks: Set(Vec::new()),
         created_at: Set(now),

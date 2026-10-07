@@ -141,10 +141,20 @@ pub struct WafConfig {
     /// before these fields existed) enforcing everything.
     #[serde(default)]
     pub advanced_mode: bool,
+    /// Per-site engine mode: `inherit` (process default), `legacy`, `shadow`
+    /// or `varman`. Old caches without the field inherit.
+    #[serde(default = "default_engine_mode")]
+    pub engine_mode: String,
     #[serde(default)]
     pub monitor_categories: Vec<String>,
     #[serde(default)]
     pub monitor_stacks: Vec<String>,
+}
+
+/// Default for [`WafConfig::engine_mode`]: follow the process-wide
+/// `VARMAN_WAF_ENGINE`.
+fn default_engine_mode() -> String {
+    "inherit".to_string()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1257,6 +1267,11 @@ impl RuleCache {
             ml_threshold: w.ml_threshold,
             anomaly_threshold: w.anomaly_threshold,
             advanced_mode: w.advanced_mode,
+            engine_mode: if w.engine_mode.is_empty() {
+                default_engine_mode()
+            } else {
+                w.engine_mode.clone()
+            },
             monitor_categories: w.monitor_categories.clone(),
             monitor_stacks: w.monitor_stacks.clone(),
         }
