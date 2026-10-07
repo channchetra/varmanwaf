@@ -204,6 +204,15 @@ fn fired_ids(
     }
     let request = Canonicalizer::default().canonicalize(parts);
     let mut txn = SecLangTransaction::from_request(&request);
+    // CRS's test application reflects request bodies (`/reflect`); response
+    // rules (950–959 families) evaluate against that reflection.
+    if let Some(data) = &input.data {
+        txn.set_response(
+            200,
+            vec![("Content-Type".to_string(), "text/html".to_string())],
+            data.clone().into_bytes(),
+        );
+    }
     // Run at the paranoia level the expected rule declares, mirroring CRS's
     // per-level CI runs; 901's default-setting rules skip pre-set values.
     let level = paranoia_level.to_string();
@@ -501,7 +510,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 4568,
-        "CRS regression regressed: {passed} passed (baseline 4568)"
+        passed >= 4642,
+        "CRS regression regressed: {passed} passed (baseline 4642)"
     );
 }

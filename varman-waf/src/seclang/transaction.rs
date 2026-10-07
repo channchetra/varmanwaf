@@ -146,6 +146,10 @@ pub struct SecLangTransaction {
     removed_tags: BTreeSet<String>,
     /// `ctl:ruleRemoveTargetByTag` entries: `(tag, target)`.
     removed_targets: Vec<(String, String)>,
+    /// Response state for phase-3/4 rules.
+    response_status: Option<u16>,
+    response_headers: Vec<(String, String)>,
+    response_body: Option<Vec<u8>>,
 }
 
 /// Decode one form-urlencoded pair while keeping its wire-byte validity.
@@ -242,6 +246,9 @@ impl SecLangTransaction {
             removed_rule_ids: BTreeSet::new(),
             removed_tags: BTreeSet::new(),
             removed_targets: Vec::new(),
+            response_status: None,
+            response_headers: Vec::new(),
+            response_body: None,
         }
     }
 
@@ -270,6 +277,20 @@ impl SecLangTransaction {
     /// Record the active body processor (`ctl:requestBodyProcessor`).
     pub(crate) fn set_body_processor(&mut self, processor: &str) {
         self.body_processor = processor.to_string();
+    }
+
+    /// Attach response data for phase-3/4 rules (`RESPONSE_STATUS`,
+    /// `RESPONSE_HEADERS`, `RESPONSE_BODY`). The enforcement layer calls
+    /// this before evaluating response-phase groups.
+    pub fn set_response(
+        &mut self,
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    ) {
+        self.response_status = Some(status);
+        self.response_headers = headers;
+        self.response_body = Some(body);
     }
 
     /// Parse the request body as JSON and flatten it into `ARGS`, mirroring
@@ -497,6 +518,43 @@ impl SecLangTransaction {
                 .iter()
                 .map(|body| ResolvedValue {
                     name: "REQUEST_BODY".to_string(),
+                    value: String::from_utf8_lossy(body).into_owned(),
+                    invalid_utf8: std::str::from_utf8(body).is_err(),
+                })
+                .collect()),
+            ("RESPONSE_STATUS", _) => cap(self
+                .response_status
+                .map(|status| ResolvedValue {
+                    name: "RESPONSE_STATUS".to_string(),
+                    value: status.to_string(),
+                    invalid_utf8: false,
+                })
+                .into_iter()
+                .collect()),
+            ("RESPONSE_HEADERS", None) => cap(self
+                .response_headers
+                .iter()
+                .map(|(n, v)| ResolvedValue {
+                    name: format!("RESPONSE_HEADERS:{n}"),
+                    value: v.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("RESPONSE_HEADERS", Some(selector)) => cap(self
+                .response_headers
+                .iter()
+                .filter(|(n, _)| n.eq_ignore_ascii_case(selector))
+                .map(|(n, v)| ResolvedValue {
+                    name: format!("RESPONSE_HEADERS:{n}"),
+                    value: v.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
+            ("RESPONSE_BODY", _) => cap(self
+                .response_body
+                .iter()
+                .map(|body| ResolvedValue {
+                    name: "RESPONSE_BODY".to_string(),
                     value: String::from_utf8_lossy(body).into_owned(),
                     invalid_utf8: std::str::from_utf8(body).is_err(),
                 })
@@ -2102,6 +2160,25 @@ mod tests {
             "SecRule REQUEST_COOKIES|!REQUEST_COOKIES:/^sess/ \"@streq evil\" \"id:2\"",
         );
         assert!(second.matches(&txn).is_empty());
+    }
+
+    #[test]
+    fn response_variables_resolve() {
+        let mut txn = SecLangTransaction::from_request(&request());
+        txn.set_response(
+            500,
+            vec![("Content-Type".to_string(), "text/plain".to_string())],
+            b"ORA-00933".to_vec(),
+        );
+        assert_eq!(txn.resolve("RESPONSE_STATUS")[0].value, "500");
+        assert_eq!(txn.resolve("RESPONSE_BODY")[0].value, "ORA-00933");
+        assert_eq!(
+            txn.resolve("RESPONSE_HEADERS:content-type")[0].value,
+            "text/plain"
+        );
+        let rule =
+            rule("SecRule RESPONSE_BODY \"@contains ORA-00933\" \"id:1\"");
+        assert_eq!(rule.matches(&txn).len(), 1);
     }
 
     #[test]

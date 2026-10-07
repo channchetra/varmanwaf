@@ -326,15 +326,14 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Eleventh slice: `SecRuleUpdateTargetById` exclusions done right (quoted
-      `!` targets append instead of replacing; CRS 999's 55 cookie exclusions
-      were silently clobbering the top failure classes), `REQUEST_COOKIES` /
-      `REQUEST_COOKIES_NAMES` resolution, negated target references
-      (`!VAR`, `!VAR:/regex/`) in the evaluator. Regression: **4568/5155**
-      (88.6%).
-- [ ] Remaining regression classes: `920120/920420/920480/920440` (protocol),
-      `931130`, `944150-152`, `922110`, `forbid [944120]` false positives,
-      `933150`, `956100`, `950150`, `952110`.
+- [x] Twelfth slice: response-phase variables (`RESPONSE_STATUS`,
+      `RESPONSE_HEADERS`, `RESPONSE_BODY`) + harness reflection of `data`
+      payloads (CRS `/reflect` semantics) — the 950–959 families collapsed.
+      Regression: **4642/5155** (90.0%).
+- [ ] Remaining regression classes: multipart `FILES`/`FILES_NAMES`
+      (920120/920121/922110) → Log4Shell transform chain
+      (944150-152) → `forbid [944120]` false positives → `931130`, `920420`,
+      `920480`, `920440`, `933150`, `942290`, `921160`, `934120`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
