@@ -61,6 +61,9 @@ struct Input {
     /// go-ftw: `false` disables client-added headers (Content-Length).
     #[serde(default)]
     autocomplete_headers: Option<bool>,
+    /// HTTP version as sent (`"HTTP/1.1"` when omitted).
+    #[serde(default)]
+    version: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -187,7 +190,10 @@ fn fired_ids(
 ) -> BTreeSet<u64> {
     let method = input.method.clone().unwrap_or_else(|| "GET".into());
     let uri = input.uri.clone().unwrap_or_else(|| "/".into());
-    let mut parts = RequestParts::new(method, "localhost", uri);
+    let mut parts = RequestParts::new(method, "localhost", uri)
+        .with_http_version(
+            input.version.clone().unwrap_or_else(|| "HTTP/1.1".into()),
+        );
     if let Some(headers) = &input.headers {
         for (name, value) in headers {
             parts = parts.with_header(name.clone(), scalar(value));
@@ -210,12 +216,14 @@ fn fired_ids(
     let request = Canonicalizer::default().canonicalize(parts);
     let mut txn = SecLangTransaction::from_request(&request);
     // CRS's test application reflects request bodies (`/reflect`); response
-    // rules (950–959 families) evaluate against that reflection.
+    // rules (950–959 families) evaluate against that reflection. A JSON body
+    // of `{"status": N}` / `{"body": "…"}` controls the reflected response.
     if let Some(data) = &input.data {
+        let (status, body) = reflect_response(data);
         txn.set_response(
-            200,
+            status,
             vec![("Content-Type".to_string(), "text/html".to_string())],
-            data.clone().into_bytes(),
+            body.into_bytes(),
         );
     }
     // Run at the paranoia level the expected rule declares, mirroring CRS's
@@ -230,6 +238,27 @@ fn fired_ids(
         .flat_map(|hit| hit.rule_ids)
         .flatten()
         .collect()
+}
+
+/// The CRS `/reflect` test application: a JSON body may set the response
+/// status and/or body; anything else is reflected verbatim.
+fn reflect_response(data: &str) -> (u16, String) {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+        if let Some(object) = value.as_object() {
+            let status = object
+                .get("status")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|status| u16::try_from(status).ok())
+                .unwrap_or(200);
+            let body = match object.get("body") {
+                Some(serde_json::Value::String(body)) => body.clone(),
+                Some(other) => other.to_string(),
+                None => data.to_string(),
+            };
+            return (status, body);
+        }
+    }
+    (200, data.to_string())
 }
 
 #[test]
@@ -265,6 +294,7 @@ fn targeted_920450_fires() {
         data: None,
         encoded_request: None,
         autocomplete_headers: None,
+        version: None,
     };
     // Introspect the chain's TX state.
     let mut parts = RequestParts::new("GET", "localhost", "/");
@@ -324,6 +354,7 @@ fn targeted_943110_chain() {
         data: None,
         encoded_request: None,
         autocomplete_headers: None,
+        version: None,
     };
     let fired = fired_ids(&engine, &input, 1);
     assert!(
@@ -352,6 +383,7 @@ fn targeted_943110_chain() {
         data: Some("{ \"phpsession\":\"foo\" }".to_string()),
         encoded_request: None,
         autocomplete_headers: None,
+        version: None,
     };
     let fired = fired_ids(&engine, &input, 1);
     assert!(
@@ -389,6 +421,7 @@ fn targeted_944150_json_evasion_fires() {
         ),
         encoded_request: None,
         autocomplete_headers: None,
+        version: None,
     };
     // Introspect what the engine sees before asserting.
     let mut parts = RequestParts::new("POST", "localhost", "/post");
@@ -439,6 +472,7 @@ fn targeted_933150_mixed_case_fires() {
         data: None,
         encoded_request: None,
         autocomplete_headers: None,
+        version: None,
     };
     let fired = fired_ids(&engine, &input, 1);
     assert!(
@@ -485,6 +519,7 @@ fn targeted_942410_regex_matches() {
         data: Some("ABS(".to_string()),
         encoded_request: None,
         autocomplete_headers: None,
+        version: None,
     };
     let fired = fired_ids(&mini, &input, 2);
     assert!(
@@ -525,6 +560,7 @@ fn targeted_942210_fires() {
         data: Some("var%3d%20@.%3d%20%28%20SELECT".to_string()),
         encoded_request: None,
         autocomplete_headers: None,
+        version: None,
     };
     // 942210 is tagged `paranoia-level/2`.
     let fired = fired_ids(&engine, &input, 2);
@@ -565,6 +601,7 @@ fn targeted_944300_fires() {
         data: Some("test=cnVudGltZQ".to_string()),
         encoded_request: None,
         autocomplete_headers: None,
+        version: None,
     };
     // 944300 is tagged `paranoia-level/3`.
     let fired = fired_ids(&engine, &input, 3);
@@ -733,7 +770,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5084,
-        "CRS regression regressed: {passed} passed (baseline 5084)"
+        passed >= 5094,
+        "CRS regression regressed: {passed} passed (baseline 5094)"
     );
 }

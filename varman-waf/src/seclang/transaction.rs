@@ -649,7 +649,12 @@ impl SecLangTransaction {
             }]),
             ("REQUEST_URI", _) => cap(vec![ResolvedValue {
                 name: "REQUEST_URI".to_string(),
-                value: self.uri.clone(),
+                // ModSecurity's REQUEST_URI includes the query string.
+                value: if self.query_string.is_empty() {
+                    self.uri.clone()
+                } else {
+                    format!("{}?{}", self.uri, self.query_string)
+                },
                 invalid_utf8: false,
             }]),
             ("REQUEST_URI_RAW", _) => cap(vec![ResolvedValue {
@@ -2420,7 +2425,10 @@ mod tests {
     fn resolves_scalars() {
         let txn = SecLangTransaction::from_request(&request());
         assert_eq!(txn.resolve("REQUEST_METHOD")[0].value, "POST");
-        assert_eq!(txn.resolve("REQUEST_URI")[0].value, "/api/items");
+        assert_eq!(
+            txn.resolve("REQUEST_URI")[0].value,
+            "/api/items?id=42&q=hello"
+        );
         assert_eq!(txn.resolve("QUERY_STRING")[0].value, "id=42&q=hello");
         assert_eq!(txn.resolve("REMOTE_ADDR")[0].value, "203.0.113.9");
         assert_eq!(txn.resolve("REQUEST_BODY")[0].value, "name=Ada&role=admin");

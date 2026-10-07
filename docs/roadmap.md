@@ -326,14 +326,12 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Twentieth slice: namespaced dangerous tags in both XSS detectors
-      (`<x:script` — CRS 941100), byte-faithful Latin-1 output from
-      `jsDecode`/`escapeSeqDecode`/`cssDecode`/`base64Decode` (CRS 941310's
-      `\xbcscript\xbe` vectors). Regression: **5084/5155** (98.6%) — 941310
-      cleared, 941100 down to 2 (libinjection-quality vectors).
-- [ ] Remaining tail: a flat set of ≤2 failures per class (`920260`,
-      `920430`, `921250`, `931131`, `932207`, `942100`, `942500`, `950100`,
-      `955120`, plus 1s) — each needs individual rule-level study.
+- [x] Twenty-first slice: harness HTTP `version` plumbing (920430),
+      `/reflect` semantics (`{"status": N}` / `{"body": "…"}` → 950100,
+      955120), `REQUEST_URI` includes the query string (ModSecurity
+      semantics — 920260). Regression: **5094/5155** (98.8%).
+- [ ] Remaining tail: `921250`, `931131`, `932207`, `941100`, `942100`,
+      `942500` (2 each) plus 1s (`920230`, `920360`–`920400`, …).
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
