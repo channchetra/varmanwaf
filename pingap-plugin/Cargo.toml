@@ -61,7 +61,7 @@ smallvec = { workspace = true }
 snafu = { workspace = true }
 substring = { workspace = true }
 tera = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util"] }
 toml = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }

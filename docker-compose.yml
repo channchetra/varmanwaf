@@ -47,6 +47,12 @@ services:
       # verdict escalated with the legacy verdict (custom rules stay effective).
       - VARMAN_WAF_ENGINE=${WAF_ENGINE:-shadow}
       - VARMAN_WAF_SHADOW=${WAF_SHADOW:-0}
+      # External processor (Phase 9). Set WAF_PROCESSOR_ENDPOINT together with
+      # the `processor` profile below: tcp:varman-processor:9100 or
+      # unix:/run/varman/proc.sock. Empty disables the feature.
+      - VARMAN_WAF_PROCESSOR_ENDPOINT=${WAF_PROCESSOR_ENDPOINT:-}
+      - VARMAN_WAF_PROCESSOR_POLICY=${WAF_PROCESSOR_POLICY:-monitor_only}
+      - VARMAN_WAF_PROCESSOR_TIMEOUT_MS=${WAF_PROCESSOR_TIMEOUT_MS:-50}
       - RUST_LOG=${RUST_LOG:-info,sqlx=warn}
       # Elasticsearch (optional — uncomment to enable log shipping)
       # - VARMAN_ES_ENABLED=true
@@ -67,6 +73,21 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    networks:
+      - varman-net
+
+  # ─── Example external processor (Phase 9) ─────────────────────────────────
+  # Start with the varman service pointed at it:
+  #   WAF_PROCESSOR_ENDPOINT=tcp:varman-processor:9100 \
+  #     docker compose --profile processor up -d processor
+  processor:
+    image: python:3-alpine
+    profiles: ["processor"]
+    container_name: varman-processor
+    command: ["python3", "/processor/mock_processor.py", "--port", "9100"]
+    volumes:
+      - ./examples/processor:/processor:ro
+    restart: unless-stopped
     networks:
       - varman-net
 

@@ -166,6 +166,10 @@ and therefore no file key:
 | `VARMAN_PASSKEY_TRUST_FORWARDED_PROTO` | `false` | Believe `X-Forwarded-Proto` when deriving the origin |
 | `VARMAN_WAF_ENGINE` | `legacy` (compose: `shadow`) | WAF engine mode: `legacy` (only the imported engine), `shadow` (run the Varman pipeline beside it and compare) or `varman` (enforce the pipeline verdict escalated with the legacy verdict; custom rules stay effective). Per-site override: dashboard **Settings → Protection → Detection engine** (`waf_settings.engine_mode`) |
 | `VARMAN_WAF_SHADOW` | `0` | Legacy switch: `1`/`true` selects `shadow` when `VARMAN_WAF_ENGINE` is unset |
+| `VARMAN_WAF_PROCESSOR_ENDPOINT` | empty (disabled) | External processor endpoint: `unix:/path/to.sock`, `tcp:host:port` or a bare `host:port`. See `examples/processor/mock_processor.py` |
+| `VARMAN_WAF_PROCESSOR_POLICY` | `fail_open` (compose: `monitor_only`) | How a timed-out/failed processor call resolves: `fail_open`, `monitor_only` or `fail_closed` |
+| `VARMAN_WAF_PROCESSOR_TIMEOUT_MS` | `50` | Per-call timeout, 1–5000 ms |
+| `VARMAN_WAF_PROCESSOR_NAME` | `processor` | Name used in the processor's rule ids (`ext.<name>.<rule>`) |
 
 The refresh-token lifetime (30 days), the minimum pool size (`1`) and the
 server-side log batch size (`500`) are compiled-in constants with no override.

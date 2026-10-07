@@ -433,8 +433,13 @@ report against the existing engine.
       monotonic merge that can only escalate the native verdict. The transport
       (UDS/gRPC client) stays a thin adapter over the trait; the caller owns
       the async timeout.
-- [ ] UDS/gRPC transport + plugin wiring (`VARMAN_WAF_PROCESSOR_*`), capability
-      negotiation, processor health/metrics.
+- [x] Transport + plugin wiring: `pingap-plugin/src/waf_processor.rs` speaks
+      newline-delimited JSON over UDS (`unix:`) or TCP (`tcp:`/`host:port`)
+      with a 50 ms default timeout (1–5000 ms), a 64 KiB response cap and
+      explicit failure policies; configured with `VARMAN_WAF_PROCESSOR_*` and
+      wired after the pipeline merge (escalate-only). Reference processor in
+      `examples/processor/mock_processor.py` + a `processor` compose profile.
+- [ ] Capability negotiation, processor health/metrics, UDS client pooling.
 - Exit: processors cannot destabilize the core; native engine remains the
   authority.
 

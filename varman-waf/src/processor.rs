@@ -24,6 +24,7 @@ use crate::canonical::CanonicalRequest;
 use crate::pipeline::{
     Action, AttackCategory, DetectorId, Finding, PipelineVerdict,
 };
+use serde::{Deserialize, Serialize};
 
 /// Maximum findings a single processor response contributes.
 pub const MAX_PROCESSOR_FINDINGS: usize = 16;
@@ -34,7 +35,7 @@ pub const MAX_PROCESSOR_SCORE: u32 = 60;
 
 /// Request summary handed to a processor. Owned so it can cross a transport
 /// without borrowing the transaction.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessorRequest {
     pub method: String,
     pub authority: String,
@@ -63,7 +64,7 @@ impl ProcessorRequest {
 }
 
 /// One finding a processor contributes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessorFinding {
     /// Processor-defined rule identifier (namespaced by the caller).
     pub rule_id: String,
@@ -74,7 +75,7 @@ pub struct ProcessorFinding {
 }
 
 /// A processor's successful response.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessorResponse {
     pub findings: Vec<ProcessorFinding>,
 }

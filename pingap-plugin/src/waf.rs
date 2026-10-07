@@ -2798,7 +2798,7 @@ impl Plugin for WafPlugin {
             .as_ref()
             .map(|site| site.monitor_categories.as_slice())
             .unwrap_or_default();
-        let verdict = match crate::waf_shadow::analyze(
+        let mut verdict = match crate::waf_shadow::analyze(
             &request_data,
             &verdict,
             engine,
@@ -2811,6 +2811,23 @@ impl Plugin for WafPlugin {
             },
             _ => verdict,
         };
+
+        // ── External processor (Phase 9): bounded, policy-resolved and
+        // additive. The processor can only escalate the verdict; a failure
+        // resolves through its configured policy. ──
+        if crate::waf_processor::is_enabled() {
+            let findings = crate::waf_processor::evaluate(&request_data)
+                .await
+                .filter(|findings| !findings.is_empty());
+            if let Some(findings) = findings {
+                let processor_verdict =
+                    crate::waf_processor::to_waf_verdict(&findings);
+                verdict = crate::waf_shadow::effective_verdict(
+                    &verdict,
+                    &processor_verdict,
+                );
+            }
+        }
 
         // Custom rule ids carry no name of their own; the site context maps
         // the one that fired back to its configured name.

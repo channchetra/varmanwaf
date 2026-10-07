@@ -119,8 +119,11 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   never weaken), contributions are bounded (16 findings, 40/finding, 60 per
   processor) and a timed-out or failed call resolves through an explicit
   `FailurePolicy` (`fail_open` / `monitor_only` / `fail_closed`) — never
-  silently. The transport (UDS/gRPC) is a thin adapter over the
-  `ExternalProcessor` trait; the caller owns the async timeout.
+  silently. The transport (`pingap-plugin/src/waf_processor.rs`) speaks
+  newline-delimited JSON over a Unix domain socket or TCP with a per-call
+  timeout and a 64 KiB response cap; `examples/processor/mock_processor.py`
+  is a runnable reference implementation and `docker compose --profile
+  processor up -d processor` starts it beside the stack.
 - **`pipeline::fast::ProtocolDetector`** (Phase 4) — framing and header
   sanity: conflicting duplicate `Content-Length`, `Content-Length` +
   `Transfer-Encoding` together, unsupported transfer codings (RFC 9112
