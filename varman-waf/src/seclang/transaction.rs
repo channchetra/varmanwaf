@@ -132,6 +132,7 @@ pub struct SecLangTransaction {
     method: String,
     uri: String,
     query_string: String,
+    raw_path: String,
     body: Option<Vec<u8>>,
     /// `XML:/*` values (element text nodes) when the XML processor is active.
     xml_texts: Vec<String>,
@@ -295,6 +296,7 @@ impl SecLangTransaction {
             method: request.method().to_string(),
             uri: request.path().to_string(),
             query_string: request.raw_query().to_string(),
+            raw_path: request.raw_path().to_string(),
             body,
             xml_texts,
             xml_attributes,
@@ -650,6 +652,15 @@ impl SecLangTransaction {
                 value: self.uri.clone(),
                 invalid_utf8: false,
             }]),
+            ("REQUEST_URI_RAW", _) => cap(vec![ResolvedValue {
+                name: "REQUEST_URI_RAW".to_string(),
+                value: if self.query_string.is_empty() {
+                    self.raw_path.clone()
+                } else {
+                    format!("{}?{}", self.raw_path, self.query_string)
+                },
+                invalid_utf8: false,
+            }]),
             ("REQUEST_FILENAME", _) => cap(vec![ResolvedValue {
                 name: "REQUEST_FILENAME".to_string(),
                 value: self.uri.clone(),
@@ -863,9 +874,6 @@ pub struct CompiledSecRule {
     regex: Option<Regex>,
     ips: Vec<ipnet::IpNet>,
     transforms: Vec<Transform>,
-    /// `multiMatch`: record every matching value, not just the first per
-    /// variable.
-    multi_match: bool,
 }
 
 /// ModSecurity transformation applied to a value before the operator runs.
@@ -2000,16 +2008,11 @@ impl CompiledSecRule {
             _ => {},
         }
         let transforms = parse_transforms(&line.actions)?;
-        let multi_match = line
-            .actions
-            .iter()
-            .any(|a| a.trim().eq_ignore_ascii_case("multimatch"));
         Ok(Self {
             line,
             regex,
             ips,
             transforms,
-            multi_match,
         })
     }
 
@@ -2064,11 +2067,10 @@ impl CompiledSecRule {
                 {
                     continue;
                 }
+                // ModSecurity evaluates every value and records every match
+                // (no short-circuit; actions run once per match).
                 if self.operator_matches(&value, txn) != self.line.negated {
                     hits.push(value);
-                    if !self.multi_match {
-                        break;
-                    }
                 }
             }
         }

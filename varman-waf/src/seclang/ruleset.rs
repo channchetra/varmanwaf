@@ -817,19 +817,18 @@ fn evaluate_group(
         if hits.is_empty() {
             return None;
         }
-        txn.set_matched(hits.first().cloned());
-        if rule.has_capture() {
-            if let Some(first) = hits.first() {
-                // Captures run on the transformed value: the regex matched
-                // it, not the original (ModSecurity captures post-transform).
-                rule.captures_into(&rule.transformed(&first.value), txn);
+        // ModSecurity runs a rule's actions once per matched value: captures
+        // and setvars see each hit in turn (multi-header chains like 920450
+        // and multipart pipelines depend on it).
+        for hit in &hits {
+            txn.set_matched(Some(hit.clone()));
+            if rule.has_capture() {
+                rule.captures_into(&rule.transformed(&hit.value), txn);
             }
-        }
-        // Chain-member actions run immediately: the next member can read
-        // TX variables this member sets (CRS 920420, 931130 rely on this).
-        if let Some(ops) = setvars.get(index) {
-            for op in ops {
-                apply_setvar(txn, op);
+            if let Some(ops) = setvars.get(index) {
+                for op in ops {
+                    apply_setvar(txn, op);
+                }
             }
         }
         // The next chain member sees transformed values (ModSecurity binds
@@ -1325,7 +1324,9 @@ mod tests {
     }
 
     #[test]
-    fn multi_match_records_every_value() {
+    fn every_matching_value_is_recorded() {
+        // ModSecurity records every matching value by default (no
+        // short-circuit), with or without `multiMatch`.
         let ruleset = SecRuleSet::from_source(
             "SecRule ARGS:a \"@rx ^[0-9]$\" \"id:1,multiMatch\"\n",
         )
@@ -1352,7 +1353,7 @@ mod tests {
                 &request("/?a=1&a=2"),
             );
         let hits = single.evaluate(&mut txn);
-        assert_eq!(hits[0].variables_hit.len(), 1);
+        assert_eq!(hits[0].variables_hit.len(), 2);
     }
 
     #[test]

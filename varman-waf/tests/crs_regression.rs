@@ -219,6 +219,67 @@ fn fired_ids(
 }
 
 #[test]
+fn targeted_920450_fires() {
+    let Some(root) = crs_root() else {
+        return;
+    };
+    let engine = compile_full_set(&root.join("rules"));
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Host".to_string(),
+        serde_yaml::Value::String("localhost".to_string()),
+    );
+    headers.insert(
+        "User-Agent".to_string(),
+        serde_yaml::Value::String("OWASP CRS test agent".to_string()),
+    );
+    headers.insert(
+        "Content-range".to_string(),
+        serde_yaml::Value::String("test".to_string()),
+    );
+    headers.insert(
+        "Accept".to_string(),
+        serde_yaml::Value::String(
+            "text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5"
+                .to_string(),
+        ),
+    );
+    let input = Input {
+        method: Some("GET".to_string()),
+        uri: Some("/".to_string()),
+        headers: Some(headers),
+        data: None,
+        encoded_request: None,
+    };
+    // Introspect the chain's TX state.
+    let mut parts = RequestParts::new("GET", "localhost", "/");
+    for (name, value) in input.headers.as_ref().expect("headers") {
+        parts = parts.with_header(name.clone(), scalar(value));
+    }
+    let request = Canonicalizer::default().canonicalize(parts);
+    let mut txn = SecLangTransaction::from_request(&request);
+    txn.tx_set("detection_paranoia_level", "1");
+    txn.tx_set("executing_paranoia_level", "1");
+    txn.tx_set("paranoia_level", "1");
+    let _ = engine.evaluate(&mut txn);
+    let stored: Vec<String> = txn
+        .resolve("TX:/^header_name_920450_/")
+        .into_iter()
+        .map(|value| format!("{}={}", value.name, value.value))
+        .collect();
+    eprintln!(
+        "920450 debug: stored={stored:?} restricted={:?}",
+        txn.tx_get("restricted_headers_basic")
+            .map(|v| v.to_string())
+    );
+    let fired = fired_ids(&engine, &input, 1);
+    assert!(
+        fired.contains(&920450),
+        "920450 did not fire; got {fired:?}"
+    );
+}
+
+#[test]
 fn targeted_943110_chain() {
     let Some(root) = crs_root() else {
         return;
@@ -650,7 +711,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5051,
-        "CRS regression regressed: {passed} passed (baseline 5051)"
+        passed >= 5068,
+        "CRS regression regressed: {passed} passed (baseline 5068)"
     );
 }

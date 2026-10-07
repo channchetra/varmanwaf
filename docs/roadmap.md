@@ -326,15 +326,13 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Sixteenth slice: JSON naming exactly as ModSecurity (`json.` root,
-      `empty-key`, `.array_N`), macro expansion in string operators
-      (`@endsWith %{request_headers.host}` — CRS 943110), `REQUEST_BODY_LENGTH`,
-      `REQUEST_HEADERS_NAMES`, and URLENCODED as the true default body
-      processor (harness no longer injects a Content-Type). Regression:
-      **5051/5155** (98.0%).
-- [ ] Remaining tail: `920450`, `922110` (forbid), `934120`, `941100`/
-      `941310` (XSS detector quality), `920170`, `930110`, `920180`,
-      `920260`, `920430`, `921180`, `921240`.
+- [x] Seventeenth slice: **removed the match short-circuit** — ModSecurity's
+      own evaluation loop (read from `rule_with_operator.cc`) evaluates every
+      value and runs actions per match; `multiMatch` affects transform
+      intermediates, not iteration. This fixed 920450, 922110 and others.
+      Regression: **5068/5155** (98.3%).
+- [ ] Remaining tail: `934120`, `941100`/`941310` (XSS detector quality),
+      `920170`, `930110`, `920180`, `920260`, `920430`, `921250`, `931131`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 
