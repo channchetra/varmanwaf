@@ -62,6 +62,12 @@ fn flatten_json(
                 counter: 0,
             });
             for (member, child) in map {
+                // ModSecurity names empty object keys `empty-key`.
+                let member = if member.is_empty() {
+                    "empty-key"
+                } else {
+                    member.as_str()
+                };
                 flatten_json(child, Some(member), containers, out);
             }
             containers.pop();
@@ -259,7 +265,9 @@ impl SecLangTransaction {
                 );
             }
         }
-        if content_type.contains("application/x-www-form-urlencoded") {
+        if body_processor == "URLENCODED" {
+            // URLENCODED is ModSecurity's default processor; form bodies are
+            // parsed even when no Content-Type header was sent.
             if let Some(bytes) = &body {
                 for pair in bytes.split(|&byte| byte == b'&') {
                     if pair.is_empty() {
@@ -377,7 +385,9 @@ impl SecLangTransaction {
             return;
         };
         let mut flattened = Vec::new();
-        flatten_json(&value, None, &mut Vec::new(), &mut flattened);
+        // ModSecurity's root container is named `json`
+        // (`getCurrentKey()` returns `"json"` at depth 0).
+        flatten_json(&value, Some("json"), &mut Vec::new(), &mut flattened);
         for (name, value) in flattened {
             self.args.push(ArgValue {
                 name,
@@ -583,6 +593,15 @@ impl SecLangTransaction {
                     invalid_utf8: false,
                 })
                 .collect()),
+            ("REQUEST_HEADERS_NAMES", _) => cap(self
+                .headers
+                .iter()
+                .map(|(n, _)| ResolvedValue {
+                    name: "REQUEST_HEADERS_NAMES".to_string(),
+                    value: n.clone(),
+                    invalid_utf8: false,
+                })
+                .collect()),
             ("REQUEST_HEADERS", Some(selector)) => cap(self
                 .headers
                 .iter()
@@ -775,6 +794,16 @@ impl SecLangTransaction {
                     invalid_utf8: false,
                 })
                 .collect()),
+            ("REQUEST_BODY_LENGTH", _) => cap(vec![ResolvedValue {
+                name: "REQUEST_BODY_LENGTH".to_string(),
+                value: self
+                    .body
+                    .as_ref()
+                    .map(|body| body.len())
+                    .unwrap_or(0)
+                    .to_string(),
+                invalid_utf8: false,
+            }]),
             ("REMOTE_ADDR", _) => cap(vec![ResolvedValue {
                 name: "REMOTE_ADDR".to_string(),
                 value: self.remote_addr.clone(),
@@ -2090,10 +2119,18 @@ impl CompiledSecRule {
                     .iter()
                     .any(|needle| lowered.contains(&needle.to_lowercase()))
             },
-            SecOperator::Contains(needle) => value.contains(needle),
-            SecOperator::Streq(expected) => value == expected,
-            SecOperator::BeginsWith(prefix) => value.starts_with(prefix),
-            SecOperator::EndsWith(suffix) => value.ends_with(suffix),
+            SecOperator::Contains(needle) => {
+                value.contains(&expand_macros(needle, txn))
+            },
+            SecOperator::Streq(expected) => {
+                value == expand_macros(expected, txn)
+            },
+            SecOperator::BeginsWith(prefix) => {
+                value.starts_with(&expand_macros(prefix, txn))
+            },
+            SecOperator::EndsWith(suffix) => {
+                value.ends_with(&expand_macros(suffix, txn))
+            },
             SecOperator::DetectSqli => detect_sqli(value).0,
             SecOperator::DetectXss => detect_xss(value).0,
             SecOperator::IpMatch(_) => value
@@ -2700,13 +2737,13 @@ mod tests {
             .into_iter()
             .map(|value| value.name)
             .collect();
-        assert!(names.contains(&"ARGS:.a.b".to_string()), "{names:?}");
+        assert!(names.contains(&"ARGS:json.a.b".to_string()), "{names:?}");
         assert!(
-            names.contains(&"ARGS:.arr.array_0".to_string()),
+            names.contains(&"ARGS:json.arr.array_0".to_string()),
             "{names:?}"
         );
         assert!(
-            names.contains(&"ARGS:.arr.array_1".to_string()),
+            names.contains(&"ARGS:json.arr.array_1".to_string()),
             "{names:?}"
         );
     }

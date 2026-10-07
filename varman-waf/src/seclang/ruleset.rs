@@ -1404,7 +1404,7 @@ mod tests {
     fn ctl_json_body_processor_populates_args() {
         let ruleset = SecRuleSet::from_source(
             "SecRule REQUEST_HEADERS:Content-Type \"@contains json\" \"id:1,ctl:requestBodyProcessor=JSON\"\n\
-             SecRule ARGS:.var \"@contains OR 1=1\" \"id:2,block\"\n",
+             SecRule ARGS:json.var \"@contains OR 1=1\" \"id:2,block\"\n",
         )
         .expect("compile");
         let request = Canonicalizer::default().canonicalize(

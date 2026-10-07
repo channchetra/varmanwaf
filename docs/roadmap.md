@@ -326,13 +326,15 @@ report against the existing engine.
       at each expected rule's declared paranoia level. Score: **3317/5155
       checked expectations pass**. Engine fixes found by it: `&VAR` instance
       counts (CRS 901 defaults), corrected `@validateByteRange` semantics.
-- [x] Fifteenth slice: captures on transformed values (922110's
-      `t:lowercase`+capture pipeline), `ARGS_GET`/`ARGS_POST`(+`_NAMES`),
-      `REQUEST_BASENAME`. Regression: **5029/5155** (97.6%) — the failure
-      histogram is now a long tail (≤6 per class).
-- [ ] Remaining tail: `942130`, `920450`, `920640`, `922110` (forbid),
-      `934120`, `941100`, `941310`, `forbid [943110]`, `920170`, `930110`,
-      `920180`, `920260`.
+- [x] Sixteenth slice: JSON naming exactly as ModSecurity (`json.` root,
+      `empty-key`, `.array_N`), macro expansion in string operators
+      (`@endsWith %{request_headers.host}` — CRS 943110), `REQUEST_BODY_LENGTH`,
+      `REQUEST_HEADERS_NAMES`, and URLENCODED as the true default body
+      processor (harness no longer injects a Content-Type). Regression:
+      **5051/5155** (98.0%).
+- [ ] Remaining tail: `920450`, `922110` (forbid), `934120`, `941100`/
+      `941310` (XSS detector quality), `920170`, `930110`, `920180`,
+      `920260`, `920430`, `921180`, `921240`.
 - [ ] OWASP CRS conformance harness against official regression tests
       (recorded in `docs/compatibility.md`).
 

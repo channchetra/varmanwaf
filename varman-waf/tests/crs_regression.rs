@@ -185,19 +185,10 @@ fn fired_ids(
     let method = input.method.clone().unwrap_or_else(|| "GET".into());
     let uri = input.uri.clone().unwrap_or_else(|| "/".into());
     let mut parts = RequestParts::new(method, "localhost", uri);
-    let mut has_content_type = false;
     if let Some(headers) = &input.headers {
         for (name, value) in headers {
-            if name.eq_ignore_ascii_case("content-type") {
-                has_content_type = true;
-            }
             parts = parts.with_header(name.clone(), scalar(value));
         }
-    }
-    if input.data.is_some() && !has_content_type {
-        // go-ftw defaults `data` to a form-urlencoded body.
-        parts = parts
-            .with_header("Content-Type", "application/x-www-form-urlencoded");
     }
     if let Some(data) = &input.data {
         parts = parts.with_body(data.clone().into_bytes());
@@ -225,6 +216,70 @@ fn fired_ids(
         .flat_map(|hit| hit.rule_ids)
         .flatten()
         .collect()
+}
+
+#[test]
+fn targeted_943110_chain() {
+    let Some(root) = crs_root() else {
+        return;
+    };
+    let engine = compile_full_set(&root.join("rules"));
+    // Test 4: same-host referer must NOT fire (chain member 3 rejects it).
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Host".to_string(),
+        serde_yaml::Value::String("localhost".to_string()),
+    );
+    headers.insert(
+        "Referer".to_string(),
+        serde_yaml::Value::String("http://localhost/test".to_string()),
+    );
+    headers.insert(
+        "User-Agent".to_string(),
+        serde_yaml::Value::String("OWASP CRS test agent".to_string()),
+    );
+    let input = Input {
+        method: Some("GET".to_string()),
+        uri: Some(
+            "/get/login.php?jsessionid=74B0CB414BD77D17B5680A6386EF1666"
+                .to_string(),
+        ),
+        headers: Some(headers),
+        data: None,
+        encoded_request: None,
+    };
+    let fired = fired_ids(&engine, &input, 1);
+    assert!(
+        !fired.contains(&943110),
+        "943110 false positive; got {fired:?}"
+    );
+
+    // Test 42: JSON session parameter name must fire.
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "Host".to_string(),
+        serde_yaml::Value::String("localhost".to_string()),
+    );
+    headers.insert(
+        "Content-Type".to_string(),
+        serde_yaml::Value::String("application/json".to_string()),
+    );
+    headers.insert(
+        "Referer".to_string(),
+        serde_yaml::Value::String("http://evil.com/".to_string()),
+    );
+    let input = Input {
+        method: Some("POST".to_string()),
+        uri: Some("/".to_string()),
+        headers: Some(headers),
+        data: Some("{ \"phpsession\":\"foo\" }".to_string()),
+        encoded_request: None,
+    };
+    let fired = fired_ids(&engine, &input, 1);
+    assert!(
+        fired.contains(&943110),
+        "943110 did not fire; got {fired:?}"
+    );
 }
 
 #[test]
@@ -595,7 +650,7 @@ fn crs_regression_corpus() {
 
     // Ratchet: raise only when the baseline genuinely improves.
     assert!(
-        passed >= 5029,
-        "CRS regression regressed: {passed} passed (baseline 5029)"
+        passed >= 5051,
+        "CRS regression regressed: {passed} passed (baseline 5051)"
     );
 }
