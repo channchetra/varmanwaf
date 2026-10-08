@@ -207,6 +207,11 @@ impl CategorySet {
         Self(self.0 | other.0)
     }
 
+    /// Categories in `self` that are not in `other`.
+    pub const fn difference(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+
     /// `true` when `category` is in this monitor set.
     pub const fn contains_category(self, category: AttackCategory) -> bool {
         let bit = match category {

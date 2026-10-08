@@ -1816,12 +1816,15 @@ pub struct WafPlugin {
     /// Locally configured engine; shared and hot-reloadable.
     engine: Arc<RwLock<WafEngine>>,
     mode: WafMode,
-    // TODO: parsed from config but not yet wired into WafEngine (detections/
-    // ml_enabled/ml_threshold are currently ignored at runtime)
+    // Parsed for configuration compatibility and wiring status: `detections`
+    // limits which families may block (unlisted families are monitored),
+    // `paranoia_level`/`anomaly_threshold` feed the engine config, and
+    // `ml_enabled`/`ml_threshold` are reported as unsupported at load time.
     #[allow(dead_code)]
     paranoia_level: u8,
     #[allow(dead_code)]
     anomaly_threshold: u32,
+    /// Informational: the parsed detection whitelist (see `try_from`).
     #[allow(dead_code)]
     detections: Vec<String>,
     #[allow(dead_code)]
@@ -2178,13 +2181,43 @@ impl TryFrom<&PluginConf> for WafPlugin {
         let anomaly_threshold =
             get_int_conf_or_default(value, "anomaly_threshold", 40) as u32;
         let detections = get_str_slice_conf(value, "detections");
-        let monitor_categories = parse_monitor_categories(&get_str_slice_conf(
-            value,
-            "monitor_categories",
-        ));
+        let mut monitor_categories = parse_monitor_categories(
+            &get_str_slice_conf(value, "monitor_categories"),
+        );
+        // `detections` is a whitelist of attack families allowed to block. The
+        // engine cannot disable detection per family, so the faithful
+        // semantic is a monitor downgrade for every family *not* listed:
+        // detection keeps running (events, telemetry) but only the listed
+        // families can block. An absent/empty list changes nothing; unknown
+        // names are dropped with a warning (observable, never silent).
+        if !detections.is_empty() {
+            let mut allowed = CategorySet::EMPTY;
+            for name in &detections {
+                match CategorySet::parse_name(name) {
+                    Some(flag) => allowed = allowed.union(flag),
+                    None => warn!(
+                        detection = %name,
+                        "unknown detection family in the WAF plugin config; \
+                         ignored (allowed: sqli, xss, rce, lfi, ssrf, deser, \
+                         crlf, xxe, ssti)"
+                    ),
+                }
+            }
+            monitor_categories =
+                monitor_categories.union(CategorySet::ALL.difference(allowed));
+        }
         let monitor_stacks =
             parse_monitor_stacks(&get_str_slice_conf(value, "monitor_stacks"));
         let ml_enabled = get_bool_conf(value, "ml_enabled");
+        if ml_enabled {
+            // The engine has no ML scorer; the flag is accepted for
+            // configuration compatibility and reported instead of silently
+            // doing nothing.
+            warn!(
+                "ml_enabled is not implemented by the detection engine; the \
+                 flag has no effect"
+            );
+        }
         let ml_threshold = value
             .get("ml_threshold")
             .and_then(|v| v.as_float())
@@ -3196,6 +3229,57 @@ monitor_stacks = ["java"]
             "details: {}",
             sqli.details
         );
+    }
+
+    #[test]
+    fn toml_detections_limit_blocking_families() {
+        // Only SQLi may block; every other family records (monitor).
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+mode = "block"
+detections = ["sqli", "bogus-family"]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let engine = plugin.engine.read().unwrap_or_else(|e| e.into_inner());
+        let sqli = engine.inspect(&probe("id=1' OR 1=1 --"));
+        assert_eq!(
+            sqli.action,
+            WafAction::Block,
+            "sqli stays blocking, details: {}",
+            sqli.details
+        );
+        let xss = engine.inspect(&probe("q=<script>alert(1)</script>"));
+        assert_eq!(
+            xss.action,
+            WafAction::Monitor,
+            "xss must be downgraded by the whitelist, details: {}",
+            xss.details
+        );
+    }
+
+    #[test]
+    fn toml_ml_enabled_is_reported_not_silent() {
+        // The engine has no ML scorer: the flag must load (with a warning)
+        // rather than fail, and must not change detection behaviour.
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+mode = "block"
+ml_enabled = true
+ml_threshold = 0.9
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(plugin.ml_enabled);
+        let engine = plugin.engine.read().unwrap_or_else(|e| e.into_inner());
+        let sqli = engine.inspect(&probe("id=1' OR 1=1 --"));
+        assert_eq!(sqli.action, WafAction::Block, "details: {}", sqli.details);
     }
 
     #[tokio::test]

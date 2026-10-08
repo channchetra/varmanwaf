@@ -130,8 +130,7 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   with `VARMAN_WAF_TI_FILE` (same documented line format, `off` disables).
   Malformed feeds are observable errors — the plugin logs and falls back to
   the starter. UA and body payloads get dedicated corpus harness loops.
-- **`processor`** (Phase 9) — the optional external-processor contract:
-  out-of-process components inspect a request and *add* findings. The native
+- **`processor`** (Phase 9) — the optional external-processor contract:  out-of-process components inspect a request and *add* findings. The native
   engine stays the authority: merging is monotonic (a processor can escalate,
   never weaken), contributions are bounded (16 findings, 40/finding, 60 per
   processor) and a timed-out or failed call resolves through an explicit
