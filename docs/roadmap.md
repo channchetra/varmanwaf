@@ -445,6 +445,9 @@ report against the existing engine.
       `VARMAN_WAF_TI_FILE`; malformed feeds error observably and fall back to
       the starter. UA corpus harness (`attacks_ua`/`benign_ua`) ratchets
       detection and locks ordinary UAs (Chrome, Googlebot, curl) clean.
+      **Verified live**: a Chrome UA passed (200); `sqlmap/1.7#stable` and
+      `Nikto/2.5.0` blocked (403) with `ti.ua | block | 25`
+      (`varman-pipeline: 1 finding(s)`).
 - [ ] API security/OpenAPI validation, ATO, virtual patching, WebSocket
       inspection.
 - Exit: each feature has corpora + FP controls + monitoring; security events
