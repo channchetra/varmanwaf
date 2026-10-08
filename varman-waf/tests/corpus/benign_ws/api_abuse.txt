@@ -1,0 +1,6 @@
+# Same-origin handshakes that must never be flagged.
+https://example.com
+https://example.com:443
+http://example.com:80
+https://EXAMPLE.com
+https://example.com/chat

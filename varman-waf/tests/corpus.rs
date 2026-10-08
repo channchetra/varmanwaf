@@ -21,7 +21,7 @@ use varman_waf::pipeline::semantic::{
     DlpDetector, GraphqlAbuseDetector, HtmlXssDetector, JwtDetector,
     LdapXPathDetector, NosqlInjectionDetector, PrototypePollutionDetector,
     SqlStructuralDetector, SsrfStructuralDetector, SstiDetector, TiDetector,
-    XxeDetector,
+    WebSocketDetector, XxeDetector,
 };
 use varman_waf::pipeline::{
     Action, AttackCategory, PipelineVerdict, SecurityPipeline,
@@ -44,6 +44,7 @@ const MUST_REACH_MONITOR: &[&str] = &[
     "credential_abuse",
     "sensitive_data_exposure",
     "threat_intelligence",
+    "api_abuse",
 ];
 
 fn corpus_dir(kind: &str) -> PathBuf {
@@ -72,6 +73,7 @@ fn pipeline() -> SecurityPipeline {
         Box::new(DlpDetector::new()),
         Box::new(BodyShapeDetector::new()),
         Box::new(TiDetector::starter()),
+        Box::new(WebSocketDetector::new()),
     ])
 }
 
@@ -102,6 +104,22 @@ fn verdict_for(pipeline: &SecurityPipeline, payload: &str) -> PipelineVerdict {
         "example.com",
         target,
     ));
+    pipeline.inspect(&request)
+}
+
+/// WebSocket handshake with the payload as the `Origin` header (`*_ws` corpus).
+fn verdict_for_ws(
+    pipeline: &SecurityPipeline,
+    payload: &str,
+) -> PipelineVerdict {
+    let request = Canonicalizer::default().canonicalize(
+        RequestParts::new("GET", "example.com", "/ws")
+            .with_header("Upgrade", "websocket")
+            .with_header("Connection", "Upgrade")
+            .with_header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .with_header("Sec-WebSocket-Version", "13")
+            .with_header("Origin", payload),
+    );
     pipeline.inspect(&request)
 }
 
@@ -429,4 +447,87 @@ fn ua_benign_corpus_is_never_monitored_or_blocked() {
         failures.join("\n")
     );
     assert!(case_count >= 3, "ua benign corpus shrank unexpectedly");
+}
+
+#[test]
+fn ws_attack_corpus_is_detected() {
+    let pipeline = pipeline();
+    let dir = corpus_dir("attacks_ws");
+    let mut failures: Vec<String> = Vec::new();
+    let mut payload_count = 0usize;
+
+    for file in category_files(&dir) {
+        let stem = file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let Some(expected) = AttackCategory::parse(&stem) else {
+            failures.push(format!(
+                "corpus file {stem}.txt names no known category"
+            ));
+            continue;
+        };
+
+        for (line, payload) in read_cases(&file) {
+            payload_count += 1;
+            let verdict = verdict_for_ws(&pipeline, &payload);
+            if !verdict.findings.iter().any(|f| f.category == expected) {
+                failures
+                    .push(format!("{stem}(ws):{line}: no {expected} finding"));
+                continue;
+            }
+            if verdict.action < Action::Monitor {
+                failures.push(format!(
+                    "{stem}(ws):{line}: expected >= monitor, got {}",
+                    verdict.action
+                ));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "ws attack corpus failures:\n{}",
+        failures.join("\n")
+    );
+    assert!(payload_count >= 3, "ws attack corpus shrank unexpectedly");
+}
+
+#[test]
+fn ws_benign_corpus_is_never_monitored_or_blocked() {
+    let pipeline = pipeline();
+    let dir = corpus_dir("benign_ws");
+    let mut failures: Vec<String> = Vec::new();
+    let mut case_count = 0usize;
+
+    for file in category_files(&dir) {
+        let name = file
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        for (line, payload) in read_cases(&file) {
+            case_count += 1;
+            let verdict = verdict_for_ws(&pipeline, &payload);
+            if verdict.action >= Action::Monitor {
+                let details: Vec<String> = verdict
+                    .findings
+                    .iter()
+                    .map(|f| format!("{} ({})", f.rule_id, f.action_hint))
+                    .collect();
+                failures.push(format!(
+                    "{name}:{line}: {} blocked/monitored benign Origin via {:?}",
+                    verdict.action, details
+                ));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "ws benign corpus failures:\n{}",
+        failures.join("\n")
+    );
+    assert!(case_count >= 3, "ws benign corpus shrank unexpectedly");
 }

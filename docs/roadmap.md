@@ -455,8 +455,13 @@ report against the existing engine.
       **Verified live**: a Chrome UA passed (200); `sqlmap/1.7#stable` and
       `Nikto/2.5.0` blocked (403) with `ti.ua | block | 25`
       (`varman-pipeline: 1 finding(s)`).
-- [ ] API security/OpenAPI validation, ATO, virtual patching, WebSocket
-      inspection.
+- [x] WebSocket handshake inspection (`semantic::websocket`, Phase 8 first
+      slice) — cross-origin handshakes (`Origin` host/port ≠ requested host,
+      including `null`) Monitor as `ws.cross_origin` (CSWSH), handshakes
+      declaring a body Monitor as `ws.handshake_with_body`; same-origin and
+      Origin-less clients stay clean. `*_ws` corpus modes ratchet both
+      directions. Frame-level inspection remains.
+- [ ] API security/OpenAPI validation, ATO, virtual patching.
 - Exit: each feature has corpora + FP controls + monitoring; security events
   explain what fired.
 

@@ -1,0 +1,6 @@
+# Cross-origin WebSocket handshakes (CSWSH), Host = example.com.
+https://evil.example
+https://example.com.evil.example
+https://example.com:8443
+null
+http://127.0.0.1

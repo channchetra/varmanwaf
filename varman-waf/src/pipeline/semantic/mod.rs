@@ -18,6 +18,7 @@ pub mod sql;
 pub mod ssrf;
 pub mod ssti;
 pub mod ti;
+pub mod websocket;
 pub mod xss;
 pub mod xxe;
 
@@ -34,5 +35,6 @@ pub use sql::SqlStructuralDetector;
 pub use ssrf::SsrfStructuralDetector;
 pub use ssti::SstiDetector;
 pub use ti::{TiDetector, TiIndicators};
+pub use websocket::WebSocketDetector;
 pub use xss::HtmlXssDetector;
 pub use xxe::XxeDetector;

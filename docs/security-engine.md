@@ -15,7 +15,7 @@
 | Shadow wiring + engine switch (`pingap-plugin/src/waf_shadow.rs`) | Landed: `VARMAN_WAF_ENGINE=legacy|shadow|varman`; shadow compares pipeline vs legacy per request and records counters; `varman` enforces the pipeline verdict escalated with the legacy verdict | Yes (`varman` mode) |
 | Lane 1 fast detectors | Started: protocol checks + Aho-Corasick signature scanner (starter table, tiered) + raw-path traversal evidence; corpora in `varman-waf/tests/corpus` | No (shadow only) |
 | Streaming body engine | Pending (Phase 5) | No |
-| Lane 2 semantic detectors | SQL, HTML/XSS, shell/command, SSRF, NoSQL, SSTI, XXE, deserialization, prototype-pollution, LDAP/XPath, GraphQL, JWT, DLP, JSON body-shape, threat-intelligence (Phase 5/8) structural detectors; covered by the corpora | No (shadow only) |
+| Lane 2 semantic detectors | SQL, HTML/XSS, shell/command, SSRF, NoSQL, SSTI, XXE, deserialization, prototype-pollution, LDAP/XPath, GraphQL, JWT, DLP, JSON body-shape, threat-intelligence, WebSocket-handshake (Phase 5/8) structural detectors; covered by the corpora | No (shadow only) |
 | SecLang / OWASP CRS (Lane 3) | Pending (Phase 7); tracked in `docs/compatibility.md` | No |
 
 The pipeline is wired into the proxy through `pingap-plugin/src/waf_shadow.rs`.
@@ -130,6 +130,14 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   with `VARMAN_WAF_TI_FILE` (same documented line format, `off` disables).
   Malformed feeds are observable errors — the plugin logs and falls back to
   the starter. UA and body payloads get dedicated corpus harness loops.
+- **`pipeline::semantic::WebSocketDetector`** (Phase 8, WebSocket inspection
+  first slice) — inspects the handshake (an ordinary HTTP request): an
+  `Origin` whose host/port differs from the requested host (including `null`)
+  **Monitors** as `ws.cross_origin` (cross-origin WebSocket hijacking), and a
+  handshake declaring a body **Monitors** as `ws.handshake_with_body`
+  (RFC 6455 forbids one). Same-origin handshakes and clients without
+  `Origin` (CLIs, bots) stay clean; the `*_ws` corpus modes lock both
+  directions in. Frame-level inspection remains future work.
 - **`processor`** (Phase 9) — the optional external-processor contract:  out-of-process components inspect a request and *add* findings. The native
   engine stays the authority: merging is monotonic (a processor can escalate,
   never weaken), contributions are bounded (16 findings, 40/finding, 60 per
