@@ -282,6 +282,8 @@ pub mod waf_processor;
 /// Shadow execution of the Varman pipeline beside the legacy engine (Phase 2
 /// wiring); see the module docs. Enabled with `VARMAN_WAF_SHADOW=1`.
 pub mod waf_shadow;
+/// Stream inspection: body tails and WebSocket frames (Phase 8).
+pub mod waf_stream;
 
 mod plugin;
 

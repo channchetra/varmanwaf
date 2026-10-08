@@ -12,10 +12,10 @@
 | 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | done for the rollout - pipeline, shadow, engine switch, telemetry, benchmarks; per-site detector config post-rollout |
 | 3 | Canonicalization (stable normalization + bypass tests) | done for the rollout - canonicalizer, bypass + idempotence tests; legacy-path wiring post-rollout |
 | 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | done for the rollout - signatures, protocol checks, corpora, lane-cost report |
-| 5 | Streaming body engine (bounded windows, limits) | in progress - bounded head window + reject policy + JSON body-shape detector shipped; tail window post-rollout |
-| 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, .) | done for the rollout - 19 detectors, corpora, per-detector budget soak; SQL AST tier post-rollout |
+| 5 | Streaming body engine (bounded windows, limits) | done - bounded head window + reject policy + JSON body-shape detector + tail inspection + slow-upload deadline (v0.21.1) |
+| 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, .) | done - 20 detectors incl. the SQL AST tier, corpora, budget soak, fuzz targets, shadow report (v0.21.1) |
 | 7 | Native SecLang core + OWASP CRS conformance | done for the rollout - full CRS loads; behavioural corpus 5150/5155 (99.90%), residuals documented |
-| 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | done for the rollout - JWT, DLP, TI, ATO, virtual patches, OpenAPI, WebSocket handshake; frame-level + JSON-Schema post-rollout |
+| 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | done - JWT, DLP, TI, ATO, virtual patches, OpenAPI incl. JSON-Schema bodies, WebSocket handshake + frames (v0.21.1) |
 | 9 | Optional External Processor API | done for the rollout - contract, UDS/TCP transport, failure policies, negotiation, telemetry, reference mock |
 
 ---
@@ -244,8 +244,12 @@ benign-corpus blocks; benchmarked cost documented.
       bytes).
 - [x] Explicit size policies: `body_policy = "process_partial" | "reject"`
       (413 above `max_body_size`), plus the JSON body-shape detector.
-- [ ] Post-rollout: bounded windowed inspection beyond the head window and
-      slow-upload/trickling defenses (need streaming inspection during
+- [x] Tail inspection + slow-upload defense (v0.21.1): the chunks the
+      early read pass does not consume flow through the read-only
+      `handle_request_body` proxy hook and are scanned with a 256-byte
+      sliding window; a confirmed payload aborts the request and records
+      an event. The read pass runs under `body_read_timeout_ms` (408 on
+      trickling uploads). Live-verified.
       forwarding).
 - Exit: large-upload peak memory bounded; bypass corpus green; fuzz-clean
   decoders.
@@ -314,8 +318,18 @@ benign-corpus blocks; benchmarked cost documented.
 - [x] Per-detector performance budgets + hostile-input soak:
       `varman-waf/tests/detector_budgets.rs` (19 detectors x 204 inputs,
       bounded findings, non-empty degradations, printed table).
-- [ ] Post-rollout: SQL AST detector (dialect-aware) as the second SQL tier;
-      cargo-fuzz targets per detector; standing shadow-mode comparison report.
+- [x] SQL AST tier (v0.21.1): `semantic.sql.ast` parses fragments via
+      statement templates and blocks stacked statements, set operations,
+      tautologies and DML/DDL (7 tests); wired into the shared detector
+      list and measured in the lane-cost report.
+- [x] cargo-fuzz targets (v0.21.1): `fuzz/` ships `detectors` and
+      `canonicalizer`; smoke campaigns clean (34,660 + 162,093 runs). The
+      canonicalizer campaign found a decode-budget convergence bound,
+      locked in a unit test.
+- [x] Standing shadow-comparison report (v0.21.1):
+      `tests/shadow_report.rs` writes `docs/shadow-report.md` - pipeline
+      21/21 attacks detected, 0/12 benign false positives, legacy 16/21,
+      pipeline stricter in 6, weaker in 0; ratcheted in CI.
 
 Exit: per-detector acceptance + performance budget; shadow-mode comparison
 report against the existing engine.
@@ -503,8 +517,14 @@ report against the existing engine.
       OpenAPI spec left a declared operation and an out-of-scope path clean
       (200) while an unknown operation under the base prefix recorded
       `api.unknown_operation | monitor | 20`.
-- [ ] Post-rollout: frame-level WebSocket inspection (handshake shipped) and
-      full JSON-Schema body validation (operation/method/parameter checks
+- [x] Frame-level WebSocket inspection (v0.21.1): read-only tunnel hooks
+      in both directions feed a streaming RFC 6455 decoder; complete
+      messages are scanned, malformed frames fail the connection, findings
+      abort it with `ws.*` events.
+- [x] Full JSON-Schema body validation (v0.21.1): `$ref`, type, nullable,
+      enum, required, properties, additionalProperties, items, bounds,
+      pattern and allOf/anyOf/oneOf; violations record
+      `api.schema_violation` with a JSON-pointer detail.
       shipped).
 - Exit: each feature has corpora + FP controls + monitoring; security events
   explain what fired.

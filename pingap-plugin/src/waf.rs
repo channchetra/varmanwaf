@@ -34,14 +34,15 @@ use crate::challenge::{
     resolve_cookie_secret,
 };
 use crate::waf_ato::{FailedAuthTracker, is_state_changing};
+use crate::waf_stream::{StreamFinding, StreamInspector, TailWindow};
 use async_trait::async_trait;
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HTTP_HEADER_NAME_X_REQUEST_ID, HttpResponse, Plugin, PluginStep,
     RequestPluginResult, ResponseBodyPluginResult, ResponsePluginResult,
-    constant_time_eq, ensure_client_ip, get_host,
+    constant_time_eq, ensure_client_ip, get_host, new_internal_error,
 };
 use pingap_util::{IpRules, base64_decode};
 use pingora::http::{ResponseHeader, Version};
@@ -1648,6 +1649,55 @@ const PENDING_ACCESS_GC_THRESHOLD: usize = 65536;
 static PENDING_ACCESS: LazyLock<DashMap<String, PendingAccess>> =
     LazyLock::new(DashMap::new);
 
+/// Per-connection stream inspection state for tail and upgraded traffic,
+/// keyed by request id. Created lazily by the stream hooks and removed when
+/// the stream ends; a bounded purge drops stale entries if a connection dies
+/// without an end-of-stream signal.
+#[derive(Default)]
+struct StreamState {
+    /// Sliding tail window for forwarded body chunks.
+    tail: TailWindow,
+    /// Set once a finding fired; further chunks are ignored while the
+    /// connection is being aborted.
+    aborted: bool,
+    /// Set when the response was a 101 WebSocket upgrade.
+    websocket: bool,
+    /// Frame decoders for an upgraded connection.
+    inspector: StreamInspector,
+    /// Creation time, for the lazy purge.
+    created: Option<Instant>,
+}
+
+static STREAMS: LazyLock<DashMap<String, StreamState>> =
+    LazyLock::new(DashMap::new);
+
+/// Purge stale stream entries once the map grows past this size.
+const STREAM_GC_THRESHOLD: usize = 10_000;
+/// Entries older than this are stale (a stream cannot live longer).
+const STREAM_TTL: Duration = Duration::from_secs(3600);
+
+/// Run `f` with the stream state for `request_id`, creating it on first use.
+/// A bounded purge drops stale entries once the map grows large, so a
+/// connection that dies without an end-of-stream signal cannot leak.
+fn with_stream<R>(
+    request_id: &str,
+    f: impl FnOnce(&mut StreamState) -> R,
+) -> R {
+    if STREAMS.len() > STREAM_GC_THRESHOLD {
+        let now = Instant::now();
+        STREAMS.retain(|_, state| {
+            state
+                .created
+                .is_none_or(|created| now.duration_since(created) < STREAM_TTL)
+        });
+    }
+    let mut state = STREAMS.entry(request_id.to_string()).or_default();
+    if state.created.is_none() {
+        state.created = Some(Instant::now());
+    }
+    f(&mut state)
+}
+
 fn register_pending_access(request_id: &str, pending: PendingAccess) {
     if PENDING_ACCESS.len() > PENDING_ACCESS_GC_THRESHOLD {
         PENDING_ACCESS.retain(|_, v| v.start.elapsed() < PENDING_ACCESS_TTL);
@@ -1859,6 +1909,16 @@ pub struct WafPlugin {
     /// `body_policy = "reject"`: refuse bodies above `max_body_size` (413)
     /// instead of inspecting a prefix and forwarding the rest.
     body_reject: bool,
+    /// Deadline for reading the whole request body while inspecting or
+    /// logging it; a slow or trickling upload is refused with 408. 0 disables
+    /// the deadline.
+    body_read_timeout_ms: u64,
+    /// `tail_inspection = false` disables the sliding-window scan of body
+    /// chunks the early read pass did not consume.
+    tail_inspection: bool,
+    /// `ws_inspection = false` disables WebSocket frame inspection on
+    /// upgraded connections.
+    ws_inspection: bool,
     /// Proof-of-work difficulty used when delegating a `Challenge` verdict.
     pow_difficulty: u32,
     hash_value: String,
@@ -2249,13 +2309,40 @@ impl TryFrom<&PluginConf> for WafPlugin {
             .unwrap_or(0.5);
         let inspect_body =
             advanced_mode || get_bool_conf(value, "inspect_body");
-        let max_body_size =
+        let configured_body_size =
             get_int_conf_or_default(value, "max_body_size", 64 * 1024) as usize;
+        // Pingora's retry buffer caps replay at 64 KiB: bytes read past that
+        // would never reach the upstream, so the inspection window is clamped
+        // to the same limit.
+        const RETRY_BUFFER_LIMIT: usize = 64 * 1024;
+        let max_body_size = configured_body_size.min(RETRY_BUFFER_LIMIT);
+        if configured_body_size > RETRY_BUFFER_LIMIT {
+            tracing::warn!(
+                configured = configured_body_size,
+                clamped = max_body_size,
+                "max_body_size exceeds the 64 KiB replay limit; clamped"
+            );
+        }
         // Phase 5 size policy: `process_partial` (default) inspects the head
         // window and forwards the rest; `reject` answers 413 once a body
         // exceeds `max_body_size` instead of inspecting a prefix.
         let body_reject =
             get_str_conf(value, "body_policy").eq_ignore_ascii_case("reject");
+        // Slow-upload defense: the body read pass gets a total deadline, so a
+        // trickling client cannot hold the connection open byte by byte.
+        let body_read_timeout_ms =
+            get_int_conf_or_default(value, "body_read_timeout_ms", 10_000)
+                .max(0) as u64;
+        // Stream inspection: body tails beyond the early read pass and
+        // WebSocket frames on upgraded connections (both default on).
+        let tail_inspection = value
+            .get("tail_inspection")
+            .and_then(|item| item.as_bool())
+            .unwrap_or(true);
+        let ws_inspection = value
+            .get("ws_inspection")
+            .and_then(|item| item.as_bool())
+            .unwrap_or(true);
         let pow_difficulty =
             get_int_conf_or_default(value, "pow_difficulty", 20) as u32;
         // ATO: repeated upstream authentication failures on state-changing
@@ -2308,6 +2395,9 @@ impl TryFrom<&PluginConf> for WafPlugin {
             inspect_body,
             max_body_size,
             body_reject,
+            body_read_timeout_ms,
+            tail_inspection,
+            ws_inspection,
             pow_difficulty,
             hash_value,
             site_contexts: DashMap::new(),
@@ -2456,8 +2546,9 @@ impl Plugin for WafPlugin {
             context.as_ref().is_some_and(|site| site.inspect_body);
         let should_inspect = self.inspect_body || site_inspect_body;
         // Log capture only matters when an agent consumes it; body inspection
-        // works standalone — a static deployment blocks POST payloads just
+        // works standalone - a static deployment blocks POST payloads just
         // the same.
+        let mut body_truncated = false;
         if (agent.is_some() && body_limit > 0 || should_inspect)
             && !(method == "POST" && path == VERIFY_ENDPOINT)
         {
@@ -2470,8 +2561,46 @@ impl Plugin for WafPlugin {
             // the inspection limit).
             session.enable_retry_buffering();
             let mut interrupted = false;
+            // Slow-upload defense: the whole read pass must finish within the
+            // deadline, so a trickling client cannot stretch it byte by byte.
+            let deadline = (self.body_read_timeout_ms > 0).then(|| {
+                tokio::time::Instant::now()
+                    + Duration::from_millis(self.body_read_timeout_ms)
+            });
             loop {
-                let Some(chunk) = session.read_request_body().await? else {
+                let read = session.read_request_body();
+                let chunk = match deadline {
+                    Some(deadline) => {
+                        match tokio::time::timeout_at(deadline, read).await {
+                            Ok(result) => result?,
+                            Err(_) => {
+                                tracing::info!(
+                                    timeout_ms = self.body_read_timeout_ms,
+                                    "request body read deadline exceeded; refused"
+                                );
+                                let mut response = block_page(
+                                    &request_id,
+                                    &format!(
+                                        "request body was not received within {} ms",
+                                        self.body_read_timeout_ms
+                                    ),
+                                );
+                                response.status =
+                                    http::StatusCode::REQUEST_TIMEOUT;
+                                emit_generated_access(
+                                    agent.as_ref(),
+                                    &request_id,
+                                    &response,
+                                );
+                                return Ok(RequestPluginResult::Respond(
+                                    response,
+                                ));
+                            },
+                        }
+                    },
+                    None => read.await?,
+                };
+                let Some(chunk) = chunk else {
                     break;
                 };
                 let chunk = chunk.as_ref();
@@ -2483,6 +2612,7 @@ impl Plugin for WafPlugin {
                 // once neither can learn anything from more bytes.
                 if should_inspect && inspect_buf.len() >= self.max_body_size {
                     interrupted = true;
+                    body_truncated = true;
                     break;
                 }
                 if !should_inspect && log_body_prefix.limit_hit() {
@@ -2952,7 +3082,9 @@ impl Plugin for WafPlugin {
             context.as_ref().and_then(|site| site.custom.as_ref())
         {
             let canonical = crate::waf_shadow::canonicalize(&request_data);
-            if let Some(custom_verdict) = custom.evaluate(&canonical) {
+            if let Some(custom_verdict) =
+                custom.evaluate(&canonical, !body_truncated)
+            {
                 verdict = crate::waf_shadow::effective_verdict(
                     &verdict,
                     &custom_verdict,
@@ -3098,6 +3230,23 @@ impl Plugin for WafPlugin {
             return Ok(ResponsePluginResult::Unchanged);
         };
         let status = upstream_response.status.as_u16();
+        // A 101 WebSocket upgrade turns the connection into a frame stream;
+        // record it so the stream hooks decode frames instead of skipping
+        // the tunnel.
+        if status == 101 {
+            let websocket = PENDING_ACCESS
+                .get(&request_id)
+                .map(|entry| {
+                    entry.request_headers.iter().any(|(name, value)| {
+                        name.eq_ignore_ascii_case("upgrade")
+                            && value.to_ascii_lowercase().contains("websocket")
+                    })
+                })
+                .unwrap_or(false);
+            if websocket {
+                with_stream(&request_id, |state| state.websocket = true);
+            }
+        }
         let upstream_latency_ms =
             ctx.timing.upstream_processing.unwrap_or(0).max(0) as u64;
         let headers = cap_headers(upstream_response.headers.iter().filter_map(
@@ -3206,6 +3355,170 @@ impl Plugin for WafPlugin {
             facts.absorb(chunk, limit);
         }
         Ok(ResponseBodyPluginResult::Unchanged)
+    }
+
+    /// Read-only inspection of forwarded request-body chunks: body tails
+    /// beyond the early read pass, and client-to-server frames once the
+    /// connection was upgraded. An error aborts the request.
+    fn handle_request_body(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        body: &Option<Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        let Some(request_id) = ctx.state.request_id.clone() else {
+            return Ok(());
+        };
+        let Some(bytes) = body.as_ref() else {
+            if end_of_stream {
+                STREAMS.remove(&request_id);
+            }
+            return Ok(());
+        };
+        if session.was_upgraded() {
+            if !self.ws_inspection {
+                return Ok(());
+            }
+            return self.inspect_tunnel(
+                &request_id,
+                ctx,
+                true,
+                bytes,
+                end_of_stream,
+            );
+        }
+        if !self.tail_inspection {
+            return Ok(());
+        }
+        self.inspect_tail(&request_id, ctx, bytes)
+    }
+
+    /// Read-only inspection of upgraded traffic flowing from the upstream to
+    /// the client (server-to-client WebSocket frames). An error closes the
+    /// connection.
+    fn handle_upgraded_body(
+        &self,
+        _session: &mut Session,
+        ctx: &mut Ctx,
+        body: &Option<Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        if !self.ws_inspection {
+            return Ok(());
+        }
+        let Some(request_id) = ctx.state.request_id.clone() else {
+            return Ok(());
+        };
+        let Some(bytes) = body.as_ref() else {
+            if end_of_stream {
+                STREAMS.remove(&request_id);
+            }
+            return Ok(());
+        };
+        self.inspect_tunnel(&request_id, ctx, false, bytes, end_of_stream)
+    }
+}
+
+impl WafPlugin {
+    /// Sliding-window scan of a forwarded body chunk. A payload found here
+    /// aborts the request: the bytes were already committed to the upstream
+    /// connection, so a clean 403 is not possible at this stage.
+    fn inspect_tail(
+        &self,
+        request_id: &str,
+        ctx: &mut Ctx,
+        bytes: &Bytes,
+    ) -> pingora::Result<()> {
+        let finding = with_stream(request_id, |state| {
+            if state.aborted {
+                return None;
+            }
+            state.tail.push(bytes)
+        });
+        if let Some((rule_id, detail)) = finding {
+            return self.abort_stream(request_id, ctx, &rule_id, &detail);
+        }
+        Ok(())
+    }
+
+    /// Frame inspection of an upgraded connection, one direction per call.
+    fn inspect_tunnel(
+        &self,
+        request_id: &str,
+        ctx: &mut Ctx,
+        from_client: bool,
+        bytes: &Bytes,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        let finding = with_stream(request_id, |state| {
+            if !state.websocket || state.aborted {
+                return None;
+            }
+            state.inspector.inspect(from_client, bytes)
+        });
+        if let Some(finding) = finding {
+            let (rule_id, detail) = match finding {
+                StreamFinding::Payload { rule_id, detail } => (rule_id, detail),
+                StreamFinding::Protocol(reason) => (
+                    "ws.protocol_violation".to_string(),
+                    format!("malformed WebSocket frame: {reason}"),
+                ),
+            };
+            return self.abort_stream(request_id, ctx, &rule_id, &detail);
+        }
+        if end_of_stream {
+            STREAMS.remove(request_id);
+        }
+        Ok(())
+    }
+
+    /// Record a stream finding and abort the connection. The client sees a
+    /// dropped connection (no HTTP response is possible at this stage); the
+    /// security event carries the full reason.
+    fn abort_stream(
+        &self,
+        request_id: &str,
+        _ctx: &mut Ctx,
+        rule_id: &str,
+        detail: &str,
+    ) -> pingora::Result<()> {
+        with_stream(request_id, |state| state.aborted = true);
+        tracing::warn!(
+            rule_id,
+            detail,
+            "stream inspection aborted the connection"
+        );
+        if let Some(agent) = VarmanAgent::instance()
+            && let Some(entry) = PENDING_ACCESS.get(request_id)
+        {
+            agent.record_request(true);
+            agent.log_security_event(SecurityEvent {
+                site_id: entry.site_id.clone(),
+                request_id: request_id.to_string(),
+                client_ip: entry.client_ip.clone(),
+                method: entry.method.clone(),
+                scheme: entry.scheme.clone(),
+                protocol: entry.protocol.clone(),
+                host: entry.host.clone(),
+                path: entry.path.clone(),
+                query_string: entry.query.clone(),
+                rule_id: rule_id.to_string(),
+                rule_name: "stream-inspection".to_string(),
+                action: "block".to_string(),
+                score: 40,
+                details: detail.to_string(),
+                response_status: 0,
+                user_agent: entry.user_agent.clone(),
+                country_code: entry.country_code.clone(),
+                matched_tags: vec![rule_id.to_string()],
+            });
+        }
+        STREAMS.remove(request_id);
+        Err(new_internal_error(
+            403,
+            format!("varman: {rule_id}: {detail}"),
+        ))
     }
 }
 
@@ -3324,6 +3637,27 @@ ml_threshold = 0.75
         ));
         let v = engine.inspect(&probe("id=1' OR 1=1 --"));
         assert_eq!(v.action, WafAction::Monitor, "details: {}", v.details);
+    }
+
+    #[test]
+    fn toml_body_read_timeout_parses() {
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+mode = "block"
+body_read_timeout_ms = 2500
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(plugin.body_read_timeout_ms, 2500);
+
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(plugin.body_read_timeout_ms, 10_000);
     }
 
     #[test]

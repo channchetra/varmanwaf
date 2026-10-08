@@ -21,12 +21,6 @@ use varman_waf::engine::{RequestData, WafEngine, WafEngineConfig};
 use varman_waf::pipeline::fast::{
     ProtocolDetector, RawPathTraversalDetector, SignatureDetector,
 };
-use varman_waf::pipeline::semantic::{
-    CommandInjectionDetector, DeserializationDetector, DlpDetector,
-    GraphqlAbuseDetector, HtmlXssDetector, JwtDetector, LdapXPathDetector,
-    NosqlInjectionDetector, PrototypePollutionDetector, SqlStructuralDetector,
-    SsrfStructuralDetector, SstiDetector, XxeDetector,
-};
 use varman_waf::pipeline::SecurityPipeline;
 
 /// Corpus repetitions; the harness reports an average, not a single shot.
@@ -115,24 +109,7 @@ fn fast_lane() -> SecurityPipeline {
 }
 
 fn full_pipeline() -> SecurityPipeline {
-    SecurityPipeline::new(vec![
-        Box::new(ProtocolDetector::new()),
-        Box::new(SignatureDetector::new()),
-        Box::new(RawPathTraversalDetector::new()),
-        Box::new(SqlStructuralDetector::new()),
-        Box::new(HtmlXssDetector::new()),
-        Box::new(CommandInjectionDetector::new()),
-        Box::new(SsrfStructuralDetector::new()),
-        Box::new(NosqlInjectionDetector::new()),
-        Box::new(SstiDetector::new()),
-        Box::new(XxeDetector::new()),
-        Box::new(DeserializationDetector::new()),
-        Box::new(PrototypePollutionDetector::new()),
-        Box::new(LdapXPathDetector::new()),
-        Box::new(GraphqlAbuseDetector::new()),
-        Box::new(JwtDetector::new()),
-        Box::new(DlpDetector::new()),
-    ])
+    SecurityPipeline::new(varman_waf::pipeline::default_detectors())
 }
 
 /// Microseconds per request for one `run` invocation, after a warmup pass.
@@ -218,7 +195,14 @@ fn lane_cost_report() {
         "{:<42} {:>12.2}",
         "fast lane (protocol+signatures+traversal)", fast_us
     );
-    println!("{:<42} {:>12.2}", "full pipeline (16 detectors)", full_us);
+    println!(
+        "{:<42} {:>12.2}",
+        format!(
+            "full pipeline ({} detectors)",
+            varman_waf::pipeline::default_detectors().len()
+        ),
+        full_us
+    );
     println!(
         "{:<42} {:>12.2}",
         "shadow/enforce path (canonicalize+full)", shadow_us

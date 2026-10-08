@@ -231,6 +231,43 @@ pub trait Plugin: Sync + Send {
     ) -> pingora::Result<ResponseBodyPluginResult> {
         Ok(ResponseBodyPluginResult::Unchanged)
     }
+
+    /// Inspects one request-body chunk as it is forwarded to the upstream.
+    ///
+    /// Read-only by design: the chunk is never modified, so a plugin cannot
+    /// corrupt the request stream. It runs after the early-request filters and
+    /// also sees bytes the early read pass did not consume - large-body tails
+    /// and, once a connection was upgraded, the client-to-server tunnel
+    /// (WebSocket client frames). Returning `Err` aborts the request.
+    #[inline]
+    fn handle_request_body(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut Ctx,
+        _body: &Option<bytes::Bytes>,
+        _end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        Ok(())
+    }
+
+    /// Inspects one chunk of upgraded-protocol traffic flowing from the
+    /// upstream to the client (read-only).
+    ///
+    /// The response-body hooks are deliberately skipped once a connection was
+    /// upgraded, so that rewriting plugins cannot corrupt the tunnel; this
+    /// hook exists for inspection-only plugins that want to see the raw
+    /// upgraded bytes (e.g. WebSocket server frames). Returning `Err` closes
+    /// the connection.
+    #[inline]
+    fn handle_upgraded_body(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut Ctx,
+        _body: &Option<bytes::Bytes>,
+        _end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        Ok(())
+    }
 }
 
 /// Plugin provider trait

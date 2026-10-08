@@ -130,8 +130,8 @@ impl PipelineVerdict {
         use crate::{ScoreBreakdown, ScoreClass, WafAction, WafVerdict};
 
         let action = match self.action {
-            Action::Pass => WafAction::Pass,
-            Action::Log | Action::Monitor => WafAction::Monitor,
+            Action::Pass | Action::Log => WafAction::Pass,
+            Action::Monitor => WafAction::Monitor,
             Action::Challenge => WafAction::Challenge,
             Action::Block => WafAction::Block,
         };
@@ -273,6 +273,45 @@ impl std::fmt::Debug for SecurityPipeline {
             .field("config", &self.config)
             .finish()
     }
+}
+
+/// The default detector list, in lane order: cheapest protocol checks first,
+/// then signatures, then raw-path evidence, then semantic analysis.
+///
+/// This is the single source of truth for the pipeline the edge runs, the
+/// corpus harnesses and the shadow-comparison report; a detector added here
+/// is measured everywhere at once.
+pub fn default_detectors() -> Vec<Box<dyn Detector>> {
+    use fast::{ProtocolDetector, RawPathTraversalDetector, SignatureDetector};
+    use semantic::{
+        BodyShapeDetector, CommandInjectionDetector, DeserializationDetector,
+        DlpDetector, GraphqlAbuseDetector, HtmlXssDetector, JwtDetector,
+        LdapXPathDetector, NosqlInjectionDetector, PrototypePollutionDetector,
+        SqlAstDetector, SqlStructuralDetector, SsrfStructuralDetector,
+        SstiDetector, TiDetector, WebSocketDetector, XxeDetector,
+    };
+    vec![
+        Box::new(ProtocolDetector::new()),
+        Box::new(SignatureDetector::new()),
+        Box::new(RawPathTraversalDetector::new()),
+        Box::new(SqlAstDetector::new()),
+        Box::new(SqlStructuralDetector::new()),
+        Box::new(HtmlXssDetector::new()),
+        Box::new(CommandInjectionDetector::new()),
+        Box::new(SsrfStructuralDetector::new()),
+        Box::new(NosqlInjectionDetector::new()),
+        Box::new(SstiDetector::new()),
+        Box::new(XxeDetector::new()),
+        Box::new(DeserializationDetector::new()),
+        Box::new(PrototypePollutionDetector::new()),
+        Box::new(LdapXPathDetector::new()),
+        Box::new(GraphqlAbuseDetector::new()),
+        Box::new(JwtDetector::new()),
+        Box::new(DlpDetector::new()),
+        Box::new(BodyShapeDetector::new()),
+        Box::new(TiDetector::from_env()),
+        Box::new(WebSocketDetector::new()),
+    ]
 }
 
 #[cfg(test)]

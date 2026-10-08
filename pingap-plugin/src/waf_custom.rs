@@ -78,13 +78,17 @@ struct Operation {
     methods: BTreeSet<String>,
     /// Required query parameters per method.
     required_query: Vec<(String, String)>,
+    /// JSON request-body schema per method: `(method, schema, required)`.
+    body_schemas: Vec<(String, Value, bool)>,
 }
 
-/// A parsed OpenAPI document (first slice: paths, methods, required query
-/// parameters).
+/// A parsed OpenAPI document (paths, methods, required query parameters and
+/// JSON request-body schemas).
 pub struct OpenApiSpec {
     base_prefix: String,
     operations: Vec<Operation>,
+    /// `components.schemas` for local `$ref` resolution.
+    schemas: serde_json::Map<String, Value>,
 }
 
 impl OpenApiSpec {
@@ -105,6 +109,7 @@ impl OpenApiSpec {
             let path_parameters = item.get("parameters");
             let mut methods = BTreeSet::new();
             let mut required_query = Vec::new();
+            let mut body_schemas = Vec::new();
             for (key, operation) in item {
                 let method = key.to_ascii_lowercase();
                 if !matches!(
@@ -121,6 +126,19 @@ impl OpenApiSpec {
                     continue;
                 }
                 methods.insert(method.clone());
+                if let Some(request_body) = operation.get("requestBody") {
+                    let required = request_body
+                        .get("required")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    if let Some(schema) = json_body_schema(request_body) {
+                        body_schemas.push((
+                            method.clone(),
+                            schema.clone(),
+                            required,
+                        ));
+                    }
+                }
                 for parameters in [path_parameters, operation.get("parameters")]
                     .into_iter()
                     .flatten()
@@ -153,6 +171,7 @@ impl OpenApiSpec {
                 segments: split_path(path),
                 methods,
                 required_query,
+                body_schemas,
             });
         }
         if operations.is_empty() {
@@ -162,9 +181,16 @@ impl OpenApiSpec {
         // longest leading segment run shared by every declared path.
         let base_prefix = server_base_prefix(&value)
             .unwrap_or_else(|| common_prefix(&operations));
+        let schemas = value
+            .get("components")
+            .and_then(|components| components.get("schemas"))
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
         Ok(Self {
             base_prefix,
             operations,
+            schemas,
         })
     }
 
@@ -173,55 +199,407 @@ impl OpenApiSpec {
         &self,
         request: &CanonicalRequest,
     ) -> Vec<(&'static str, u32, String)> {
-        let path = request.path();
-        if !self.base_prefix.is_empty() && !path.starts_with(&self.base_prefix)
-        {
+        let Some(path) = self.relative_path(request.path()) else {
             return Vec::new();
+        };
+        let segments = split_path(path);
+        let Some(operation) = self.find_operation(&segments) else {
+            return vec![(
+                "api.unknown_operation",
+                20,
+                format!("no declared operation matches {path}"),
+            )];
+        };
+        let method = request.method().to_ascii_lowercase();
+        if !operation.methods.contains(&method) {
+            return vec![(
+                "api.method_not_allowed",
+                20,
+                format!(
+                    "{method} is not declared for {}",
+                    join_segments(&operation.segments)
+                ),
+            )];
         }
-        // Declared paths are relative to the spec's base prefix.
-        let path = path
-            .strip_prefix(&self.base_prefix)
-            .unwrap_or(path)
-            .to_string();
-        let segments = split_path(&path);
-        for operation in &self.operations {
-            if !segments_match(&operation.segments, &segments) {
-                continue;
-            }
-            let method = request.method().to_ascii_lowercase();
-            if !operation.methods.contains(&method) {
+        let present: BTreeSet<&str> = request
+            .query()
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect();
+        for (declared_method, name) in &operation.required_query {
+            if declared_method == &method && !present.contains(name.as_str()) {
                 return vec![(
-                    "api.method_not_allowed",
-                    20,
-                    format!(
-                        "{method} is not declared for {}",
-                        join_segments(&operation.segments)
-                    ),
+                    "api.missing_required_param",
+                    15,
+                    format!("required query parameter {name:?} is missing"),
                 )];
             }
-            let present: BTreeSet<&str> = request
-                .query()
+        }
+        Vec::new()
+    }
+
+    /// Validate the JSON request body of a matched operation against its
+    /// schema. `body_complete` is false when only the head window of a larger
+    /// body was captured: a truncated body cannot be parsed, so it is skipped
+    /// rather than reported.
+    fn validate_body(
+        &self,
+        request: &CanonicalRequest,
+        body_complete: bool,
+    ) -> Option<(&'static str, u32, String)> {
+        let path = self.relative_path(request.path())?;
+        let segments = split_path(path);
+        let operation = self.find_operation(&segments)?;
+        let method = request.method().to_ascii_lowercase();
+        if !operation.methods.contains(&method) {
+            // Reported by `validate` as a method violation.
+            return None;
+        }
+        let (_, schema, required) = operation
+            .body_schemas
+            .iter()
+            .find(|(declared, _, _)| declared == &method)?;
+        let body = request.body().unwrap_or_default();
+        if body.is_empty() {
+            return required.then(|| {
+                (
+                    "api.missing_body",
+                    15,
+                    "the operation declares a required JSON body".to_string(),
+                )
+            });
+        }
+        if !body_complete {
+            return None;
+        }
+        let instance: Value = match serde_json::from_slice(body) {
+            Ok(instance) => instance,
+            Err(error) => {
+                return Some((
+                    "api.invalid_json",
+                    15,
+                    format!("request body is not valid JSON: {error}"),
+                ));
+            },
+        };
+        let mut checker = SchemaChecker {
+            schemas: &self.schemas,
+            budget: 20_000,
+        };
+        match checker.check(schema, &instance, "body", 0) {
+            Ok(()) => None,
+            Err(detail) => Some(("api.schema_violation", 15, detail)),
+        }
+    }
+
+    /// The request path relative to the spec's base prefix, when in scope.
+    fn relative_path<'a>(&self, path: &'a str) -> Option<&'a str> {
+        if !self.base_prefix.is_empty() && !path.starts_with(&self.base_prefix)
+        {
+            return None;
+        }
+        Some(path.strip_prefix(&self.base_prefix).unwrap_or(path))
+    }
+
+    /// The operation whose path template matches `segments`.
+    fn find_operation(
+        &self,
+        segments: &[Option<String>],
+    ) -> Option<&Operation> {
+        self.operations
+            .iter()
+            .find(|operation| segments_match(&operation.segments, segments))
+    }
+}
+
+/// The JSON request-body schema of an OpenAPI `requestBody` object, when it
+/// declares one for `application/json` or a `+json` media type.
+fn json_body_schema(request_body: &Value) -> Option<&Value> {
+    let content = request_body.get("content")?.as_object()?;
+    let (_, media) = content.iter().find(|(media_type, _)| {
+        let media_type = media_type.to_ascii_lowercase();
+        media_type == "application/json" || media_type.ends_with("+json")
+    })?;
+    media.get("schema")
+}
+
+/// A JSON Schema validator for the OpenAPI 3.0 dialect subset.
+///
+/// Supported: local `$ref` (`#/components/schemas/...`), `type` (string or
+/// list), `nullable`, `enum`, `required`, `properties`,
+/// `additionalProperties: false`, `items`, `minItems`/`maxItems`,
+/// `minLength`/`maxLength`, `pattern`, numeric `minimum`/`maximum`,
+/// `allOf`/`anyOf`/`oneOf`. Unsupported keywords are ignored rather than
+/// guessed. The walk is budgeted: a pathological instance stops validating
+/// instead of burning the edge's time, and the budget is conservative (a
+/// stopped walk reports nothing).
+struct SchemaChecker<'a> {
+    schemas: &'a serde_json::Map<String, Value>,
+    budget: usize,
+}
+
+impl SchemaChecker<'_> {
+    fn check(
+        &mut self,
+        schema: &Value,
+        instance: &Value,
+        path: &str,
+        depth: usize,
+    ) -> Result<(), String> {
+        if self.budget == 0 || depth > 16 {
+            return Ok(());
+        }
+        self.budget -= 1;
+        let Some(object) = schema.as_object() else {
+            return Ok(());
+        };
+        if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+            // Copy the shared reference out so the recursive call is free to
+            // borrow `self` mutably.
+            let schemas = self.schemas;
+            let Some(target) = resolve_ref(schemas, reference) else {
+                return Ok(());
+            };
+            return self.check(target, instance, path, depth + 1);
+        }
+        if instance.is_null() {
+            if self.allows_null(object) {
+                return Ok(());
+            }
+            if object.contains_key("type") {
+                return Err(format!(
+                    "{path}: expected {}, found null",
+                    declared_type(object)
+                ));
+            }
+        } else if let Some(type_error) = self.check_type(object, instance, path)
+        {
+            return Err(type_error);
+        }
+        if let Some(enum_values) = object.get("enum").and_then(Value::as_array)
+            && !enum_values.iter().any(|candidate| candidate == instance)
+        {
+            return Err(format!(
+                "{path}: value is not one of the allowed enum values"
+            ));
+        }
+        if let Some(branches) = object.get("allOf").and_then(Value::as_array) {
+            for branch in branches {
+                self.check(branch, instance, path, depth + 1)?;
+            }
+        }
+        if let Some(branches) = object.get("anyOf").and_then(Value::as_array) {
+            let matched = branches
                 .iter()
-                .map(|param| param.name.as_str())
-                .collect();
-            for (declared_method, name) in &operation.required_query {
-                if declared_method == &method
-                    && !present.contains(name.as_str())
-                {
-                    return vec![(
-                        "api.missing_required_param",
-                        15,
-                        format!("required query parameter {name:?} is missing"),
-                    )];
+                .any(|branch| self.branch_ok(branch, instance, path, depth));
+            if !matched {
+                return Err(format!("{path}: no anyOf branch matched"));
+            }
+        }
+        if let Some(branches) = object.get("oneOf").and_then(Value::as_array) {
+            let matched = branches
+                .iter()
+                .filter(|branch| self.branch_ok(branch, instance, path, depth))
+                .count();
+            if matched != 1 {
+                return Err(format!(
+                    "{path}: expected exactly one oneOf branch to match, {matched} matched"
+                ));
+            }
+        }
+        if let Some(instance_object) = instance.as_object() {
+            if let Some(required) =
+                object.get("required").and_then(Value::as_array)
+            {
+                for name in required.iter().filter_map(Value::as_str) {
+                    if !instance_object.contains_key(name) {
+                        return Err(format!(
+                            "{path}: required property {name:?} is missing"
+                        ));
+                    }
                 }
             }
-            return Vec::new();
+            let properties =
+                object.get("properties").and_then(Value::as_object);
+            if let Some(properties) = properties {
+                for (name, subschema) in properties {
+                    if let Some(value) = instance_object.get(name) {
+                        self.check(
+                            subschema,
+                            value,
+                            &format!("{path}.{name}"),
+                            depth + 1,
+                        )?;
+                    }
+                }
+            }
+            if object.get("additionalProperties") == Some(&Value::Bool(false))
+                && let Some(properties) = properties
+            {
+                for name in instance_object.keys() {
+                    if !properties.contains_key(name) {
+                        return Err(format!(
+                            "{path}: unexpected property {name:?}"
+                        ));
+                    }
+                }
+            }
         }
-        vec![(
-            "api.unknown_operation",
-            20,
-            format!("no declared operation matches {path}"),
-        )]
+        if let Some(instance_array) = instance.as_array() {
+            if let Some(items) = object.get("items") {
+                for (index, value) in instance_array.iter().enumerate() {
+                    self.check(
+                        items,
+                        value,
+                        &format!("{path}[{index}]"),
+                        depth + 1,
+                    )?;
+                }
+            }
+            if let Some(min) = object.get("minItems").and_then(Value::as_u64)
+                && (instance_array.len() as u64) < min
+            {
+                return Err(format!("{path}: expected at least {min} items"));
+            }
+            if let Some(max) = object.get("maxItems").and_then(Value::as_u64)
+                && (instance_array.len() as u64) > max
+            {
+                return Err(format!("{path}: expected at most {max} items"));
+            }
+        }
+        if let Some(instance_string) = instance.as_str() {
+            let length = instance_string.chars().count() as u64;
+            if let Some(min) = object.get("minLength").and_then(Value::as_u64)
+                && length < min
+            {
+                return Err(format!("{path}: shorter than minLength {min}"));
+            }
+            if let Some(max) = object.get("maxLength").and_then(Value::as_u64)
+                && length > max
+            {
+                return Err(format!("{path}: longer than maxLength {max}"));
+            }
+            if let Some(pattern) = object.get("pattern").and_then(Value::as_str)
+                && pattern.len() <= 512
+                && let Ok(regex) = regex::Regex::new(pattern)
+                && !regex.is_match(instance_string)
+            {
+                return Err(format!(
+                    "{path}: does not match pattern {pattern:?}"
+                ));
+            }
+        }
+        if let Some(instance_number) = instance.as_f64() {
+            if let Some(min) = object.get("minimum").and_then(Value::as_f64)
+                && instance_number < min
+            {
+                return Err(format!("{path}: below minimum {min}"));
+            }
+            if let Some(max) = object.get("maximum").and_then(Value::as_f64)
+                && instance_number > max
+            {
+                return Err(format!("{path}: above maximum {max}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a combinator branch accepts the instance; errors are
+    /// swallowed and the branch runs under a small budget of its own.
+    fn branch_ok(
+        &mut self,
+        schema: &Value,
+        instance: &Value,
+        path: &str,
+        depth: usize,
+    ) -> bool {
+        let allowance = self.budget.min(2_000);
+        let mut branch = SchemaChecker {
+            schemas: self.schemas,
+            budget: allowance,
+        };
+        let ok = branch.check(schema, instance, path, depth + 1).is_ok();
+        self.budget = self.budget.saturating_sub(allowance - branch.budget);
+        ok
+    }
+
+    fn allows_null(&self, object: &serde_json::Map<String, Value>) -> bool {
+        if object.get("nullable").and_then(Value::as_bool) == Some(true) {
+            return true;
+        }
+        match object.get("type") {
+            Some(Value::String(kind)) => kind == "null",
+            Some(Value::Array(kinds)) => {
+                kinds.iter().any(|kind| kind == "null")
+            },
+            _ => false,
+        }
+    }
+
+    fn check_type(
+        &self,
+        object: &serde_json::Map<String, Value>,
+        instance: &Value,
+        path: &str,
+    ) -> Option<String> {
+        let declared = match object.get("type") {
+            Some(Value::String(kind)) => vec![kind.as_str()],
+            Some(Value::Array(kinds)) => {
+                kinds.iter().filter_map(Value::as_str).collect()
+            },
+            _ => return None,
+        };
+        if declared.is_empty() {
+            return None;
+        }
+        let actual = match instance {
+            Value::Null => "null",
+            Value::Bool(_) => "boolean",
+            Value::Number(number) => {
+                if number.is_i64() || number.is_u64() {
+                    "integer"
+                } else {
+                    "number"
+                }
+            },
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+        };
+        let ok = declared.iter().any(|kind| {
+            *kind == actual || (*kind == "number" && actual == "integer")
+        });
+        (!ok).then(|| {
+            format!(
+                "{path}: expected {}, found {actual}",
+                declared.join(" or ")
+            )
+        })
+    }
+}
+
+/// Resolve a local `$ref` into `components.schemas`; remote or nested
+/// references are not guessed.
+fn resolve_ref<'a>(
+    schemas: &'a serde_json::Map<String, Value>,
+    reference: &str,
+) -> Option<&'a Value> {
+    let name = reference.strip_prefix("#/components/schemas/")?;
+    if name.contains('/') {
+        return None;
+    }
+    schemas.get(name)
+}
+
+fn declared_type(object: &serde_json::Map<String, Value>) -> String {
+    match object.get("type") {
+        Some(Value::String(kind)) => kind.clone(),
+        Some(Value::Array(kinds)) => kinds
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(" or "),
+        _ => "a typed value".to_string(),
     }
 }
 
@@ -356,7 +734,11 @@ impl CustomLayers {
     /// Evaluate both layers against one canonical request, returning a
     /// verdict when anything fired. The caller escalates it with the native
     /// verdict, so these layers can only add protection.
-    pub fn evaluate(&self, request: &CanonicalRequest) -> Option<WafVerdict> {
+    pub fn evaluate(
+        &self,
+        request: &CanonicalRequest,
+        body_complete: bool,
+    ) -> Option<WafVerdict> {
         if let Some((rule_ids, matched)) = self
             .patches
             .as_ref()
@@ -380,8 +762,11 @@ impl CustomLayers {
         }
         if let Some(openapi) = &self.openapi {
             let findings = openapi.validate(request);
-            if let Some((rule_id, score, detail)) = findings.into_iter().next()
-            {
+            let finding = findings
+                .into_iter()
+                .next()
+                .or_else(|| openapi.validate_body(request, body_complete));
+            if let Some((rule_id, score, detail)) = finding {
                 return Some(verdict(
                     WafAction::Monitor,
                     score,
@@ -428,6 +813,18 @@ mod tests {
         ))
     }
 
+    fn canonical_body(
+        target: &str,
+        method: &str,
+        body: &str,
+    ) -> varman_waf::canonical::CanonicalRequest {
+        Canonicalizer::default().canonicalize(
+            RequestParts::new(method, "api.example.com", target)
+                .with_header("Content-Type", "application/json")
+                .with_body(body.as_bytes().to_vec()),
+        )
+    }
+
     #[test]
     fn virtual_patch_blocks_matching_requests() {
         let layers = CustomLayers::build(
@@ -439,12 +836,12 @@ mod tests {
         .expect("layers");
 
         let hit = layers
-            .evaluate(&canonical("/cve-2026-0001/exploit", "GET"))
+            .evaluate(&canonical("/cve-2026-0001/exploit", "GET"), true)
             .expect("must block");
         assert_eq!(hit.action, WafAction::Block);
         assert!(hit.matched_rules[0].contains("900001"));
 
-        assert!(layers.evaluate(&canonical("/safe", "GET")).is_none());
+        assert!(layers.evaluate(&canonical("/safe", "GET"), true).is_none());
     }
 
     #[test]
@@ -466,10 +863,34 @@ mod tests {
     {
       "openapi": "3.0.0",
       "servers": [{"url": "https://api.example.com/v1"}],
+      "components": {
+        "schemas": {
+          "Item": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1, "maxLength": 64},
+              "price": {"type": "number", "minimum": 0},
+              "tags": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+              "kind": {"type": "string", "enum": ["book", "food"]}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
       "paths": {
         "/items": {
           "get": {"parameters": [{"in": "query", "name": "page", "required": true}]},
-          "post": {}
+          "post": {
+            "requestBody": {
+              "required": true,
+              "content": {
+                "application/json": {
+                  "schema": {"$ref": "#/components/schemas/Item"}
+                }
+              }
+            }
+          }
         },
         "/items/{id}": {"get": {}}
       }
@@ -505,14 +926,200 @@ mod tests {
     fn openapi_layers_monitor_and_escalate_only() {
         let layers = CustomLayers::build("", SPEC).0.expect("layers");
         let hit = layers
-            .evaluate(&canonical("/v1/unknown", "GET"))
+            .evaluate(&canonical("/v1/unknown", "GET"), true)
             .expect("must monitor");
         assert_eq!(hit.action, WafAction::Monitor);
         assert!(
             layers
-                .evaluate(&canonical("/v1/items?page=1", "GET"))
+                .evaluate(&canonical("/v1/items?page=1", "GET"), true)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn openapi_body_schema_validation() {
+        let spec = OpenApiSpec::parse(SPEC).expect("spec");
+
+        // Valid body through the $ref'd schema: clean.
+        assert!(
+            spec.validate_body(
+                &canonical_body(
+                    "/v1/items",
+                    "POST",
+                    r#"{"name":"widget","price":9.5,"kind":"book"}"#,
+                ),
+                true,
+            )
+            .is_none()
+        );
+        // Missing required property.
+        let finding = spec
+            .validate_body(
+                &canonical_body("/v1/items", "POST", r#"{"price":9.5}"#),
+                true,
+            )
+            .expect("must flag");
+        assert_eq!(finding.0, "api.schema_violation");
+        assert!(finding.2.contains("name"), "detail: {}", finding.2);
+        // Wrong type.
+        let finding = spec
+            .validate_body(
+                &canonical_body("/v1/items", "POST", r#"{"name":7}"#),
+                true,
+            )
+            .expect("must flag");
+        assert!(finding.2.contains("expected string"));
+        // additionalProperties: false.
+        let finding = spec
+            .validate_body(
+                &canonical_body(
+                    "/v1/items",
+                    "POST",
+                    r#"{"name":"a","nope":1}"#,
+                ),
+                true,
+            )
+            .expect("must flag");
+        assert!(finding.2.contains("unexpected property"));
+        // enum violation.
+        let finding = spec
+            .validate_body(
+                &canonical_body(
+                    "/v1/items",
+                    "POST",
+                    r#"{"name":"a","kind":"drink"}"#,
+                ),
+                true,
+            )
+            .expect("must flag");
+        assert!(finding.2.contains("enum"));
+        // Array item bounds.
+        let finding = spec
+            .validate_body(
+                &canonical_body(
+                    "/v1/items",
+                    "POST",
+                    r#"{"name":"a","tags":["x","y","z","w"]}"#,
+                ),
+                true,
+            )
+            .expect("must flag");
+        assert!(finding.2.contains("at most 3"));
+        // Numeric bound.
+        let finding = spec
+            .validate_body(
+                &canonical_body(
+                    "/v1/items",
+                    "POST",
+                    r#"{"name":"a","price":-1}"#,
+                ),
+                true,
+            )
+            .expect("must flag");
+        assert!(finding.2.contains("below minimum"));
+        // Missing body where the operation requires one.
+        let finding = spec
+            .validate_body(&canonical_body("/v1/items", "POST", ""), true)
+            .expect("must flag");
+        assert_eq!(finding.0, "api.missing_body");
+        // Invalid JSON.
+        let finding = spec
+            .validate_body(&canonical_body("/v1/items", "POST", "{oops"), true)
+            .expect("must flag");
+        assert_eq!(finding.0, "api.invalid_json");
+        // A truncated capture is skipped, never reported.
+        assert!(
+            spec.validate_body(
+                &canonical_body("/v1/items", "POST", r#"{"name":"wid"#),
+                false,
+            )
+            .is_none()
+        );
+        // No declared body schema: clean.
+        assert!(
+            spec.validate_body(
+                &canonical_body("/v1/items/42", "GET", ""),
+                true
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn openapi_body_violation_monitors_through_layers() {
+        let layers = CustomLayers::build("", SPEC).0.expect("layers");
+        let hit = layers
+            .evaluate(
+                &canonical_body("/v1/items", "POST", r#"{"price":1}"#),
+                true,
+            )
+            .expect("must monitor");
+        assert_eq!(hit.action, WafAction::Monitor);
+        assert_eq!(hit.matched_rules[0], "api.schema_violation");
+        assert!(
+            layers
+                .evaluate(
+                    &canonical_body("/v1/items", "POST", r#"{"name":"ok"}"#,),
+                    true,
+                )
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn schema_combinators_and_nullable() {
+        let spec = OpenApiSpec::parse(
+            r###"{
+              "openapi": "3.0.0",
+              "servers": [{"url": "https://api.example.com/v2"}],
+              "paths": {"/n": {"post": {"requestBody": {"content": {"application/json": {"schema": {
+                "type": "object",
+                "properties": {
+                  "pick": {"oneOf": [{"type": "integer"}, {"type": "string"}]},
+                  "maybe": {"type": "string", "nullable": true},
+                  "all": {"allOf": [{"type": "string", "minLength": 2}]},
+                  "any": {"anyOf": [{"type": "boolean"}, {"type": "null"}]}
+                },
+                "additionalProperties": false
+              }}}}}}}
+            }"###,
+        )
+        .expect("spec");
+        assert!(
+            spec.validate_body(
+                &canonical_body(
+                    "/v2/n",
+                    "POST",
+                    r#"{"pick":3,"maybe":null,"all":"xy","any":null}"#,
+                ),
+                true,
+            )
+            .is_none()
+        );
+        // oneOf with no matching branch.
+        let finding = spec
+            .validate_body(
+                &canonical_body("/v2/n", "POST", r#"{"pick":true}"#),
+                true,
+            )
+            .expect("must flag");
+        assert!(finding.2.contains("oneOf"), "detail: {}", finding.2);
+        // allOf branch violation.
+        let finding = spec
+            .validate_body(
+                &canonical_body("/v2/n", "POST", r#"{"all":"x"}"#),
+                true,
+            )
+            .expect("must flag");
+        assert!(finding.2.contains("minLength"));
+        // A typed schema rejects null without `nullable`.
+        let finding = spec
+            .validate_body(
+                &canonical_body("/v2/n", "POST", r#"{"all":null}"#),
+                true,
+            )
+            .expect("must flag");
+        assert!(finding.2.contains("found null"));
     }
 
     #[test]

@@ -11,27 +11,30 @@ corpora (132 payloads x 20 repetitions = 2,640 requests per lane):
 
 | Lane | µs / request |
 |---|---:|
-| Legacy engine (`WafEngine::inspect`, normalizes internally) | 445.69 |
-| Canonicalize only (`Canonicalizer::canonicalize`) | 4.80 |
-| Fast lane (protocol + signatures + raw-path traversal) | 2.51 |
-| Full pipeline (16 detectors) | 88.23 |
-| Shadow/enforce path (canonicalize + full pipeline) | 95.50 |
-| **Pipeline / legacy ratio** | **0.20** |
+| Legacy engine (`WafEngine::inspect`, normalizes internally) | 462.05 |
+| Canonicalize only (`Canonicalizer::canonicalize`) | 5.21 |
+| Fast lane (protocol + signatures + raw-path traversal) | 2.74 |
+| Full pipeline (20 detectors, incl. SQL AST) | 122.74 |
+| Shadow/enforce path (canonicalize + full pipeline) | 130.03 |
+| **Pipeline / legacy ratio** | **0.27** |
 
-The Varman pipeline inspects the same adversarial corpus in **one fifth of the
-legacy engine's time** (5.0x faster), including canonicalization. The fast lane
-alone is ~35x cheaper than the full pipeline, which is why it runs first and
-why cheap detectors are registered before semantic ones.
+The Varman pipeline inspects the same adversarial corpus in **under a third of
+the legacy engine's time** (3.8x faster), including canonicalization. The fast
+lane alone is ~45x cheaper than the full pipeline, which is why it runs first
+and why cheap detectors are registered before semantic ones.
 
 ### Interpretation
 
 - The legacy engine's cost is dominated by its managed rule set and internal
   normalization; it is the production baseline today.
-- The pipeline's 88 µs is dominated by the semantic detectors (each scans
-  every value with structure-aware regexes). The corpus is adversarial by
-  design, so this is close to a worst case per request size (~40 bytes of
-  payload); benign production traffic measures lower.
-- Canonicalization is cheap (4.80 µs) and shared: the pipeline never
+- The pipeline's ~123 µs is dominated by the semantic detectors (each scans
+  every value with structure-aware regexes). The SQL AST tier adds ~30 µs on
+  this corpus: parsing is attempted only for SQL-ish values (a cheap keyword
+  prefilter), and it buys precision - fragments are wrapped into statements
+  and inspected as real ASTs (stacked statements, UNIONs, tautologies,
+  DML/DDL). The corpus is adversarial by design, so this is close to a worst
+  case; benign production traffic measures lower.
+- Canonicalization is cheap (5.21 µs) and shared: the pipeline never
   re-decodes inside detectors.
 
 ### Caveats
@@ -80,3 +83,4 @@ not across machines.
 | Date | Change | Full pipeline | Pipeline / legacy |
 |---|---|---:|---:|
 | 2026-10-07 | First lane-cost measurement (16 detectors) | 88.23 µs | 0.20 |
+| 2026-10-08 | SQL AST tier + WebSocket/stream detectors (20 detectors) | 122.74 µs | 0.27 |

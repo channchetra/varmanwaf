@@ -608,4 +608,44 @@ mod tests {
             );
         }
     }
+
+    /// Documented convergence bound: a target encoded deeply enough to
+    /// exhaust the decode budget can leave a residual escape that the next
+    /// (fresh-budget) pass decodes further. The production path
+    /// canonicalizes exactly once per request, so this is a stability bound,
+    /// not an enforcement gap - but it must stay bounded: from the second
+    /// pass on, the form is stable and no escape is ever re-introduced.
+    ///
+    /// Found by the `canonicalizer` cargo-fuzz target
+    /// (`fuzz/fuzz_targets/canonicalizer.rs`); locked here so a decoder
+    /// change is a deliberate diff.
+    #[test]
+    fn decode_budget_exhaustion_converges_from_the_second_pass() {
+        let first = Canonicalizer::default().canonicalize(RequestParts::new(
+            "GET",
+            "example.com",
+            "/%2525e25e",
+        ));
+        let second = recanonicalize(&first);
+        let third = recanonicalize(&second);
+        // First pass: the budget stops after the `%25` layers, leaving the
+        // incomplete `%e2` escape (an invalid UTF-8 continuation, so it is
+        // preserved rather than decoded).
+        assert_eq!(first.path(), "/%e25e");
+        // Second pass: a fresh budget resolves the now-complete escape.
+        assert_ne!(second.path(), first.path());
+        // From the second pass on: stable.
+        assert_eq!(third.path(), second.path());
+        let second_query: Vec<(String, String)> = second
+            .query()
+            .iter()
+            .map(|param| (param.name.clone(), param.value.clone()))
+            .collect();
+        let third_query: Vec<(String, String)> = third
+            .query()
+            .iter()
+            .map(|param| (param.name.clone(), param.value.clone()))
+            .collect();
+        assert_eq!(third_query, second_query);
+    }
 }

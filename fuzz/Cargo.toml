@@ -1,0 +1,30 @@
+[package]
+name = "varman-waf-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+varman-waf = { path = "../varman-waf" }
+
+[[bin]]
+name = "detectors"
+path = "fuzz_targets/detectors.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "canonicalizer"
+path = "fuzz_targets/canonicalizer.rs"
+test = false
+doc = false
+bench = false
+
+# The fuzz crate lives outside the workspace on purpose: `cargo fuzz` builds it
+# with the nightly toolchain and its own flags.
+[workspace]

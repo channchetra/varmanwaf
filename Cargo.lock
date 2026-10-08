@@ -1650,7 +1650,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1762,7 +1762,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3008,7 +3008,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3745,7 +3745,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4499,7 +4499,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pingap-acme"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -4533,7 +4533,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-cache"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "ahash",
  "async-trait",
@@ -4566,7 +4566,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-certificate"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4592,7 +4592,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-config"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4627,7 +4627,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-core"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "TinyUFO",
  "ahash",
@@ -4656,7 +4656,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-discovery"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "async-trait",
  "bollard",
@@ -4675,7 +4675,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-health"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4697,7 +4697,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-imageoptim"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "async-trait",
  "bytemuck",
@@ -4725,7 +4725,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-location"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4746,7 +4746,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-logger"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4779,7 +4779,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-otel"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4796,7 +4796,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-performance"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4826,7 +4826,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-plugin"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4884,7 +4884,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-proxy"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "ahash",
  "async-trait",
@@ -4918,7 +4918,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-pyroscope"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "async-trait",
  "pingora",
@@ -4931,14 +4931,14 @@ dependencies = [
 
 [[package]]
 name = "pingap-sentry"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "sentry-core",
 ]
 
 [[package]]
 name = "pingap-upstream"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4970,7 +4970,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-util"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "aes-gcm-siv",
  "ahash",
@@ -4992,7 +4992,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-webhook"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "async-trait",
  "local-ip-address",
@@ -5889,7 +5889,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6432,7 +6432,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6513,7 +6513,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7230,6 +7230,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlparser"
+version = "0.63.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3679862809bd1f92e563cf6fd820e28f39135303668001c10331d5027183e8b4"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "sqlx"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7708,7 +7717,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8452,7 +8461,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "varman"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "ahash",
  "anyhow",
@@ -8642,6 +8651,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sqlparser",
  "tracing",
 ]
 
@@ -8899,7 +8909,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

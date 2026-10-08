@@ -21,16 +21,6 @@
 use std::time::{Duration, Instant};
 
 use varman_waf::canonical::{Canonicalizer, RequestParts};
-use varman_waf::pipeline::fast::{
-    ProtocolDetector, RawPathTraversalDetector, SignatureDetector,
-};
-use varman_waf::pipeline::semantic::{
-    BodyShapeDetector, CommandInjectionDetector, DeserializationDetector,
-    DlpDetector, GraphqlAbuseDetector, HtmlXssDetector, JwtDetector,
-    LdapXPathDetector, NosqlInjectionDetector, PrototypePollutionDetector,
-    SqlStructuralDetector, SsrfStructuralDetector, SstiDetector, TiDetector,
-    WebSocketDetector, XxeDetector,
-};
 use varman_waf::pipeline::DetectionContext;
 use varman_waf::pipeline::Detector;
 
@@ -100,27 +90,7 @@ fn hostile_inputs() -> Vec<RequestParts> {
 }
 
 fn detectors() -> Vec<Box<dyn Detector>> {
-    vec![
-        Box::new(ProtocolDetector::new()),
-        Box::new(SignatureDetector::new()),
-        Box::new(RawPathTraversalDetector::new()),
-        Box::new(SqlStructuralDetector::new()),
-        Box::new(HtmlXssDetector::new()),
-        Box::new(CommandInjectionDetector::new()),
-        Box::new(SsrfStructuralDetector::new()),
-        Box::new(NosqlInjectionDetector::new()),
-        Box::new(SstiDetector::new()),
-        Box::new(XxeDetector::new()),
-        Box::new(DeserializationDetector::new()),
-        Box::new(PrototypePollutionDetector::new()),
-        Box::new(LdapXPathDetector::new()),
-        Box::new(GraphqlAbuseDetector::new()),
-        Box::new(JwtDetector::new()),
-        Box::new(DlpDetector::new()),
-        Box::new(BodyShapeDetector::new()),
-        Box::new(TiDetector::starter()),
-        Box::new(WebSocketDetector::new()),
-    ]
+    varman_waf::pipeline::default_detectors()
 }
 
 #[test]

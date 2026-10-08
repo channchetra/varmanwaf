@@ -1070,6 +1070,75 @@ impl Server {
         result
     }
 
+    /// Runs the read-only request-body inspection hook for each plugin.
+    ///
+    /// Called for every request-body chunk as it is forwarded upstream, after
+    /// the early-request filters: it sees body tails beyond the early read
+    /// pass and, once upgraded, the client-to-server tunnel. An error aborts
+    /// the request.
+    #[inline]
+    pub fn handle_request_body_plugin(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        body: &Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        let Some(plugins) = ctx.plugins.take() else {
+            return Ok(());
+        };
+        let result = {
+            for (name, plugin) in plugins.iter() {
+                let now = Instant::now();
+                plugin.handle_request_body(
+                    session,
+                    ctx,
+                    body,
+                    end_of_stream,
+                )?;
+                let elapsed = now.elapsed().as_millis() as u32;
+                ctx.add_plugin_processing_time(name, elapsed);
+            }
+            Ok(())
+        };
+        ctx.plugins = Some(plugins);
+        result
+    }
+
+    /// Runs the read-only upgraded-traffic inspection hook for each plugin.
+    ///
+    /// Used after a 101 in place of the response-body hooks: rewriting plugins
+    /// stay away from the tunnel (#114), while inspection-only plugins see the
+    /// raw upgraded bytes. An error closes the connection.
+    #[inline]
+    pub fn handle_upgraded_body_plugin(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        body: &Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        let Some(plugins) = ctx.plugins.take() else {
+            return Ok(());
+        };
+        let result = {
+            for (name, plugin) in plugins.iter() {
+                let now = Instant::now();
+                plugin.handle_upgraded_body(
+                    session,
+                    ctx,
+                    body,
+                    end_of_stream,
+                )?;
+                let elapsed = now.elapsed().as_millis() as u32;
+                ctx.add_plugin_processing_time(name, elapsed);
+            }
+            Ok(())
+        };
+        ctx.plugins = Some(plugins);
+        result
+    }
+
     #[inline]
     pub fn handle_upstream_response_body_plugin(
         &self,
@@ -1136,7 +1205,14 @@ impl Server {
         // its value, so keying off the request would let a client turn plugins
         // off with one header.
         if session.was_upgraded() {
-            return Ok(());
+            // Rewriting plugins stay away from the tunnel, but inspection-only
+            // plugins get the raw upgraded bytes through this hook.
+            return self.handle_upgraded_body_plugin(
+                session,
+                ctx,
+                body,
+                end_of_stream,
+            );
         }
         let plugins = match ctx.plugins.take() {
             Some(p) => p,
@@ -1482,9 +1558,9 @@ impl ProxyHttp for Server {
     /// Tracks payload size and enforces size limits.
     async fn request_body_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         body: &mut Option<Bytes>,
-        _end_of_stream: bool,
+        end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()>
     where
@@ -1504,6 +1580,8 @@ impl ProxyHttp for Server {
                 }
             }
         }
+        // Read-only inspection hook: body tails and upgraded client frames.
+        self.handle_request_body_plugin(session, ctx, body, end_of_stream)?;
         Ok(())
     }
     /// Generates cache keys for request caching.

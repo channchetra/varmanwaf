@@ -137,8 +137,21 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   handshake declaring a body **Monitors** as `ws.handshake_with_body`
   (RFC 6455 forbids one). Same-origin handshakes and clients without
   `Origin` (CLIs, bots) stay clean; the `*_ws` corpus modes lock both
-  directions in. Frame-level inspection remains future work.
-- **`processor`** (Phase 9) — the optional external-processor contract:  out-of-process components inspect a request and *add* findings. The native
+  directions in.
+
+  **Frame-level inspection (v0.21.1):** after a 101 the raw tunnel bytes reach
+  read-only plugin hooks in both directions (`Plugin::handle_request_body` for
+  client-to-server frames, `Plugin::handle_upgraded_body` for server-to-client
+  frames; the response-body hooks stay skipped so rewriting plugins cannot
+  corrupt the tunnel, #114). `pingap-plugin/src/waf_stream.rs` decodes RFC 6455
+  frames streaming, assembles fragmented messages under hard caps, handles
+  control frames and fails the connection on malformed frames; complete
+  message payloads are scanned with the injection detectors. Findings abort the
+  connection and record `ws.*` events; a 101 that is not a WebSocket upgrade is
+  never decoded. `ws_inspection = false` disables it. Compressed
+  (permessage-deflate) frames are not decompressed.
+- **`processor`** (Phase 9) - the optional external-processor contract:
+  out-of-process components inspect a request and *add* findings. The native
   engine stays the authority: merging is monotonic (a processor can escalate,
   never weaken), contributions are bounded (16 findings, 40/finding, 60 per
   processor) and a timed-out or failed call resolves through an explicit
@@ -165,7 +178,13 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
     undeclared path (`api.unknown_operation`, Monitor), undeclared method
     (`api.method_not_allowed`), missing required query parameter
     (`api.missing_required_param`). Out-of-scope paths are untouched.
-    Full JSON-Schema body validation is future work.
+    **JSON request-body schemas (v0.21.1):** `requestBody` schemas are
+    enforced - `$ref` into `components.schemas`, `type`, `nullable`, `enum`,
+    `required`, `properties`, `additionalProperties: false`, `items`,
+    `minItems`/`maxItems`, `minLength`/`maxLength`, `pattern`, numeric bounds
+    and `allOf`/`anyOf`/`oneOf` - recording `api.schema_violation` (Monitor)
+    with a JSON-pointer detail; a truncated capture is skipped, never
+    misreported. Non-JSON bodies and remote `$ref`s are not resolved.
 - **Account-takeover defense (`pingap-plugin/src/waf_ato.rs`)** (Phase 8) -
   repeated upstream authentication failures (401/403) on state-changing
   requests (POST/PUT/PATCH/DELETE) from one client open a failure window;
@@ -173,11 +192,35 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   `ato_window_secs` = 300) blocks that `(site, client)` for
   `ato_block_secs` = 300 with a 403 + `Retry-After`. Expired-token polling
   is GET traffic, so ordinary SPAs cannot trip it; `0` disables the tracker.
-- **Body size policy** (Phase 5) - `body_policy = "reject"` answers 413 once
-  a request body exceeds `max_body_size` instead of inspecting a prefix and
-  forwarding the remainder (the default `process_partial` keeps the head
-  window behaviour).
-  processor up -d processor` starts it beside the stack.
+- **Body size policy and tail inspection** (Phase 5) - `body_policy = "reject"`
+  answers 413 once a request body exceeds `max_body_size` (itself clamped to
+  the 64 KiB replay limit with a warning); the default `process_partial` keeps
+  the head window. The read pass runs under `body_read_timeout_ms` (default
+  10 s), so a trickling upload is refused with 408. **Tail inspection
+  (v0.21.1):** the chunks the early read pass did not consume flow through the
+  read-only `handle_request_body` hook and are scanned with a 256-byte sliding
+  window (`pingap-plugin/src/waf_stream.rs`), so a payload split across chunk
+  boundaries is still seen; a confirmed payload aborts the request and records
+  an event (`tail_inspection = false` disables the scan). A tail payload is
+  stopped as its chunks arrive - the upstream has already received the header
+  and head, so no clean 403 is possible mid-stream.
+- **`pipeline::semantic::SqlAstDetector`** (Phase 6, the second SQL tier;
+  v0.21.1) - dialect-aware SQL parsing (`sqlparser`, generic/MySQL/PostgreSQL/
+  SQLite). Full statements parse directly; fragments are wrapped into
+  statement templates, which is what lets real constructs surface. Blocks
+  stacked statements (`ast.stacked_statements`), UNION/EXCEPT/INTERSECT
+  queries (`ast.set_operation`), tautological literal comparisons
+  (`ast.tautology`) and DML/DDL (`ast.dml_statement`); a clean raw query is
+  recorded at log level (`ast.raw_query`). Values that do not parse are
+  ignored - the tier adds precision, it never guesses.
+- **Coverage-guided fuzz targets** (Phase 6; `fuzz/`, cargo-fuzz, nightly) -
+  `detectors` (no panic, no unbounded findings on arbitrary targets/bodies)
+  and `canonicalizer` (no panic and convergence: a target that exhausts the
+  decode budget resolves further escapes on a second pass and is stable from
+  then on - the exact counterexample `/%2525e25e` is locked in the
+  canonicalizer unit tests). Smoke campaigns at release: detectors 34,660
+  runs / 30 s and canonicalizer 162,093 runs / 30 s, both clean; see
+  `fuzz/README.md`.
 - **`pipeline::fast::ProtocolDetector`** (Phase 4) — framing and header
   sanity: conflicting duplicate `Content-Length`, `Content-Length` +
   `Transfer-Encoding` together, unsupported transfer codings (RFC 9112

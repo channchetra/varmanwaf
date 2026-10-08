@@ -23,16 +23,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use varman_agent::heartbeat::{MetricsCollector, ShadowResult};
 use varman_waf::canonical::{Canonicalizer, ClientIdentity, RequestParts};
 use varman_waf::pipeline::SecurityPipeline;
-use varman_waf::pipeline::fast::{
-    ProtocolDetector, RawPathTraversalDetector, SignatureDetector,
-};
-use varman_waf::pipeline::semantic::{
-    BodyShapeDetector, CommandInjectionDetector, DeserializationDetector,
-    DlpDetector, GraphqlAbuseDetector, HtmlXssDetector, JwtDetector,
-    LdapXPathDetector, NosqlInjectionDetector, PrototypePollutionDetector,
-    SqlStructuralDetector, SsrfStructuralDetector, SstiDetector, TiDetector,
-    WebSocketDetector, XxeDetector,
-};
 use varman_waf::pipeline::shadow::{self, Agreement, ShadowComparison};
 use varman_waf::{RequestData, WafAction, WafVerdict};
 
@@ -133,29 +123,9 @@ struct ShadowRuntime {
 
 static SHADOW: LazyLock<ShadowRuntime> = LazyLock::new(|| ShadowRuntime {
     mode: engine_mode_from_env(),
-    // Lane ordering is detector list order: cheapest protocol checks first,
-    // then signatures, then raw-path evidence, then semantic analysis.
-    pipeline: SecurityPipeline::new(vec![
-        Box::new(ProtocolDetector::new()),
-        Box::new(SignatureDetector::new()),
-        Box::new(RawPathTraversalDetector::new()),
-        Box::new(SqlStructuralDetector::new()),
-        Box::new(HtmlXssDetector::new()),
-        Box::new(CommandInjectionDetector::new()),
-        Box::new(SsrfStructuralDetector::new()),
-        Box::new(NosqlInjectionDetector::new()),
-        Box::new(SstiDetector::new()),
-        Box::new(XxeDetector::new()),
-        Box::new(DeserializationDetector::new()),
-        Box::new(PrototypePollutionDetector::new()),
-        Box::new(LdapXPathDetector::new()),
-        Box::new(GraphqlAbuseDetector::new()),
-        Box::new(JwtDetector::new()),
-        Box::new(DlpDetector::new()),
-        Box::new(BodyShapeDetector::new()),
-        Box::new(ti_detector()),
-        Box::new(WebSocketDetector::new()),
-    ]),
+    // Lane ordering lives in `varman_waf::pipeline::default_detectors`
+    // (one source of truth for the edge, the harnesses and the report).
+    pipeline: SecurityPipeline::new(varman_waf::pipeline::default_detectors()),
     counters: ShadowCounters::default(),
 });
 
@@ -163,49 +133,6 @@ fn shadow_enabled_from_env() -> bool {
     std::env::var(SHADOW_ENV)
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
-}
-
-/// Threat-intelligence detector for the pipeline.
-///
-/// `VARMAN_WAF_TI_FILE` selects an operator feed (same line format as the
-/// bundled starter); unset uses the starter feed, `off`/`none` disables the
-/// detector. A missing or malformed feed logs and falls back to the starter
-/// (the safe default) — never silently to an empty detector.
-fn ti_detector() -> TiDetector {
-    match std::env::var("VARMAN_WAF_TI_FILE") {
-        Ok(value)
-            if value.trim().eq_ignore_ascii_case("off")
-                || value.trim().eq_ignore_ascii_case("none") =>
-        {
-            TiDetector::new(
-                varman_waf::pipeline::semantic::TiIndicators::default(),
-            )
-        },
-        Ok(path) if !path.trim().is_empty() => {
-            match std::fs::read_to_string(path.trim()) {
-                Ok(feed) => match TiDetector::from_feed_str(&feed) {
-                    Ok(detector) => detector,
-                    Err(error) => {
-                        tracing::error!(
-                            %error,
-                            path = %path,
-                            "invalid threat-intelligence feed; using the starter feed"
-                        );
-                        TiDetector::starter()
-                    },
-                },
-                Err(error) => {
-                    tracing::error!(
-                        %error,
-                        path = %path,
-                        "cannot read threat-intelligence feed; using the starter feed"
-                    );
-                    TiDetector::starter()
-                },
-            }
-        },
-        _ => TiDetector::starter(),
-    }
 }
 
 /// `true` when the pipeline runs (shadow or enforce mode).

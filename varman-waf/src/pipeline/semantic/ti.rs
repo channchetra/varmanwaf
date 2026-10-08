@@ -128,6 +128,46 @@ impl TiDetector {
     pub fn from_feed_str(feed: &str) -> Result<Self, String> {
         Ok(Self::new(TiIndicators::parse(feed)?))
     }
+
+    /// The process-wide TI detector: the starter feed by default, an operator
+    /// feed file named by `VARMAN_WAF_TI_FILE`, or an empty feed when that
+    /// variable is `off`/`none` (an observable opt-out). A feed that cannot
+    /// be read or parsed falls back to the starter feed with an error log.
+    pub fn from_env() -> Self {
+        match std::env::var("VARMAN_WAF_TI_FILE") {
+            Ok(value)
+                if value.trim().eq_ignore_ascii_case("off")
+                    || value.trim().eq_ignore_ascii_case("none") =>
+            {
+                Self::new(TiIndicators::default())
+            },
+            Ok(path) if !path.trim().is_empty() => {
+                let path = path.trim();
+                match std::fs::read_to_string(path) {
+                    Ok(feed) => match Self::from_feed_str(&feed) {
+                        Ok(detector) => detector,
+                        Err(error) => {
+                            tracing::error!(
+                                %error,
+                                path,
+                                "invalid threat-intelligence feed; using the starter feed"
+                            );
+                            Self::starter()
+                        },
+                    },
+                    Err(error) => {
+                        tracing::error!(
+                            %error,
+                            path,
+                            "threat-intelligence feed unreadable; using the starter feed"
+                        );
+                        Self::starter()
+                    },
+                }
+            },
+            _ => Self::starter(),
+        }
+    }
 }
 
 impl Default for TiDetector {
