@@ -484,6 +484,12 @@ report against the existing engine.
       spec's base prefix). Dashboard: Protection → **Custom layers** (two
       editors with per-field save). Migration `000032`, proto fields 45/46,
       agent cache, plugin `waf_custom`. 5 plugin tests + API validation.
+      **Verified live**: an invalid patch was rejected by the API
+      (`unsupported operator @nope`); a valid SecLang patch blocked
+      `/cve-test/exploit` (403, `virtual-patch:900001 | block | 40`); the
+      OpenAPI spec left a declared operation and an out-of-scope path clean
+      (200) while an unknown operation under the base prefix recorded
+      `api.unknown_operation | monitor | 20`.
 - [ ] Frame-level WebSocket inspection; full JSON-Schema body validation.
 - Exit: each feature has corpora + FP controls + monitoring; security events
   explain what fired.
