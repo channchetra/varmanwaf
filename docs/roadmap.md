@@ -460,7 +460,10 @@ report against the existing engine.
       including `null`) Monitor as `ws.cross_origin` (CSWSH), handshakes
       declaring a body Monitor as `ws.handshake_with_body`; same-origin and
       Origin-less clients stay clean. `*_ws` corpus modes ratchet both
-      directions. Frame-level inspection remains.
+      directions. Frame-level inspection remains. **Verified live**:
+      same-origin handshake 200 (clean); cross-origin handshake 200 with
+      `ws.cross_origin | monitor | 20`; a non-WebSocket request carrying an
+      evil `Origin` stayed untouched.
 - [ ] API security/OpenAPI validation, ATO, virtual patching.
 - Exit: each feature has corpora + FP controls + monitoring; security events
   explain what fired.
