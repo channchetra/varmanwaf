@@ -2544,12 +2544,19 @@ impl Plugin for WafPlugin {
         // truncation cap.
         let site_inspect_body =
             context.as_ref().is_some_and(|site| site.inspect_body);
+        // Per-site custom layers may need the body (OpenAPI JSON-body
+        // schemas) even when generic body inspection is off.
+        let site_wants_body = context
+            .as_ref()
+            .and_then(|site| site.custom.as_ref())
+            .is_some_and(|custom| custom.wants_body());
         let should_inspect = self.inspect_body || site_inspect_body;
+        let capture_body = should_inspect || site_wants_body;
         // Log capture only matters when an agent consumes it; body inspection
         // works standalone - a static deployment blocks POST payloads just
         // the same.
         let mut body_truncated = false;
-        if (agent.is_some() && body_limit > 0 || should_inspect)
+        if (agent.is_some() && body_limit > 0 || capture_body)
             && !(method == "POST" && path == VERIFY_ENDPOINT)
         {
             // Reading the body here consumes it from the downstream stream.
@@ -2605,17 +2612,17 @@ impl Plugin for WafPlugin {
                 };
                 let chunk = chunk.as_ref();
                 log_body_prefix.absorb(chunk);
-                if should_inspect {
+                if capture_body {
                     inspect_buf.put(chunk);
                 }
                 // Inspection needs the prefix; the log needs its own. Stop
                 // once neither can learn anything from more bytes.
-                if should_inspect && inspect_buf.len() >= self.max_body_size {
+                if capture_body && inspect_buf.len() >= self.max_body_size {
                     interrupted = true;
                     body_truncated = true;
                     break;
                 }
-                if !should_inspect && log_body_prefix.limit_hit() {
+                if !capture_body && log_body_prefix.limit_hit() {
                     interrupted = true;
                     break;
                 }
@@ -3026,8 +3033,9 @@ impl Plugin for WafPlugin {
 
         // ── Inspect ──
         // The body (if any) was already read during log capture; when body
-        // inspection is enabled the engine sees the same prefix.
-        request_data.body = if should_inspect && !inspect_buf.is_empty() {
+        // inspection (or a per-site body schema) is enabled the engine sees
+        // the same prefix.
+        request_data.body = if capture_body && !inspect_buf.is_empty() {
             Some(inspect_buf.to_vec())
         } else {
             None

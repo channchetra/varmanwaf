@@ -8,7 +8,8 @@ Usage:
 Performs the RFC 6455 handshake, sends one masked text frame with `payload`
 (default: a benign message), then waits for the echo. Prints `echo` when the
 server echoed the exact payload, `closed` when the WAF aborted the tunnel, or
-`timeout`.
+`timeout`. The Host header defaults to the connect host and can be overridden
+with a fourth argument (site routing).
 """
 
 import base64
@@ -24,17 +25,18 @@ def main():
     payload = (
         sys.argv[3] if len(sys.argv) > 3 else "hello from the ws client"
     ).encode("utf-8")
+    host_header = sys.argv[4] if len(sys.argv) > 4 else host
 
     conn = socket.create_connection((host, port), timeout=8)
     key = base64.b64encode(os.urandom(16)).decode("ascii")
     handshake = (
         "GET /ws HTTP/1.1\r\n"
-        f"Host: {host}\r\n"
+        f"Host: {host_header}\r\n"
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         f"Sec-WebSocket-Key: {key}\r\n"
         "Sec-WebSocket-Version: 13\r\n"
-        "Origin: https://example.com\r\n\r\n"
+        f"Origin: https://{host_header}\r\n\r\n"
     )
     conn.sendall(handshake.encode("ascii"))
     response = b""
@@ -68,6 +70,9 @@ def main():
                 return
             received += chunk
         print("echo" if received == payload else f"other:{received[:60]!r}")
+    except (ConnectionResetError, BrokenPipeError):
+        # The WAF aborted the tunnel: no echo, connection torn down.
+        print("closed")
     except (socket.timeout, OSError):
         print("timeout")
 

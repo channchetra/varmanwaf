@@ -89,6 +89,9 @@ pub struct OpenApiSpec {
     operations: Vec<Operation>,
     /// `components.schemas` for local `$ref` resolution.
     schemas: serde_json::Map<String, Value>,
+    /// Whether any operation declares a JSON request-body schema (drives
+    /// whether the plugin captures bodies for this site).
+    has_body_schemas: bool,
 }
 
 impl OpenApiSpec {
@@ -187,11 +190,20 @@ impl OpenApiSpec {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
+        let has_body_schemas = operations
+            .iter()
+            .any(|operation| !operation.body_schemas.is_empty());
         Ok(Self {
             base_prefix,
             operations,
             schemas,
+            has_body_schemas,
         })
+    }
+
+    /// Whether the spec declares at least one JSON request-body schema.
+    pub fn wants_body(&self) -> bool {
+        self.has_body_schemas
     }
 
     /// Validate one request. Returns `(rule_id, score, detail)` findings.
@@ -729,6 +741,13 @@ impl CustomLayers {
             return (None, errors);
         }
         (Some(Arc::new(Self { patches, openapi })), errors)
+    }
+
+    /// Whether any configured layer needs the request body (an OpenAPI spec
+    /// with JSON request-body schemas): the plugin captures bodies for such
+    /// sites even when generic body inspection is off.
+    pub fn wants_body(&self) -> bool {
+        self.openapi.as_ref().is_some_and(|spec| spec.wants_body())
     }
 
     /// Evaluate both layers against one canonical request, returning a
