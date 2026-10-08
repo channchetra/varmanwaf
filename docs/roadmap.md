@@ -154,6 +154,13 @@ a working VarmanWAF with unchanged behaviour.
       per inspected request and the metric shipper (30s cadence) stores them
       in `agent_metrics`. Surfaced in the dashboard's agent detail as an
       **Engine telemetry** panel via `GET /agents/{id}/metrics`.
+- [x] **Standalone plugin configuration fidelity**: the WAF plugin TOML's
+      `detections` list is now enforced - a non-empty whitelist downgrades
+      every *unlisted* family to monitor (detection keeps running, only the
+      listed families block); unknown names warn. `ml_enabled` logs an
+      explicit "not implemented" warning instead of silently doing nothing.
+      `paranoia_level`/`anomaly_threshold`/monitor lists were already wired;
+      the stale TODO is gone and tests cover the whitelist behaviour.
 - [x] Benchmarks: pipeline overhead vs legacy on the request corpus.
       `varman-waf/tests/lane_cost.rs` measures both engines over the attack +
       benign corpora (2,640 requests/lane) and prints the lane-cost table;
