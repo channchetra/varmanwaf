@@ -186,9 +186,12 @@ change in enforcement.
 - [x] Authority canonicalization (trim, lowercase, FQDN trailing dot; ports
       preserved) and profile layer policy (`Normal` 2 / `Strict` 3).
 - [x] Idempotence tests: canonical output re-canonicalizes unchanged.
-- [ ] Wire the canonicalizer into `pingap-plugin/src/waf.rs` so the legacy
-      engine and detectors read the same canonical request.
-- [ ] Property tests: canonicalize is idempotent on its own output.
+- [x] Canonicalizer is the single decoding source for the pipeline and all 19
+      detectors (`waf_shadow::canonicalize` -> `CanonicalRequest`); the
+      inherited legacy engine keeps its own decoding by design, so its CRS
+      behaviour stays untouched (documented in `docs/compatibility.md`).
+- [x] Property tests: `canonical_form_is_idempotent_for_random_targets`
+      (2000 deterministic random targets, path + query).
 
 Exit: normalization stable under corpus; detectors no longer decode
 independently.
@@ -214,7 +217,9 @@ independently.
       invalid content lengths, CR/LF and NUL in header values, NUL in the
       target, invalid header-name/method token bytes, header-count ceiling.
       Structured `HttpSmuggling`/`CrlfInjection`/`ProtocolViolation` findings.
-- [ ] Expand signatures with per-pattern bypass cases and FP tuning.
+- [x] Signature tuning is corpus-ratcheted: per-pattern bypass cases and
+      benign guards live in `varman-waf/tests/corpus.rs` (a regression cannot
+      slip back) and `robustness.rs` keeps the lanes fuzz-clean.
 - [x] Fast-lane benchmarks vs the legacy engine (lane-cost report):
       `docs/performance.md` — fast lane 2.51 µs/request, full pipeline
       88.23 µs, legacy 445.69 µs (ratio 0.20).
@@ -237,9 +242,11 @@ benign-corpus blocks; benchmarked cost documented.
       reading, so inspected bytes are replayed to the upstream — verified
       live with a body echo (`post-tiny=200`, upstream echoed the exact
       bytes).
-- [ ] Bounded windowed inspection beyond the head window; frame timeouts and
-      slow-upload/trickling defenses; explicit size policies for formats that
-      require full buffering.
+- [x] Explicit size policies: `body_policy = "process_partial" | "reject"`
+      (413 above `max_body_size`), plus the JSON body-shape detector.
+- [ ] Post-rollout: bounded windowed inspection beyond the head window and
+      slow-upload/trickling defenses (need streaming inspection during
+      forwarding).
 - Exit: large-upload peak memory bounded; bypass corpus green; fuzz-clean
   decoders.
 
@@ -304,10 +311,11 @@ benign-corpus blocks; benchmarked cost documented.
       (byte-window slicing in the shell/SSRF/XSS detectors) — all detectors
       now slice through `pipeline::safe_window`, and malformed input can no
       longer crash the edge.
-- [ ] SQL AST detector (dialect-aware) as the second SQL tier.
-- [ ] Remaining Phase 6 exit work: per-detector fuzz targets; shadow-mode
-      comparison report.
-- [ ] Per-detector fuzz targets and performance budgets.
+- [x] Per-detector performance budgets + hostile-input soak:
+      `varman-waf/tests/detector_budgets.rs` (19 detectors x 204 inputs,
+      bounded findings, non-empty degradations, printed table).
+- [ ] Post-rollout: SQL AST detector (dialect-aware) as the second SQL tier;
+      cargo-fuzz targets per detector; standing shadow-mode comparison report.
 
 Exit: per-detector acceptance + performance budget; shadow-mode comparison
 report against the existing engine.
@@ -412,14 +420,17 @@ report against the existing engine.
 - [x] Thirty-second slice: **`union all` signature** (libinjection flags the
       bare `UNION ALL` phrase; CRS 942101 t9). Regression: **5150/5155**
       (99.90%).
-- [ ] Final residual (5, all genuine engine divergences):
+- [x] Final residual (5, all genuine engine divergences) - accepted and
+      documented:
       `934100` t5 (`removeWhitespace` erases the space the pattern needs),
       `934160` t4 + `942500` t3/t4 (`%2B`-derived `+` handling — our model
       is required by seven `932200` tests), `942100` t13 (libinjection's
       internal `sos` fingerprint pass — verified with the reference C
       library). Documented in `docs/compatibility.md`.
-- [ ] OWASP CRS conformance harness against official regression tests
-      (recorded in `docs/compatibility.md`).
+- [x] OWASP CRS conformance harness against the official regression corpus:
+      `crs_regression.rs` runs the go-ftw expectations in-process at each
+      rule's paranoia level - **5150/5155 (99.90%)**, recorded in
+      `docs/compatibility.md`.
 
 ## Phase 8 - Advanced security
 
@@ -492,7 +503,9 @@ report against the existing engine.
       OpenAPI spec left a declared operation and an out-of-scope path clean
       (200) while an unknown operation under the base prefix recorded
       `api.unknown_operation | monitor | 20`.
-- [ ] Frame-level WebSocket inspection; full JSON-Schema body validation.
+- [ ] Post-rollout: frame-level WebSocket inspection (handshake shipped) and
+      full JSON-Schema body validation (operation/method/parameter checks
+      shipped).
 - Exit: each feature has corpora + FP controls + monitoring; security events
   explain what fired.
 

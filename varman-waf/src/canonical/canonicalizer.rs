@@ -545,4 +545,67 @@ mod tests {
             );
         }
     }
+
+    /// Property test: idempotence holds across thousands of deterministic
+    /// random targets. The token alphabet stays inside the round-trip-safe
+    /// set documented on [`recanonicalize`] (no decoded `%`, `&`, `=`, `+` or
+    /// space, which the re-serialization would re-encode differently); raw
+    /// `&`/`=`/`?`/`#` are structural separators. Failures print the exact
+    /// target, so a counterexample is a one-line reproduction.
+    #[test]
+    fn canonical_form_is_idempotent_for_random_targets() {
+        const TOKENS: &[&str] = &[
+            "a", "Z", "0", "-", "_", "~", ".", "..", "/", "//", "%2e", "%2f",
+            "%41", "%7e", "%252e", "?", "&", "=", "#",
+        ];
+        let mut seed: u64 = 0x1d3e_0f1d;
+        let mut next = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize
+        };
+        for _ in 0..2000 {
+            let mut target = String::from("/");
+            for _ in 0..(next() % 8) {
+                target.push_str(TOKENS[next() % TOKENS.len()]);
+            }
+            if next() % 2 == 0 {
+                target.push('?');
+                for index in 0..1 + next() % 3 {
+                    if index > 0 {
+                        target.push('&');
+                    }
+                    target.push_str(TOKENS[next() % TOKENS.len()]);
+                    if next() % 2 == 0 {
+                        target.push('=');
+                        target.push_str(TOKENS[next() % TOKENS.len()]);
+                    }
+                }
+            }
+            let once = Canonicalizer::default().canonicalize(
+                RequestParts::new("GET", "example.com", target.clone()),
+            );
+            let twice = recanonicalize(&once);
+            assert_eq!(
+                twice.path(),
+                once.path(),
+                "path not idempotent for {target}"
+            );
+            let once_query: Vec<(String, String)> = once
+                .query()
+                .iter()
+                .map(|param| (param.name.clone(), param.value.clone()))
+                .collect();
+            let twice_query: Vec<(String, String)> = twice
+                .query()
+                .iter()
+                .map(|param| (param.name.clone(), param.value.clone()))
+                .collect();
+            assert_eq!(
+                twice_query, once_query,
+                "query not idempotent for {target}"
+            );
+        }
+    }
 }
