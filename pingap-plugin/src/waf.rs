@@ -1649,6 +1649,24 @@ const PENDING_ACCESS_GC_THRESHOLD: usize = 65536;
 static PENDING_ACCESS: LazyLock<DashMap<String, PendingAccess>> =
     LazyLock::new(DashMap::new);
 
+/// Facts about the request that opened a stream, snapshotted when a 101
+/// upgrade is seen: the pending access entry is consumed by the access log
+/// when the 101 completes, so aborts later in the tunnel still need the
+/// request's identity for their security event.
+#[derive(Default, Clone)]
+struct StreamFacts {
+    site_id: String,
+    client_ip: String,
+    method: String,
+    scheme: String,
+    protocol: String,
+    host: String,
+    path: String,
+    query: String,
+    user_agent: String,
+    country_code: String,
+}
+
 /// Per-connection stream inspection state for tail and upgraded traffic,
 /// keyed by request id. Created lazily by the stream hooks and removed when
 /// the stream ends; a bounded purge drops stale entries if a connection dies
@@ -1664,6 +1682,8 @@ struct StreamState {
     websocket: bool,
     /// Frame decoders for an upgraded connection.
     inspector: StreamInspector,
+    /// Request identity for abort events, snapshotted at the 101.
+    facts: StreamFacts,
     /// Creation time, for the lazy purge.
     created: Option<Instant>,
 }
@@ -3252,7 +3272,28 @@ impl Plugin for WafPlugin {
                 })
                 .unwrap_or(false);
             if websocket {
-                with_stream(&request_id, |state| state.websocket = true);
+                // Snapshot the request identity: the access log consumes the
+                // pending entry when the 101 completes, but aborts inside the
+                // tunnel still need it for their security event.
+                let facts = PENDING_ACCESS
+                    .get(&request_id)
+                    .map(|entry| StreamFacts {
+                        site_id: entry.site_id.clone(),
+                        client_ip: entry.client_ip.clone(),
+                        method: entry.method.clone(),
+                        scheme: entry.scheme.clone(),
+                        protocol: entry.protocol.clone(),
+                        host: entry.host.clone(),
+                        path: entry.path.clone(),
+                        query: entry.query.clone(),
+                        user_agent: entry.user_agent.clone(),
+                        country_code: entry.country_code.clone(),
+                    })
+                    .unwrap_or_default();
+                with_stream(&request_id, |state| {
+                    state.websocket = true;
+                    state.facts = facts;
+                });
             }
         }
         let upstream_latency_ms =
@@ -3481,9 +3522,11 @@ impl WafPlugin {
         Ok(())
     }
 
-    /// Record a stream finding and abort the connection. The client sees a
-    /// dropped connection (no HTTP response is possible at this stage); the
-    /// security event carries the full reason.
+    /// Record a stream finding and abort the connection. The client sees the
+    /// connection torn down (no HTTP response is possible at this stage); the
+    /// security event carries the full reason. The pending access entry is
+    /// preferred while it exists (tail aborts); for tunnel aborts the
+    /// snapshot taken at the 101 is used.
     fn abort_stream(
         &self,
         request_id: &str,
@@ -3491,34 +3534,49 @@ impl WafPlugin {
         rule_id: &str,
         detail: &str,
     ) -> pingora::Result<()> {
-        with_stream(request_id, |state| state.aborted = true);
+        let facts = with_stream(request_id, |state| {
+            state.aborted = true;
+            state.facts.clone()
+        });
         tracing::warn!(
             rule_id,
             detail,
             "stream inspection aborted the connection"
         );
-        if let Some(agent) = VarmanAgent::instance()
-            && let Some(entry) = PENDING_ACCESS.get(request_id)
-        {
+        if let Some(agent) = VarmanAgent::instance() {
+            let from_pending =
+                PENDING_ACCESS.get(request_id).map(|entry| StreamFacts {
+                    site_id: entry.site_id.clone(),
+                    client_ip: entry.client_ip.clone(),
+                    method: entry.method.clone(),
+                    scheme: entry.scheme.clone(),
+                    protocol: entry.protocol.clone(),
+                    host: entry.host.clone(),
+                    path: entry.path.clone(),
+                    query: entry.query.clone(),
+                    user_agent: entry.user_agent.clone(),
+                    country_code: entry.country_code.clone(),
+                });
+            let facts = from_pending.unwrap_or(facts);
             agent.record_request(true);
             agent.log_security_event(SecurityEvent {
-                site_id: entry.site_id.clone(),
+                site_id: facts.site_id,
                 request_id: request_id.to_string(),
-                client_ip: entry.client_ip.clone(),
-                method: entry.method.clone(),
-                scheme: entry.scheme.clone(),
-                protocol: entry.protocol.clone(),
-                host: entry.host.clone(),
-                path: entry.path.clone(),
-                query_string: entry.query.clone(),
+                client_ip: facts.client_ip,
+                method: facts.method,
+                scheme: facts.scheme,
+                protocol: facts.protocol,
+                host: facts.host,
+                path: facts.path,
+                query_string: facts.query,
                 rule_id: rule_id.to_string(),
                 rule_name: "stream-inspection".to_string(),
                 action: "block".to_string(),
                 score: 40,
                 details: detail.to_string(),
                 response_status: 0,
-                user_agent: entry.user_agent.clone(),
-                country_code: entry.country_code.clone(),
+                user_agent: facts.user_agent,
+                country_code: facts.country_code,
                 matched_tags: vec![rule_id.to_string()],
             });
         }
