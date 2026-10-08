@@ -695,6 +695,12 @@ fn waf_config_to_proto(
         .filter(|mode| !mode.is_empty())
         .unwrap_or_else(|| "inherit".to_string());
 
+    let virtual_patches = settings
+        .map(|s| s.virtual_patches.clone())
+        .unwrap_or_default();
+    let openapi_spec =
+        settings.map(|s| s.openapi_spec.clone()).unwrap_or_default();
+
     // Advanced mode (strict + body inspection) and monitor downgrades are
     // meaningful only with the WAF on; a site with no custom rules but an
     // explicit posture still gets the managed ruleset. An explicit engine
@@ -733,6 +739,8 @@ fn waf_config_to_proto(
         monitor_categories,
         monitor_stacks,
         engine_mode,
+        virtual_patches,
+        openapi_spec,
     }
 }
 
@@ -1247,6 +1255,8 @@ mod tests {
             site_id,
             advanced_mode,
             engine_mode: "inherit".into(),
+            virtual_patches: String::new(),
+            openapi_spec: String::new(),
             monitor_categories: categories,
             monitor_stacks: stacks,
             created_at: Utc::now(),

@@ -318,6 +318,10 @@ message WafConfig {
   // Per-site engine selection: "inherit" (process-wide VARMAN_WAF_ENGINE),
   // "legacy", "shadow" or "varman".
   string engine_mode = 44;
+
+  // Per-site SecLang virtual-patch source and JSON OpenAPI document.
+  string virtual_patches = 45;
+  string openapi_spec = 46;
 }
 
 enum WafMode {

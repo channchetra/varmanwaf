@@ -1,10 +1,13 @@
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Gauge, Lightning, ShieldWarning } from '@phosphor-icons/react'
+import { useState } from 'react'
+import { Gauge, Lightning, ShieldWarning, Wrench } from '@phosphor-icons/react'
+import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Select } from '@/components/ui/Select'
 import { Switch } from '@/components/ui/Switch'
+import { Textarea } from '@/components/ui/Textarea'
 import { SkeletonCard } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
@@ -30,6 +33,10 @@ export function ProtectionSettingsPanel() {
   const queryClient = useQueryClient()
   const canWrite = useCanWrite()
   const { siteId = '' } = useParams<{ siteId: string }>()
+
+  // Custom-layer drafts: `null` means "show the saved value" (unedited).
+  const [patchesDraft, setPatchesDraft] = useState<string | null>(null)
+  const [openapiDraft, setOpenapiDraft] = useState<string | null>(null)
 
   const settingsQuery = useQuery({
     queryKey: wafSettingsKeys.settings(siteId),
@@ -59,6 +66,12 @@ export function ProtectionSettingsPanel() {
                 }),
                 ...(payload.engine_mode !== undefined && {
                   engine_mode: payload.engine_mode,
+                }),
+                ...(payload.virtual_patches !== undefined && {
+                  virtual_patches: payload.virtual_patches,
+                }),
+                ...(payload.openapi_spec !== undefined && {
+                  openapi_spec: payload.openapi_spec,
                 }),
                 ...(payload.monitor_categories !== undefined && {
                   monitor_categories: payload.monitor_categories,
@@ -111,6 +124,8 @@ export function ProtectionSettingsPanel() {
   const busy = update.isPending
   const categoriesOn = (settings.monitor_categories ?? []) as string[]
   const stacksOn = (settings.monitor_stacks ?? []) as string[]
+  const patchesValue = patchesDraft ?? settings.virtual_patches ?? ''
+  const openapiValue = openapiDraft ?? settings.openapi_spec ?? ''
 
   const toggleCategory = (category: string, on: boolean) => {
     update.mutate({
@@ -192,6 +207,83 @@ export function ProtectionSettingsPanel() {
               update.mutate({ engine_mode: event.target.value })
             }
           />
+        </CardBody>
+      </Card>
+
+      {/* ── Custom layers: SecLang virtual patches + OpenAPI ─────────── */}
+      <Card>
+        <CardHeader
+          title={t('pages.protection.customLayersTitle')}
+          description={t('pages.protection.customLayersHint')}
+        />
+        <CardBody className="flex flex-col gap-6">
+          <section className="flex flex-col gap-2">
+            <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-fg-subtle">
+              <Wrench weight="duotone" className="h-3.5 w-3.5" />
+              {t('pages.protection.virtualPatches')}
+            </h3>
+            <Textarea
+              mono
+              rows={5}
+              value={patchesValue}
+              disabled={!canWrite || busy}
+              placeholder={t('pages.protection.virtualPatchesPlaceholder')}
+              onChange={(event) => setPatchesDraft(event.target.value)}
+              aria-label={t('pages.protection.virtualPatches')}
+            />
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-[11px] text-fg-subtle">
+                {t('pages.protection.virtualPatchesHint')}
+              </span>
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={!canWrite || busy || patchesDraft === null}
+                onClick={() =>
+                  update.mutate(
+                    { virtual_patches: patchesValue },
+                    { onSuccess: () => setPatchesDraft(null) },
+                  )
+                }
+              >
+                {t('common.save')}
+              </Button>
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-2">
+            <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-fg-subtle">
+              <Wrench weight="duotone" className="h-3.5 w-3.5" />
+              {t('pages.protection.openapiSpec')}
+            </h3>
+            <Textarea
+              mono
+              rows={5}
+              value={openapiValue}
+              disabled={!canWrite || busy}
+              placeholder={t('pages.protection.openapiSpecPlaceholder')}
+              onChange={(event) => setOpenapiDraft(event.target.value)}
+              aria-label={t('pages.protection.openapiSpec')}
+            />
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-[11px] text-fg-subtle">
+                {t('pages.protection.openapiSpecHint')}
+              </span>
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={!canWrite || busy || openapiDraft === null}
+                onClick={() =>
+                  update.mutate(
+                    { openapi_spec: openapiValue },
+                    { onSuccess: () => setOpenapiDraft(null) },
+                  )
+                }
+              >
+                {t('common.save')}
+              </Button>
+            </div>
+          </section>
         </CardBody>
       </Card>
 

@@ -275,6 +275,8 @@ mod ua_restriction;
 mod waf;
 /// Failed-authentication streak tracker (Phase 8 ATO defense).
 pub mod waf_ato;
+/// Per-site custom layers: SecLang virtual patches + OpenAPI validation.
+pub mod waf_custom;
 /// External-processor transport (Phase 9); see the module docs.
 pub mod waf_processor;
 /// Shadow execution of the Varman pipeline beside the legacy engine (Phase 2

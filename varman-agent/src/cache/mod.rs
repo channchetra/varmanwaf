@@ -145,6 +145,12 @@ pub struct WafConfig {
     /// or `varman`. Old caches without the field inherit.
     #[serde(default = "default_engine_mode")]
     pub engine_mode: String,
+    /// SecLang virtual-patch source (empty = off).
+    #[serde(default)]
+    pub virtual_patches: String,
+    /// OpenAPI document, JSON (empty = off).
+    #[serde(default)]
+    pub openapi_spec: String,
     #[serde(default)]
     pub monitor_categories: Vec<String>,
     #[serde(default)]
@@ -1272,6 +1278,8 @@ impl RuleCache {
             } else {
                 w.engine_mode.clone()
             },
+            virtual_patches: w.virtual_patches.clone(),
+            openapi_spec: w.openapi_spec.clone(),
             monitor_categories: w.monitor_categories.clone(),
             monitor_stacks: w.monitor_stacks.clone(),
         }

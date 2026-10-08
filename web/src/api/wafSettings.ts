@@ -23,6 +23,8 @@ export function defaultWafSettings(): WafSettings {
     site_id: '',
     advanced_mode: false,
     engine_mode: 'inherit',
+    virtual_patches: '',
+    openapi_spec: '',
     monitor_categories: [],
     monitor_stacks: [],
     created_at: '',

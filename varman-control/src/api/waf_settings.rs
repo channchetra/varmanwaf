@@ -38,6 +38,10 @@ pub struct UpdateWafSettingsRequest {
     #[serde(default)]
     pub engine_mode: Option<String>,
     #[serde(default)]
+    pub virtual_patches: Option<String>,
+    #[serde(default)]
+    pub openapi_spec: Option<String>,
+    #[serde(default)]
     pub monitor_categories: Option<Vec<String>>,
     #[serde(default)]
     pub monitor_stacks: Option<Vec<String>>,
@@ -92,6 +96,14 @@ async fn update_waf_settings(
         }
         active.engine_mode = Set(engine_mode);
     }
+    if let Some(virtual_patches) = payload.virtual_patches {
+        validate_virtual_patches(&virtual_patches)?;
+        active.virtual_patches = Set(virtual_patches);
+    }
+    if let Some(openapi_spec) = payload.openapi_spec {
+        validate_openapi_spec(&openapi_spec)?;
+        active.openapi_spec = Set(openapi_spec);
+    }
     if let Some(categories) = payload.monitor_categories {
         active.monitor_categories = Set(normalise_list(
             &categories,
@@ -113,6 +125,45 @@ async fn update_waf_settings(
     notify_config_changed(&state, id).await;
 
     Ok(Json(updated))
+}
+
+/// Validates a SecLang virtual-patch source by compiling it with the native
+/// engine: an invalid rule is rejected at the API, never shipped to the edge.
+fn validate_virtual_patches(source: &str) -> Result<(), ApiError> {
+    if source.trim().is_empty() {
+        return Ok(());
+    }
+    varman_waf::seclang::SecRuleSet::from_source(source).map_err(|error| {
+        ApiError::BadRequest(format!("invalid SecLang virtual patch: {error}"))
+    })?;
+    Ok(())
+}
+
+/// Validates an OpenAPI document: JSON object with a `paths` object.
+fn validate_openapi_spec(source: &str) -> Result<(), ApiError> {
+    if source.trim().is_empty() {
+        return Ok(());
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(source).map_err(|error| {
+            ApiError::BadRequest(format!(
+                "OpenAPI spec is not valid JSON: {error}"
+            ))
+        })?;
+    let Some(object) = value.as_object() else {
+        return Err(ApiError::BadRequest(
+            "OpenAPI spec must be a JSON object".to_string(),
+        ));
+    };
+    if !object
+        .get("paths")
+        .is_some_and(serde_json::Value::is_object)
+    {
+        return Err(ApiError::BadRequest(
+            "OpenAPI spec must contain a `paths` object".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Trims, lowercases, de-duplicates and whitelist-checks a monitor list.
@@ -160,6 +211,8 @@ async fn find_or_create(
         site_id: Set(site_id),
         advanced_mode: Set(false),
         engine_mode: Set("inherit".to_string()),
+        virtual_patches: Set(String::new()),
+        openapi_spec: Set(String::new()),
         monitor_categories: Set(Vec::new()),
         monitor_stacks: Set(Vec::new()),
         created_at: Set(now),

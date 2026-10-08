@@ -22,6 +22,10 @@ pub struct Model {
     /// Per-site engine mode: `inherit` (process default), `legacy`, `shadow`
     /// or `varman`.
     pub engine_mode: String,
+    /// SecLang virtual-patch source evaluated by the native engine.
+    pub virtual_patches: String,
+    /// OpenAPI document (JSON) used for request-shape validation.
+    pub openapi_spec: String,
     pub monitor_categories: Vec<String>,
     pub monitor_stacks: Vec<String>,
     pub created_at: DateTimeUtc,

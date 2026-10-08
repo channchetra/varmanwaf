@@ -476,7 +476,15 @@ report against the existing engine.
 - [x] Per-detector budget soak (`tests/detector_budgets.rs`): 19 detectors ×
       204 hostile inputs, bounded findings, non-empty degradation reasons,
       1.5 s per-detector budget with a printed table.
-- [ ] API security/OpenAPI validation, virtual patching.
+- [x] Virtual patching + API security (OpenAPI) first slice — per-site
+      `waf_settings.virtual_patches` (SecLang, compiled and **validated by
+      the control plane**, evaluated by the native engine, blocking rules
+      escalate) and `waf_settings.openapi_spec` (JSON; unknown operation /
+      method not allowed / missing required query parameter monitor under the
+      spec's base prefix). Dashboard: Protection → **Custom layers** (two
+      editors with per-field save). Migration `000032`, proto fields 45/46,
+      agent cache, plugin `waf_custom`. 5 plugin tests + API validation.
+- [ ] Frame-level WebSocket inspection; full JSON-Schema body validation.
 - Exit: each feature has corpora + FP controls + monitoring; security events
   explain what fired.
 

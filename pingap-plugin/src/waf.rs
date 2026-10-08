@@ -289,11 +289,29 @@ struct SiteContext {
     /// applied to the Varman pipeline so both engines agree on the site's
     /// policy.
     monitor_categories: Vec<String>,
+    /// Compiled per-site custom layers (SecLang virtual patches + OpenAPI
+    /// validation); `None` when neither is configured.
+    custom: Option<Arc<crate::waf_custom::CustomLayers>>,
 }
 
 impl SiteContext {
     fn build(site_rules: &CacheSiteRules) -> Self {
         let waf_cfg = site_rules.waf_config.as_ref();
+        let (custom, custom_errors) = waf_cfg
+            .map(|cfg| {
+                crate::waf_custom::CustomLayers::build(
+                    &cfg.virtual_patches,
+                    &cfg.openapi_spec,
+                )
+            })
+            .unwrap_or_default();
+        for error in &custom_errors {
+            warn!(
+                site_id = %site_rules.site_id,
+                error,
+                "custom WAF layer failed to compile; layer disabled"
+            );
+        }
         let rate_limits = RateLimitPolicy::build(site_rules);
         let basic_auth = site_rules
             .basic_auth
@@ -337,6 +355,7 @@ impl SiteContext {
             monitor_categories: waf_cfg
                 .map(|cfg| cfg.monitor_categories.clone())
                 .unwrap_or_default(),
+            custom,
         }
     }
 
@@ -2926,6 +2945,21 @@ impl Plugin for WafPlugin {
             _ => verdict,
         };
 
+        // ── Per-site custom layers: SecLang virtual patches (block) and
+        // OpenAPI validation (monitor). Compiled once per site context; both
+        // escalate only, never weaken the native verdict. ──
+        if let Some(custom) =
+            context.as_ref().and_then(|site| site.custom.as_ref())
+        {
+            let canonical = crate::waf_shadow::canonicalize(&request_data);
+            if let Some(custom_verdict) = custom.evaluate(&canonical) {
+                verdict = crate::waf_shadow::effective_verdict(
+                    &verdict,
+                    &custom_verdict,
+                );
+            }
+        }
+
         // ── External processor (Phase 9): bounded, policy-resolved and
         // additive. The processor can only escalate the verdict; a failure
         // resolves through its configured policy. ──
@@ -3238,6 +3272,8 @@ ml_threshold = 0.75
             anomaly_threshold: 0,
             advanced_mode,
             engine_mode: "inherit".into(),
+            virtual_patches: String::new(),
+            openapi_spec: String::new(),
             monitor_categories,
             monitor_stacks,
         }

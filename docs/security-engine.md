@@ -152,6 +152,20 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   `version`, `max_findings`); the WAF namespaces findings with the declared
   name (when it is a safe token), clamps its caps to the declared limits,
   and logs the identity once per change.
+- **Per-site custom layers (`pingap-plugin/src/waf_custom.rs`)** (Phase 8) —
+  compiled once per site context from the dashboard's WAF settings and
+  evaluated per request (escalate-only):
+  * **SecLang virtual patches** — a rule source in the OWASP CRS dialect
+    evaluated by the native engine; rules carrying `block`/`deny`/`drop`
+    block matching requests (`virtual-patch:<ids>`). The control plane
+    compiles the source at upload time, so an invalid patch is rejected by
+    the API, never shipped.
+  * **OpenAPI validation** — a JSON OpenAPI document; requests under the
+    spec's base prefix are checked against the declared operations:
+    undeclared path (`api.unknown_operation`, Monitor), undeclared method
+    (`api.method_not_allowed`), missing required query parameter
+    (`api.missing_required_param`). Out-of-scope paths are untouched.
+    Full JSON-Schema body validation is future work.
 - **Account-takeover defense (`pingap-plugin/src/waf_ato.rs`)** (Phase 8) -
   repeated upstream authentication failures (401/403) on state-changing
   requests (POST/PUT/PATCH/DELETE) from one client open a failure window;

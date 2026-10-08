@@ -345,7 +345,7 @@ fn analyze_with(
 ///
 /// The plugin already holds method/path/query/headers/body/client IP; the
 /// canonicalizer applies the one shared normalization policy on top.
-fn canonicalize(
+pub(crate) fn canonicalize(
     request: &RequestData,
 ) -> varman_waf::canonical::CanonicalRequest {
     let target = if request.query.is_empty() {

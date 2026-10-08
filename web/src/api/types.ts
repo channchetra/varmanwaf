@@ -415,6 +415,8 @@ export interface WafSettings {
   site_id: string
   advanced_mode: boolean
   engine_mode: WafEngineMode | string
+  virtual_patches: string
+  openapi_spec: string
   monitor_categories: WafCategory[] | string[]
   monitor_stacks: WafStack[] | string[]
   created_at: string
@@ -430,6 +432,8 @@ export const WAF_ENGINE_MODES: WafEngineMode[] = ['inherit', 'legacy', 'shadow',
 export interface UpdateWafSettingsRequest {
   advanced_mode?: boolean
   engine_mode?: WafEngineMode | string
+  virtual_patches?: string
+  openapi_spec?: string
   monitor_categories?: string[]
   monitor_stacks?: string[]
 }
