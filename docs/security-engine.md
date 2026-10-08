@@ -15,7 +15,7 @@
 | Shadow wiring + engine switch (`pingap-plugin/src/waf_shadow.rs`) | Landed: `VARMAN_WAF_ENGINE=legacy|shadow|varman`; shadow compares pipeline vs legacy per request and records counters; `varman` enforces the pipeline verdict escalated with the legacy verdict | Yes (`varman` mode) |
 | Lane 1 fast detectors | Started: protocol checks + Aho-Corasick signature scanner (starter table, tiered) + raw-path traversal evidence; corpora in `varman-waf/tests/corpus` | No (shadow only) |
 | Streaming body engine | Pending (Phase 5) | No |
-| Lane 2 semantic detectors | SQL, HTML/XSS, shell/command, SSRF, NoSQL, SSTI, XXE, deserialization, prototype-pollution, LDAP/XPath, GraphQL, JWT, DLP (Phase 8) structural detectors; covered by the corpora | No (shadow only) |
+| Lane 2 semantic detectors | SQL, HTML/XSS, shell/command, SSRF, NoSQL, SSTI, XXE, deserialization, prototype-pollution, LDAP/XPath, GraphQL, JWT, DLP, JSON body-shape (Phase 5/8) structural detectors; covered by the corpora | No (shadow only) |
 | SecLang / OWASP CRS (Lane 3) | Pending (Phase 7); tracked in `docs/compatibility.md` | No |
 
 The pipeline is wired into the proxy through `pingap-plugin/src/waf_shadow.rs`.
@@ -113,6 +113,14 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   (presigned URLs carry them by design), and public keys, test-mode keys and
   credential-free connection strings stay clean — all locked in by the benign
   corpus.
+- **`pipeline::semantic::BodyShapeDetector`** (Phase 5/8, API security) —
+  reasons about the *shape* of a JSON request body with a byte-wise scanner
+  (no document tree, so hostile nesting cannot exhaust the stack): nesting
+  depth ≥ 24 **Monitors** (`sem.body.deep_nesting`) and a single array with
+  ≥ 4096 elements **Monitors** (`sem.body.large_array`). Nothing blocks by
+  default — bulk APIs legitimately send large arrays — and the benign body
+  corpus locks ordinary payloads clean. Body payloads get their own corpus
+  harness (`tests/corpus/attacks_body`, `benign_body`).
 - **`processor`** (Phase 9) — the optional external-processor contract:
   out-of-process components inspect a request and *add* findings. The native
   engine stays the authority: merging is monotonic (a processor can escalate,

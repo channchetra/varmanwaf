@@ -21,10 +21,10 @@ use varman_waf::pipeline::fast::{
     ProtocolDetector, RawPathTraversalDetector, SignatureDetector,
 };
 use varman_waf::pipeline::semantic::{
-    CommandInjectionDetector, DeserializationDetector, DlpDetector,
-    GraphqlAbuseDetector, HtmlXssDetector, JwtDetector, LdapXPathDetector,
-    NosqlInjectionDetector, PrototypePollutionDetector, SqlStructuralDetector,
-    SsrfStructuralDetector, SstiDetector, XxeDetector,
+    BodyShapeDetector, CommandInjectionDetector, DeserializationDetector,
+    DlpDetector, GraphqlAbuseDetector, HtmlXssDetector, JwtDetector,
+    LdapXPathDetector, NosqlInjectionDetector, PrototypePollutionDetector,
+    SqlStructuralDetector, SsrfStructuralDetector, SstiDetector, XxeDetector,
 };
 use varman_waf::pipeline::{Action, PipelineVerdict, SecurityPipeline};
 
@@ -46,6 +46,7 @@ fn pipeline() -> SecurityPipeline {
         Box::new(GraphqlAbuseDetector::new()),
         Box::new(JwtDetector::new()),
         Box::new(DlpDetector::new()),
+        Box::new(BodyShapeDetector::new()),
     ])
 }
 

@@ -12,7 +12,7 @@
 | 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | 🚧 In progress — types, pipeline, shadow wiring and the `legacy|shadow|varman` engine switch landed and verified E2E; snapshot/benchmarks pending |
 | 3 | Canonicalization (stable normalization + bypass tests) | 🚧 In progress — canonicalizer core landed (authority, profiles, idempotence); plugin wiring pending |
 | 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | 🚧 In progress — signature scanner + corpora landed and verified live in shadow mode; protocol checks pending |
-| 5 | Streaming body engine (bounded windows, limits) | ⏳ Planned |
+| 5 | Streaming body engine (bounded windows, limits) | 🚧 In progress - JSON body-shape detector + body corpora landed; windowed inspection, timeouts and size policies pending |
 | 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, …) | 🚧 In progress — SQL structural, HTML/XSS structural and shell/command detectors landed, corpus-covered and live-verified in shadow; AST, SSRF, XXE, SSTI, NoSQL, deserialization, GraphQL pending |
 | 7 | Native SecLang core + OWASP CRS conformance | 🚧 In progress — SecRule parser landed (structured AST, unsupported directives observable); execution engine next |
 | 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | 🚧 In progress — JWT analysis and DLP detectors landed with corpora; API security, ATO, TI and virtual patching pending |
@@ -215,9 +215,16 @@ benign-corpus blocks; benchmarked cost documented.
 
 ## Phase 5 — Streaming body engine
 
-- Bounded windowed inspection for request bodies; decoders per content type;
-  frame timeouts; slow-upload and trickling defenses; explicit size policies
-  for formats that require full buffering.
+- [x] JSON body-shape detector (`semantic::body_shape`, Phase 5/8 first slice):
+      a byte-wise, allocation-free scanner over JSON bodies reports nesting
+      depth ≥ 24 (`sem.body.deep_nesting`, Monitor 20) and arrays with ≥ 4096
+      elements (`sem.body.large_array`, Monitor 15) — API-abuse / parser-DoS
+      shapes with no default blocking. Body corpora
+      (`tests/corpus/{attacks_body,benign_body}`) and a dedicated harness
+      loop cover it.
+- [ ] Bounded windowed inspection beyond the head window; frame timeouts and
+      slow-upload/trickling defenses; explicit size policies for formats that
+      require full buffering.
 - Exit: large-upload peak memory bounded; bypass corpus green; fuzz-clean
   decoders.
 

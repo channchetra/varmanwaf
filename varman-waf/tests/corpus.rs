@@ -17,10 +17,10 @@ use std::path::{Path, PathBuf};
 use varman_waf::canonical::{Canonicalizer, RequestParts};
 use varman_waf::pipeline::fast::{RawPathTraversalDetector, SignatureDetector};
 use varman_waf::pipeline::semantic::{
-    CommandInjectionDetector, DeserializationDetector, DlpDetector,
-    GraphqlAbuseDetector, HtmlXssDetector, JwtDetector, LdapXPathDetector,
-    NosqlInjectionDetector, PrototypePollutionDetector, SqlStructuralDetector,
-    SsrfStructuralDetector, SstiDetector, XxeDetector,
+    BodyShapeDetector, CommandInjectionDetector, DeserializationDetector,
+    DlpDetector, GraphqlAbuseDetector, HtmlXssDetector, JwtDetector,
+    LdapXPathDetector, NosqlInjectionDetector, PrototypePollutionDetector,
+    SqlStructuralDetector, SsrfStructuralDetector, SstiDetector, XxeDetector,
 };
 use varman_waf::pipeline::{
     Action, AttackCategory, PipelineVerdict, SecurityPipeline,
@@ -68,6 +68,7 @@ fn pipeline() -> SecurityPipeline {
         Box::new(GraphqlAbuseDetector::new()),
         Box::new(JwtDetector::new()),
         Box::new(DlpDetector::new()),
+        Box::new(BodyShapeDetector::new()),
     ])
 }
 
@@ -98,6 +99,19 @@ fn verdict_for(pipeline: &SecurityPipeline, payload: &str) -> PipelineVerdict {
         "example.com",
         target,
     ));
+    pipeline.inspect(&request)
+}
+
+/// POST with a JSON body (the body-shape corpus in `attacks_body`/`benign_body`).
+fn verdict_for_body(
+    pipeline: &SecurityPipeline,
+    payload: &str,
+) -> PipelineVerdict {
+    let request = Canonicalizer::default().canonicalize(
+        RequestParts::new("POST", "example.com", "/api/v1/items")
+            .with_header("Content-Type", "application/json")
+            .with_body(payload.as_bytes().to_vec()),
+    );
     pipeline.inspect(&request)
 }
 
@@ -231,4 +245,89 @@ fn benign_corpus_is_never_monitored_or_blocked() {
         failures.join("\n")
     );
     assert!(case_count >= 20, "benign corpus shrank unexpectedly");
+}
+
+#[test]
+fn body_attack_corpus_is_detected() {
+    let pipeline = pipeline();
+    let dir = corpus_dir("attacks_body");
+    let mut failures: Vec<String> = Vec::new();
+    let mut payload_count = 0usize;
+
+    for file in category_files(&dir) {
+        let stem = file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let Some(expected) = AttackCategory::parse(&stem) else {
+            failures.push(format!(
+                "corpus file {stem}.txt names no known category"
+            ));
+            continue;
+        };
+        let must_monitor = MUST_REACH_MONITOR.contains(&stem.as_str());
+
+        for (line, payload) in read_cases(&file) {
+            payload_count += 1;
+            let verdict = verdict_for_body(&pipeline, &payload);
+            if !verdict.findings.iter().any(|f| f.category == expected) {
+                failures.push(format!(
+                    "{stem}(body):{line}: no {expected} finding"
+                ));
+                continue;
+            }
+            if must_monitor && verdict.action < Action::Monitor {
+                failures.push(format!(
+                    "{stem}(body):{line}: expected >= monitor, got {}",
+                    verdict.action
+                ));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "body attack corpus failures:\n{}",
+        failures.join("\n")
+    );
+    assert!(payload_count >= 2, "body attack corpus shrank unexpectedly");
+}
+
+#[test]
+fn body_benign_corpus_is_never_monitored_or_blocked() {
+    let pipeline = pipeline();
+    let dir = corpus_dir("benign_body");
+    let mut failures: Vec<String> = Vec::new();
+    let mut case_count = 0usize;
+
+    for file in category_files(&dir) {
+        let name = file
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        for (line, payload) in read_cases(&file) {
+            case_count += 1;
+            let verdict = verdict_for_body(&pipeline, &payload);
+            if verdict.action >= Action::Monitor {
+                let details: Vec<String> = verdict
+                    .findings
+                    .iter()
+                    .map(|f| format!("{} ({})", f.rule_id, f.action_hint))
+                    .collect();
+                failures.push(format!(
+                    "{name}:{line}: {} blocked/monitored benign body via {:?}",
+                    verdict.action, details
+                ));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "body benign corpus failures:\n{}",
+        failures.join("\n")
+    );
+    assert!(case_count >= 2, "body benign corpus shrank unexpectedly");
 }

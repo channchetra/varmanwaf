@@ -1,0 +1,6 @@
+# Ordinary JSON API payloads: deep-ish but sane, bulk but bounded.
+{"page":1,"data":{"items":[1,2,3,4,5],"meta":{"total":5,"cursor":"abc"}}}
+{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":
+1
+}}}}}}}}}}}}}}}}}}}}
+{"tags":["a","b","c"],"nested":{"list":[{"id":1},{"id":2}]}}
