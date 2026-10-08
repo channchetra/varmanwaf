@@ -2361,6 +2361,14 @@ impl Plugin for WafPlugin {
         if (agent.is_some() && body_limit > 0 || should_inspect)
             && !(method == "POST" && path == VERIFY_ENDPOINT)
         {
+            // Reading the body here consumes it from the downstream stream.
+            // Pingora only enables its retry buffer after the request filters
+            // have run, so without this call the bytes we read are lost: the
+            // proxy replays nothing while the upstream waits for the declared
+            // Content-Length and the request stalls. Enabling the buffer
+            // first makes every byte we read replayable (64 KiB cap, matching
+            // the inspection limit).
+            session.enable_retry_buffering();
             let mut interrupted = false;
             loop {
                 let Some(chunk) = session.read_request_body().await? else {

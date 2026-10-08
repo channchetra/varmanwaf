@@ -221,7 +221,13 @@ benign-corpus blocks; benchmarked cost documented.
       elements (`sem.body.large_array`, Monitor 15) — API-abuse / parser-DoS
       shapes with no default blocking. Body corpora
       (`tests/corpus/{attacks_body,benign_body}`) and a dedicated harness
-      loop cover it.
+      loop cover it. **Fixed in the same slice:** reading the request body in
+      the request filter consumed it without making it replayable, so any
+      POST/PUT with a body stalled (the upstream waited for the declared
+      Content-Length). The plugin now enables Pingora's retry buffer before
+      reading, so inspected bytes are replayed to the upstream — verified
+      live with a body echo (`post-tiny=200`, upstream echoed the exact
+      bytes).
 - [ ] Bounded windowed inspection beyond the head window; frame timeouts and
       slow-upload/trickling defenses; explicit size policies for formats that
       require full buffering.
