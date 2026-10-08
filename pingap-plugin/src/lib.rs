@@ -273,6 +273,8 @@ mod sub_filter;
 mod traffic_splitting;
 mod ua_restriction;
 mod waf;
+/// Failed-authentication streak tracker (Phase 8 ATO defense).
+pub mod waf_ato;
 /// External-processor transport (Phase 9); see the module docs.
 pub mod waf_processor;
 /// Shadow execution of the Varman pipeline beside the legacy engine (Phase 2

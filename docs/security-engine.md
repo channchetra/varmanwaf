@@ -147,6 +147,22 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   newline-delimited JSON over a Unix domain socket or TCP with a per-call
   timeout and a 64 KiB response cap; `examples/processor/mock_processor.py`
   is a runnable reference implementation and `docker compose --profile
+  processor up -d processor` starts it beside the stack. **Capability
+  negotiation:** a response may carry a `processor` object (`name`,
+  `version`, `max_findings`); the WAF namespaces findings with the declared
+  name (when it is a safe token), clamps its caps to the declared limits,
+  and logs the identity once per change.
+- **Account-takeover defense (`pingap-plugin/src/waf_ato.rs`)** (Phase 8) -
+  repeated upstream authentication failures (401/403) on state-changing
+  requests (POST/PUT/PATCH/DELETE) from one client open a failure window;
+  crossing the threshold (`ato_failed_auth_threshold`, default 20 per
+  `ato_window_secs` = 300) blocks that `(site, client)` for
+  `ato_block_secs` = 300 with a 403 + `Retry-After`. Expired-token polling
+  is GET traffic, so ordinary SPAs cannot trip it; `0` disables the tracker.
+- **Body size policy** (Phase 5) - `body_policy = "reject"` answers 413 once
+  a request body exceeds `max_body_size` instead of inspecting a prefix and
+  forwarding the remainder (the default `process_partial` keeps the head
+  window behaviour).
   processor up -d processor` starts it beside the stack.
 - **`pipeline::fast::ProtocolDetector`** (Phase 4) — framing and header
   sanity: conflicting duplicate `Content-Length`, `Content-Length` +

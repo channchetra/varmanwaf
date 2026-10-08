@@ -464,7 +464,19 @@ report against the existing engine.
       same-origin handshake 200 (clean); cross-origin handshake 200 with
       `ws.cross_origin | monitor | 20`; a non-WebSocket request carrying an
       evil `Origin` stayed untouched.
-- [ ] API security/OpenAPI validation, ATO, virtual patching.
+- [x] ATO defense (`waf_ato`): failed-auth streaks on state-changing requests
+      block the `(site, client)` pair with a 403 + `Retry-After`; window,
+      threshold and block are configurable, `0` disables. GET polling cannot
+      trip it. 6 tests.
+- [x] Capability negotiation: processors may declare `name`/`version`/
+      `max_findings`; findings are namespaced with the declared name, caps
+      clamped to the declared limits, identity logged once per change.
+- [x] Body size policy: `body_policy = "reject"` answers 413 above
+      `max_body_size` (default `process_partial`).
+- [x] Per-detector budget soak (`tests/detector_budgets.rs`): 19 detectors ×
+      204 hostile inputs, bounded findings, non-empty degradation reasons,
+      1.5 s per-detector budget with a printed table.
+- [ ] API security/OpenAPI validation, virtual patching.
 - Exit: each feature has corpora + FP controls + monitoring; security events
   explain what fired.
 

@@ -33,6 +33,7 @@ use crate::challenge::{
     build_challenge_response, paused_page, rate_limit_page,
     resolve_cookie_secret,
 };
+use crate::waf_ato::{FailedAuthTracker, is_state_changing};
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
@@ -1836,6 +1837,9 @@ pub struct WafPlugin {
     /// first KiB of every body is captured for the access log.
     inspect_body: bool,
     max_body_size: usize,
+    /// `body_policy = "reject"`: refuse bodies above `max_body_size` (413)
+    /// instead of inspecting a prefix and forwarding the rest.
+    body_reject: bool,
     /// Proof-of-work difficulty used when delegating a `Challenge` verdict.
     pow_difficulty: u32,
     hash_value: String,
@@ -1844,6 +1848,8 @@ pub struct WafPlugin {
     /// Rate limit counters, keyed by rule id and characteristic values. Kept
     /// on the plugin so they survive per-site context rebuilds.
     rate_counters: DashMap<String, RateCounter>,
+    /// Failed-authentication streak tracker (Phase 8 ATO defense).
+    ato: Arc<FailedAuthTracker>,
 }
 
 fn parse_mode(value: &str) -> WafMode {
@@ -2226,8 +2232,21 @@ impl TryFrom<&PluginConf> for WafPlugin {
             advanced_mode || get_bool_conf(value, "inspect_body");
         let max_body_size =
             get_int_conf_or_default(value, "max_body_size", 64 * 1024) as usize;
+        // Phase 5 size policy: `process_partial` (default) inspects the head
+        // window and forwards the rest; `reject` answers 413 once a body
+        // exceeds `max_body_size` instead of inspecting a prefix.
+        let body_reject =
+            get_str_conf(value, "body_policy").eq_ignore_ascii_case("reject");
         let pow_difficulty =
             get_int_conf_or_default(value, "pow_difficulty", 20) as u32;
+        // ATO: repeated upstream authentication failures on state-changing
+        // requests from one client block that client for a while. 0 disables.
+        let ato = Arc::new(FailedAuthTracker::new(
+            get_int_conf_or_default(value, "ato_failed_auth_threshold", 20)
+                as u32,
+            get_int_conf_or_default(value, "ato_window_secs", 300) as u64,
+            get_int_conf_or_default(value, "ato_block_secs", 300) as u64,
+        ));
 
         let plugin_step = match super::get_step_conf_in(
             value,
@@ -2269,10 +2288,12 @@ impl TryFrom<&PluginConf> for WafPlugin {
             ml_threshold,
             inspect_body,
             max_body_size,
+            body_reject,
             pow_difficulty,
             hash_value,
             site_contexts: DashMap::new(),
             rate_counters: DashMap::new(),
+            ato,
         })
     }
 }
@@ -2368,6 +2389,33 @@ impl Plugin for WafPlugin {
             None
         };
 
+        // ── ATO: a client serving out a failed-authentication block is
+        // refused before any further work happens. ──
+        if self.ato.enabled() && !site_id.is_empty() {
+            let key = format!("{site_id}|{client_ip}");
+            if self.ato.is_blocked(&key) {
+                let retry = self.ato.retry_after_secs(&key).unwrap_or(0);
+                tracing::info!(
+                    site_id = %site_id,
+                    client_ip = %client_ip,
+                    "request refused: failed-authentication streak"
+                );
+                let mut response = block_page(
+                    &request_id,
+                    "too many failed authentication attempts; try again later",
+                );
+                if retry > 0 {
+                    response.headers.get_or_insert_with(Vec::new).push((
+                        http::header::RETRY_AFTER,
+                        http::HeaderValue::from_str(&retry.to_string())
+                            .unwrap_or(http::HeaderValue::from_static("60")),
+                    ));
+                }
+                emit_generated_access(agent.as_ref(), &request_id, &response);
+                return Ok(RequestPluginResult::Respond(response));
+            }
+        }
+
         // ── Full-request log capture: snapshot headers (capped) and keep the
         // configured body prefix. Pingora's retry buffer replays bytes
         // consumed here to the upstream, so reading does not interfere with
@@ -2425,6 +2473,28 @@ impl Plugin for WafPlugin {
             }
             if interrupted {
                 log_body_prefix.interrupted();
+                // Explicit size policy: refuse the request rather than
+                // inspecting a prefix and forwarding the remainder.
+                if self.body_reject {
+                    tracing::info!(
+                        limit = self.max_body_size,
+                        "request body exceeds the inspection limit; rejected"
+                    );
+                    let mut response = block_page(
+                        &request_id,
+                        &format!(
+                            "request body exceeds the {} byte inspection limit",
+                            self.max_body_size
+                        ),
+                    );
+                    response.status = http::StatusCode::PAYLOAD_TOO_LARGE;
+                    emit_generated_access(
+                        agent.as_ref(),
+                        &request_id,
+                        &response,
+                    );
+                    return Ok(RequestPluginResult::Respond(response));
+                }
             }
         }
         let (log_body, log_body_size, log_body_truncated) =
@@ -3011,6 +3081,18 @@ impl Plugin for WafPlugin {
             let Some(mut entry) = PENDING_ACCESS.get_mut(&request_id) else {
                 return Ok(ResponsePluginResult::Unchanged);
             };
+            // ── ATO: upstream authentication failures on state-changing
+            // requests feed the failed-auth streak tracker. Credential
+            // submissions are state-changing; expired-token polling is not,
+            // so ordinary SPAs cannot trip it. ──
+            if matches!(status, 401 | 403)
+                && is_state_changing(&entry.method)
+                && self.ato.enabled()
+                && !entry.site_id.is_empty()
+            {
+                let key = format!("{}|{}", entry.site_id, entry.client_ip);
+                self.ato.record_failure(&key);
+            }
             if entry.body_limit > 0
                 && should_capture_response_body(
                     &entry.method,
@@ -3206,6 +3288,56 @@ ml_threshold = 0.75
         ));
         let v = engine.inspect(&probe("id=1' OR 1=1 --"));
         assert_eq!(v.action, WafAction::Monitor, "details: {}", v.details);
+    }
+
+    #[test]
+    fn toml_body_policy_reject_parses() {
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+mode = "block"
+body_policy = "reject"
+max_body_size = 1024
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(plugin.body_reject);
+        assert_eq!(plugin.max_body_size, 1024);
+
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+        assert!(!plugin.body_reject, "default stays process_partial");
+    }
+
+    #[test]
+    fn toml_ato_threshold_parses_and_zero_disables() {
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+mode = "block"
+ato_failed_auth_threshold = 7
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(plugin.ato.threshold(), 7);
+
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+mode = "block"
+ato_failed_auth_threshold = 0
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!plugin.ato.enabled());
     }
 
     #[test]

@@ -40,7 +40,12 @@ def handle_request(payload):
                 "detail": "path matches the processor's fraud rule",
             }
         )
-    return {"findings": findings}
+    return {
+        # Capability negotiation: the WAF namespaces findings with this name
+        # and clamps its limits to the declared ones.
+        "processor": {"name": "varman-mock", "version": "1.0", "max_findings": 8},
+        "findings": findings,
+    }
 
 
 class Handler(socketserver.StreamRequestHandler):

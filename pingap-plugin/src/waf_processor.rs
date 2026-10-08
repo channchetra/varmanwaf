@@ -21,15 +21,15 @@
 //! `ProcessorResponse` followed by `\n`. Responses are read with a 64 KiB
 //! cap so a misbehaving processor cannot exhaust memory.
 
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use varman_agent::heartbeat::{MetricsCollector, ProcessorResult};
 use varman_waf::processor::{
-    FailurePolicy, ProcessorFinding, ProcessorOutcome, ProcessorRequest,
-    ProcessorResponse,
+    FailurePolicy, ProcessorFinding, ProcessorHello, ProcessorOutcome,
+    ProcessorRequest, ProcessorResponse,
 };
 use varman_waf::{RequestData, ScoreBreakdown, WafAction, WafVerdict};
 
@@ -163,7 +163,29 @@ pub async fn evaluate(
             ProcessorOutcome::Failed(_) => ProcessorResult::Failed,
         });
     }
+    // Capability negotiation: report a declared identity once per change.
+    if let ProcessorOutcome::Responded(response) = &outcome
+        && let Some(hello) = &response.processor
+    {
+        note_identity(hello);
+    }
     Some(outcome.findings(&PROCESSOR.name, PROCESSOR.policy))
+}
+
+/// Log the processor's declared identity when it first appears or changes.
+fn note_identity(hello: &ProcessorHello) {
+    let identity = format!(
+        "{} {}",
+        hello.name.as_deref().unwrap_or("-"),
+        hello.version.as_deref().unwrap_or("-")
+    );
+    static LAST: LazyLock<Mutex<Option<String>>> =
+        LazyLock::new(|| Mutex::new(None));
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.as_deref() != Some(identity.as_str()) {
+        tracing::info!(processor = %identity, "external processor identified");
+        *last = Some(identity);
+    }
 }
 
 /// Build the processor summary from the request the engines inspected.
@@ -298,7 +320,8 @@ mod tests {
     use varman_waf::WafAction;
     use varman_waf::pipeline::{Action, AttackCategory};
     use varman_waf::processor::{
-        FailurePolicy, ProcessorFinding, ProcessorOutcome, ProcessorRequest,
+        FailurePolicy, ProcessorFinding, ProcessorHello, ProcessorOutcome,
+        ProcessorRequest,
     };
 
     fn summary() -> ProcessorRequest {
@@ -391,6 +414,11 @@ mod tests {
                             action_hint: Action::Monitor,
                             detail: None,
                         }],
+                        processor: Some(ProcessorHello {
+                            name: Some("test-proc".into()),
+                            version: Some("1.0".into()),
+                            max_findings: None,
+                        }),
                     };
                     let mut body =
                         serde_json::to_string(&response).expect("serialize");
@@ -413,6 +441,11 @@ mod tests {
             ProcessorOutcome::Responded(response) => {
                 assert_eq!(response.findings.len(), 1);
                 assert_eq!(response.findings[0].rule_id, "seen");
+                // Capability negotiation: the declared identity namespaces
+                // the findings.
+                let resolved = ProcessorOutcome::Responded(response)
+                    .findings("configured", FailurePolicy::FailOpen);
+                assert_eq!(resolved[0].rule_id, "ext.test-proc.seen");
             },
             other => panic!("expected a response, got {other:?}"),
         }

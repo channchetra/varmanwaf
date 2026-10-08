@@ -77,7 +77,27 @@ pub struct ProcessorFinding {
 /// A processor's successful response.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessorResponse {
+    #[serde(default)]
     pub findings: Vec<ProcessorFinding>,
+    /// Optional identity the processor declares (capability negotiation).
+    #[serde(default)]
+    pub processor: Option<ProcessorHello>,
+}
+
+/// Identity a processor may declare on its responses: the WAF namespaces
+/// findings with the declared name and clamps its limits to the declared
+/// ones, so a processor can describe itself without extra configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessorHello {
+    /// Processor name used in rule ids (`ext.<name>.<rule>`).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Informational version, logged when it changes.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Findings the processor itself will return at most.
+    #[serde(default)]
+    pub max_findings: Option<usize>,
 }
 
 /// Failure policy for a processor call.
@@ -142,6 +162,22 @@ impl ProcessorOutcome {
     }
 }
 
+/// The namespace to use for a response: the declared processor name when the
+/// processor announced one, the configured name otherwise.
+fn namespace(configured: &str, hello: Option<&ProcessorHello>) -> String {
+    hello
+        .and_then(|hello| hello.name.as_deref())
+        .map(str::trim)
+        .filter(|name| {
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .unwrap_or(configured)
+        .to_string()
+}
+
 fn failure_findings(
     name: &str,
     policy: FailurePolicy,
@@ -167,10 +203,17 @@ fn failure_findings(
 }
 
 fn sanitize(name: &str, response: ProcessorResponse) -> Vec<ProcessorFinding> {
+    let namespace = namespace(name, response.processor.as_ref());
+    let cap = response
+        .processor
+        .as_ref()
+        .and_then(|hello| hello.max_findings)
+        .map(|declared| declared.min(MAX_PROCESSOR_FINDINGS))
+        .unwrap_or(MAX_PROCESSOR_FINDINGS);
     let mut out: Vec<ProcessorFinding> = Vec::new();
     let mut total = 0u32;
     for mut finding in response.findings {
-        if out.len() >= MAX_PROCESSOR_FINDINGS {
+        if out.len() >= cap {
             break;
         }
         let score = finding.score.min(MAX_PROCESSOR_FINDING_SCORE);
@@ -180,7 +223,7 @@ fn sanitize(name: &str, response: ProcessorResponse) -> Vec<ProcessorFinding> {
         total += score;
         finding.score = score;
         if !finding.rule_id.starts_with("ext.") {
-            finding.rule_id = format!("ext.{name}.{}", finding.rule_id);
+            finding.rule_id = format!("ext.{namespace}.{}", finding.rule_id);
         }
         out.push(finding);
     }
@@ -312,6 +355,43 @@ mod tests {
     }
 
     #[test]
+    fn declared_identity_namespaces_and_clamps() {
+        use super::ProcessorHello;
+
+        // A processor that declares its name and a tighter finding cap.
+        let mut response = ProcessorResponse {
+            findings: Vec::new(),
+            processor: Some(ProcessorHello {
+                name: Some("fraud-svc".to_string()),
+                version: Some("2.1.0".to_string()),
+                max_findings: Some(2),
+            }),
+        };
+        for index in 0..5 {
+            let mut item = finding(5, Action::Monitor);
+            item.rule_id = format!("rule-{index}");
+            response.findings.push(item);
+        }
+        let out = ProcessorOutcome::Responded(response)
+            .findings("configured", FailurePolicy::FailOpen);
+        assert_eq!(out.len(), 2, "declared max_findings must clamp");
+        assert!(out[0].rule_id.starts_with("ext.fraud-svc."));
+
+        // An invalid declared name falls back to the configured one.
+        let response = ProcessorResponse {
+            findings: vec![finding(5, Action::Monitor)],
+            processor: Some(ProcessorHello {
+                name: Some("../evil".to_string()),
+                version: None,
+                max_findings: None,
+            }),
+        };
+        let out = ProcessorOutcome::Responded(response)
+            .findings("configured", FailurePolicy::FailOpen);
+        assert!(out[0].rule_id.starts_with("ext.configured."));
+    }
+
+    #[test]
     fn merging_never_weakens_the_native_verdict() {
         let mut verdict = PipelineVerdict::pass();
         merge_findings(&mut verdict, vec![finding(20, Action::Monitor)]);
@@ -369,6 +449,7 @@ mod tests {
             ) -> Result<ProcessorResponse, String> {
                 Ok(ProcessorResponse {
                     findings: vec![finding(15, Action::Monitor)],
+                    processor: None,
                 })
             }
         }
