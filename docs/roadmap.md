@@ -438,8 +438,15 @@ report against the existing engine.
       Corpus files use `${…}` placeholders expanded at read time so the
       repository never contains token-shaped literals (GitHub push
       protection).
-- [ ] API security/OpenAPI validation, ATO, threat intelligence,
-      virtual patching, WebSocket inspection.
+- [x] Threat-intelligence detector (`semantic::ti`, Phase 8) — feed-driven
+      matching for attack-tool user agents, client IPs/CIDRs, hostnames and
+      path prefixes (Block, category `ThreatIntelligence`). Bundled starter
+      feed of scanner/exploitation UAs; operator feeds via
+      `VARMAN_WAF_TI_FILE`; malformed feeds error observably and fall back to
+      the starter. UA corpus harness (`attacks_ua`/`benign_ua`) ratchets
+      detection and locks ordinary UAs (Chrome, Googlebot, curl) clean.
+- [ ] API security/OpenAPI validation, ATO, virtual patching, WebSocket
+      inspection.
 - Exit: each feature has corpora + FP controls + monitoring; security events
   explain what fired.
 

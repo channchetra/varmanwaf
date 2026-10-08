@@ -68,6 +68,9 @@ pub enum AttackCategory {
     BotActivity,
     /// Sensitive data exposure (DLP-class findings).
     SensitiveDataExposure,
+    /// Threat-intelligence indicator match (scanner/attack-tool user agents,
+    /// operator-supplied IPs, domains and paths).
+    ThreatIntelligence,
     /// Protocol-level violation that is not a smuggling attempt.
     ProtocolViolation,
     /// Category not yet assigned (weak signals, heuristics in progress).
@@ -100,6 +103,7 @@ impl AttackCategory {
             Self::CredentialAbuse => "credential_abuse",
             Self::BotActivity => "bot_activity",
             Self::SensitiveDataExposure => "sensitive_data_exposure",
+            Self::ThreatIntelligence => "threat_intelligence",
             Self::ProtocolViolation => "protocol_violation",
             Self::Unknown => "unknown",
         }
@@ -134,6 +138,7 @@ impl AttackCategory {
             Self::CredentialAbuse,
             Self::BotActivity,
             Self::SensitiveDataExposure,
+            Self::ThreatIntelligence,
             Self::ProtocolViolation,
             Self::Unknown,
         ]
@@ -177,6 +182,7 @@ mod tests {
             AttackCategory::CredentialAbuse,
             AttackCategory::BotActivity,
             AttackCategory::SensitiveDataExposure,
+            AttackCategory::ThreatIntelligence,
             AttackCategory::ProtocolViolation,
             AttackCategory::Unknown,
         ];
@@ -218,6 +224,7 @@ mod tests {
             AttackCategory::CredentialAbuse,
             AttackCategory::BotActivity,
             AttackCategory::SensitiveDataExposure,
+            AttackCategory::ThreatIntelligence,
             AttackCategory::ProtocolViolation,
             AttackCategory::Unknown,
         ];

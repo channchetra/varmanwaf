@@ -170,6 +170,7 @@ and therefore no file key:
 | `VARMAN_WAF_PROCESSOR_POLICY` | `fail_open` (compose: `monitor_only`) | How a timed-out/failed processor call resolves: `fail_open`, `monitor_only` or `fail_closed` |
 | `VARMAN_WAF_PROCESSOR_TIMEOUT_MS` | `50` | Per-call timeout, 1–5000 ms |
 | `VARMAN_WAF_PROCESSOR_NAME` | `processor` | Name used in the processor's rule ids (`ext.<name>.<rule>`) |
+| `VARMAN_WAF_TI_FILE` | unset (bundled starter feed) | Threat-intelligence feed path (line format in `varman-waf/src/pipeline/semantic/ti_starter.txt`); `off`/`none` disables the detector |
 
 The refresh-token lifetime (30 days), the minimum pool size (`1`) and the
 server-side log batch size (`500`) are compiled-in constants with no override.

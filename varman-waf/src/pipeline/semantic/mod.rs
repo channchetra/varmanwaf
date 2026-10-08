@@ -17,6 +17,7 @@ pub mod proto;
 pub mod sql;
 pub mod ssrf;
 pub mod ssti;
+pub mod ti;
 pub mod xss;
 pub mod xxe;
 
@@ -32,5 +33,6 @@ pub use proto::PrototypePollutionDetector;
 pub use sql::SqlStructuralDetector;
 pub use ssrf::SsrfStructuralDetector;
 pub use ssti::SstiDetector;
+pub use ti::{TiDetector, TiIndicators};
 pub use xss::HtmlXssDetector;
 pub use xxe::XxeDetector;

@@ -1,0 +1,7 @@
+# Attack-tool user agents (Phase 8 threat intelligence, starter feed).
+sqlmap/1.7#stable (https://sqlmap.org)
+Nikto/2.5.0
+Mozilla/5.0 (compatible; Nmap Scripting Engine; https://nmap.org/book/nse.html)
+masscan/1.3
+Nuclei - Open-source project (github.com/projectdiscovery/nuclei)
+WPScan v3.8.25 (https://wpscan.com/wordpress-security-scanner)

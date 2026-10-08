@@ -1,0 +1,30 @@
+# VarmanWAF starter threat-intelligence feed.
+#
+# Attack-tool user agents only: every token below is an unambiguous scanner or
+# exploitation tool, so a match blocks (CRS's scanner rule blocks at PL1 too).
+# Operator feeds replace this file entirely (VARMAN_WAF_TI_FILE); use the same
+# line format.
+#
+# Format: <type> <value>   (blank lines and # comments are ignored)
+#   ua     <lowercase substring of the User-Agent header>
+#   ip     <address or CIDR>            (client IP)
+#   domain <hostname>                   (Host header, subdomains included)
+#   path   <canonical path prefix>
+ua sqlmap
+ua nikto
+ua nmap scripting engine
+ua masscan
+ua zgrab
+ua nuclei
+ua wpscan
+ua hydra
+ua gobuster
+ua dirbuster
+ua ffuf
+ua feroxbuster
+ua acunetix
+ua nessus
+ua openvas
+ua whatweb
+ua joomscan
+ua droopescan

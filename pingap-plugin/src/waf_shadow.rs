@@ -30,7 +30,8 @@ use varman_waf::pipeline::semantic::{
     BodyShapeDetector, CommandInjectionDetector, DeserializationDetector,
     DlpDetector, GraphqlAbuseDetector, HtmlXssDetector, JwtDetector,
     LdapXPathDetector, NosqlInjectionDetector, PrototypePollutionDetector,
-    SqlStructuralDetector, SsrfStructuralDetector, SstiDetector, XxeDetector,
+    SqlStructuralDetector, SsrfStructuralDetector, SstiDetector, TiDetector,
+    XxeDetector,
 };
 use varman_waf::pipeline::shadow::{self, Agreement, ShadowComparison};
 use varman_waf::{RequestData, WafAction, WafVerdict};
@@ -152,6 +153,7 @@ static SHADOW: LazyLock<ShadowRuntime> = LazyLock::new(|| ShadowRuntime {
         Box::new(JwtDetector::new()),
         Box::new(DlpDetector::new()),
         Box::new(BodyShapeDetector::new()),
+        Box::new(ti_detector()),
     ]),
     counters: ShadowCounters::default(),
 });
@@ -160,6 +162,49 @@ fn shadow_enabled_from_env() -> bool {
     std::env::var(SHADOW_ENV)
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
+}
+
+/// Threat-intelligence detector for the pipeline.
+///
+/// `VARMAN_WAF_TI_FILE` selects an operator feed (same line format as the
+/// bundled starter); unset uses the starter feed, `off`/`none` disables the
+/// detector. A missing or malformed feed logs and falls back to the starter
+/// (the safe default) — never silently to an empty detector.
+fn ti_detector() -> TiDetector {
+    match std::env::var("VARMAN_WAF_TI_FILE") {
+        Ok(value)
+            if value.trim().eq_ignore_ascii_case("off")
+                || value.trim().eq_ignore_ascii_case("none") =>
+        {
+            TiDetector::new(
+                varman_waf::pipeline::semantic::TiIndicators::default(),
+            )
+        },
+        Ok(path) if !path.trim().is_empty() => {
+            match std::fs::read_to_string(path.trim()) {
+                Ok(feed) => match TiDetector::from_feed_str(&feed) {
+                    Ok(detector) => detector,
+                    Err(error) => {
+                        tracing::error!(
+                            %error,
+                            path = %path,
+                            "invalid threat-intelligence feed; using the starter feed"
+                        );
+                        TiDetector::starter()
+                    },
+                },
+                Err(error) => {
+                    tracing::error!(
+                        %error,
+                        path = %path,
+                        "cannot read threat-intelligence feed; using the starter feed"
+                    );
+                    TiDetector::starter()
+                },
+            }
+        },
+        _ => TiDetector::starter(),
+    }
 }
 
 /// `true` when the pipeline runs (shadow or enforce mode).
