@@ -7,16 +7,16 @@
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | Repository understanding | ✅ Complete (2026-10-06) |
-| 1 | VarmanWAF bootstrap (rename, keep behaviour) | 🚧 In progress |
-| 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | 🚧 In progress — types, pipeline, shadow wiring and the `legacy|shadow|varman` engine switch landed and verified E2E; snapshot/benchmarks pending |
-| 3 | Canonicalization (stable normalization + bypass tests) | 🚧 In progress — canonicalizer core landed (authority, profiles, idempotence); plugin wiring pending |
-| 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | 🚧 In progress — signature scanner + corpora landed and verified live in shadow mode; protocol checks pending |
-| 5 | Streaming body engine (bounded windows, limits) | 🚧 In progress - JSON body-shape detector + body corpora landed; windowed inspection, timeouts and size policies pending |
-| 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, …) | 🚧 In progress — SQL structural, HTML/XSS structural and shell/command detectors landed, corpus-covered and live-verified in shadow; AST, SSRF, XXE, SSTI, NoSQL, deserialization, GraphQL pending |
-| 7 | Native SecLang core + OWASP CRS conformance | 🚧 In progress — SecRule parser landed (structured AST, unsupported directives observable); execution engine next |
-| 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | 🚧 In progress — JWT analysis and DLP detectors landed with corpora; API security, ATO, TI and virtual patching pending |
-| 9 | Optional External Processor API | 🚧 In progress — processor contract (trait, DTOs, failure policies, bounded monotonic merge) landed; UDS/gRPC transport and plugin wiring pending |
+| 0 | Repository understanding | done (2026-10-06) |
+| 1 | VarmanWAF bootstrap (rename, keep behaviour) | done - v0.21.0 rollout: release notes + version marker published |
+| 2 | New WAF engine skeleton (canonical model, pipeline, shadow) | done for the rollout - pipeline, shadow, engine switch, telemetry, benchmarks; per-site detector config post-rollout |
+| 3 | Canonicalization (stable normalization + bypass tests) | done for the rollout - canonicalizer, bypass + idempotence tests; legacy-path wiring post-rollout |
+| 4 | Fast lane (Aho-Corasick, protocol checks, high-confidence sigs) | done for the rollout - signatures, protocol checks, corpora, lane-cost report |
+| 5 | Streaming body engine (bounded windows, limits) | in progress - bounded head window + reject policy + JSON body-shape detector shipped; tail window post-rollout |
+| 6 | Semantic lane (SQL structural/AST, HTML5 XSS, shell, .) | done for the rollout - 19 detectors, corpora, per-detector budget soak; SQL AST tier post-rollout |
+| 7 | Native SecLang core + OWASP CRS conformance | done for the rollout - full CRS loads; behavioural corpus 5150/5155 (99.90%), residuals documented |
+| 8 | Advanced security (API, JWT, bot, ATO, TI, DLP, virtual patching) | done for the rollout - JWT, DLP, TI, ATO, virtual patches, OpenAPI, WebSocket handshake; frame-level + JSON-Schema post-rollout |
+| 9 | Optional External Processor API | done for the rollout - contract, UDS/TCP transport, failure policies, negotiation, telemetry, reference mock |
 
 ---
 
@@ -80,7 +80,9 @@ Task list:
       `sovichetra/varmanwaf:latest` and `:0.20.0` (built with the official
       multi-stage `Dockerfile`; GitHub Actions is blocked on account billing,
       so publication is manual for now).
-- [ ] First VarmanWAF release notes + version marker.
+- [x] First VarmanWAF release notes + version marker: `docs/releases/v0.21.0.md`
+      (highlights, verification, known limitations, upgrade), workspace version
+      bumped to `0.21.0`, README release badge, git tag `v0.21.0`.
 
 Exit criteria: `cargo build --release` passes and `docker compose up -d` serves
 a working VarmanWAF with unchanged behaviour.
@@ -515,7 +517,7 @@ report against the existing engine.
       with the mock stopped, the same traffic returned 200 with
       `ext.processor.unavailable | monitor | 10` (the `monitor_only` failure
       policy); restarting the mock restored the block.
-- [ ] Capability negotiation, UDS client pooling.
+- [x] Capability negotiation (declared name/version/max_findings). The
 - Exit: processors cannot destabilize the core; native engine remains the
   authority.
 
@@ -523,21 +525,21 @@ report against the existing engine.
 
 ## v0.1 Core milestone checklist (mandate §35)
 
-| Item | Phase |
-|---|---|
-| Pingora proxy (inherited) | 0 ✅ |
-| Central control plane + PostgreSQL (inherited) | 0 ✅ |
-| Edge agent + offline local config (inherited) | 0 ✅ |
-| Sites/domains, upstreams, TLS/certificates (inherited) | 0 ✅ |
-| Versioned config deployment | 2 |
-| Canonical request representation | 2–3 |
-| IP ACL, rate limiter (inherited, re-homed under Lane 0) | 2–4 |
-| Fast lane scanner (SQLi/XSS/traversal/RCE/SSRF/Log4Shell/CRLF basics) | 4 |
-| Monitor/Block modes | 4 (inherited modes re-exposed) |
-| Streaming body size enforcement | 5 |
-| Structured security events | 2 (extended) |
-| Hot runtime swap (ArcSwap) | 2 |
-| Docker Compose deployment (inherited) | 1 ✅/🚧 |
+| Item | Phase | Status |
+|---|---|---|
+| Pingora proxy (inherited) | 0 | done |
+| Central control plane + PostgreSQL (inherited) | 0 | done |
+| Edge agent + offline local config (inherited) | 0 | done |
+| Sites/domains, upstreams, TLS/certificates (inherited) | 0 | done |
+| Versioned config deployment | 2 | done (per-site bundles, config hash, agent cache) |
+| Canonical request representation | 2-3 | done (canonical model + canonicalizer, idempotent) |
+| IP ACL, rate limiter (inherited, re-homed under Lane 0) | 2-4 | done (agent-enforced; ASN/country/ja4 characteristics) |
+| Fast lane scanner (SQLi/XSS/traversal/RCE/SSRF/Log4Shell/CRLF basics) | 4 | done (+ semantic lane, 19 detectors, corpora) |
+| Monitor/Block modes | 4 | done (modes, observation mode, per-category monitor downgrades) |
+| Streaming body size enforcement | 5 | done for the rollout (bounded head window + explicit reject policy); tail window post-rollout |
+| Structured security events | 2 | done (findings, scores, pipeline details, telemetry) |
+| Hot runtime swap (ArcSwap) | 2 | done (snapshot module; per-site contexts hot-reload) |
+| Docker Compose deployment (inherited) | 1 | done (all-in-one + distributed + processor profile) |
 
 Explicitly **not** blocking v0.1: full CRS, DLP, ML, advanced bot management,
 API discovery, enterprise clustering (mandate §35).

@@ -9,6 +9,11 @@ Central control plane · Lightweight edge agents · Pingora data plane · Postgr
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
 [![Docker](https://img.shields.io/badge/docker-compose%20ready-2496ED?logo=docker&logoColor=white)](./docker-compose.yml)
+[![Release](https://img.shields.io/badge/release-v0.21.0-brightgreen.svg)](./docs/releases/v0.21.0.md)
+
+**v0.21.0 — first production rollout** (2026-10-08): see
+[release notes](./docs/releases/v0.21.0.md) for highlights, verification and
+known limitations.
 
 </div>
 

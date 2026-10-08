@@ -1,5 +1,9 @@
 # Compatibility Tracking
 
+> **Rollout status (v0.21.0, 2026-10-08):** this is the compatibility record for
+> the first production rollout. Highlights, verification evidence and known
+> limitations are in [`docs/releases/v0.21.0.md`](./releases/v0.21.0.md).
+
 > Honest status of ModSecurity SecLang / OWASP CRS compatibility. The VarmanWAF
 > native SecLang engine is implemented (Phase 7 in `docs/roadmap.md`) and
 > hardening continues against the upstream CRS rule files; the CRS conformance
