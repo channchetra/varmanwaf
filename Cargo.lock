@@ -4160,9 +4160,9 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry"
-version = "0.33.0"
+version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cdb0b1b267eb9db3331b434ed9ddab10d50e280a9adf9d13e5233e2002b61b5"
+checksum = "8c1f1a6ac9c875a4941e4c7c085b61e8f4daa326de03b4701768c3491a6ad9ee"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -4173,9 +4173,9 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-http"
-version = "0.33.0"
+version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee2c3625b8aa04209f7e01e513bc8044da9687fa38a9eacf59628ca5f3b87300"
+checksum = "302249bd8ee804789faaa7b5b2cbf79bc61cb864714079c644e3828af5b7e811"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4185,9 +4185,9 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-otlp"
-version = "0.33.0"
+version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "699a67345e21962a231955b9059a157e428b219fa5df8efe11f08346fb23a344"
+checksum = "0756af24841e367128ef31c831999937b8b5c5197d47914590d8f4e2e88c2e1a"
 dependencies = [
  "http",
  "opentelemetry",
@@ -4202,9 +4202,9 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-proto"
-version = "0.33.0"
+version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25da1ac11a0aeccf38d7f77ee0348715adaf8340f65ad46c94a02c6b20e2f65d"
+checksum = "d576f5dddc3299341bcd85a04be17b2564844c0c9563214f02d85f2524d1afae"
 dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",
@@ -4215,9 +4215,9 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry_sdk"
-version = "0.33.0"
+version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb39533d9d1c912123efd7d41d7e0c29d16917b60ce15b4c8d87cb1af7f67520"
+checksum = "372a912db2974d1990207006fd0e3aa0ef3fd4ad3be43c65cfaadf2206866061"
 dependencies = [
  "futures-channel",
  "futures-executor",
@@ -4499,7 +4499,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pingap-acme"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -4533,7 +4533,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-cache"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "ahash",
  "async-trait",
@@ -4566,7 +4566,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-certificate"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4592,7 +4592,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-config"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4627,7 +4627,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-core"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "TinyUFO",
  "ahash",
@@ -4656,7 +4656,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-discovery"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "async-trait",
  "bollard",
@@ -4675,7 +4675,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-health"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4697,7 +4697,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-imageoptim"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "async-trait",
  "bytemuck",
@@ -4725,7 +4725,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-location"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4746,7 +4746,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-logger"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4774,12 +4774,12 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "walkdir",
- "zstd 0.14.0",
+ "zstd 0.14.2",
 ]
 
 [[package]]
 name = "pingap-otel"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4796,7 +4796,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-performance"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4826,7 +4826,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-plugin"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4884,7 +4884,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-proxy"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "ahash",
  "async-trait",
@@ -4918,7 +4918,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-pyroscope"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "async-trait",
  "pingora",
@@ -4931,14 +4931,14 @@ dependencies = [
 
 [[package]]
 name = "pingap-sentry"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "sentry-core",
 ]
 
 [[package]]
 name = "pingap-upstream"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4969,7 +4969,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-util"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "aes-gcm-siv",
  "ahash",
@@ -4991,7 +4991,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-webhook"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "async-trait",
  "local-ip-address",
@@ -5106,7 +5106,7 @@ dependencies = [
  "unicase",
  "windows-sys 0.59.0",
  "x509-parser 0.16.0",
- "zstd 0.14.0",
+ "zstd 0.14.2",
 ]
 
 [[package]]
@@ -5728,9 +5728,9 @@ dependencies = [
 
 [[package]]
 name = "psl"
-version = "2.1.238"
+version = "2.1.241"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e6aa2cd4e8e062e78ac5d7df6206e2f8e39b624f658efd6f34f9aa1928ac5da"
+checksum = "c7319b480e204d67e759cad7886178335d26324c7c8573c126cc9dfa7350d064"
 dependencies = [
  "psl-types",
 ]
@@ -6328,9 +6328,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed"
-version = "8.12.0"
+version = "8.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9e7760e252aaba7b09f4be00e36476cf585bdb68a53552ac954cdf504ab4bc9"
+checksum = "19afa5b4b6a611de00bd1bdae6ae6f39084c9399f0679c3f52d8469cf335cc23"
 dependencies = [
  "include-flate",
  "rust-embed-impl",
@@ -6340,9 +6340,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed-impl"
-version = "8.12.0"
+version = "8.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bcfc4d6f53af43755f7a723e4b6b8794fcce052a178dd8c6c1dadc5f5343097"
+checksum = "e0d8afda6374eac59e066abee06d265247ebbaf3006cf878e2879e8356e34053"
 dependencies = [
  "mime_guess",
  "proc-macro2",
@@ -6354,9 +6354,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed-utils"
-version = "8.12.0"
+version = "8.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42ffa149f6aa81b58a5b3011d01a857c4ed12c7a732d2c51947a4c7c692185f0"
+checksum = "0d84e8ba78bd384263e5922f084cbe1b081c3b7e69add59c8fb097b879ba968a"
 dependencies = [
  "include-flate",
  "mime_guess",
@@ -7153,9 +7153,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.16.2"
+version = "1.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
+checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 dependencies = [
  "serde",
 ]
@@ -7846,9 +7846,9 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.53.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
 dependencies = [
  "bytes",
  "libc",
@@ -7884,9 +7884,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls"
-version = "0.26.5"
+version = "0.26.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0c85f2c3ef0b1cd58b36682f4b17aaa995f0e5db534d85692b4903abce21f67"
+checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
 dependencies = [
  "rustls",
  "tokio",
@@ -8432,9 +8432,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.26.1"
+version = "1.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
+checksum = "7cc1186384beb7dd8eedea376413fd654937285ea6c9cfbb928dc3043ea4b606"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -8462,7 +8462,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "varman"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "ahash",
  "anyhow",
@@ -8532,7 +8532,7 @@ dependencies = [
 
 [[package]]
 name = "varman-agent"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -8629,7 +8629,7 @@ dependencies = [
 
 [[package]]
 name = "varman-protocol"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "prost 0.14.4",
  "prost-types 0.14.4",
@@ -9426,11 +9426,11 @@ dependencies = [
 
 [[package]]
 name = "zstd"
-version = "0.14.0"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf06bd8162af0734b344780deb55b42a2429ae430870d13fcc12f238e880fe6e"
+checksum = "057cfd910cfac363a0ada849592624b4c9ff2e10bef504c3433810d78ed96f93"
 dependencies = [
- "zstd-safe 8.0.0",
+ "zstd-safe 8.1.0",
 ]
 
 [[package]]
@@ -9444,18 +9444,18 @@ dependencies = [
 
 [[package]]
 name = "zstd-safe"
-version = "8.0.0"
+version = "8.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae42c0555055784c70058d19ba8e275528e8a99a706684868ace5da4e716a4ab"
+checksum = "bdd44c6a7284e91f3717755b24315a302edd9153a01f753c3cba3d765e8eafac"
 dependencies = [
  "zstd-sys",
 ]
 
 [[package]]
 name = "zstd-sys"
-version = "2.1.0+zstd.1.5.7"
+version = "2.1.1+zstd.1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ef0a8027ec3ee71300ab3bcbcd0393f434aa72b91ca6d635a39941deae8eea0"
+checksum = "aeec9eaf2dffbbd09201e23bd0ffcbaa33bb8e9266a10734fd7ed90a85eca078"
 dependencies = [
  "cc",
  "pkg-config",
