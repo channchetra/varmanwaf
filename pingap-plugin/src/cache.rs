@@ -685,7 +685,7 @@ impl Plugin for Cache {
         // No agent, unknown host, or no match leaves the static config
         // below in charge.
         let host = get_host(req_header).unwrap_or_default();
-        let site_rules = self.resolve_site_rules(host);
+        let site_rules = self.resolve_site_rules(&host);
         let matched = if let Some(site) = site_rules.as_deref() {
             // Only gather what some expression on this site actually
             // references — the common path-only rules then collect nothing.
@@ -712,7 +712,7 @@ impl Plugin for Cache {
                 method: req_header.method.as_str(),
                 path: req_header.uri.path(),
                 full_uri,
-                host,
+                host: &host,
                 user_agent: req_header
                     .headers
                     .get(header::USER_AGENT)

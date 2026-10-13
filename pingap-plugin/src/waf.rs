@@ -3408,39 +3408,38 @@ impl Plugin for WafPlugin {
 
     /// Read-only inspection of forwarded request-body chunks: body tails
     /// beyond the early read pass, and client-to-server frames once the
-    /// connection was upgraded. An error aborts the request.
+    /// connection was upgraded. The body is never modified; a tail finding
+    /// answers the request with the standard block page (the server writes it
+    /// and aborts the upstream exchange), while a tunnel finding aborts the
+    /// connection with an error because no HTTP response is possible there.
     fn handle_request_body(
         &self,
         session: &mut Session,
         ctx: &mut Ctx,
-        body: &Option<Bytes>,
+        body: &mut Option<Bytes>,
         end_of_stream: bool,
-    ) -> pingora::Result<()> {
+    ) -> pingora::Result<Option<HttpResponse>> {
         let Some(request_id) = ctx.state.request_id.clone() else {
-            return Ok(());
+            return Ok(None);
         };
         let Some(bytes) = body.as_ref() else {
             if end_of_stream {
                 STREAMS.remove(&request_id);
             }
-            return Ok(());
+            return Ok(None);
         };
         if session.was_upgraded() {
             if !self.ws_inspection {
-                return Ok(());
+                return Ok(None);
             }
-            return self.inspect_tunnel(
-                &request_id,
-                ctx,
-                true,
-                bytes,
-                end_of_stream,
-            );
+            return self
+                .inspect_tunnel(&request_id, ctx, true, bytes, end_of_stream)
+                .map(|()| None);
         }
         if !self.tail_inspection {
-            return Ok(());
+            return Ok(None);
         }
-        self.inspect_tail(&request_id, ctx, bytes)
+        Ok(self.inspect_tail(&request_id, ctx, bytes))
     }
 
     /// Read-only inspection of upgraded traffic flowing from the upstream to
@@ -3471,27 +3470,32 @@ impl Plugin for WafPlugin {
 
 impl WafPlugin {
     /// Sliding-window scan of a forwarded body chunk. A payload found here
-    /// aborts the request: the bytes were already committed to the upstream
-    /// connection, so a clean 403 is not possible at this stage.
+    /// returns the standard block page: the server writes it to the client
+    /// (nothing has been sent downstream yet) and aborts the upstream
+    /// exchange, so a tail payload surfaces as a clean 403.
     fn inspect_tail(
         &self,
         request_id: &str,
         ctx: &mut Ctx,
         bytes: &Bytes,
-    ) -> pingora::Result<()> {
+    ) -> Option<HttpResponse> {
         let finding = with_stream(request_id, |state| {
             if state.aborted {
                 return None;
             }
             state.tail.push(bytes)
         });
-        if let Some((rule_id, detail)) = finding {
-            return self.abort_stream(request_id, ctx, &rule_id, &detail);
-        }
-        Ok(())
+        let (rule_id, detail) = finding?;
+        self.record_stream_abort(request_id, ctx, &rule_id, &detail);
+        Some(block_page(
+            request_id,
+            &format!("varman: {rule_id}: {detail}"),
+        ))
     }
 
     /// Frame inspection of an upgraded connection, one direction per call.
+    /// A finding aborts the connection with an error: no HTTP response is
+    /// possible once the tunnel is open.
     fn inspect_tunnel(
         &self,
         request_id: &str,
@@ -3514,7 +3518,11 @@ impl WafPlugin {
                     format!("malformed WebSocket frame: {reason}"),
                 ),
             };
-            return self.abort_stream(request_id, ctx, &rule_id, &detail);
+            self.record_stream_abort(request_id, ctx, &rule_id, &detail);
+            return Err(new_internal_error(
+                403,
+                format!("varman: {rule_id}: {detail}"),
+            ));
         }
         if end_of_stream {
             STREAMS.remove(request_id);
@@ -3522,18 +3530,18 @@ impl WafPlugin {
         Ok(())
     }
 
-    /// Record a stream finding and abort the connection. The client sees the
-    /// connection torn down (no HTTP response is possible at this stage); the
-    /// security event carries the full reason. The pending access entry is
-    /// preferred while it exists (tail aborts); for tunnel aborts the
-    /// snapshot taken at the 101 is used.
-    fn abort_stream(
+    /// Record a stream finding and mark the stream aborted. The security
+    /// event carries the full reason; the pending access entry is preferred
+    /// while it exists (tail aborts), and for tunnel aborts the snapshot
+    /// taken at the 101 is used. The caller decides the wire outcome: a
+    /// block page for a tail finding, a connection error inside the tunnel.
+    fn record_stream_abort(
         &self,
         request_id: &str,
         _ctx: &mut Ctx,
         rule_id: &str,
         detail: &str,
-    ) -> pingora::Result<()> {
+    ) {
         let facts = with_stream(request_id, |state| {
             state.aborted = true;
             state.facts.clone()
@@ -3581,10 +3589,6 @@ impl WafPlugin {
             });
         }
         STREAMS.remove(request_id);
-        Err(new_internal_error(
-            403,
-            format!("varman: {rule_id}: {detail}"),
-        ))
     }
 }
 
