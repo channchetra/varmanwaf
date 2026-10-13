@@ -286,6 +286,12 @@ struct SiteContext {
     /// Per-site WAF engine mode from `waf_settings.engine_mode`: empty or
     /// `inherit` follows the process-wide `VARMAN_WAF_ENGINE`.
     engine_mode: String,
+    /// Per-site enforcement mode from `waf_settings.mode`; `None` when no
+    /// site context exists (standalone mode). The mode caps every engine
+    /// path after inspection: `monitor` records findings without enforcing
+    /// and `off` skips inspection entirely, no matter which engine (legacy,
+    /// pipeline, custom layers, processor) escalated the verdict.
+    mode: Option<WafMode>,
     /// Per-site monitor-only categories (`waf_settings.monitor_categories`),
     /// applied to the Varman pipeline so both engines agree on the site's
     /// policy.
@@ -353,6 +359,7 @@ impl SiteContext {
             engine_mode: waf_cfg
                 .map(|cfg| cfg.engine_mode.clone())
                 .unwrap_or_default(),
+            mode: waf_cfg.map(site_mode),
             monitor_categories: waf_cfg
                 .map(|cfg| cfg.monitor_categories.clone())
                 .unwrap_or_default(),
@@ -1998,12 +2005,37 @@ fn parse_monitor_stacks(names: &[String]) -> StackSet {
 }
 
 /// Build a [`WafEngine`] from control-plane site WAF config.
-fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
-    let mode = match cfg.mode {
+/// Maps a site's enforcement mode (`waf_settings.mode`) onto the engine mode.
+fn site_mode(cfg: &CacheWafConfig) -> WafMode {
+    match cfg.mode {
         CacheWafMode::Off => WafMode::Off,
         CacheWafMode::Monitor => WafMode::Monitor,
         CacheWafMode::Block => WafMode::Block,
-    };
+    }
+}
+
+/// Applies the site's enforcement mode to the escalated verdict: `monitor`
+/// downgrades a Block/Challenge to a Monitor verdict (recorded, never
+/// enforced) and `off` enforces nothing. Block leaves the verdict alone.
+fn cap_to_site_mode(verdict: WafVerdict, mode: WafMode) -> WafVerdict {
+    match mode {
+        WafMode::Off => WafVerdict {
+            action: WafAction::Pass,
+            ..verdict
+        },
+        WafMode::Monitor => match verdict.action {
+            WafAction::Block | WafAction::Challenge => WafVerdict {
+                action: WafAction::Monitor,
+                ..verdict
+            },
+            _ => verdict,
+        },
+        WafMode::Block => verdict,
+    }
+}
+
+fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
+    let mode = site_mode(cfg);
     let rules: Vec<CompiledRule> = cfg
         .custom_rules
         .iter()
@@ -3103,6 +3135,15 @@ impl Plugin for WafPlugin {
             }
             return Ok(RequestPluginResult::Skipped);
         }
+        // A site-level `off` mode skips enforcement entirely, mirroring the
+        // plugin-level switch above: the site is configured to enforce
+        // nothing, so neither the legacy engine nor the pipeline runs.
+        if context.as_ref().and_then(|site| site.mode) == Some(WafMode::Off) {
+            if let Some(agent) = &agent {
+                agent.record_request(false);
+            }
+            return Ok(RequestPluginResult::Skipped);
+        }
 
         // ── Inspect ──
         // The body (if any) was already read during log capture; when body
@@ -3189,6 +3230,16 @@ impl Plugin for WafPlugin {
                     &processor_verdict,
                 );
             }
+        }
+
+        // ── The site's enforcement mode caps every engine path, including
+        // the escalate-only ones (pipeline, custom layers, external
+        // processor): `monitor` records findings without enforcing and `off`
+        // (handled above) enforces nothing. Access control decided before
+        // inspection - mTLS, basic auth, paused sites, dynamic IP blocks -
+        // is never downgraded. ──
+        if let Some(mode) = context.as_ref().and_then(|site| site.mode) {
+            verdict = cap_to_site_mode(verdict, mode);
         }
 
         // Custom rule ids carry no name of their own; the site context maps
@@ -3765,6 +3816,43 @@ ml_threshold = 0.75
     }
 
     #[test]
+    fn site_mode_caps_the_escalated_verdict() {
+        let block = WafVerdict {
+            action: WafAction::Block,
+            score: 55,
+            matched_rules: vec!["sig.sqli.union_bare".to_string()],
+            details: "varman-pipeline: 3 finding(s)".to_string(),
+            ..WafVerdict::pass()
+        };
+
+        // Monitor records the finding but never enforces.
+        let capped = cap_to_site_mode(block.clone(), WafMode::Monitor);
+        assert_eq!(capped.action, WafAction::Monitor);
+        assert_eq!(capped.score, 55);
+        assert_eq!(capped.matched_rules, block.matched_rules);
+
+        // Off enforces nothing.
+        assert_eq!(
+            cap_to_site_mode(block.clone(), WafMode::Off).action,
+            WafAction::Pass
+        );
+
+        // Block leaves the verdict alone, and a Monitor verdict stays one.
+        assert_eq!(
+            cap_to_site_mode(block, WafMode::Block).action,
+            WafAction::Block
+        );
+        let monitor = WafVerdict {
+            action: WafAction::Monitor,
+            ..WafVerdict::pass()
+        };
+        assert_eq!(
+            cap_to_site_mode(monitor, WafMode::Monitor).action,
+            WafAction::Monitor
+        );
+    }
+
+    #[test]
     fn toml_body_read_timeout_parses() {
         let plugin = WafPlugin::new(
             &toml::from_str::<PluginConf>(
@@ -4174,6 +4262,80 @@ advanced_mode = true
             })
             .unwrap();
         installed
+    }
+
+    /// Builds the one-site config used by the mode-cap test: `example.com`
+    /// runs the Varman pipeline with the given site mode (1 = monitor,
+    /// 2 = block). The config hash differs per mode so the plugin's per-site
+    /// cache cannot serve a stale context between the two phases.
+    fn monitor_varman_site(mode: i32) -> proto::SiteConfig {
+        proto::SiteConfig {
+            sites: vec![proto::Site {
+                id: "site-1".to_string(),
+                name: "example".to_string(),
+                domain: "example.com".to_string(),
+                alternate_domains: Vec::new(),
+                rules: Some(proto::RuleBundle {
+                    site_id: "site-1".to_string(),
+                    config_hash: format!("hash-{mode}"),
+                    waf: Some(proto::WafConfig {
+                        enabled: true,
+                        mode,
+                        engine_mode: "varman".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            config_hash: format!("hash-{mode}"),
+            updated_at: None,
+        }
+    }
+
+    /// Runs the union-select probe through the plugin for `example.com`.
+    async fn run_query_probe(plugin: &WafPlugin) -> RequestPluginResult {
+        let input_header = "GET /?id=1'%20UNION%20SELECT%20username,password%20FROM%20users-- \
+                            HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        ctx.conn.client_ip = Some("203.0.113.7".to_string());
+        plugin
+            .handle_request(PluginStep::EarlyRequest, &mut session, &mut ctx)
+            .await
+            .unwrap()
+    }
+
+    /// A site that runs the Varman pipeline in monitor mode never enforces:
+    /// the site's `mode` caps every engine path, including the pipeline's
+    /// escalation to Block.
+    #[tokio::test]
+    async fn test_site_monitor_mode_caps_the_pipeline() {
+        let (_guard, agent, _dir) = install_test_agent().await;
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+
+        // Control: the same site in block mode enforces the finding, so the
+        // monitor assertion below is meaningful.
+        agent
+            .rule_cache
+            .update_from_site_config(&monitor_varman_site(2))
+            .unwrap();
+        assert!(matches!(
+            run_query_probe(&plugin).await,
+            RequestPluginResult::Respond(_)
+        ));
+
+        // Monitor mode caps it: detected and recorded, never enforced.
+        agent
+            .rule_cache
+            .update_from_site_config(&monitor_varman_site(1))
+            .unwrap();
+        assert!(run_query_probe(&plugin).await == RequestPluginResult::Continue);
     }
 
     /// A paused site answers with a 503 maintenance page (and a Retry-After
