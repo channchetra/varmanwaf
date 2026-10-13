@@ -7,7 +7,7 @@
 //! the site overlay applied, then the site's own settings as the fallback),
 //! which is what the dashboard preview and the tests assert against.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -33,13 +33,18 @@ use crate::models::{
     site_waf_policy_override, waf_policy, waf_policy_layer, waf_policy_version,
     waf_settings,
 };
-use crate::policy::{self, LAYER_KINDS};
+use crate::policy::{self, LAYER_CUSTOM_RULES, LAYER_KINDS};
+use crate::policy_content;
 
 /// Routes contributed to `/api/v1`.
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/policies", get(list_policies).post(create_policy))
         .route("/policies/preview", post(preview_policy))
+        .route("/policies/templates", get(list_templates))
+        .route("/policies/recipes", get(list_recipes))
+        .route("/policies/from-template", post(create_from_template))
+        .route("/policies/{id}/recipes", post(apply_recipe))
         .route(
             "/policies/{id}",
             get(get_policy).put(update_policy).delete(delete_policy),
@@ -430,6 +435,29 @@ async fn create_policy(
     for (kind, config) in &payload.layers {
         validate_layer_payload(kind, config)?;
     }
+    let layers: BTreeMap<String, Value> = payload.layers.into_iter().collect();
+    let policy = create_policy_with_layers(
+        &state,
+        &current.email,
+        name,
+        payload.description,
+        payload.enabled.unwrap_or(true),
+        &layers,
+    )
+    .await?;
+    respond_with_detail(&state, &policy).await
+}
+
+/// Creates the policy row and its layers, rejecting duplicate names and
+/// recording the first version. Shared by the plain and template creates.
+async fn create_policy_with_layers(
+    state: &AppState,
+    actor: &str,
+    name: String,
+    description: String,
+    enabled: bool,
+    layers: &BTreeMap<String, Value>,
+) -> Result<waf_policy::Model, ApiError> {
     if waf_policy::Entity::find()
         .filter(waf_policy::Column::Name.eq(name.clone()))
         .one(&state.db)
@@ -446,8 +474,8 @@ async fn create_policy(
     let policy = waf_policy::ActiveModel {
         id: Set(id),
         name: Set(name),
-        description: Set(payload.description),
-        enabled: Set(payload.enabled.unwrap_or(true)),
+        description: Set(description),
+        enabled: Set(enabled),
         revision: Set(1),
         created_at: Set(now),
         updated_at: Set(now),
@@ -456,12 +484,127 @@ async fn create_policy(
     .await?;
 
     // Store layers in a deterministic order so timestamps never race.
-    let mut kinds: Vec<&String> = payload.layers.keys().collect();
+    let mut kinds: Vec<&String> = layers.keys().collect();
     kinds.sort();
     for kind in kinds {
-        let config = payload.layers.get(kind).expect("key from keys()");
-        insert_layer(&state, id, kind, config).await?;
+        let config = layers.get(kind).expect("key from keys()");
+        insert_layer(state, id, kind, config).await?;
     }
+    policy::record_version(
+        &state.db,
+        id,
+        Some(actor),
+        waf_policy_version::source::API,
+    )
+    .await?;
+
+    tracing::info!(policy_id = %id, name = %policy.name, "waf policy created");
+    Ok(policy)
+}
+
+/// `GET /api/v1/policies/templates` - the built-in starter policies.
+async fn list_templates(
+    _current: AuthUser,
+) -> Json<Vec<policy_content::TemplateView>> {
+    Json(policy_content::templates())
+}
+
+/// `GET /api/v1/policies/recipes` - the built-in rule recipes.
+async fn list_recipes(
+    _current: AuthUser,
+) -> Json<&'static [policy_content::Recipe]> {
+    Json(policy_content::recipes())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FromTemplateRequest {
+    pub template_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// `POST /api/v1/policies/from-template` - creates a policy from a
+/// built-in template.
+async fn create_from_template(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Json(payload): Json<FromTemplateRequest>,
+) -> Result<Json<PolicyDetail>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
+    let name = validate_name(&payload.name)?;
+    let layers = policy_content::template_layers(&payload.template_id)
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "unknown template '{}'",
+                payload.template_id
+            ))
+        })?;
+    for (kind, config) in &layers {
+        validate_layer_payload(kind, config)?;
+    }
+    let policy = create_policy_with_layers(
+        &state,
+        &current.email,
+        name,
+        payload.description,
+        true,
+        &layers,
+    )
+    .await?;
+    tracing::info!(
+        policy_id = %policy.id,
+        template = %payload.template_id,
+        "policy created from template"
+    );
+    respond_with_detail(&state, &policy).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApplyRecipeRequest {
+    pub recipe_id: String,
+    #[serde(default)]
+    pub params: BTreeMap<String, String>,
+}
+
+/// A recipe application: the rendered rule plus the updated policy.
+#[derive(Debug, Serialize)]
+pub struct RecipeApplied {
+    pub rule: policy::PolicyRule,
+    pub policy: PolicyDetail,
+}
+
+/// `POST /api/v1/policies/{id}/recipes` - renders a recipe into the policy's
+/// custom rules (replacing a rule with the same name), records a version
+/// and pushes the change to assigned sites.
+async fn apply_recipe(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(id): Path<String>,
+    Json(payload): Json<ApplyRecipeRequest>,
+) -> Result<Json<RecipeApplied>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
+    let id = parse_uuid(&id, "policy id")?;
+    let policy = load_policy(&state, id).await?;
+    let rule = policy_content::render_recipe(&payload.recipe_id, &payload.params)
+        .map_err(ApiError::bad_request)?;
+
+    let existing = waf_policy_layer::Entity::find()
+        .filter(waf_policy_layer::Column::PolicyId.eq(id))
+        .filter(waf_policy_layer::Column::Kind.eq(LAYER_CUSTOM_RULES))
+        .one(&state.db)
+        .await?;
+    let mut rules = existing
+        .as_ref()
+        .map(|row| policy::rules_from_layer(&row.config))
+        .unwrap_or_default();
+    // Re-applying the same recipe updates its rule instead of duplicating.
+    rules.retain(|existing| existing.name != rule.name);
+    rules.push(rule.clone());
+    let config = serde_json::json!({ "rules": rules });
+    validate_layer_payload(LAYER_CUSTOM_RULES, &config)?;
+    insert_layer(&state, id, LAYER_CUSTOM_RULES, &config).await?;
+    let updated = bump_revision(&state, &policy).await?;
     policy::record_version(
         &state.db,
         id,
@@ -469,9 +612,18 @@ async fn create_policy(
         waf_policy_version::source::API,
     )
     .await?;
-
-    tracing::info!(policy_id = %id, name = %policy.name, "waf policy created");
-    respond_with_detail(&state, &policy).await
+    tracing::info!(
+        policy_id = %id,
+        recipe = %payload.recipe_id,
+        rule = %rule.name,
+        "policy recipe applied"
+    );
+    resync_assigned_sites(&state, id, &current.email).await?;
+    let detail = respond_with_detail(&state, &updated).await?;
+    Ok(Json(RecipeApplied {
+        rule,
+        policy: detail.0,
+    }))
 }
 
 /// `GET /api/v1/policies/{id}` - one policy with layers and sites.

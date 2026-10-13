@@ -217,9 +217,38 @@ export interface PolicyVersionDiff {
   layers: LayerDiff[]
 }
 
+/** Built-in starter policy (`GET /policies/templates`). */
+export interface PolicyTemplate {
+  id: string
+  name: string
+  description: string
+  layers: Record<string, unknown>
+}
+
+/** One parameter of a rule recipe. */
+export interface RecipeParam {
+  name: string
+  label: string
+  placeholder: string
+  required: boolean
+}
+
+/** Built-in rule recipe (`GET /policies/recipes`). */
+export interface Recipe {
+  id: string
+  name: string
+  description: string
+  params: RecipeParam[]
+}
+
+/** Result of applying a recipe: the rendered rule + updated policy. */
+export interface RecipeApplied {
+  rule: PolicyRule
+  policy: PolicyDetail
+}
+
 /** Per-node application state for one site. */
-export interface ApplyStatus {
-  site_id: string
+export interface ApplyStatus {  site_id: string
   published: {
     config_hash: string
     policy_revision: number
@@ -329,6 +358,21 @@ export const policiesApi = {
 
   applyStatus: (siteId: string) =>
     apiClient.get<ApplyStatus>(`/sites/${siteId}/apply-status`),
+
+  templates: () => apiClient.get<PolicyTemplate[]>('/policies/templates'),
+
+  recipes: () => apiClient.get<Recipe[]>('/policies/recipes'),
+
+  fromTemplate: (data: {
+    template_id: string
+    name: string
+    description?: string
+  }) => apiClient.post<PolicyDetail>('/policies/from-template', data),
+
+  applyRecipe: (
+    id: string,
+    data: { recipe_id: string; params: Record<string, string> },
+  ) => apiClient.post<RecipeApplied>(`/policies/${id}/recipes`, data),
 }
 
 export const policyKeys = {
@@ -345,6 +389,8 @@ export const policyKeys = {
     ['sites', siteId, 'effective-config'] as const,
   applyStatus: (siteId: string) =>
     ['sites', siteId, 'apply-status'] as const,
+  templates: () => [...policyKeys.all, 'templates'] as const,
+  recipes: () => [...policyKeys.all, 'recipes'] as const,
 }
 
 /** Built-in managed-rule catalogue (`GET /managed-rules`). */

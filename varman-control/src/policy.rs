@@ -481,6 +481,12 @@ fn parse_rules(config: &Value) -> Vec<PolicyRule> {
         .unwrap_or_default()
 }
 
+/// Parses a validated `custom_rules` payload into rules (public wrapper for
+/// the recipe merge path).
+pub fn rules_from_layer(config: &Value) -> Vec<PolicyRule> {
+    parse_rules(config)
+}
+
 fn validate_rule_overrides(config: &Value) -> Result<(), String> {
     let map = as_object(LAYER_RULE_OVERRIDES, config)?;
     for (key, value) in map {

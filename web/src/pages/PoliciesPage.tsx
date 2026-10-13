@@ -245,13 +245,31 @@ function CreatePolicyDialog({
   const toast = useToast()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [templateId, setTemplateId] = useState('')
+
+  const templates = useQuery({
+    queryKey: policyKeys.templates(),
+    queryFn: () => policiesApi.templates(),
+    enabled: open,
+  })
+  const selected = (templates.data ?? []).find(
+    (template) => template.id === templateId,
+  )
 
   const create = useMutation({
-    mutationFn: () => policiesApi.create({ name, description }),
+    mutationFn: () =>
+      templateId
+        ? policiesApi.fromTemplate({
+            template_id: templateId,
+            name,
+            description,
+          })
+        : policiesApi.create({ name, description }),
     onSuccess: (policy) => {
       toast.success(t('pages.policies.created'), policy.name)
       setName('')
       setDescription('')
+      setTemplateId('')
       onCreated(policy.id)
     },
     onError: (error) => {
@@ -267,6 +285,19 @@ function CreatePolicyDialog({
       description={t('pages.policies.newHint')}
     >
       <div className="space-y-4 px-5 py-4">
+        <Select
+          label={t('pages.policies.template')}
+          hint={selected?.description ?? t('pages.policies.templateHint')}
+          value={templateId}
+          onChange={(e) => setTemplateId(e.target.value)}
+          options={[
+            { value: '', label: t('pages.policies.blank') },
+            ...(templates.data ?? []).map((template) => ({
+              value: template.id,
+              label: template.name,
+            })),
+          ]}
+        />
         <Input
           label={t('pages.policies.name')}
           value={name}
@@ -1216,6 +1247,7 @@ function CustomRulesForm({
     onSuccess: onStored,
   })
   const [rules, setRules] = useState<PolicyRule[]>(stored?.rules ?? [])
+  const [recipeOpen, setRecipeOpen] = useState(false)
 
   const patch = (index: number, next: Partial<PolicyRule>) => {
     setRules((current) =>
@@ -1322,13 +1354,18 @@ function CustomRulesForm({
           </div>
         ))}
         {canWrite && (
-          <Button
-            size="sm"
-            icon={<Plus weight="bold" className="h-4 w-4" />}
-            onClick={() => setRules((current) => [...current, emptyRule()])}
-          >
-            {t('pages.policies.fields.addRule')}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              icon={<Plus weight="bold" className="h-4 w-4" />}
+              onClick={() => setRules((current) => [...current, emptyRule()])}
+            >
+              {t('pages.policies.fields.addRule')}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setRecipeOpen(true)}>
+              {t('pages.policies.fromRecipe')}
+            </Button>
+          </div>
         )}
       </div>
       <LayerFooter
@@ -1338,7 +1375,112 @@ function CustomRulesForm({
         onSave={() => save.mutate({ rules })}
         onRemove={() => remove.mutate()}
       />
+      {recipeOpen && (
+        <RecipeDialog
+          policyId={policyId}
+          onClose={() => setRecipeOpen(false)}
+          onApplied={(rule) => {
+            // The server already stored the layer; merge into the local
+            // draft so the editor reflects it immediately.
+            setRules((current) => [
+              ...current.filter((existing) => existing.name !== rule.name),
+              rule,
+            ])
+            setRecipeOpen(false)
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+/** Recipe gallery: pick a recipe, fill its parameters, apply it. */
+function RecipeDialog({
+  policyId,
+  onClose,
+  onApplied,
+}: {
+  policyId: string
+  onClose: () => void
+  onApplied: (rule: PolicyRule) => void
+}) {
+  const { t } = useTranslation()
+  const toast = useToast()
+  const recipes = useQuery({
+    queryKey: policyKeys.recipes(),
+    queryFn: () => policiesApi.recipes(),
+  })
+  const [recipeId, setRecipeId] = useState('')
+  const [params, setParams] = useState<Record<string, string>>({})
+  const recipe = (recipes.data ?? []).find((entry) => entry.id === recipeId)
+
+  const apply = useMutation({
+    mutationFn: () =>
+      policiesApi.applyRecipe(policyId, { recipe_id: recipeId, params }),
+    onSuccess: (result) => {
+      toast.success(t('pages.policies.recipeApplied'), result.rule.name)
+      onApplied(result.rule)
+    },
+    onError: (error) =>
+      toast.error(t('pages.policies.recipeFailed'), String(error)),
+  })
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="md"
+      title={t('pages.policies.fromRecipe')}
+      description={t('pages.policies.recipeHint')}
+    >
+      <div className="space-y-3 px-5 py-4">
+        <Select
+          label={t('pages.policies.recipe')}
+          value={recipeId}
+          onChange={(e) => {
+            setRecipeId(e.target.value)
+            setParams({})
+          }}
+          options={[
+            { value: '', label: t('pages.policies.recipePick') },
+            ...(recipes.data ?? []).map((entry) => ({
+              value: entry.id,
+              label: entry.name,
+            })),
+          ]}
+        />
+        {recipe && (
+          <p className="text-[13px] text-fg-subtle">{recipe.description}</p>
+        )}
+        {recipe?.params.map((param) => (
+          <Input
+            key={param.name}
+            label={param.label}
+            placeholder={param.placeholder}
+            value={params[param.name] ?? ''}
+            onChange={(e) =>
+              setParams((current) => ({
+                ...current,
+                [param.name]: e.target.value,
+              }))
+            }
+          />
+        ))}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            variant="primary"
+            loading={apply.isPending}
+            disabled={!recipeId}
+            onClick={() => apply.mutate()}
+          >
+            {t('pages.policies.recipeApply')}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
   )
 }
 
