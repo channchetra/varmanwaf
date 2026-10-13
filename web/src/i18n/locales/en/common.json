@@ -238,7 +238,8 @@
       "layers": {
         "engine": "Engine",
         "crs": "CRS tuning",
-        "custom_rules": "Custom rules"
+        "custom_rules": "Custom rules",
+        "rule_overrides": "Rule tuning"
       },
       "fields": {
         "wafEnabled": "WAF switch",
@@ -265,7 +266,15 @@
         "ruleAction": "Action",
         "ruleMode": "Mode",
         "ruleSeverity": "Severity",
-        "ruleTags": "Tags"
+        "ruleTags": "Tags",
+        "ruleTuningHint": "Per-rule tuning applied to every site following this policy: monitor records findings without enforcing, disable skips the rule entirely, score override replaces its anomaly contribution.",
+        "tunedCount": "{{n}} rule(s) tuned",
+        "override": {
+          "default": "Default",
+          "monitor": "Monitor",
+          "disable": "Disable",
+          "score_override": "Score override"
+        }
       }
     },
     "sitePolicy": {
@@ -293,6 +302,8 @@
       "sourcePolicy": "Policy: {{name}}",
       "sourceSite": "Site settings",
       "modeDerived": "derived from rules",
+      "disabledRules": "Disabled rules",
+      "ruleScores": "Score overrides",
       "rulesTitle": "Custom rules ({{n}})",
       "noRules": "No policy rules reach this site.",
       "effectiveUnavailable": "Effective configuration is unavailable right now."

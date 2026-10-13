@@ -142,6 +142,8 @@ pub struct EffectiveConfigView {
     pub crs: Value,
     /// Policy custom rules (policy layer first, overlay rules after).
     pub rules: Vec<policy::PolicyRule>,
+    /// Effective managed-rule overrides (policy first, overlay on top).
+    pub overrides: Vec<policy::RuleOverrideEntry>,
     /// What the next bundle will carry, layer applied over the site row.
     pub effective: policy::EffectiveEngine,
 }
@@ -805,6 +807,7 @@ async fn get_effective_config(
         engine: Value::Object(resolved.engine.clone()),
         crs: Value::Object(resolved.crs.clone()),
         rules: resolved.rules.clone(),
+        overrides: resolved.overrides.clone(),
         effective,
     }))
 }

@@ -309,6 +309,20 @@ export function PolicyPage() {
                     '—'
                   }
                 />
+                <EffectiveRow
+                  label={t('pages.sitePolicy.disabledRules')}
+                  value={
+                    effectiveData.effective.disabled_rules.join(', ') || '—'
+                  }
+                />
+                <EffectiveRow
+                  label={t('pages.sitePolicy.ruleScores')}
+                  value={
+                    Object.entries(effectiveData.effective.rule_scores)
+                      .map(([id, score]) => `${id}=${score}`)
+                      .join(', ') || '—'
+                  }
+                />
               </dl>
 
               <div>

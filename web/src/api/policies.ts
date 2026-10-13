@@ -11,7 +11,11 @@ import { apiClient } from './client'
  * by accident.
  */
 
-export type PolicyLayerKind = 'engine' | 'crs' | 'custom_rules'
+export type PolicyLayerKind =
+  | 'engine'
+  | 'crs'
+  | 'custom_rules'
+  | 'rule_overrides'
 
 export interface PolicyRef {
   id: string
@@ -82,6 +86,31 @@ export interface CustomRulesLayerConfig {
   rules?: PolicyRule[]
 }
 
+/**
+ * One managed-rule tuning entry inside a `rule_overrides` layer.
+ * `score` is required for `score_override` and rejected otherwise.
+ */
+export interface RuleOverrideEntry {
+  rule_id: string
+  action: 'default' | 'disable' | 'monitor' | 'score_override'
+  score?: number
+}
+
+/** `rule_overrides` layer payload. */
+export interface RuleOverridesLayerConfig {
+  overrides?: RuleOverrideEntry[]
+}
+
+/** `GET /managed-rules` - the built-in managed-rule catalogue. */
+export interface ManagedRuleInfo {
+  id: string
+  name: string
+  action: string
+  severity: number
+  tags: string[]
+  stacks: string[]
+}
+
 /** The engine knobs the next bundle will actually carry for a site. */
 export interface EffectiveEngine {
   waf_enabled: boolean
@@ -92,6 +121,8 @@ export interface EffectiveEngine {
   monitor_categories: string[]
   monitor_stacks: string[]
   monitor_managed_rules: string[]
+  disabled_rules: string[]
+  rule_scores: Record<string, number>
 }
 
 export interface EffectiveConfig {
@@ -103,6 +134,7 @@ export interface EffectiveConfig {
   engine: EngineLayerConfig
   crs: CrsLayerConfig
   rules: PolicyRule[]
+  overrides: RuleOverrideEntry[]
   effective: EffectiveEngine
 }
 
@@ -134,9 +166,7 @@ export interface UpdatePolicyRequest {
 }
 
 export const policiesApi = {
-  list: () => apiClient.get<PolicySummary[]>('/policies'),
-
-  get: (id: string) => apiClient.get<PolicyDetail>(`/policies/${id}`),
+  list: () => apiClient.get<PolicySummary[]>('/policies'),  get: (id: string) => apiClient.get<PolicyDetail>(`/policies/${id}`),
 
   create: (data: CreatePolicyRequest) =>
     apiClient.post<PolicyDetail>('/policies', data),
@@ -185,6 +215,15 @@ export const policyKeys = {
     ['sites', siteId, 'policy-override'] as const,
   siteEffective: (siteId: string) =>
     ['sites', siteId, 'effective-config'] as const,
+}
+
+/** Built-in managed-rule catalogue (`GET /managed-rules`). */
+export const managedRulesApi = {
+  list: () => apiClient.get<ManagedRuleInfo[]>('/managed-rules'),
+}
+
+export const managedRuleKeys = {
+  all: ['managed-rules'] as const,
 }
 
 /**

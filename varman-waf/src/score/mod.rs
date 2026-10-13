@@ -127,6 +127,33 @@ impl AnomalyScorer {
         self.add_severity_hit_ex(breakdown, severity, false);
     }
 
+    /// [`AnomalyScorer::add_severity_hit`] with an explicit point value -
+    /// the per-rule score override. Family sub-scores stay untouched: the
+    /// override replaces this rule's own aggregate contribution only.
+    pub fn add_points_hit(
+        &self,
+        breakdown: &mut ScoreBreakdown,
+        points: u32,
+    ) {
+        self.add_points_hit_ex(breakdown, points, false);
+    }
+
+    /// [`AnomalyScorer::add_points_hit`] with a monitor-only downgrade flag
+    /// (see [`AnomalyScorer::add_severity_hit_ex`]).
+    pub fn add_points_hit_ex(
+        &self,
+        breakdown: &mut ScoreBreakdown,
+        points: u32,
+        monitored: bool,
+    ) {
+        breakdown.total = breakdown.total.saturating_add(points);
+        if !monitored {
+            breakdown.block_total =
+                breakdown.block_total.saturating_add(points);
+        }
+        breakdown.overall_class = self.classify(breakdown.block_total);
+    }
+
     /// [`AnomalyScorer::add_severity_hit`] with a monitor-only downgrade
     /// flag: downgraded hits keep the aggregate (visibility) but are
     /// excluded from the blocking subset.

@@ -37,9 +37,17 @@ pub const LAYER_ENGINE: &str = "engine";
 pub const LAYER_CRS: &str = "crs";
 /// Custom-rules layer kind: `{ "rules": [ ... ] }`, ordered as written.
 pub const LAYER_CUSTOM_RULES: &str = "custom_rules";
+/// Rule-overrides layer kind: `{ "overrides": [ ... ] }`, per-managed-rule
+/// tuning (disable / monitor / score override) in data.
+pub const LAYER_RULE_OVERRIDES: &str = "rule_overrides";
 
 /// Every layer kind a policy (or a site override) may carry.
-pub const LAYER_KINDS: [&str; 3] = [LAYER_ENGINE, LAYER_CRS, LAYER_CUSTOM_RULES];
+pub const LAYER_KINDS: [&str; 4] = [
+    LAYER_ENGINE,
+    LAYER_CRS,
+    LAYER_CUSTOM_RULES,
+    LAYER_RULE_OVERRIDES,
+];
 
 /// Longest accepted custom rule expression.
 const MAX_EXPRESSION_LEN: usize = 4096;
@@ -50,6 +58,75 @@ const MAX_TAG_LEN: usize = 64;
 /// Upper bounds that keep one layer payload bounded.
 const MAX_RULES_PER_LAYER: usize = 200;
 const MAX_TAGS_PER_RULE: usize = 16;
+const MAX_OVERRIDES_PER_LAYER: usize = 200;
+
+/// Actions a managed-rule override can take.
+pub mod override_action {
+    /// Clears an override; only meaningful in a site overlay, where it
+    /// removes the policy's entry for that rule.
+    pub const DEFAULT: &str = "default";
+    /// Skips the rule entirely: no match, no score, no event.
+    pub const DISABLE: &str = "disable";
+    /// Matches and records the rule, never enforces its action.
+    pub const MONITOR: &str = "monitor";
+    /// Replaces the rule's anomaly contribution with `score`; the rule's
+    /// own action still applies.
+    pub const SCORE_OVERRIDE: &str = "score_override";
+
+    /// Every accepted action, in documentation order.
+    pub const ALL: [&str; 4] = [DEFAULT, DISABLE, MONITOR, SCORE_OVERRIDE];
+}
+
+/// One managed-rule tuning entry inside a `rule_overrides` layer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleOverrideEntry {
+    /// Managed rule id (`VARMAN-…`); only ids this engine ships are accepted.
+    pub rule_id: String,
+    pub action: String,
+    /// Required for `score_override`; rejected for the other actions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<u32>,
+}
+
+impl RuleOverrideEntry {
+    fn validate(&self) -> Result<(), String> {
+        if !MANAGED_RULES.contains(&self.rule_id.as_str()) {
+            return Err(format!(
+                "unknown managed rule '{}' (expected one of: {})",
+                self.rule_id,
+                MANAGED_RULES.join(", ")
+            ));
+        }
+        if !override_action::ALL.contains(&self.action.as_str()) {
+            return Err(format!(
+                "unknown action '{}' (expected one of: {})",
+                self.action,
+                override_action::ALL.join(", ")
+            ));
+        }
+        match (self.action.as_str(), self.score) {
+            (override_action::SCORE_OVERRIDE, Some(score)) => {
+                if !(1..=255).contains(&score) {
+                    return Err("'score' must be between 1 and 255".to_string());
+                }
+            }
+            (override_action::SCORE_OVERRIDE, None) => {
+                return Err(
+                    "'score' is required for the score_override action".to_string()
+                );
+            }
+            (_, Some(_)) => {
+                return Err(
+                    "'score' is only valid with the score_override action"
+                        .to_string(),
+                );
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
 
 /// True when `kind` names a layer this build understands.
 pub fn is_layer_kind(kind: &str) -> bool {
@@ -152,6 +229,7 @@ pub fn validate_layer(kind: &str, config: &Value) -> Result<(), String> {
         LAYER_ENGINE => validate_engine(config),
         LAYER_CRS => validate_crs(config),
         LAYER_CUSTOM_RULES => validate_custom_rules(config),
+        LAYER_RULE_OVERRIDES => validate_rule_overrides(config),
         other => Err(format!(
             "unknown layer kind '{other}' (expected one of: {})",
             LAYER_KINDS.join(", ")
@@ -323,6 +401,75 @@ fn parse_rules(config: &Value) -> Vec<PolicyRule> {
         .unwrap_or_default()
 }
 
+fn validate_rule_overrides(config: &Value) -> Result<(), String> {
+    let map = as_object(LAYER_RULE_OVERRIDES, config)?;
+    for (key, value) in map {
+        match key.as_str() {
+            "overrides" => {
+                let items = value.as_array().ok_or_else(|| {
+                    "'overrides' must be an array of rule override objects"
+                        .to_string()
+                })?;
+                if items.len() > MAX_OVERRIDES_PER_LAYER {
+                    return Err(format!(
+                        "'overrides' must hold at most {MAX_OVERRIDES_PER_LAYER} entries"
+                    ));
+                }
+                for (index, item) in items.iter().enumerate() {
+                    parse_override(item)
+                        .map_err(|err| format!("overrides[{index}]: {err}"))?;
+                }
+            }
+            other => {
+                return Err(format!("unknown rule_overrides key '{other}'"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Parses and validates one override entry.
+fn parse_override(value: &Value) -> Result<RuleOverrideEntry, String> {
+    let entry: RuleOverrideEntry = serde_json::from_value(value.clone())
+        .map_err(|err| err.to_string())?;
+    entry.validate()?;
+    Ok(entry)
+}
+
+/// Parses a validated `rule_overrides` payload into entries (tolerating
+/// unparseable stored entries, like [`parse_rules`]).
+fn parse_overrides(config: &Value) -> Vec<RuleOverrideEntry> {
+    config
+        .get("overrides")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    serde_json::from_value::<RuleOverrideEntry>(item.clone())
+                        .ok()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Merges overlay overrides on top of the accumulated set: an entry
+/// replaces the one with the same rule id, `default` clears it. The result
+/// is ordered by rule id so resolution stays deterministic.
+fn merge_overrides(
+    target: &mut Vec<RuleOverrideEntry>,
+    patch: &[RuleOverrideEntry],
+) {
+    for entry in patch {
+        target.retain(|existing| existing.rule_id != entry.rule_id);
+        if entry.action != override_action::DEFAULT {
+            target.push(entry.clone());
+        }
+    }
+    target.sort_by(|a, b| a.rule_id.cmp(&b.rule_id));
+}
+
 /// Parses a string array, dropping non-strings and duplicates so typed
 /// views are deterministic sets no matter how the payload was written.
 fn string_array(value: &Value) -> Option<Vec<String>> {
@@ -409,6 +556,9 @@ pub struct Resolved {
     pub crs: Map<String, Value>,
     /// Policy rules followed by overlay rules, as written.
     pub rules: Vec<PolicyRule>,
+    /// Effective managed-rule overrides (policy first, overlay applied on
+    /// top), ordered by rule id.
+    pub overrides: Vec<RuleOverrideEntry>,
     /// Layer kinds the site overlay contributed to, in [`LAYER_KINDS`] order.
     pub override_kinds: Vec<String>,
 }
@@ -419,6 +569,7 @@ impl Resolved {
         self.engine.is_empty()
             && self.crs.is_empty()
             && self.rules.is_empty()
+            && self.overrides.is_empty()
             && self.override_kinds.is_empty()
     }
 
@@ -437,6 +588,41 @@ impl Resolved {
     ) -> EffectiveEngine {
         let engine = EngineOverrides::from_map(&self.engine);
         let crs = CrsOverrides::from_map(&self.crs);
+        // Effective managed-rule tuning: the crs layer (or the site's own
+        // monitor list) is the base; overrides apply on top, where
+        // disable / monitor / score are mutually exclusive per rule.
+        let mut monitor_managed_rules = crs
+            .monitor_managed_rules
+            .or_else(|| settings.map(|row| row.monitor_managed_rules.clone()))
+            .unwrap_or_default();
+        let mut disabled_rules: Vec<String> = Vec::new();
+        let mut rule_scores: BTreeMap<String, u32> = BTreeMap::new();
+        for entry in &self.overrides {
+            match entry.action.as_str() {
+                override_action::DISABLE => {
+                    monitor_managed_rules.retain(|id| id != &entry.rule_id);
+                    rule_scores.remove(&entry.rule_id);
+                    if !disabled_rules.contains(&entry.rule_id) {
+                        disabled_rules.push(entry.rule_id.clone());
+                    }
+                }
+                override_action::MONITOR => {
+                    disabled_rules.retain(|id| id != &entry.rule_id);
+                    rule_scores.remove(&entry.rule_id);
+                    if !monitor_managed_rules.contains(&entry.rule_id) {
+                        monitor_managed_rules.push(entry.rule_id.clone());
+                    }
+                }
+                override_action::SCORE_OVERRIDE => {
+                    monitor_managed_rules.retain(|id| id != &entry.rule_id);
+                    disabled_rules.retain(|id| id != &entry.rule_id);
+                    if let Some(score) = entry.score {
+                        rule_scores.insert(entry.rule_id.clone(), score);
+                    }
+                }
+                _ => {}
+            }
+        }
         EffectiveEngine {
             waf_enabled: engine
                 .waf_enabled
@@ -472,10 +658,9 @@ impl Resolved {
                 .monitor_stacks
                 .or_else(|| settings.map(|row| row.monitor_stacks.clone()))
                 .unwrap_or_default(),
-            monitor_managed_rules: crs
-                .monitor_managed_rules
-                .or_else(|| settings.map(|row| row.monitor_managed_rules.clone()))
-                .unwrap_or_default(),
+            monitor_managed_rules,
+            disabled_rules,
+            rule_scores,
         }
     }
 }
@@ -492,6 +677,10 @@ pub struct EffectiveEngine {
     pub monitor_categories: Vec<String>,
     pub monitor_stacks: Vec<String>,
     pub monitor_managed_rules: Vec<String>,
+    /// Managed rules skipped entirely.
+    pub disabled_rules: Vec<String>,
+    /// Per-rule score overrides (`rule id -> points`).
+    pub rule_scores: BTreeMap<String, u32>,
 }
 
 /// Resolves one site's effective policy layers.
@@ -542,6 +731,9 @@ pub async fn resolve(
     if let Some(config) = by_kind.get(LAYER_CUSTOM_RULES) {
         resolved.rules = parse_rules(config);
     }
+    if let Some(config) = by_kind.get(LAYER_RULE_OVERRIDES) {
+        merge_overrides(&mut resolved.overrides, &parse_overrides(config));
+    }
 
     // The site overlay is applied last and only adds/overrides the keys it
     // names, so everything else keeps inheriting from the policy.
@@ -580,6 +772,15 @@ pub async fn resolve(
                     resolved.override_kinds.push(kind.to_string());
                 }
                 resolved.rules.extend(extra);
+            }
+            LAYER_RULE_OVERRIDES => {
+                if patch.get("overrides").is_some() {
+                    resolved.override_kinds.push(kind.to_string());
+                }
+                merge_overrides(
+                    &mut resolved.overrides,
+                    &parse_overrides(patch),
+                );
             }
             _ => {}
         }
@@ -709,6 +910,116 @@ mod tests {
         let err = validate_layer("body", &json!({})).unwrap_err();
         assert!(err.contains("unknown layer kind 'body'"));
         assert!(err.contains(LAYER_ENGINE));
+    }
+
+    #[test]
+    fn rule_overrides_layer_validates_entries() {
+        let ok = json!({"overrides": [
+            {"rule_id": "VARMAN-1010", "action": "monitor"},
+            {"rule_id": "VARMAN-1020", "action": "score_override", "score": 1},
+            {"rule_id": "VARMAN-1002", "action": "disable"}
+        ]});
+        assert!(validate_layer(LAYER_RULE_OVERRIDES, &ok).is_ok());
+
+        assert!(validate_layer(
+            LAYER_RULE_OVERRIDES,
+            &json!({"overrides": [{"rule_id": "VARMAN-9999", "action": "disable"}]})
+        )
+        .unwrap_err()
+        .contains("unknown managed rule"));
+
+        assert!(validate_layer(
+            LAYER_RULE_OVERRIDES,
+            &json!({"overrides": [{"rule_id": "VARMAN-1010", "action": "drop"}]})
+        )
+        .unwrap_err()
+        .contains("unknown action"));
+
+        assert!(validate_layer(
+            LAYER_RULE_OVERRIDES,
+            &json!({"overrides": [{"rule_id": "VARMAN-1010", "action": "score_override"}]})
+        )
+        .unwrap_err()
+        .contains("'score' is required"));
+
+        assert!(validate_layer(
+            LAYER_RULE_OVERRIDES,
+            &json!({"overrides": [{"rule_id": "VARMAN-1010", "action": "disable", "score": 5}]})
+        )
+        .unwrap_err()
+        .contains("only valid with the score_override"));
+
+        assert!(validate_layer(LAYER_RULE_OVERRIDES, &json!({"rules": []}))
+            .unwrap_err()
+            .contains("unknown rule_overrides key"));
+    }
+
+    #[test]
+    fn overrides_apply_on_top_of_the_monitor_base() {
+        let mut settings = waf_settings_row(true, "block", 2, "inherit");
+        settings.monitor_managed_rules = vec!["VARMAN-1010".to_string()];
+
+        let resolved = Resolved {
+            overrides: vec![
+                RuleOverrideEntry {
+                    rule_id: "VARMAN-1010".into(),
+                    action: "score_override".into(),
+                    score: Some(2),
+                },
+                RuleOverrideEntry {
+                    rule_id: "VARMAN-1020".into(),
+                    action: "disable".into(),
+                    score: None,
+                },
+                RuleOverrideEntry {
+                    rule_id: "VARMAN-1002".into(),
+                    action: "monitor".into(),
+                    score: None,
+                },
+            ],
+            ..Resolved::default()
+        };
+
+        let effective = resolved.effective_engine(Some(&settings));
+        // The site's monitor entry is replaced by the score override; the
+        // disabled and monitor entries land in their own buckets.
+        assert!(!effective
+            .monitor_managed_rules
+            .contains(&"VARMAN-1010".to_string()));
+        assert_eq!(effective.rule_scores.get("VARMAN-1010"), Some(&2));
+        assert!(effective.disabled_rules.contains(&"VARMAN-1020".to_string()));
+        assert!(effective
+            .monitor_managed_rules
+            .contains(&"VARMAN-1002".to_string()));
+    }
+
+    #[test]
+    fn overlay_default_clears_a_policy_override() {
+        let mut target = vec![RuleOverrideEntry {
+            rule_id: "VARMAN-1010".into(),
+            action: "disable".into(),
+            score: None,
+        }];
+        merge_overrides(
+            &mut target,
+            &[RuleOverrideEntry {
+                rule_id: "VARMAN-1010".into(),
+                action: "default".into(),
+                score: None,
+            }],
+        );
+        assert!(target.is_empty());
+
+        merge_overrides(
+            &mut target,
+            &[RuleOverrideEntry {
+                rule_id: "VARMAN-1002".into(),
+                action: "monitor".into(),
+                score: None,
+            }],
+        );
+        assert_eq!(target.len(), 1);
+        assert_eq!(target[0].rule_id, "VARMAN-1002");
     }
 
     #[test]

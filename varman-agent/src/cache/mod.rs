@@ -342,6 +342,13 @@ pub struct WafConfig {
     pub monitor_stacks: Vec<String>,
     #[serde(default)]
     pub monitor_managed_rules: Vec<String>,
+    /// Managed rules switched off entirely (no match, no score, no event).
+    #[serde(default)]
+    pub disabled_rules: Vec<String>,
+    /// Per-rule score overrides (`rule id -> points`); the rule's own action
+    /// still applies.
+    #[serde(default)]
+    pub rule_scores: std::collections::HashMap<String, u32>,
 }
 
 /// Default for [`WafConfig::engine_mode`]: follow the process-wide
@@ -1848,6 +1855,8 @@ impl RuleCache {
             monitor_categories: w.monitor_categories.clone(),
             monitor_stacks: w.monitor_stacks.clone(),
             monitor_managed_rules: w.monitor_managed_rules.clone(),
+            disabled_rules: w.disabled_rules.clone(),
+            rule_scores: w.rule_scores.clone(),
         }
     }
 

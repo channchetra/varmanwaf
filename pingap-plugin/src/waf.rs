@@ -2100,6 +2100,11 @@ fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
             .cloned()
             .collect(),
         monitor_custom_rules: Default::default(),
+        // Per-rule tuning from the control plane's policies: disabled rules
+        // are skipped entirely, score overrides replace the severity-derived
+        // contribution.
+        disabled_rules: cfg.disabled_rules.iter().cloned().collect(),
+        rule_scores: cfg.rule_scores.iter().map(|(k, v)| (k.clone(), *v)).collect(),
     };
     WafEngine::new(&engine_config)
 }
@@ -2445,6 +2450,8 @@ impl TryFrom<&PluginConf> for WafPlugin {
             fast_path_block_on_critical: true,
             monitor_managed_rules: Default::default(),
             monitor_custom_rules: Default::default(),
+            disabled_rules: Default::default(),
+            rule_scores: Default::default(),
         };
 
         Ok(Self {
@@ -3765,6 +3772,8 @@ ml_threshold = 0.75
             monitor_categories,
             monitor_stacks,
             monitor_managed_rules: Vec::new(),
+            disabled_rules: Vec::new(),
+            rule_scores: Default::default(),
         }
     }
 
@@ -3813,6 +3822,38 @@ ml_threshold = 0.75
         ));
         let v = engine.inspect(&probe("id=1' OR 1=1 --"));
         assert_eq!(v.action, WafAction::Monitor, "details: {}", v.details);
+    }
+
+    #[test]
+    fn site_engine_applies_disabled_rules_and_score_overrides() {
+        let mut r = probe("");
+        r.headers
+            .retain(|(k, _)| !k.eq_ignore_ascii_case("User-Agent"));
+        r.headers.push(("User-Agent".into(), "sqlmap/1.7".into()));
+
+        // Baseline: the scanner-UA managed rule blocks.
+        let base =
+            build_site_engine(&cache_waf_config(false, Vec::new(), Vec::new()));
+        assert_eq!(base.inspect(&r).action, WafAction::Block);
+
+        // Disabled: the rule is skipped entirely.
+        let mut cfg = cache_waf_config(false, Vec::new(), Vec::new());
+        cfg.disabled_rules = vec!["VARMAN-1010".to_string()];
+        let disabled = build_site_engine(&cfg);
+        let v = disabled.inspect(&r);
+        assert_ne!(v.action, WafAction::Block, "details: {}", v.details);
+        assert!(!v.matched_rules.contains(&"VARMAN-1010".to_string()));
+
+        // Score override: the rule still enforces, with the override points
+        // (severity 4 contributes 4 by default, 1 with the override).
+        let base_total = base.inspect(&r).breakdown.total;
+        let mut cfg = cache_waf_config(false, Vec::new(), Vec::new());
+        cfg.rule_scores =
+            [("VARMAN-1010".to_string(), 1u32)].into_iter().collect();
+        let overridden = build_site_engine(&cfg);
+        let v = overridden.inspect(&r);
+        assert_eq!(v.action, WafAction::Block);
+        assert_eq!(v.breakdown.total, base_total - 3);
     }
 
     #[test]

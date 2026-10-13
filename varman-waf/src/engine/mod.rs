@@ -96,10 +96,17 @@ pub struct WafEngineConfig {
     pub monitor_managed_rules: std::collections::HashSet<String>,
     /// Custom rule ids downgraded to monitor-only: a hit feeds the anomaly
     /// score and the event log but the rule's own action never enforces.
-    /// This carries the per-rule monitor switch from the control plane —
+    /// This carries the per-rule monitor switch from the control plane -
     /// unlike managed rules, a custom rule's id never starts with
     /// `VARMAN-`, so membership here is the only downgrade source.
     pub monitor_custom_rules: std::collections::HashSet<String>,
+    /// Rule ids skipped entirely: no expression evaluation, no score, no
+    /// event. The control plane only accepts managed-rule ids here.
+    pub disabled_rules: std::collections::HashSet<String>,
+    /// Per-rule score overrides: when the rule matches, this replaces the
+    /// severity-derived anomaly contribution (the rule's own action still
+    /// applies, so a Block rule with an override still blocks).
+    pub rule_scores: std::collections::HashMap<String, u32>,
 }
 
 impl Default for WafEngineConfig {
@@ -118,6 +125,8 @@ impl Default for WafEngineConfig {
             monitor_stacks: StackSet::EMPTY,
             monitor_managed_rules: std::collections::HashSet::new(),
             monitor_custom_rules: std::collections::HashSet::new(),
+            disabled_rules: std::collections::HashSet::new(),
+            rule_scores: std::collections::HashMap::new(),
         }
     }
 }
@@ -222,6 +231,8 @@ pub struct WafEngine {
     monitor_stacks: StackSet,
     monitor_managed_rules: std::collections::HashSet<String>,
     monitor_custom_rules: std::collections::HashSet<String>,
+    disabled_rules: std::collections::HashSet<String>,
+    rule_scores: std::collections::HashMap<String, u32>,
 }
 
 impl std::fmt::Debug for WafEngine {
@@ -267,6 +278,8 @@ impl WafEngine {
             monitor_stacks: config.monitor_stacks,
             monitor_managed_rules: config.monitor_managed_rules.clone(),
             monitor_custom_rules: config.monitor_custom_rules.clone(),
+            disabled_rules: config.disabled_rules.clone(),
+            rule_scores: config.rule_scores.clone(),
         }
     }
 
@@ -301,6 +314,12 @@ impl WafEngine {
             },
             None => false,
         }
+    }
+
+    /// `true` when the control plane switched the rule off entirely: it is
+    /// never evaluated, scored or reported.
+    fn rule_disabled(&self, rule: &CompiledRule) -> bool {
+        self.disabled_rules.contains(rule.id.as_str())
     }
 
     /// Paranoia level actually used for rule gating. The Strict level implies
@@ -1033,6 +1052,9 @@ impl WafEngine {
             if !rule.enabled || rule.action != RuleAction::Allow {
                 continue;
             }
+            if self.rule_disabled(rule) {
+                continue;
+            }
             if rule.paranoia_level > paranoia
                 || !self.stacks.contains(rule.stacks)
             {
@@ -1073,6 +1095,9 @@ impl WafEngine {
             if !rule.enabled || rule.action == RuleAction::Allow {
                 continue;
             }
+            if self.rule_disabled(rule) {
+                continue;
+            }
             if rule.paranoia_level > paranoia
                 || !self.stacks.contains(rule.stacks)
             {
@@ -1086,6 +1111,10 @@ impl WafEngine {
                 continue;
             }
             let rule_monitored = self.rule_monitored(rule);
+            // Control-plane score override: replaces the severity-derived
+            // contribution of this rule; the rule's action still applies.
+            let override_points =
+                self.rule_scores.get(rule.id.as_str()).copied();
             rule_recs.push(RuleRec {
                 id: &rule.id,
                 name: &rule.name,
@@ -1106,24 +1135,45 @@ impl WafEngine {
                     // never contribute to blocking use the per-rule monitor
                     // switch instead, which routes through
                     // `add_severity_hit_ex(monitored=true)`.
-                    self.scorer.add_severity_hit(&mut breakdown, rule.severity);
+                    match override_points {
+                        Some(points) => self
+                            .scorer
+                            .add_points_hit(&mut breakdown, points),
+                        None => self
+                            .scorer
+                            .add_severity_hit(&mut breakdown, rule.severity),
+                    }
                 },
                 RuleAction::Block => {
-                    self.scorer.add_severity_hit_ex(
-                        &mut breakdown,
-                        rule.severity,
-                        rule_monitored,
-                    );
+                    match override_points {
+                        Some(points) => self.scorer.add_points_hit_ex(
+                            &mut breakdown,
+                            points,
+                            rule_monitored,
+                        ),
+                        None => self.scorer.add_severity_hit_ex(
+                            &mut breakdown,
+                            rule.severity,
+                            rule_monitored,
+                        ),
+                    }
                     if !rule_monitored {
                         forced_action = Some(WafAction::Block);
                     }
                 },
                 RuleAction::Challenge | RuleAction::JsChallenge => {
-                    self.scorer.add_severity_hit_ex(
-                        &mut breakdown,
-                        rule.severity,
-                        rule_monitored,
-                    );
+                    match override_points {
+                        Some(points) => self.scorer.add_points_hit_ex(
+                            &mut breakdown,
+                            points,
+                            rule_monitored,
+                        ),
+                        None => self.scorer.add_severity_hit_ex(
+                            &mut breakdown,
+                            rule.severity,
+                            rule_monitored,
+                        ),
+                    }
                     if !rule_monitored
                         && forced_action != Some(WafAction::Block)
                     {
@@ -1405,6 +1455,46 @@ mod tests {
         assert!(v.matched_rules.contains(&"VARMAN-1002".to_string()));
         assert!(v.breakdown.total > 0);
         assert!(v.details.contains("[monitored]"));
+    }
+
+    #[test]
+    fn disabled_rule_is_skipped_entirely() {
+        // A dotfile probe fires the managed rule; disabling it removes the
+        // match, the score and the enforcement.
+        let r = req("GET", "/.git/config", "");
+        let base = engine().inspect(&r);
+        assert_eq!(base.action, WafAction::Block, "details: {}", base.details);
+        assert!(base.matched_rules.contains(&"VARMAN-1020".to_string()));
+
+        let cfg = WafEngineConfig {
+            disabled_rules: ["VARMAN-1020".to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        let v = WafEngine::new(&cfg).inspect(&r);
+        assert_eq!(v.action, WafAction::Pass, "details: {}", v.details);
+        assert!(!v.matched_rules.contains(&"VARMAN-1020".to_string()));
+        assert_eq!(v.score, 0);
+    }
+
+    #[test]
+    fn score_override_replaces_the_severity_contribution() {
+        let r = req("GET", "/.env", "");
+        let base = engine().inspect(&r);
+        assert_eq!(base.action, WafAction::Block, "details: {}", base.details);
+        assert!(base.matched_rules.contains(&"VARMAN-1020".to_string()));
+
+        let cfg = WafEngineConfig {
+            rule_scores: [("VARMAN-1020".to_string(), 1u32)]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let v = WafEngine::new(&cfg).inspect(&r);
+        // The rule still enforces (its action is Block); only its anomaly
+        // contribution changes, from the severity-5 default to 1 point.
+        assert_eq!(v.action, WafAction::Block);
+        assert_eq!(v.breakdown.total, base.breakdown.total - 4);
+        assert_eq!(v.breakdown.block_total, base.breakdown.block_total - 4);
     }
 
     #[test]

@@ -18,6 +18,8 @@ import { useCanWrite } from '@/hooks'
 import { cn } from '@/lib/utils'
 import {
   MANAGED_RULE_IDS,
+  managedRuleKeys,
+  managedRulesApi,
   policiesApi,
   policyKeys,
   type CrsLayerConfig,
@@ -27,11 +29,18 @@ import {
   type PolicyLayerKind,
   type PolicyRule,
   type PolicySummary,
+  type RuleOverrideEntry,
+  type RuleOverridesLayerConfig,
 } from '@/api/policies'
 import { WAF_CATEGORIES, WAF_ENGINE_MODES, WAF_STACKS } from '@/api/types'
 
 /** Layer tabs of the editor, in display order. */
-const LAYER_TABS: PolicyLayerKind[] = ['engine', 'crs', 'custom_rules']
+const LAYER_TABS: PolicyLayerKind[] = [
+  'engine',
+  'crs',
+  'custom_rules',
+  'rule_overrides',
+]
 
 /**
  * Global WAF policies: shared, revisioned configuration documents sites can
@@ -418,6 +427,17 @@ function LayerEditor({
       />
     )
   }
+  if (tab === 'rule_overrides') {
+    return (
+      <RuleOverridesForm
+        policyId={policy.id}
+        stored={stored?.config as RuleOverridesLayerConfig | undefined}
+        hasStored={Boolean(stored)}
+        canWrite={canWrite}
+        onStored={onStored}
+      />
+    )
+  }
   return (
     <CustomRulesForm
       policyId={policy.id}
@@ -662,6 +682,174 @@ function CrsLayerForm({
         hasStored={hasStored}
         saving={save.isPending || remove.isPending}
         onSave={() => save.mutate({ monitor_managed_rules: rules })}
+        onRemove={() => remove.mutate()}
+      />
+    </div>
+  )
+}
+
+const OVERRIDE_ACTIONS = [
+  'default',
+  'monitor',
+  'disable',
+  'score_override',
+] as const
+
+/** Managed-rule tuning: disable, log-only or score override per rule. */
+function RuleOverridesForm({
+  policyId,
+  stored,
+  hasStored,
+  canWrite,
+  onStored,
+}: {
+  policyId: string
+  stored?: RuleOverridesLayerConfig
+  hasStored: boolean
+  canWrite: boolean
+  onStored: () => void
+}) {
+  const { t } = useTranslation()
+  const save = useLayerMutation(policyId, 'rule_overrides', onStored)
+  const remove = useMutation({
+    mutationFn: () => policiesApi.deleteLayer(policyId, 'rule_overrides'),
+    onSuccess: onStored,
+  })
+  const catalogue = useQuery({
+    queryKey: managedRuleKeys.all,
+    queryFn: () => managedRulesApi.list(),
+  })
+
+  // Draft keyed by rule id; a missing key means "default" (no override).
+  const [draft, setDraft] = useState<
+    Record<string, { action: string; score: string }>
+  >(() => {
+    const initial: Record<string, { action: string; score: string }> = {}
+    for (const entry of stored?.overrides ?? []) {
+      initial[entry.rule_id] = {
+        action: entry.action,
+        score: entry.score !== undefined ? String(entry.score) : '',
+      }
+    }
+    return initial
+  })
+
+  const setAction = (ruleId: string, action: string) => {
+    setDraft((current) => {
+      const next = { ...current }
+      if (action === 'default') {
+        delete next[ruleId]
+      } else {
+        next[ruleId] = {
+          action,
+          score: current[ruleId]?.score ?? '',
+        }
+      }
+      return next
+    })
+  }
+
+  const setScore = (ruleId: string, score: string) => {
+    setDraft((current) => ({
+      ...current,
+      [ruleId]: {
+        action: current[ruleId]?.action ?? 'score_override',
+        score,
+      },
+    }))
+  }
+
+  const payload = () => ({
+    overrides: Object.entries(draft).map(([rule_id, value]) => {
+      const entry: RuleOverrideEntry = {
+        rule_id,
+        action: value.action as RuleOverrideEntry['action'],
+      }
+      if (value.action === 'score_override') {
+        entry.score = Math.min(255, Math.max(1, Number(value.score) || 1))
+      }
+      return entry
+    }),
+  })
+
+  const tuned = Object.keys(draft).length
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-[13px] text-fg-subtle">
+            {t('pages.policies.fields.ruleTuningHint')}
+          </p>
+          <Badge tone={tuned > 0 ? 'warning' : 'neutral'}>
+            {t('pages.policies.fields.tunedCount', { n: tuned })}
+          </Badge>
+        </div>
+        {catalogue.isLoading ? (
+          <SkeletonCard />
+        ) : (
+          <ul className="divide-y divide-line rounded-lg border border-line">
+            {(catalogue.data ?? []).map((rule) => {
+              const state = draft[rule.id]
+              const action = state?.action ?? 'default'
+              return (
+                <li
+                  key={rule.id}
+                  className="flex flex-wrap items-center gap-3 px-3 py-2.5"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <code className="text-xs text-fg-subtle">
+                        {rule.id}
+                      </code>
+                      <span className="truncate text-[13px] font-medium text-fg-strong">
+                        {rule.name}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-fg-subtle">
+                      {rule.tags.map((tag) => (
+                        <span key={tag}>#{tag}</span>
+                      ))}
+                      <span>
+                        {t('pages.policies.fields.ruleSeverity')}{' '}
+                        {rule.severity}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={action}
+                      disabled={!canWrite}
+                      onChange={(e) => setAction(rule.id, e.target.value)}
+                      options={OVERRIDE_ACTIONS.map((value) => ({
+                        value,
+                        label: t(`pages.policies.fields.override.${value}`),
+                      }))}
+                    />
+                    {action === 'score_override' && (
+                      <div className="w-20">
+                        <Input
+                          type="number"
+                          min={1}
+                          max={255}
+                          value={state?.score ?? ''}
+                          disabled={!canWrite}
+                          onChange={(e) => setScore(rule.id, e.target.value)}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+      <LayerFooter
+        canWrite={canWrite}
+        hasStored={hasStored}
+        saving={save.isPending || remove.isPending}
+        onSave={() => save.mutate(payload())}
         onRemove={() => remove.mutate()}
       />
     </div>

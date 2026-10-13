@@ -393,6 +393,14 @@ message WafConfig {
   // monitor-only at this site. Unknown ids are ignored by the data plane.
   // (Upstream field, renumbered: 44-46 are VarmanWAF's.)
   repeated string monitor_managed_rules = 47;
+
+  // Per-rule tuning from the control plane's policies. `disabled_rules`
+  // are skipped entirely (no match, no score, no event); `rule_scores`
+  // replaces the severity-derived anomaly contribution of the named rule
+  // while its action still applies. Unknown ids are ignored by the data
+  // plane.
+  repeated string disabled_rules = 48;
+  map<string, uint32> rule_scores = 49;
 }
 
 enum WafMode {

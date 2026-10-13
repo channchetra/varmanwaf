@@ -807,6 +807,8 @@ fn waf_config_to_proto(
         engine_mode,
         virtual_patches,
         openapi_spec,
+        disabled_rules: Vec::new(),
+        rule_scores: HashMap::new(),
     }
 }
 
@@ -843,6 +845,8 @@ fn waf_config_with_policy(
     config.monitor_categories = effective.monitor_categories;
     config.monitor_stacks = effective.monitor_stacks;
     config.monitor_managed_rules = effective.monitor_managed_rules;
+    config.disabled_rules = effective.disabled_rules;
+    config.rule_scores = effective.rule_scores.into_iter().collect();
     config.engine_mode = effective.engine_mode;
     config.enabled = (effective.waf_enabled || config.engine_mode != "inherit")
         && any_group_enabled;

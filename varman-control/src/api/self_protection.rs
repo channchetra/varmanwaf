@@ -344,6 +344,8 @@ pub async fn refresh(
             monitor_stacks: StackSet::EMPTY,
             monitor_managed_rules: std::collections::HashSet::new(),
             monitor_custom_rules: std::collections::HashSet::new(),
+            disabled_rules: std::collections::HashSet::new(),
+            rule_scores: std::collections::HashMap::new(),
             threshold: 40,
             paranoia_level: 2,
             max_decode_layers: 3,
