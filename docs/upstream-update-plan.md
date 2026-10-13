@@ -107,3 +107,32 @@ signature.
    probes 403, client IP unchanged in events, engine telemetry present),
    then publish.
 5. Record the batch in this document and in the release notes.
+
+## Batch 2b-2 WIP state (branch `upstream-batch2b2-wip`)
+
+The applied 86 files are committed on the WIP branch. The remaining work is
+the interconnected core, in dependency order:
+
+1. **`varman-control/Cargo.toml`** - add `hmac`, `ring`, `maxminddb`,
+   `lettre` (workspace entries needed for the last three), `sysinfo`
+   (workspace), `rustls-pemfile = { workspace = true }`, `axum` `multipart`
+   feature, `version.workspace = true`.
+2. **`src/config/mod.rs`** - new settings (notification channels/secret key,
+   gRPC TLS, cache ceilings, failover defaults, login security) + JWT-secret
+   pinning.
+3. **`src/lib.rs`** - `pub mod config_history; pub mod notify;`, the
+   `resolve_jwt_secret` call, notification init/reload/self-monitor, gRPC TLS
+   builder.
+4. **`src/grpc/mod.rs`** - per-agent visibility (`agent_visible_site_ids`,
+   `update_payload_for_agent`), config-version recording, actor-aware
+   `notify_config_changed`/`notify_all_config_changed`.
+5. **`src/grpc/config.rs`** - map the new schema (mode/paranoia, waf_enabled,
+   monitor_managed_rules, proxy trust, cache settings, failover policies,
+   event types) into the proto, keeping our engine fields.
+6. **`src/api/waf_settings.rs`** - add the upstream fields beside our
+   engine_mode/virtual_patches/openapi_spec.
+7. **`src/{admin,cli,main,varman}.rs`** - config CLI (`pingwaf config`),
+   startup services, new flags.
+
+Then: full sweep, deploy, smoke, release. The 229 compile errors on the WIP
+branch are all attributable to these seven files.
