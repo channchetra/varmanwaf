@@ -32,7 +32,7 @@ fn bench_get_host(c: &mut Criterion) {
         req.append_header("Host", "pingap.io").unwrap();
         b.iter(|| {
             let host = get_host(&req);
-            assert_eq!(host, Some("pingap.io"));
+            assert_eq!(host, Some("pingap.io".to_string()));
         });
     });
 }

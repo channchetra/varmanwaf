@@ -739,12 +739,12 @@ impl Server {
         // the first full match equals a linear scan of `route.ordered`.
         let matched_info = route
             .host_index
-            .candidate_indices(host)
+            .candidate_indices(&host)
             .into_iter()
             .find_map(|idx| {
                 let name = route.ordered.get(idx)?;
                 let location = self.location_provider.get(name)?;
-                let (matched, captures) = location.match_host_path(host, path);
+                let (matched, captures) = location.match_host_path(&host, path);
                 if matched && location.match_conditions(header, client_ip) {
                     Some((location, captures))
                 } else {
@@ -1070,41 +1070,6 @@ impl Server {
         result
     }
 
-    /// Runs the read-only request-body inspection hook for each plugin.
-    ///
-    /// Called for every request-body chunk as it is forwarded upstream, after
-    /// the early-request filters: it sees body tails beyond the early read
-    /// pass and, once upgraded, the client-to-server tunnel. An error aborts
-    /// the request.
-    #[inline]
-    pub fn handle_request_body_plugin(
-        &self,
-        session: &mut Session,
-        ctx: &mut Ctx,
-        body: &Option<bytes::Bytes>,
-        end_of_stream: bool,
-    ) -> pingora::Result<()> {
-        let Some(plugins) = ctx.plugins.take() else {
-            return Ok(());
-        };
-        let result = {
-            for (name, plugin) in plugins.iter() {
-                let now = Instant::now();
-                plugin.handle_request_body(
-                    session,
-                    ctx,
-                    body,
-                    end_of_stream,
-                )?;
-                let elapsed = now.elapsed().as_millis() as u32;
-                ctx.add_plugin_processing_time(name, elapsed);
-            }
-            Ok(())
-        };
-        ctx.plugins = Some(plugins);
-        result
-    }
-
     /// Runs the read-only upgraded-traffic inspection hook for each plugin.
     ///
     /// Used after a 101 in place of the response-body hooks: rewriting plugins
@@ -1183,6 +1148,68 @@ impl Server {
             }
             Ok(())
         };
+        ctx.plugins = Some(plugins);
+        result
+    }
+
+    /// Runs the request-body plugins (downstream → upstream direction).
+    ///
+    /// A plugin returning `Some(response)` answers the request itself
+    /// (e.g. a WAF block page decided once the staged body is complete):
+    /// the client has not seen a single response byte yet, so the response
+    /// is written here and the upstream exchange is aborted with an error
+    /// — `fail_to_proxy` sees the response as already written and sends
+    /// nothing more.
+    #[inline]
+    pub async fn handle_request_body_plugin(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        let plugins = match ctx.plugins.take() {
+            Some(p) => p,
+            None => return Ok(()), // No plugins, exit early.
+        };
+        if plugins.is_empty() {
+            ctx.plugins = Some(plugins);
+            return Ok(());
+        }
+        let mut result = Ok(());
+        for (name, plugin) in plugins.iter() {
+            let now = Instant::now();
+            let Some(resp) = plugin.handle_request_body(
+                session,
+                ctx,
+                body,
+                end_of_stream,
+            )?
+            else {
+                continue;
+            };
+            let elapsed = now.elapsed().as_millis() as u32;
+            ctx.add_plugin_processing_time(name, elapsed);
+            debug!(
+                target: LOG_TARGET,
+                name = &**name, elapsed,
+                "request body plugin answered the request"
+            );
+            // ignore status >= 900, mirroring handle_request_plugin
+            let status = resp.status.as_u16();
+            if status < 900 {
+                ctx.state.status = Some(resp.status);
+                if let Err(e) = resp.send(session).await {
+                    result = Err(e);
+                    break;
+                }
+            }
+            result = Err(new_internal_error(
+                status,
+                "request answered by a request-body plugin",
+            ));
+            break;
+        }
         ctx.plugins = Some(plugins);
         result
     }
@@ -1448,7 +1475,13 @@ impl ProxyHttp for Server {
             return Err(no_available_upstream(ctx));
         };
         ctx.upstream.address = peer.address().to_string();
-
+        if first_attempt {
+            // Pairing markers for logging(): the processing increment and
+            // the least-connections inflight acquire both happen inside
+            // new_http_peer exactly on the first successful attempt.
+            ctx.upstream.processing_counted = true;
+            ctx.upstream.inflight_address = Some(ctx.upstream.address.clone());
+        }
         // start connect to upstream
         ctx.timing.upstream_connect =
             Some(get_start_time(&ctx.timing.created_at));
@@ -1580,8 +1613,11 @@ impl ProxyHttp for Server {
                 }
             }
         }
-        // Read-only inspection hook: body tails and upgraded client frames.
-        self.handle_request_body_plugin(session, ctx, body, end_of_stream)?;
+        // Plugins run after the size accounting above so the 413 limit
+        // always sees the bytes the client actually sent, even when a
+        // plugin withholds the chunk from the upstream (WAF body staging).
+        self.handle_request_body_plugin(session, ctx, body, end_of_stream)
+            .await?;
         Ok(())
     }
     /// Generates cache keys for request caching.
@@ -1699,6 +1735,12 @@ impl ProxyHttp for Server {
         // call response plugin
         self.handle_response_plugin(session, ctx, upstream_response)
             .await?;
+
+        // Identity stamp: every response leaving the edge says `server:
+        // pingwaf`, the way `server: cloudflare` does. Visitors and site
+        // owners see from the response alone that the edge served it, and a
+        // support request with the x-request-id is attributable in seconds.
+        let _ = upstream_response.insert_header("server", "pingwaf");
 
         // add server-timing response header
         if self.enable_server_timing {
@@ -1883,10 +1925,14 @@ impl ProxyHttp for Server {
         }
 
         let mut resp = error_response_header(code);
+        // The edge generated this error itself (upstream unreachable, …) —
+        // stamp it like every other edge response.
+        let _ = resp.insert_header("server", "pingwaf");
         let content = self.error_template.render(
             pingap_util::get_pkg_version(),
             &e.to_string(),
             error_type,
+            ctx.state.request_id.as_deref().unwrap_or(""),
         );
         let buf = Bytes::from(content);
         let content_type = if self.error_template.is_json() {
@@ -1961,8 +2007,23 @@ impl ProxyHttp for Server {
         }
         // get from cache does not connect to upstream
         if let Some(upstream_instance) = &ctx.upstream.upstream_instance {
-            ctx.upstream.processing_count = Some(upstream_instance.completed());
-            upstream_instance.release(&ctx.upstream.address);
+            // Only decrement when this request actually incremented the
+            // counter: a peer-selection failure (upstream_peer returned an
+            // error before any peer was produced) never incremented, and
+            // an unconditional completed() would drive the counter
+            // permanently negative.
+            if ctx.upstream.processing_counted {
+                ctx.upstream.processing_count =
+                    Some(upstream_instance.completed());
+            }
+            // Release the address whose inflight counter was acquired —
+            // the first attempt's choice, not the final peer after retries.
+            let inflight_addr = ctx
+                .upstream
+                .inflight_address
+                .as_deref()
+                .unwrap_or(&ctx.upstream.address);
+            upstream_instance.release(inflight_addr);
         }
         if ctx.state.status.is_none()
             && let Some(header) = session.response_written()

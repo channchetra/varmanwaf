@@ -21,7 +21,6 @@ bytesize = { workspace = true }
 dashmap = { workspace = true }
 derive_more = { workspace = true }
 futures = { workspace = true }
-futures-util = { workspace = true }
 http = { workspace = true }
 pingap-config = { workspace = true }
 pingap-core = { workspace = true }

@@ -72,23 +72,42 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// A type alias for a tuple representing an HTTP header.
 pub type HttpHeader = (HeaderName, HeaderValue);
 
+/// Normalises a host so every consumer — site rule indexes, failover
+/// registries, caches — keys on one canonical form: lowercased, the trailing
+/// root dot dropped (`EXAMPLE.com.` → `example.com`), port untouched (callers
+/// strip it beforehand via `strip_port`). This mirrors nginx's `$host`
+/// semantics and must be applied on **both** sides of a host-keyed lookup.
+pub fn normalize_host(host: &str) -> String {
+    // ASCII fast path: hosts are IDN A-labels in practice, never UTF-8.
+    host.to_ascii_lowercase()
+}
+
 /// Gets the request host by checking the URI first, then falling back to the "Host" header.
 ///
 /// This function follows the common practice of prioritizing the host from the absolute URI
 /// (e.g., in `GET http://example.com/path HTTP/1.1`) over the `Host` header field.
-pub fn get_host(header: &RequestHeader) -> Option<&str> {
+///
+/// The returned host is normalised (lowercase, no trailing root dot); see
+/// `normalize_host`.
+pub fn get_host(header: &RequestHeader) -> Option<String> {
     // First, try to get the host directly from the parsed URI.
     // http2 will always have a host in the uri
-    if let Some(host) = header.uri.host() {
-        return Some(host);
+    let raw = if let Some(host) = header.uri.host() {
+        host
+    } else {
+        // If not in the URI, fall back to the "Host" header.
+        header
+            .headers
+            .get(http::header::HOST)
+            // Convert the header value to a string slice.
+            .and_then(|value| value.to_str().ok())?
+    };
+    let host = strip_port(raw);
+    let host = host.strip_suffix('.').unwrap_or(host);
+    if host.is_empty() {
+        return None;
     }
-    // If not in the URI, fall back to the "Host" header.
-    header
-        .headers
-        .get(http::header::HOST)
-        // Convert the header value to a string slice.
-        .and_then(|value| value.to_str().ok())
-        .map(strip_port)
+    Some(normalize_host(host))
 }
 
 /// Drops the `:port` suffix of a `Host` value. An IPv6 literal keeps its
@@ -228,7 +247,8 @@ pub fn convert_header_value(
 
     // Match the entire byte slice against the predefined variable tags.
     match buf {
-        HOST_TAG => get_host(session.req_header()).and_then(to_header_value),
+        HOST_TAG => get_host(session.req_header())
+            .and_then(|host| to_header_value(&host)),
         SCHEME_TAG => Some(if ctx.conn.tls_version.is_some() {
             SCHEME_HTTPS.clone()
         } else {
@@ -373,8 +393,9 @@ static TRUSTED_PROXIES: ArcSwapOption<TrustedProxies> =
 ///
 /// When a non-empty list is configured, forwarded headers are only trusted for
 /// connections coming directly from one of these addresses. Passing `None` or
-/// an empty list restores the default behaviour of trusting forwarded headers
-/// unconditionally (backwards compatible). Safe to call repeatedly on reload.
+/// an empty list restores the default: forwarded headers are honoured only
+/// from loopback/private-range direct peers, and a public peer always resolves
+/// to its own address. Safe to call repeatedly on reload.
 pub fn set_trusted_proxies(proxies: &Option<Vec<String>>) {
     let parsed = match proxies {
         Some(list) if !list.is_empty() => Some(TrustedProxies::parse(list)),
@@ -392,6 +413,23 @@ fn is_trusted_proxy(peer: IpAddr) -> bool {
         .load()
         .as_ref()
         .is_some_and(|trusted| trusted.contains(peer))
+}
+
+/// Heuristic for the unconfigured default: addresses a same-host or
+/// private-network load balancer plausibly connects from. A direct client
+/// from a public address must not influence client-IP resolution.
+fn is_plausible_internal_proxy(peer: IpAddr) -> bool {
+    match peer {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private(),
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unique_local()
+                // IPv4-mapped peers (::ffff:a.b.c.d) follow v4 semantics.
+                || v6
+                    .to_ipv4_mapped()
+                    .is_some_and(|v4| v4.is_loopback() || v4.is_private())
+        },
+    }
 }
 
 /// Ensures `ctx.conn.client_ip` is populated and returns a borrowed reference.
@@ -412,26 +450,48 @@ pub fn ensure_client_ip<'a>(session: &Session, ctx: &'a mut Ctx) -> &'a str {
 /// When trusted proxies are configured, `X-Forwarded-For` / `X-Real-IP` are
 /// only honoured if the direct TCP peer is a trusted proxy; otherwise the
 /// peer's own address is returned. When no trusted proxies are configured the
-/// lookup order is:
+/// forwarded headers are honoured only for connections whose direct peer is a
+/// loopback or private-range address — the usual shape for a same-host or
+/// private-network load balancer. A client arriving directly from a public
+/// address controls its own forwarded headers, so honouring them would let
+/// anyone forge the identity every IP rule keys on; such connections always
+/// resolve to their TCP peer. Deployments behind a proxy with public addresses
+/// (e.g. some cloud load balancers) must configure `basic.trusted_proxies`.
+/// The lookup order within the honoured path is:
 /// 1. `X-Forwarded-For` (taking the first IP in the list)
 /// 2. `X-Real-IP`
 /// 3. The remote address of the direct TCP connection
 pub fn get_client_ip(session: &Session) -> String {
-    // When trusted proxies are configured, a direct (untrusted) peer's
-    // forwarded headers must be ignored to prevent client-IP spoofing.
+    // When no peer address is available (unit-test mock sessions, exotic
+    // setups) trust cannot be judged either way; keep the legacy
+    // header-first behaviour rather than resolving to nothing.
+    let peer = session
+        .client_addr()
+        .and_then(|addr| addr.as_inet())
+        .map(|addr| addr.ip());
+    let peer = match peer {
+        Some(ip) => ip,
+        None => return forwarded_client_ip(session),
+    };
     if TRUSTED_PROXIES_ENABLED.load(Ordering::Relaxed) {
         // Compare the address itself; formatting it only to parse it back
         // would cost an allocation per request.
-        let peer = session
-            .client_addr()
-            .and_then(|addr| addr.as_inet())
-            .map(|addr| addr.ip());
-        match peer {
-            Some(ip) if is_trusted_proxy(ip) => {},
-            Some(ip) => return ip.to_string(),
-            None => return String::new(),
+        if !is_trusted_proxy(peer) {
+            return peer.to_string();
+        }
+    } else {
+        // Unconfigured: the fail-open default is a public peer's own
+        // address — its forwarded headers are attacker-controlled.
+        if !is_plausible_internal_proxy(peer) {
+            return peer.to_string();
         }
     }
+    forwarded_client_ip(session)
+}
+
+/// The legacy lookup order: `X-Forwarded-For` (first entry), then
+/// `X-Real-IP`, then the connection's remote address.
+fn forwarded_client_ip(session: &Session) -> String {
     // 1. Check `X-Forwarded-For`.
     if let Some(value) = session.get_header(HTTP_HEADER_X_FORWARDED_FOR) {
         // Efficiently take the first IP without creating an intermediate Vec.
@@ -454,6 +514,107 @@ pub fn get_client_ip(session: &Session) -> String {
     }
     // If all checks fail, return an empty string.
     "".to_string()
+}
+
+/// Per-site proxy trust settings, mirrored from the control plane.
+///
+/// Sites behind a CDN or reverse proxy ask the plugin to derive the client IP
+/// from a forwarded header instead of the direct TCP peer, so that IP access
+/// rules, rate limiting and logs all key on the real client address. Trust is
+/// scoped: only a connection whose direct peer falls inside one of the
+/// configured CIDR ranges may influence the resolution at all, so a client
+/// that connects directly — skipping the proxy — cannot spoof its IP through
+/// forwarded headers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProxyTrust {
+    /// Whether per-site proxy trust is enabled.
+    pub enabled: bool,
+    /// The forwarded header to trust, lower-case (e.g. `x-forwarded-for`).
+    pub header: String,
+    /// Trust only the most recent hop: take the last entry of
+    /// `X-Forwarded-For` (appended by the closest proxy, so a client cannot
+    /// spoof it) instead of the first.
+    pub last_hop_only: bool,
+    /// CIDR ranges of trusted proxies. An empty list trusts nothing.
+    pub trusted_ranges: Vec<IpNet>,
+}
+
+impl ProxyTrust {
+    /// Builds trust settings from configuration; a bare IP is treated as a
+    /// /32 (or /128) host range, and unparsable entries are dropped rather
+    /// than failing the whole site.
+    pub fn new(
+        enabled: bool,
+        header: &str,
+        last_hop_only: bool,
+        trusted_ranges: &[String],
+    ) -> Self {
+        Self {
+            enabled,
+            header: header.trim().to_ascii_lowercase(),
+            last_hop_only,
+            trusted_ranges: trusted_ranges
+                .iter()
+                .filter_map(|range| {
+                    let raw = range.trim();
+                    raw.parse::<IpNet>()
+                        .map(|net| net.trunc())
+                        .or_else(|_| raw.parse::<IpAddr>().map(IpNet::from))
+                        .ok()
+                })
+                .collect(),
+        }
+    }
+
+    /// Whether the direct peer is allowed to influence the client-IP
+    /// resolution. An empty range list trusts nothing.
+    pub fn peer_is_trusted(&self, peer: IpAddr) -> bool {
+        self.trusted_ranges.iter().any(|net| net.contains(&peer))
+    }
+}
+
+/// Resolves the client IP from the site-trusted forwarded header.
+///
+/// Trust is strict: the direct TCP peer must fall inside one of the
+/// configured proxy ranges for the forwarded header to be read at all.
+/// Anything else — a client connecting directly, or an unparsable header
+/// from an otherwise trusted proxy — resolves to the TCP peer itself, never
+/// to a client-supplied header value. Returns `None` when proxy trust is
+/// disabled or no peer address is available; callers then keep the default
+/// [`get_client_ip`] resolution.
+pub fn resolve_client_ip_with_trust(
+    session: &Session,
+    trust: &ProxyTrust,
+) -> Option<String> {
+    if !trust.enabled || trust.header.is_empty() {
+        return None;
+    }
+    let peer = session
+        .client_addr()
+        .and_then(|addr| addr.as_inet())
+        .map(|addr| addr.ip())?;
+    if !trust.peer_is_trusted(peer) {
+        return Some(peer.to_string());
+    }
+    let value = session.get_header(trust.header.as_str())?;
+    let value = value.to_str().ok()?;
+    let raw = if trust.header == HTTP_HEADER_X_FORWARDED_FOR {
+        // `X-Forwarded-For` is a comma separated list. The last entry is
+        // appended by the closest proxy and cannot be spoofed by the client.
+        if trust.last_hop_only {
+            value.rsplit(',').next().unwrap_or_default()
+        } else {
+            value.split(',').next().unwrap_or_default()
+        }
+    } else {
+        value
+    };
+    match raw.trim().parse::<IpAddr>() {
+        Ok(ip) => Some(ip.to_string()),
+        // A trusted proxy sent something unusable: fall back to its own
+        // address rather than to a spoofable header.
+        Err(_) => Some(peer.to_string()),
+    }
 }
 
 /// A convenient helper to get a header value as a `&str` from a `RequestHeader`.
@@ -577,7 +738,173 @@ pub fn remove_query_from_header(
 mod tests {
     use super::*;
     use crate::{ConnectionInfo, UpstreamInfo, new_test_session};
+    use pingora::protocols::SocketDigest;
+    use pingora::protocols::l4::socket::SocketAddr;
     use pretty_assertions::assert_eq;
+
+    /// Builds a mock session whose direct TCP peer is `peer`.
+    ///
+    /// `new_test_session` has no socket, so the digest is synthesized to
+    /// let the strict proxy-trust resolution see a peer address.
+    async fn new_test_session_with_peer(
+        headers: &[&str],
+        url: &str,
+        peer: IpAddr,
+    ) -> pingora::proxy::Session {
+        let mut session = new_test_session(headers, url).await;
+        let socket_digest = SocketDigest::from_raw_fd(-1);
+        socket_digest
+            .peer_addr
+            .set(Some(SocketAddr::Inet(std::net::SocketAddr::new(peer, 0))))
+            .expect("peer addr is unset on a fresh digest");
+        session
+            .as_downstream_mut()
+            .digest_mut()
+            .expect("the h1 session always carries a digest")
+            .socket_digest = Some(Arc::new(socket_digest));
+        session
+    }
+
+    #[tokio::test]
+    async fn test_resolve_client_ip_with_trust() {
+        // The mock peer sits inside the trusted ranges, so forwarded
+        // headers are honored.
+        let ranges = &["10.0.0.0/8".to_string()];
+        let trust = ProxyTrust::new(true, "x-forwarded-for", true, ranges);
+        let session = new_test_session_with_peer(
+            &["Host: github.com", "X-Forwarded-For: 1.2.3.4, 10.0.0.1"],
+            "/",
+            "10.0.0.1".parse().unwrap(),
+        )
+        .await;
+        assert_eq!(
+            Some("10.0.0.1".to_string()),
+            resolve_client_ip_with_trust(&session, &trust)
+        );
+
+        let trust = ProxyTrust::new(true, "x-forwarded-for", false, ranges);
+        assert_eq!(
+            Some("1.2.3.4".to_string()),
+            resolve_client_ip_with_trust(&session, &trust)
+        );
+
+        let trust = ProxyTrust::new(true, "cf-connecting-ip", true, ranges);
+        let session = new_test_session_with_peer(
+            &["Host: github.com", "CF-Connecting-IP: 203.0.113.7"],
+            "/",
+            "10.0.0.1".parse().unwrap(),
+        )
+        .await;
+        assert_eq!(
+            Some("203.0.113.7".to_string()),
+            resolve_client_ip_with_trust(&session, &trust)
+        );
+
+        let trust = ProxyTrust::new(true, "x-real-ip", true, ranges);
+        let session = new_test_session_with_peer(
+            &["Host: github.com", "X-Real-IP: 198.51.100.9"],
+            "/",
+            "10.0.0.1".parse().unwrap(),
+        )
+        .await;
+        assert_eq!(
+            Some("198.51.100.9".to_string()),
+            resolve_client_ip_with_trust(&session, &trust)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_client_ip_with_trust_fallbacks() {
+        // Disabled trust never resolves through the trusted header.
+        let trust = ProxyTrust::new(true, "x-forwarded-for", true, &[]);
+        let session = new_test_session(
+            &["Host: github.com", "X-Forwarded-For: 1.2.3.4"],
+            "/",
+        )
+        .await;
+        assert_eq!(None, resolve_client_ip_with_trust(&session, &trust));
+
+        let trust = ProxyTrust::new(true, "x-forwarded-for", true, &[]);
+        // A trusted proxy that sends no header falls back to the default
+        // resolution.
+        let session = new_test_session(&["Host: github.com"], "/").await;
+        assert_eq!(None, resolve_client_ip_with_trust(&session, &trust));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_client_ip_strict_peer_scope() {
+        // Spoofed header: the direct peer is NOT a trusted proxy, so the
+        // forwarded header must be ignored in favor of the peer address.
+        let ranges = &["10.0.0.0/8".to_string()];
+        let trust = ProxyTrust::new(true, "x-forwarded-for", false, ranges);
+        let session = new_test_session_with_peer(
+            &["Host: github.com", "X-Forwarded-For: 1.2.3.4"],
+            "/",
+            "203.0.113.50".parse().unwrap(),
+        )
+        .await;
+        assert_eq!(
+            Some("203.0.113.50".to_string()),
+            resolve_client_ip_with_trust(&session, &trust)
+        );
+
+        // Empty ranges trust nothing: same spoofing attempt resolves to
+        // the peer even though trust is nominally enabled.
+        let trust = ProxyTrust::new(true, "x-forwarded-for", false, &[]);
+        let session = new_test_session_with_peer(
+            &["Host: github.com", "X-Forwarded-For: 1.2.3.4"],
+            "/",
+            "203.0.113.50".parse().unwrap(),
+        )
+        .await;
+        assert_eq!(
+            Some("203.0.113.50".to_string()),
+            resolve_client_ip_with_trust(&session, &trust)
+        );
+
+        // A trusted proxy that sends an unparsable header must not
+        // surface the injection attempt; the peer address wins.
+        let ranges = &["10.0.0.0/8".to_string()];
+        let trust = ProxyTrust::new(true, "x-forwarded-for", false, ranges);
+        let session = new_test_session_with_peer(
+            &["Host: github.com", "X-Forwarded-For: evil.example.com"],
+            "/",
+            "10.0.0.1".parse().unwrap(),
+        )
+        .await;
+        assert_eq!(
+            Some("10.0.0.1".to_string()),
+            resolve_client_ip_with_trust(&session, &trust)
+        );
+    }
+
+    #[test]
+    fn test_proxy_trust_range_parsing() {
+        let trust = ProxyTrust::new(
+            true,
+            " X-Forwarded-For ",
+            true,
+            &[
+                "10.0.0.0/8".to_string(),
+                " 2001:db8::/32 ".to_string(),
+                "not-a-range".to_string(),
+            ],
+        );
+        assert_eq!("x-forwarded-for", trust.header);
+        assert_eq!(2, trust.trusted_ranges.len());
+        assert!(trust.peer_is_trusted("10.1.2.3".parse().unwrap()));
+        assert!(trust.peer_is_trusted("2001:db8::1".parse().unwrap()));
+        assert!(!trust.peer_is_trusted("192.168.1.1".parse().unwrap()));
+        // A bare IP is normalized to a /32 (or /128) host range.
+        let trust = ProxyTrust::new(
+            true,
+            "x-real-ip",
+            false,
+            &["203.0.113.7".to_string()],
+        );
+        assert!(trust.peer_is_trusted("203.0.113.7".parse().unwrap()));
+        assert!(!trust.peer_is_trusted("203.0.113.8".parse().unwrap()));
+    }
 
     #[test]
     fn test_convert_headers() {
@@ -859,7 +1186,10 @@ mod tests {
         let session =
             new_test_session(&["Host: pingap.io"], "/vicanso/pingap?size=1")
                 .await;
-        assert_eq!(get_host(session.req_header()), Some("pingap.io"));
+        assert_eq!(
+            get_host(session.req_header()),
+            Some("pingap.io".to_string())
+        );
     }
 
     #[test]
@@ -878,36 +1208,60 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_client_ip() {
-        let session = new_test_session(
+        // Default mode: a private-range direct peer (internal LB shape)
+        // honours forwarded headers.
+        let session = new_test_session_with_peer(
             &["X-Forwarded-For:192.168.1.1"],
             "/vicanso/pingap?size=1",
+            "10.0.0.9".parse().unwrap(),
         )
         .await;
         assert_eq!(get_client_ip(&session), "192.168.1.1");
 
-        let session = new_test_session(
+        let session = new_test_session_with_peer(
             &["X-Real-Ip:192.168.1.2"],
             "/vicanso/pingap?size=1",
+            "10.0.0.9".parse().unwrap(),
         )
         .await;
         assert_eq!(get_client_ip(&session), "192.168.1.2");
 
-        // With trusted proxies configured, a forwarded header from an untrusted
-        // direct peer (the mock session has no trusted peer address) must be
-        // ignored instead of being taken at face value.
-        set_trusted_proxies(&Some(vec!["10.0.0.0/8".to_string()]));
-        let session = new_test_session(
+        // A public direct peer controls its own forwarded headers, so they
+        // must be ignored: the peer itself is the client IP.
+        let session = new_test_session_with_peer(
             &["X-Forwarded-For:192.168.1.1"],
             "/vicanso/pingap?size=1",
+            "93.184.216.34".parse().unwrap(),
         )
         .await;
-        assert_ne!(get_client_ip(&session), "192.168.1.1");
+        assert_eq!(get_client_ip(&session), "93.184.216.34");
 
-        // Restoring the default trusts forwarded headers again.
-        set_trusted_proxies(&None);
-        let session = new_test_session(
+        // With trusted proxies configured, the strict list wins: a trusted
+        // peer's header is honoured, a private-but-unlisted peer's is not.
+        set_trusted_proxies(&Some(vec!["10.0.0.0/8".to_string()]));
+        let session = new_test_session_with_peer(
             &["X-Forwarded-For:192.168.1.1"],
             "/vicanso/pingap?size=1",
+            "10.0.0.9".parse().unwrap(),
+        )
+        .await;
+        assert_eq!(get_client_ip(&session), "192.168.1.1");
+
+        let session = new_test_session_with_peer(
+            &["X-Forwarded-For:192.168.1.1"],
+            "/vicanso/pingap?size=1",
+            "192.168.5.5".parse().unwrap(),
+        )
+        .await;
+        assert_eq!(get_client_ip(&session), "192.168.5.5");
+
+        // Restoring the default honours forwarded headers from private
+        // peers again.
+        set_trusted_proxies(&None);
+        let session = new_test_session_with_peer(
+            &["X-Forwarded-For:192.168.1.1"],
+            "/vicanso/pingap?size=1",
+            "10.0.0.9".parse().unwrap(),
         )
         .await;
         assert_eq!(get_client_ip(&session), "192.168.1.1");
@@ -972,7 +1326,10 @@ mod tests {
         let mut req_with_authority =
             RequestHeader::build("GET", b"/path", None).unwrap();
         req_with_authority.set_uri(uri);
-        assert_eq!(get_host(&req_with_authority), Some("authority.com"));
+        assert_eq!(
+            get_host(&req_with_authority),
+            Some("authority.com".to_string())
+        );
 
         // Case 2: Host is in the "Host" header.
         let mut req_with_host_header =
@@ -980,23 +1337,32 @@ mod tests {
         req_with_host_header
             .insert_header("Host", "header-host.com:8080")
             .unwrap();
-        assert_eq!(get_host(&req_with_host_header), Some("header-host.com"));
+        assert_eq!(
+            get_host(&req_with_host_header),
+            Some("header-host.com".to_string())
+        );
 
         // Case 3: No host information available.
         let req_no_host = RequestHeader::build("GET", b"/path", None).unwrap();
         assert_eq!(get_host(&req_no_host), None);
 
         // Case 4: IPv6 literals keep their brackets and lose only the port.
+        // Cases 5-7: hosts are normalised — lowercased and the trailing
+        // root dot dropped — so `EXAMPLE.com.` and `example.com` hit the
+        // same site-rule or failover-registry key.
         for (host, expected) in [
             ("[::1]:8080", "[::1]"),
             ("[::1]", "[::1]"),
             ("[2001:db8::1]:443", "[2001:db8::1]"),
             ("example.com", "example.com"),
             ("example.com:8080", "example.com"),
+            ("EXAMPLE.com:8080", "example.com"),
+            ("Example.COM.", "example.com"),
+            ("MiXeD.CaSe.Example.ORG.", "mixed.case.example.org"),
         ] {
             let mut req = RequestHeader::build("GET", b"/path", None).unwrap();
             req.insert_header("Host", host).unwrap();
-            assert_eq!(get_host(&req), Some(expected), "{host}");
+            assert_eq!(get_host(&req), Some(expected.to_string()), "{host}");
         }
     }
 

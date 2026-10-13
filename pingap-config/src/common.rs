@@ -376,6 +376,19 @@ pub struct UpstreamConf {
     #[serde(with = "humantime_serde")]
     pub backend_stats_interval: Option<Duration>,
 
+    /// Maximum number of candidate backends the load balancer tries per
+    /// request: each candidate is checked against the health check and the
+    /// circuit breaker, and the first accepted one serves the request. Must
+    /// be greater than zero. Default 8 — a too-small bound turns "several
+    /// backends down" into an early 503 even when healthy backends remain.
+    pub lb_max_iterations: Option<usize>,
+
+    /// Forward the request even when every backend is rejected by the
+    /// health check or the circuit breaker: the selection filter is dropped
+    /// for that request instead of failing with 503. Off by default to keep
+    /// the strict "only healthy backends serve" semantics.
+    pub enable_unhealthy_fallback: Option<bool>,
+
     /// Application Layer Protocol Negotiation for TLS
     pub alpn: Option<String>,
 
@@ -505,6 +518,7 @@ impl Validate for UpstreamConf {
     /// 3. Health check URL must be valid if specified
     /// 4. TCP probe count must not exceed maximum (16)
     /// 5. `h1_upgrade` must be one of the known policies
+    /// 6. `lb_max_iterations` must be greater than zero
     fn validate(&self) -> Result<()> {
         // Validate address list
         self.validate_addresses()?;
@@ -524,6 +538,9 @@ impl Validate for UpstreamConf {
         // Validate the custom CA bundle and the HTTP/2 flow-control windows
         self.validate_ca()?;
         self.validate_h2_window()?;
+
+        // Validate the per-request selection iteration bound
+        self.validate_lb_max_iterations()?;
 
         Ok(())
     }
@@ -687,6 +704,19 @@ impl UpstreamConf {
         {
             return Err(Error::Invalid {
                 message: "max h2 streams should be greater than 0".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn validate_lb_max_iterations(&self) -> Result<()> {
+        if let Some(iterations) = self.lb_max_iterations
+            && iterations == 0
+        {
+            return Err(Error::Invalid {
+                message: "lb max iterations should be greater than 0"
+                    .to_string(),
             });
         }
 
@@ -2085,6 +2115,28 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
                 "[::1]:8080 3".to_string(),
                 "127.0.0.1:8080".to_string(),
             ],
+            ..Default::default()
+        };
+        assert_eq!(true, conf.validate().is_ok());
+    }
+
+    #[test]
+    fn test_upstream_conf_lb_max_iterations() {
+        let conf = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            lb_max_iterations: Some(0),
+            ..Default::default()
+        };
+        let err = conf.validate().expect_err("zero iterations").to_string();
+        assert_eq!(
+            true,
+            err.contains("lb max iterations should be greater than 0"),
+            "{err}"
+        );
+
+        let conf = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            lb_max_iterations: Some(16),
             ..Default::default()
         };
         assert_eq!(true, conf.validate().is_ok());

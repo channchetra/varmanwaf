@@ -25,7 +25,7 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use derive_more::Debug;
-use futures_util::FutureExt;
+use futures::FutureExt;
 use http::StatusCode;
 use pingap_config::Hashable;
 use pingap_config::UpstreamConf;
@@ -69,9 +69,15 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Default number of candidate backends the selector tries per request.
+/// Every rejected candidate re-enters the health/circuit filter, so a
+/// too-small bound turns "several backends down" into an early 503 even
+/// when healthy backends remain. Configurable via `lb_max_iterations`.
+const DEFAULT_LB_MAX_ITERATIONS: usize = 8;
 
 pub struct BackendObserveNotification {
     name: String,
@@ -290,6 +296,17 @@ pub struct Upstream {
     /// Circuit breaker states
     #[debug("circuit_breaker_states")]
     circuit_breaker_states: Option<BackendCircuitStates>,
+
+    /// Max candidates the selector tries per request before giving up;
+    /// each candidate runs through [`Upstream::accept_backend`]. Bounded
+    /// by `lb_max_iterations`, default [`DEFAULT_LB_MAX_ITERATIONS`].
+    lb_max_iterations: usize,
+
+    /// When every candidate is rejected by the health check or the circuit
+    /// breaker, retry the selection without the filter so traffic still
+    /// flows through the least-bad backend instead of turning into 503.
+    /// Enabled by `enable_unhealthy_fallback`.
+    unhealthy_fallback: bool,
 }
 
 // Creates new backend servers based on discovery method (DNS/Docker/Static)
@@ -755,6 +772,32 @@ impl Upstream {
             None
         };
 
+        // The circuit breaker reads its window failure rates and consecutive
+        // counters from `BackendStats`; `update_state_after_request` early-
+        // returns when stats are absent, so a breaker without stats would
+        // silently stay Closed forever. Breaker thresholds implicitly turn
+        // stats on, even when `enable_backend_stats` was left unset.
+        let stats_enabled_by_breaker = circuit_breaker_states.is_some()
+            && !conf.enable_backend_stats.unwrap_or_default();
+        if stats_enabled_by_breaker {
+            info!(
+                target: LOG_TARGET,
+                name,
+                "backend stats is enabled implicitly: circuit breaker is configured"
+            );
+        }
+        let backend_stats = if conf.enable_backend_stats.unwrap_or_default()
+            || circuit_breaker_states.is_some()
+        {
+            Some(BackendStats::new(
+                conf.backend_stats_interval
+                    .unwrap_or_else(|| Duration::from_secs(60)),
+                failure_status_codes,
+            ))
+        } else {
+            None
+        };
+
         let up = Self {
             name: name.into(),
             key,
@@ -783,16 +826,14 @@ impl Upstream {
             peer_tracer,
             tracer,
             processing: AtomicI32::new(0),
-            backend_stats: if conf.enable_backend_stats.unwrap_or_default() {
-                Some(BackendStats::new(
-                    conf.backend_stats_interval
-                        .unwrap_or_else(|| Duration::from_secs(60)),
-                    failure_status_codes,
-                ))
-            } else {
-                None
-            },
+            backend_stats,
             circuit_breaker_states,
+            lb_max_iterations: conf
+                .lb_max_iterations
+                .unwrap_or(DEFAULT_LB_MAX_ITERATIONS),
+            unhealthy_fallback: conf
+                .enable_unhealthy_fallback
+                .unwrap_or_default(),
         };
         debug!(
             target: LOG_TARGET,
@@ -813,6 +854,38 @@ impl Upstream {
             return true;
         };
         states.is_backend_acceptable(&backend.addr)
+    }
+
+    /// Selects a backend through the health/circuit-breaker filter.
+    ///
+    /// At most [`Upstream::lb_max_iterations`] distinct candidates are
+    /// tried. When nothing passes the filter and `unhealthy_fallback` is
+    /// on, the selection is retried without the filter: forwarding to the
+    /// least-bad backend beats an instant 503 once health checks or the
+    /// breaker have rejected everything (they can be misjudged, and the
+    /// request itself still feeds failure stats for a quicker recovery).
+    fn select_backend<S>(
+        &self,
+        lb: &LoadBalancer<S>,
+        key: &[u8],
+    ) -> Option<Backend>
+    where
+        S: BackendSelection + 'static,
+        S::Iter: BackendIter,
+    {
+        let backend =
+            lb.select_with(key, self.lb_max_iterations, |backend, healthy| {
+                self.accept_backend(backend, healthy)
+            });
+        if backend.is_some() || !self.unhealthy_fallback {
+            return backend;
+        }
+        debug!(
+            target: LOG_TARGET,
+            name = self.name.as_ref(),
+            "all backends are rejected by the health/circuit filter, falling back to unfiltered selection"
+        );
+        lb.select_with(key, self.lb_max_iterations, |_, _| true)
     }
 
     /// Creates and configures a new HTTP peer for handling requests
@@ -847,9 +920,7 @@ impl Upstream {
         let mut p = match &self.lb {
             // For round-robin, use empty key since selection is sequential
             SelectionLb::RoundRobin(lb) => {
-                let backend = lb.select_with(b"", 4, |backend, healthy| {
-                    self.accept_backend(backend, healthy)
-                })?;
+                let backend = self.select_backend(lb, b"")?;
                 HttpPeer::new(backend, self.tls, self.sni.clone())
             },
             // Least connections: the selector orders backends by in-flight
@@ -857,9 +928,7 @@ impl Upstream {
             // attempt (retries re-enter this method and would otherwise leak
             // counts, while `release` below runs exactly once).
             SelectionLb::LeastConnections { lb, inflight } => {
-                let backend = lb.select_with(b"", 4, |backend, healthy| {
-                    self.accept_backend(backend, healthy)
-                })?;
+                let backend = self.select_backend(lb, b"")?;
                 if count_processing {
                     inflight.acquire(&backend.addr.to_string());
                 }
@@ -867,18 +936,13 @@ impl Upstream {
             },
             // For random, use empty key since selection ignores it
             SelectionLb::Random(lb) => {
-                let backend = lb.select_with(b"", 4, |backend, healthy| {
-                    self.accept_backend(backend, healthy)
-                })?;
+                let backend = self.select_backend(lb, b"")?;
                 HttpPeer::new(backend, self.tls, self.sni.clone())
             },
             // For consistent hashing, generate hash value from request details
             SelectionLb::Consistent { lb, hash } => {
                 let value = hash.get_value(session, client_ip);
-                let backend =
-                    lb.select_with(value.as_bytes(), 4, |backend, healthy| {
-                        self.accept_backend(backend, healthy)
-                    })?;
+                let backend = self.select_backend(lb, value.as_bytes())?;
                 HttpPeer::new(backend, self.tls, self.sni.clone())
             },
             // In transparent mode, use the request's host header
@@ -1263,11 +1327,13 @@ pub fn new_upstream_health_check_task(
 #[cfg(test)]
 mod tests {
     use super::{
-        Upstream, UpstreamConf, UpstreamProvider, host_name, new_backends,
-        new_load_balancer, resolve_host, split_host_port,
+        DEFAULT_LB_MAX_ITERATIONS, SelectionLb, Upstream, UpstreamConf,
+        UpstreamProvider, host_name, new_backends, new_load_balancer,
+        resolve_host, split_host_port,
     };
     use crate::new_ahash_upstreams;
     use bytesize::ByteSize;
+    use http::StatusCode;
     use pingap_core::UpstreamInstance;
     use pingap_discovery::Discovery;
     use pingora::protocols::ALPN;
@@ -1381,6 +1447,108 @@ mod tests {
             format!("{:?}", up.tcp_keepalive)
         );
         assert_eq!("Some(1024)", format!("{:?}", up.tcp_recv_buf));
+    }
+
+    #[test]
+    fn test_backend_stats_implicit_enable_with_breaker() {
+        // Breaker thresholds configured while `enable_backend_stats` is left
+        // unset: stats must be created implicitly, otherwise the breaker's
+        // update_state_after_request early-returns and it silently stays
+        // Closed forever.
+        let up = Upstream::new(
+            "breaker",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1:8001".to_string()],
+                circuit_break_max_consecutive_failures: Some(5),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert!(up.backend_stats.is_some());
+        assert!(up.circuit_breaker_states.is_some());
+
+        // Explicit stats without a breaker: stats on, breaker off.
+        let up = Upstream::new(
+            "stats",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1:8001".to_string()],
+                enable_backend_stats: Some(true),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert!(up.backend_stats.is_some());
+        assert!(up.circuit_breaker_states.is_none());
+
+        // Neither configured: both stay off.
+        let up = Upstream::new(
+            "plain",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1:8001".to_string()],
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert!(up.backend_stats.is_none());
+        assert!(up.circuit_breaker_states.is_none());
+    }
+
+    #[test]
+    fn test_lb_max_iterations_and_unhealthy_fallback() {
+        // Default iteration bound and explicit override.
+        let up = Upstream::new(
+            "iters",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1:8001".to_string()],
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(up.lb_max_iterations, DEFAULT_LB_MAX_ITERATIONS);
+
+        let up = Upstream::new(
+            "iters",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1:8001".to_string()],
+                lb_max_iterations: Some(3),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(up.lb_max_iterations, 3);
+
+        // A breaker that opens on the very first 502: the rejected backend
+        // yields nothing while the strict filter applies, but still serves
+        // once `enable_unhealthy_fallback` is on.
+        let breaker_conf = |fallback: bool| UpstreamConf {
+            addrs: vec!["192.168.1.1:8001".to_string()],
+            enable_backend_stats: Some(true),
+            circuit_break_max_consecutive_failures: Some(1),
+            enable_unhealthy_fallback: Some(fallback),
+            ..Default::default()
+        };
+
+        let up = Upstream::new("break", &breaker_conf(false), None).unwrap();
+        up.on_response("192.168.1.1:8001", StatusCode::BAD_GATEWAY);
+        let SelectionLb::RoundRobin(lb) = &up.lb else {
+            panic!("expected the default round robin selector");
+        };
+        assert!(up.select_backend(lb, b"").is_none());
+
+        let up = Upstream::new("fallback", &breaker_conf(true), None).unwrap();
+        up.on_response("192.168.1.1:8001", StatusCode::BAD_GATEWAY);
+        let SelectionLb::RoundRobin(lb) = &up.lb else {
+            panic!("expected the default round robin selector");
+        };
+        let backend = up
+            .select_backend(lb, b"")
+            .expect("the rejected backend must still serve as a fallback");
+        assert_eq!(backend.addr.to_string(), "192.168.1.1:8001");
     }
 
     #[tokio::test]

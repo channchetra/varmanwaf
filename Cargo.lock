@@ -4948,7 +4948,6 @@ dependencies = [
  "dashmap 6.2.1",
  "derive_more",
  "futures",
- "futures-util",
  "http",
  "pingap-config",
  "pingap-core",
