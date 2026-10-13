@@ -17,6 +17,7 @@
 //! bundle path ([`resolve`], [`Resolved::effective_engine`]).
 
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use sea_orm::{
     ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter,
@@ -78,25 +79,94 @@ pub mod override_action {
 }
 
 /// One managed-rule tuning entry inside a `rule_overrides` layer.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+///
+/// The entry addresses rules in exactly one of three ways: by `rule_id`
+/// (a single managed rule), by `tags` (every catalogue rule carrying any of
+/// the tags) or by `severity_min` (every rule at or above the level).
+/// Selector entries expand at resolution time; exact rule-id entries apply
+/// afterwards and therefore always win.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuleOverrideEntry {
-    /// Managed rule id (`VARMAN-…`); only ids this engine ships are accepted.
+    /// Managed rule id (`VARMAN-…`); empty when a selector is used.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub rule_id: String,
+    /// Selector: rules carrying any of these tags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Selector: rules with severity at or above this level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity_min: Option<u8>,
     pub action: String,
     /// Required for `score_override`; rejected for the other actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score: Option<u32>,
+    /// Request targets excluded from the addressed rules' evaluation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_targets: Vec<String>,
+}
+
+/// Request targets a rule override may exclude from evaluation.
+pub const EXCLUSION_TARGETS: [&str; 8] = [
+    "path",
+    "query",
+    "body",
+    "header",
+    "cookie",
+    "user_agent",
+    "host",
+    "method",
+];
+
+/// The managed-rule catalogue, built once: selector expansion and tag
+/// validation read it on every resolution.
+static CATALOGUE: LazyLock<Vec<varman_waf::ManagedRuleInfo>> = LazyLock::new(
+    || varman_waf::managed_rule_catalogue(varman_waf::WafLevel::Strict),
+);
+
+/// Every tag the catalogue knows, for selector validation.
+fn catalogue_tags() -> std::collections::BTreeSet<&'static str> {
+    CATALOGUE
+        .iter()
+        .flat_map(|info| info.tags.iter().map(String::as_str))
+        .collect()
 }
 
 impl RuleOverrideEntry {
     fn validate(&self) -> Result<(), String> {
-        if !MANAGED_RULES.contains(&self.rule_id.as_str()) {
+        let addressings = usize::from(!self.rule_id.is_empty())
+            + usize::from(!self.tags.is_empty())
+            + usize::from(self.severity_min.is_some());
+        if addressings != 1 {
+            return Err(
+                "exactly one of 'rule_id', 'tags' or 'severity_min' is required"
+                    .to_string(),
+            );
+        }
+        if !self.rule_id.is_empty() && !MANAGED_RULES.contains(&self.rule_id.as_str()) {
             return Err(format!(
                 "unknown managed rule '{}' (expected one of: {})",
                 self.rule_id,
                 MANAGED_RULES.join(", ")
             ));
+        }
+        for tag in &self.tags {
+            if tag.trim().is_empty() || tag.chars().count() > 64 {
+                return Err("each tag must be 1-64 characters".to_string());
+            }
+            if !catalogue_tags().contains(tag.as_str()) {
+                return Err(format!(
+                    "unknown tag '{tag}' (expected one of: {})",
+                    catalogue_tags().into_iter().collect::<Vec<_>>().join(", ")
+                ));
+            }
+        }
+        if let Some(min) = self.severity_min {
+            if !(1..=5).contains(&min) {
+                return Err(
+                    "'severity_min' must be between 1 and 5".to_string()
+                );
+            }
         }
         if !override_action::ALL.contains(&self.action.as_str()) {
             return Err(format!(
@@ -123,6 +193,14 @@ impl RuleOverrideEntry {
                 );
             }
             _ => {}
+        }
+        for target in &self.exclude_targets {
+            if !EXCLUSION_TARGETS.contains(&target.as_str()) {
+                return Err(format!(
+                    "unknown exclusion target '{target}' (expected one of: {})",
+                    EXCLUSION_TARGETS.join(", ")
+                ));
+            }
         }
         Ok(())
     }
@@ -454,20 +532,84 @@ fn parse_overrides(config: &Value) -> Vec<RuleOverrideEntry> {
         .unwrap_or_default()
 }
 
+/// Identity of an override entry: exact rule id, tag selector or severity
+/// selector. Used so an overlay can replace or clear exactly one entry.
+fn entry_key(entry: &RuleOverrideEntry) -> String {
+    if !entry.rule_id.is_empty() {
+        return format!("id:{}", entry.rule_id);
+    }
+    if !entry.tags.is_empty() {
+        let mut tags = entry.tags.clone();
+        tags.sort();
+        return format!("tags:{}", tags.join(","));
+    }
+    format!("sev:{}", entry.severity_min.unwrap_or(0))
+}
+
 /// Merges overlay overrides on top of the accumulated set: an entry
-/// replaces the one with the same rule id, `default` clears it. The result
-/// is ordered by rule id so resolution stays deterministic.
+/// replaces the one with the same key, `default` clears it. The result is
+/// ordered by key so resolution stays deterministic.
 fn merge_overrides(
     target: &mut Vec<RuleOverrideEntry>,
     patch: &[RuleOverrideEntry],
 ) {
     for entry in patch {
-        target.retain(|existing| existing.rule_id != entry.rule_id);
+        let key = entry_key(entry);
+        target.retain(|existing| entry_key(existing) != key);
         if entry.action != override_action::DEFAULT {
             target.push(entry.clone());
         }
     }
-    target.sort_by(|a, b| a.rule_id.cmp(&b.rule_id));
+    target.sort_by_key(entry_key);
+}
+
+/// Applies one override entry to the effective tuning of the addressed
+/// rule ids. Monitor / disable / score are mutually exclusive per rule;
+/// exclusions persist until a `default` entry clears them.
+fn apply_override(
+    ids: &[String],
+    entry: &RuleOverrideEntry,
+    monitor: &mut Vec<String>,
+    disabled: &mut Vec<String>,
+    rule_scores: &mut BTreeMap<String, u32>,
+    exclusions: &mut BTreeMap<String, Vec<String>>,
+) {
+    for id in ids {
+        match entry.action.as_str() {
+            override_action::DEFAULT => {
+                monitor.retain(|existing| existing != id);
+                disabled.retain(|existing| existing != id);
+                rule_scores.remove(id);
+                exclusions.remove(id);
+                continue;
+            }
+            override_action::DISABLE => {
+                monitor.retain(|existing| existing != id);
+                rule_scores.remove(id);
+                if !disabled.contains(id) {
+                    disabled.push(id.clone());
+                }
+            }
+            override_action::MONITOR => {
+                disabled.retain(|existing| existing != id);
+                rule_scores.remove(id);
+                if !monitor.contains(id) {
+                    monitor.push(id.clone());
+                }
+            }
+            override_action::SCORE_OVERRIDE => {
+                monitor.retain(|existing| existing != id);
+                disabled.retain(|existing| existing != id);
+                if let Some(score) = entry.score {
+                    rule_scores.insert(id.clone(), score);
+                }
+            }
+            _ => {}
+        }
+        if !entry.exclude_targets.is_empty() {
+            exclusions.insert(id.clone(), entry.exclude_targets.clone());
+        }
+    }
 }
 
 /// Parses a string array, dropping non-strings and duplicates so typed
@@ -597,31 +739,49 @@ impl Resolved {
             .unwrap_or_default();
         let mut disabled_rules: Vec<String> = Vec::new();
         let mut rule_scores: BTreeMap<String, u32> = BTreeMap::new();
+        let mut rule_target_exclusions: BTreeMap<String, Vec<String>> =
+            BTreeMap::new();
+        // Selector entries expand against the catalogue first; exact
+        // rule-id entries then apply on top, so they always win.
         for entry in &self.overrides {
-            match entry.action.as_str() {
-                override_action::DISABLE => {
-                    monitor_managed_rules.retain(|id| id != &entry.rule_id);
-                    rule_scores.remove(&entry.rule_id);
-                    if !disabled_rules.contains(&entry.rule_id) {
-                        disabled_rules.push(entry.rule_id.clone());
-                    }
-                }
-                override_action::MONITOR => {
-                    disabled_rules.retain(|id| id != &entry.rule_id);
-                    rule_scores.remove(&entry.rule_id);
-                    if !monitor_managed_rules.contains(&entry.rule_id) {
-                        monitor_managed_rules.push(entry.rule_id.clone());
-                    }
-                }
-                override_action::SCORE_OVERRIDE => {
-                    monitor_managed_rules.retain(|id| id != &entry.rule_id);
-                    disabled_rules.retain(|id| id != &entry.rule_id);
-                    if let Some(score) = entry.score {
-                        rule_scores.insert(entry.rule_id.clone(), score);
-                    }
-                }
-                _ => {}
+            if !entry.rule_id.is_empty() {
+                continue;
             }
+            let ids: Vec<String> = CATALOGUE
+                .iter()
+                .filter(|info| {
+                    (!entry.tags.is_empty()
+                        && info
+                            .tags
+                            .iter()
+                            .any(|tag| entry.tags.contains(tag)))
+                        || entry
+                            .severity_min
+                            .is_some_and(|min| info.severity >= min)
+                })
+                .map(|info| info.id.clone())
+                .collect();
+            apply_override(
+                &ids,
+                entry,
+                &mut monitor_managed_rules,
+                &mut disabled_rules,
+                &mut rule_scores,
+                &mut rule_target_exclusions,
+            );
+        }
+        for entry in &self.overrides {
+            if entry.rule_id.is_empty() {
+                continue;
+            }
+            apply_override(
+                std::slice::from_ref(&entry.rule_id),
+                entry,
+                &mut monitor_managed_rules,
+                &mut disabled_rules,
+                &mut rule_scores,
+                &mut rule_target_exclusions,
+            );
         }
         EffectiveEngine {
             waf_enabled: engine
@@ -661,6 +821,7 @@ impl Resolved {
             monitor_managed_rules,
             disabled_rules,
             rule_scores,
+            rule_target_exclusions,
         }
     }
 }
@@ -681,6 +842,8 @@ pub struct EffectiveEngine {
     pub disabled_rules: Vec<String>,
     /// Per-rule score overrides (`rule id -> points`).
     pub rule_scores: BTreeMap<String, u32>,
+    /// Per-rule excluded request targets (`rule id -> targets`).
+    pub rule_target_exclusions: BTreeMap<String, Vec<String>>,
 }
 
 /// Resolves one site's effective policy layers.
@@ -710,29 +873,16 @@ pub async fn resolve(
         .filter(waf_policy_layer::Column::PolicyId.eq(policy.id))
         .all(db)
         .await?;
-    let by_kind: BTreeMap<&str, &Value> = layer_rows
-        .iter()
-        .filter(|row| is_layer_kind(&row.kind))
-        .map(|row| (row.kind.as_str(), &row.config))
-        .collect();
-
     let mut resolved = Resolved {
         policy_id: Some(policy.id),
         policy_name: Some(policy.name.clone()),
         revision: policy.revision,
         ..Resolved::default()
     };
-    if let Some(Value::Object(engine)) = by_kind.get(LAYER_ENGINE) {
-        resolved.engine = engine.clone();
-    }
-    if let Some(Value::Object(crs)) = by_kind.get(LAYER_CRS) {
-        resolved.crs = crs.clone();
-    }
-    if let Some(config) = by_kind.get(LAYER_CUSTOM_RULES) {
-        resolved.rules = parse_rules(config);
-    }
-    if let Some(config) = by_kind.get(LAYER_RULE_OVERRIDES) {
-        merge_overrides(&mut resolved.overrides, &parse_overrides(config));
+    for kind in LAYER_KINDS {
+        if let Some(row) = layer_rows.iter().find(|row| row.kind == kind) {
+            apply_layer(&mut resolved, kind, &row.config);
+        }
     }
 
     // The site overlay is applied last and only adds/overrides the keys it
@@ -745,47 +895,140 @@ pub async fn resolve(
     else {
         return Ok(resolved);
     };
+    apply_overlay(&mut resolved, &overlay_map);
+    Ok(resolved)
+}
+
+/// Applies one layer payload onto a resolved view (policy layers and site
+/// overlay patches share this merge).
+fn apply_layer(resolved: &mut Resolved, kind: &str, config: &Value) {
+    match kind {
+        LAYER_ENGINE => {
+            if let Some(map) = config.as_object() {
+                for (key, value) in map {
+                    resolved.engine.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        LAYER_CRS => {
+            if let Some(map) = config.as_object() {
+                for (key, value) in map {
+                    resolved.crs.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        LAYER_CUSTOM_RULES => {
+            resolved.rules.extend(parse_rules(config));
+        }
+        LAYER_RULE_OVERRIDES => {
+            merge_overrides(&mut resolved.overrides, &parse_overrides(config));
+        }
+        _ => {}
+    }
+}
+
+/// Applies the site overlay patch on top of a resolved policy view.
+fn apply_overlay(resolved: &mut Resolved, overlay_map: &Map<String, Value>) {
     for kind in LAYER_KINDS {
         let Some(patch) = overlay_map.get(kind) else {
             continue;
         };
-        match kind {
-            LAYER_ENGINE => {
-                if let Some(engine) = patch.as_object() {
-                    for (key, value) in engine {
-                        resolved.engine.insert(key.clone(), value.clone());
-                    }
-                    resolved.override_kinds.push(kind.to_string());
-                }
-            }
-            LAYER_CRS => {
-                if let Some(crs) = patch.as_object() {
-                    for (key, value) in crs {
-                        resolved.crs.insert(key.clone(), value.clone());
-                    }
-                    resolved.override_kinds.push(kind.to_string());
-                }
-            }
-            LAYER_CUSTOM_RULES => {
-                let extra = parse_rules(patch);
-                if !extra.is_empty() || patch.get("rules").is_some() {
-                    resolved.override_kinds.push(kind.to_string());
-                }
-                resolved.rules.extend(extra);
-            }
-            LAYER_RULE_OVERRIDES => {
-                if patch.get("overrides").is_some() {
-                    resolved.override_kinds.push(kind.to_string());
-                }
-                merge_overrides(
-                    &mut resolved.overrides,
-                    &parse_overrides(patch),
-                );
-            }
-            _ => {}
+        if patch.as_object().is_some_and(|map| !map.is_empty()) {
+            resolved.override_kinds.push(kind.to_string());
+        }
+        apply_layer(resolved, kind, patch);
+    }
+}
+
+/// Resolves a synthetic view from raw layer payloads (used by the preview
+/// endpoint): the same merge rules as [`resolve`], without database access.
+pub fn resolve_maps(
+    policy_id: Option<Uuid>,
+    policy_name: Option<String>,
+    revision: i32,
+    layers: &BTreeMap<String, Value>,
+    overlay: Option<&Value>,
+) -> Resolved {
+    let mut resolved = Resolved {
+        policy_id,
+        policy_name,
+        revision,
+        ..Resolved::default()
+    };
+    for kind in LAYER_KINDS {
+        if let Some(config) = layers.get(kind) {
+            apply_layer(&mut resolved, kind, config);
         }
     }
-    Ok(resolved)
+    if let Some(Value::Object(overlay_map)) = overlay {
+        apply_overlay(&mut resolved, overlay_map);
+    }
+    resolved
+}
+
+/// The managed-rule catalogue (built once).
+pub fn catalogue() -> &'static [varman_waf::ManagedRuleInfo] {
+    &CATALOGUE
+}
+
+/// One row of the compiled rule plan: what the data plane will do with a
+/// managed rule for a site.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RulePlan {
+    pub id: String,
+    pub name: String,
+    pub severity: u8,
+    pub action: String,
+    pub tags: Vec<String>,
+    pub stacks: Vec<String>,
+    pub strict_only: bool,
+    /// `enforce`, `monitor` or `disabled`.
+    pub effective: &'static str,
+    /// Anomaly points the rule contributes (override or severity default).
+    pub score: u32,
+    pub exclusions: Vec<String>,
+}
+
+/// Builds the compiled rule plan for an effective engine view.
+pub fn rule_plan(effective: &EffectiveEngine) -> Vec<RulePlan> {
+    CATALOGUE
+        .iter()
+        .map(|info| {
+            let disabled = effective.disabled_rules.contains(&info.id);
+            let monitored =
+                effective.monitor_managed_rules.contains(&info.id);
+            RulePlan {
+                id: info.id.clone(),
+                name: info.name.clone(),
+                severity: info.severity,
+                action: info.action.clone(),
+                tags: info.tags.clone(),
+                stacks: info.stacks.clone(),
+                strict_only: info.strict_only,
+                effective: if disabled {
+                    "disabled"
+                } else if monitored {
+                    "monitor"
+                } else {
+                    "enforce"
+                },
+                score: effective
+                    .rule_scores
+                    .get(&info.id)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        varman_waf::AnomalyScorer::points_for_severity(
+                            info.severity,
+                        )
+                    }),
+                exclusions: effective
+                    .rule_target_exclusions
+                    .get(&info.id)
+                    .cloned()
+                    .unwrap_or_default(),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -965,16 +1208,17 @@ mod tests {
                     rule_id: "VARMAN-1010".into(),
                     action: "score_override".into(),
                     score: Some(2),
+                    ..RuleOverrideEntry::default()
                 },
                 RuleOverrideEntry {
                     rule_id: "VARMAN-1020".into(),
                     action: "disable".into(),
-                    score: None,
+                    ..RuleOverrideEntry::default()
                 },
                 RuleOverrideEntry {
                     rule_id: "VARMAN-1002".into(),
                     action: "monitor".into(),
-                    score: None,
+                    ..RuleOverrideEntry::default()
                 },
             ],
             ..Resolved::default()
@@ -998,14 +1242,14 @@ mod tests {
         let mut target = vec![RuleOverrideEntry {
             rule_id: "VARMAN-1010".into(),
             action: "disable".into(),
-            score: None,
+            ..RuleOverrideEntry::default()
         }];
         merge_overrides(
             &mut target,
             &[RuleOverrideEntry {
                 rule_id: "VARMAN-1010".into(),
                 action: "default".into(),
-                score: None,
+                ..RuleOverrideEntry::default()
             }],
         );
         assert!(target.is_empty());
@@ -1015,11 +1259,151 @@ mod tests {
             &[RuleOverrideEntry {
                 rule_id: "VARMAN-1002".into(),
                 action: "monitor".into(),
-                score: None,
+                ..RuleOverrideEntry::default()
             }],
         );
         assert_eq!(target.len(), 1);
         assert_eq!(target[0].rule_id, "VARMAN-1002");
+    }
+
+    #[test]
+    fn selector_validation_requires_exactly_one_addressing() {
+        // No addressing at all.
+        assert!(validate_layer(
+            LAYER_RULE_OVERRIDES,
+            &json!({"overrides": [{"action": "monitor"}]})
+        )
+        .unwrap_err()
+        .contains("exactly one"));
+
+        // Two addressings at once.
+        assert!(validate_layer(
+            LAYER_RULE_OVERRIDES,
+            &json!({"overrides": [
+                {"rule_id": "VARMAN-1010", "tags": ["scanner"], "action": "monitor"}
+            ]})
+        )
+        .unwrap_err()
+        .contains("exactly one"));
+
+        // Unknown tag.
+        assert!(validate_layer(
+            LAYER_RULE_OVERRIDES,
+            &json!({"overrides": [{"tags": ["nope"], "action": "monitor"}]})
+        )
+        .unwrap_err()
+        .contains("unknown tag"));
+
+        // Unknown exclusion target.
+        assert!(validate_layer(
+            LAYER_RULE_OVERRIDES,
+            &json!({"overrides": [
+                {"rule_id": "VARMAN-1010", "action": "monitor",
+                 "exclude_targets": ["referer"]}
+            ]})
+        )
+        .unwrap_err()
+        .contains("unknown exclusion target"));
+
+        // Valid selector entries with exclusions.
+        assert!(validate_layer(
+            LAYER_RULE_OVERRIDES,
+            &json!({"overrides": [
+                {"tags": ["scanner"], "action": "monitor",
+                 "exclude_targets": ["header", "query"]},
+                {"severity_min": 4, "action": "disable"}
+            ]})
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn selector_entries_expand_and_exact_entries_win() {
+        let resolved = Resolved {
+            overrides: vec![
+                // Tag selector: every dotfile-tagged rule goes monitor.
+                RuleOverrideEntry {
+                    tags: vec!["dotfile".to_string()],
+                    action: "monitor".to_string(),
+                    ..RuleOverrideEntry::default()
+                },
+                // Severity selector: every critical rule disabled.
+                RuleOverrideEntry {
+                    severity_min: Some(5),
+                    action: "disable".to_string(),
+                    ..RuleOverrideEntry::default()
+                },
+                // Exact entry wins over both selectors for one rule.
+                RuleOverrideEntry {
+                    rule_id: "VARMAN-1020".to_string(),
+                    action: "score_override".to_string(),
+                    score: Some(2),
+                    ..RuleOverrideEntry::default()
+                },
+            ],
+            ..Resolved::default()
+        };
+
+        let effective = resolved.effective_engine(None);
+        assert_eq!(effective.rule_scores.get("VARMAN-1020"), Some(&2));
+        assert!(!effective
+            .disabled_rules
+            .contains(&"VARMAN-1020".to_string()));
+        assert!(!effective
+            .monitor_managed_rules
+            .contains(&"VARMAN-1020".to_string()));
+        // The severity selector disabled the other critical rules.
+        assert!(effective
+            .disabled_rules
+            .contains(&"VARMAN-1002".to_string()));
+        assert!(effective
+            .disabled_rules
+            .contains(&"VARMAN-1050".to_string()));
+    }
+
+    #[test]
+    fn rule_plan_reports_effective_state() {
+        let resolved = Resolved {
+            overrides: vec![
+                RuleOverrideEntry {
+                    rule_id: "VARMAN-1020".into(),
+                    action: "score_override".into(),
+                    score: Some(2),
+                    ..RuleOverrideEntry::default()
+                },
+                RuleOverrideEntry {
+                    rule_id: "VARMAN-1010".into(),
+                    action: "monitor".into(),
+                    ..RuleOverrideEntry::default()
+                },
+                RuleOverrideEntry {
+                    rule_id: "VARMAN-1002".into(),
+                    action: "disable".into(),
+                    ..RuleOverrideEntry::default()
+                },
+                RuleOverrideEntry {
+                    rule_id: "VARMAN-1004".into(),
+                    action: "monitor".into(),
+                    exclude_targets: vec!["query".into()],
+                    ..RuleOverrideEntry::default()
+                },
+            ],
+            ..Resolved::default()
+        };
+        let effective = resolved.effective_engine(None);
+        let plan = rule_plan(&effective);
+        let row = |id: &str| {
+            plan.iter()
+                .find(|row| row.id == id)
+                .expect("catalogue row")
+        };
+        assert_eq!(row("VARMAN-1020").effective, "enforce");
+        assert_eq!(row("VARMAN-1020").score, 2);
+        assert_eq!(row("VARMAN-1010").effective, "monitor");
+        assert_eq!(row("VARMAN-1002").effective, "disabled");
+        assert_eq!(row("VARMAN-1004").exclusions, vec!["query".to_string()]);
+        // Severity default when no override: VARMAN-1003 is critical.
+        assert_eq!(row("VARMAN-1003").score, 5);
     }
 
     #[test]

@@ -17,6 +17,7 @@ import { ErrorState } from '@/components/ErrorState'
 import { useCanWrite } from '@/hooks'
 import { cn } from '@/lib/utils'
 import {
+  EXCLUSION_TARGETS,
   MANAGED_RULE_IDS,
   managedRuleKeys,
   managedRulesApi,
@@ -27,10 +28,12 @@ import {
   type EngineLayerConfig,
   type PolicyDetail,
   type PolicyLayerKind,
+  type PolicyPreview,
   type PolicyRule,
   type PolicySummary,
   type RuleOverrideEntry,
   type RuleOverridesLayerConfig,
+  type RulePlanEntry,
 } from '@/api/policies'
 import { WAF_CATEGORIES, WAF_ENGINE_MODES, WAF_STACKS } from '@/api/types'
 
@@ -695,7 +698,7 @@ const OVERRIDE_ACTIONS = [
   'score_override',
 ] as const
 
-/** Managed-rule tuning: disable, log-only or score override per rule. */
+/** Managed-rule tuning: disable, log-only, score override and exclusions. */
 function RuleOverridesForm({
   policyId,
   stored,
@@ -710,6 +713,7 @@ function RuleOverridesForm({
   onStored: () => void
 }) {
   const { t } = useTranslation()
+  const toast = useToast()
   const save = useLayerMutation(policyId, 'rule_overrides', onStored)
   const remove = useMutation({
     mutationFn: () => policiesApi.deleteLayer(policyId, 'rule_overrides'),
@@ -720,59 +724,93 @@ function RuleOverridesForm({
     queryFn: () => managedRulesApi.list(),
   })
 
+  type Draft = { action: string; score: string; exclusions: string[] }
   // Draft keyed by rule id; a missing key means "default" (no override).
-  const [draft, setDraft] = useState<
-    Record<string, { action: string; score: string }>
-  >(() => {
-    const initial: Record<string, { action: string; score: string }> = {}
+  const [draft, setDraft] = useState<Record<string, Draft>>(() => {
+    const initial: Record<string, Draft> = {}
     for (const entry of stored?.overrides ?? []) {
+      if (!entry.rule_id) continue
       initial[entry.rule_id] = {
         action: entry.action,
         score: entry.score !== undefined ? String(entry.score) : '',
+        exclusions: entry.exclude_targets ?? [],
       }
     }
     return initial
   })
+  // Selector entries (tags / severity) are authored through the API; show
+  // them read-only so the tuning is visible.
+  const selectors = (stored?.overrides ?? []).filter(
+    (entry) => !entry.rule_id,
+  )
+
+  const patch = (ruleId: string, next: Partial<Draft>) => {
+    setDraft((current) => {
+      const base = current[ruleId] ?? {
+        action: 'default',
+        score: '',
+        exclusions: [],
+      }
+      return { ...current, [ruleId]: { ...base, ...next } }
+    })
+  }
 
   const setAction = (ruleId: string, action: string) => {
     setDraft((current) => {
       const next = { ...current }
       if (action === 'default') {
-        delete next[ruleId]
+        const existing = current[ruleId]
+        if (existing && existing.exclusions.length > 0) {
+          next[ruleId] = { ...existing, action }
+        } else {
+          delete next[ruleId]
+        }
       } else {
+        const existing = current[ruleId]
         next[ruleId] = {
           action,
-          score: current[ruleId]?.score ?? '',
+          score: existing?.score ?? '',
+          exclusions: existing?.exclusions ?? [],
         }
       }
       return next
     })
   }
 
-  const setScore = (ruleId: string, score: string) => {
-    setDraft((current) => ({
-      ...current,
-      [ruleId]: {
-        action: current[ruleId]?.action ?? 'score_override',
-        score,
-      },
-    }))
-  }
-
   const payload = () => ({
-    overrides: Object.entries(draft).map(([rule_id, value]) => {
-      const entry: RuleOverrideEntry = {
-        rule_id,
-        action: value.action as RuleOverrideEntry['action'],
-      }
-      if (value.action === 'score_override') {
-        entry.score = Math.min(255, Math.max(1, Number(value.score) || 1))
-      }
-      return entry
-    }),
+    overrides: Object.entries(draft)
+      .filter(([, value]) => value.action !== 'default')
+      .map(([rule_id, value]) => {
+        const entry: RuleOverrideEntry = {
+          rule_id,
+          action: value.action as RuleOverrideEntry['action'],
+        }
+        if (value.action === 'score_override') {
+          entry.score = Math.min(255, Math.max(1, Number(value.score) || 1))
+        }
+        if (value.exclusions.length > 0) {
+          entry.exclude_targets = value.exclusions
+        }
+        return entry
+      }),
   })
 
-  const tuned = Object.keys(draft).length
+  const tuned = Object.entries(draft).filter(
+    ([, value]) => value.action !== 'default',
+  ).length
+
+  // Draft preview: compiles the layer as if it were saved.
+  const [preview, setPreview] = useState<PolicyPreview | null>(null)
+  const runPreview = useMutation({
+    mutationFn: () =>
+      policiesApi.preview({
+        policy_id: policyId,
+        layers: { rule_overrides: payload() },
+      }),
+    onSuccess: (result) => setPreview(result),
+    onError: (error) =>
+      toast.error(t('pages.policies.previewFailed'), String(error)),
+  })
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -784,7 +822,30 @@ function RuleOverridesForm({
           <Badge tone={tuned > 0 ? 'warning' : 'neutral'}>
             {t('pages.policies.fields.tunedCount', { n: tuned })}
           </Badge>
+          <Button
+            size="sm"
+            loading={runPreview.isPending}
+            onClick={() => runPreview.mutate()}
+          >
+            {t('pages.policies.preview')}
+          </Button>
         </div>
+        {selectors.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {selectors.map((entry, index) => (
+              <Badge key={index} tone="info">
+                {entry.tags && entry.tags.length > 0
+                  ? t('pages.policies.fields.selectorTags', {
+                      tags: entry.tags.join(', '),
+                    })
+                  : t('pages.policies.fields.selectorSeverity', {
+                      n: entry.severity_min ?? 0,
+                    })}{' '}
+                → {t(`pages.policies.fields.override.${entry.action}`)}
+              </Badge>
+            ))}
+          </div>
+        )}
         {catalogue.isLoading ? (
           <SkeletonCard />
         ) : (
@@ -793,52 +854,67 @@ function RuleOverridesForm({
               const state = draft[rule.id]
               const action = state?.action ?? 'default'
               return (
-                <li
-                  key={rule.id}
-                  className="flex flex-wrap items-center gap-3 px-3 py-2.5"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <code className="text-xs text-fg-subtle">
-                        {rule.id}
-                      </code>
-                      <span className="truncate text-[13px] font-medium text-fg-strong">
-                        {rule.name}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-fg-subtle">
-                      {rule.tags.map((tag) => (
-                        <span key={tag}>#{tag}</span>
-                      ))}
-                      <span>
-                        {t('pages.policies.fields.ruleSeverity')}{' '}
-                        {rule.severity}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={action}
-                      disabled={!canWrite}
-                      onChange={(e) => setAction(rule.id, e.target.value)}
-                      options={OVERRIDE_ACTIONS.map((value) => ({
-                        value,
-                        label: t(`pages.policies.fields.override.${value}`),
-                      }))}
-                    />
-                    {action === 'score_override' && (
-                      <div className="w-20">
-                        <Input
-                          type="number"
-                          min={1}
-                          max={255}
-                          value={state?.score ?? ''}
-                          disabled={!canWrite}
-                          onChange={(e) => setScore(rule.id, e.target.value)}
-                        />
+                <li key={rule.id} className="space-y-2 px-3 py-2.5">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <code className="text-xs text-fg-subtle">
+                          {rule.id}
+                        </code>
+                        <span className="truncate text-[13px] font-medium text-fg-strong">
+                          {rule.name}
+                        </span>
                       </div>
-                    )}
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-fg-subtle">
+                        {rule.tags.map((tag) => (
+                          <span key={tag}>#{tag}</span>
+                        ))}
+                        <span>
+                          {t('pages.policies.fields.ruleSeverity')}{' '}
+                          {rule.severity}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Select
+                        value={action}
+                        disabled={!canWrite}
+                        onChange={(e) => setAction(rule.id, e.target.value)}
+                        options={OVERRIDE_ACTIONS.map((value) => ({
+                          value,
+                          label: t(`pages.policies.fields.override.${value}`),
+                        }))}
+                      />
+                      {action === 'score_override' && (
+                        <div className="w-20">
+                          <Input
+                            type="number"
+                            min={1}
+                            max={255}
+                            value={state?.score ?? ''}
+                            disabled={!canWrite}
+                            onChange={(e) =>
+                              patch(rule.id, { score: e.target.value })
+                            }
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
+                  {action !== 'default' && (
+                    <PillMultiSelect
+                      label={t('pages.policies.fields.excludeTargets')}
+                      hint={t('pages.policies.fields.excludeTargetsHint')}
+                      options={EXCLUSION_TARGETS.map((target) => ({
+                        value: target,
+                        label: target,
+                      }))}
+                      value={state?.exclusions ?? []}
+                      onChange={(exclusions) =>
+                        patch(rule.id, { exclusions })
+                      }
+                    />
+                  )}
                 </li>
               )
             })}
@@ -852,7 +928,67 @@ function RuleOverridesForm({
         onSave={() => save.mutate(payload())}
         onRemove={() => remove.mutate()}
       />
+      {preview && (
+        <RulePlanDialog
+          plan={preview.plan}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </div>
+  )
+}
+
+/** Read-only table of a compiled rule plan. */
+function RulePlanDialog({
+  plan,
+  onClose,
+}: {
+  plan: RulePlanEntry[]
+  onClose: () => void
+}) {
+  const { t } = useTranslation()
+  const tone: Record<string, 'success' | 'warning' | 'neutral'> = {
+    enforce: 'success',
+    monitor: 'warning',
+    disabled: 'neutral',
+  }
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="lg"
+      title={t('pages.policies.planTitle')}
+      description={t('pages.policies.planHint')}
+    >
+      <div className="max-h-[60vh] overflow-y-auto px-5 py-4">
+        <ul className="divide-y divide-line rounded-lg border border-line">
+          {plan.map((row) => (
+            <li
+              key={row.id}
+              className="flex flex-wrap items-center gap-2 px-3 py-2 text-[13px]"
+            >
+              <code className="text-xs text-fg-subtle">{row.id}</code>
+              <span className="min-w-0 flex-1 truncate font-medium text-fg-strong">
+                {row.name}
+              </span>
+              {row.exclusions.length > 0 && (
+                <span className="text-[11px] text-fg-subtle">
+                  {t('pages.policies.planExclusions', {
+                    targets: row.exclusions.join(', '),
+                  })}
+                </span>
+              )}
+              <Badge tone="neutral">
+                {t('pages.policies.planScore', { n: row.score })}
+              </Badge>
+              <Badge tone={tone[row.effective] ?? 'neutral'}>
+                {t(`pages.policies.plan.${row.effective}`)}
+              </Badge>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </Dialog>
   )
 }
 

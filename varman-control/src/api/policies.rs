@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{get, put};
+use axum::routing::{get, post, put};
 use axum::Json;
 use axum::Router;
 use chrono::{DateTime, Utc};
@@ -38,6 +38,7 @@ use crate::policy::{self, LAYER_KINDS};
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/policies", get(list_policies).post(create_policy))
+        .route("/policies/preview", post(preview_policy))
         .route(
             "/policies/{id}",
             get(get_policy).put(update_policy).delete(delete_policy),
@@ -146,6 +147,9 @@ pub struct EffectiveConfigView {
     pub overrides: Vec<policy::RuleOverrideEntry>,
     /// What the next bundle will carry, layer applied over the site row.
     pub effective: policy::EffectiveEngine,
+    /// The compiled managed-rule plan (enforce/monitor/disabled, score,
+    /// exclusions) for the effective engine.
+    pub plan: Vec<policy::RulePlan>,
 }
 
 /* ── Requests ──────────────────────────────────────────────────────────── */
@@ -787,6 +791,7 @@ async fn get_effective_config(
         .one(&state.db)
         .await?;
     let effective = resolved.effective_engine(settings.as_ref());
+    let plan = policy::rule_plan(&effective);
 
     let policy_ref = match (resolved.policy_id, &resolved.policy_name) {
         (Some(policy_id), Some(name)) => Some(PolicyRef {
@@ -809,6 +814,89 @@ async fn get_effective_config(
         rules: resolved.rules.clone(),
         overrides: resolved.overrides.clone(),
         effective,
+        plan,
+    }))
+}
+
+/* ── Preview ───────────────────────────────────────────────────────────── */
+
+#[derive(Debug, Deserialize)]
+pub struct PreviewRequest {
+    /// Base policy whose stored layers seed the preview.
+    #[serde(default)]
+    pub policy_id: Option<Uuid>,
+    /// When set, the site's overlay applies and its own settings feed the
+    /// fallback knobs.
+    #[serde(default)]
+    pub site_id: Option<Uuid>,
+    /// Draft layers keyed by kind; they replace the base layer of the same
+    /// kind for the preview only.
+    #[serde(default)]
+    pub layers: HashMap<String, Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreviewView {
+    pub engine: Value,
+    pub crs: Value,
+    pub rules: Vec<policy::PolicyRule>,
+    pub overrides: Vec<policy::RuleOverrideEntry>,
+    pub effective: policy::EffectiveEngine,
+    pub plan: Vec<policy::RulePlan>,
+}
+
+/// `POST /api/v1/policies/preview` - compiles a draft without saving it.
+async fn preview_policy(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Json(payload): Json<PreviewRequest>,
+) -> Result<Json<PreviewView>, ApiError> {
+    let mut layers: std::collections::BTreeMap<String, Value> =
+        std::collections::BTreeMap::new();
+    let mut policy_name = None;
+    let mut revision = 0;
+    if let Some(policy_id) = payload.policy_id {
+        let policy = load_policy(&state, policy_id).await?;
+        policy_name = Some(policy.name.clone());
+        revision = policy.revision;
+        for row in load_layers(&state, policy_id).await? {
+            layers.insert(row.kind, row.config);
+        }
+    }
+    for (kind, config) in &payload.layers {
+        validate_layer_payload(kind, config)?;
+        layers.insert(kind.clone(), config.clone());
+    }
+    let mut overlay = None;
+    let mut settings = None;
+    if let Some(site_id) = payload.site_id {
+        load_site_read(&state.db, site_id, &current).await?;
+        overlay = site_waf_policy_override::Entity::find_by_id(site_id)
+            .one(&state.db)
+            .await?
+            .map(|row| row.config);
+        settings = waf_settings::Entity::find()
+            .filter(waf_settings::Column::SiteId.eq(site_id))
+            .one(&state.db)
+            .await?;
+    }
+
+    let resolved = policy::resolve_maps(
+        payload.policy_id,
+        policy_name,
+        revision,
+        &layers,
+        overlay.as_ref(),
+    );
+    let effective = resolved.effective_engine(settings.as_ref());
+    let plan = policy::rule_plan(&effective);
+    Ok(Json(PreviewView {
+        engine: Value::Object(resolved.engine.clone()),
+        crs: Value::Object(resolved.crs.clone()),
+        rules: resolved.rules.clone(),
+        overrides: resolved.overrides.clone(),
+        effective,
+        plan,
     }))
 }
 

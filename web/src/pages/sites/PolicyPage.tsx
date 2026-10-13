@@ -368,8 +368,52 @@ export function PolicyPage() {
           )}
         </CardBody>
       </Card>
+
+      {/* Compiled rule plan */}
+      {effectiveData && (
+        <Card>
+          <CardHeader
+            title={t('pages.sitePolicy.planTitle')}
+            description={t('pages.sitePolicy.planHint')}
+          />
+          <CardBody>
+            <ul className="divide-y divide-line rounded-lg border border-line">
+              {effectiveData.plan.map((row) => (
+                <li
+                  key={row.id}
+                  className="flex flex-wrap items-center gap-2 px-3 py-2 text-[13px]"
+                >
+                  <code className="text-xs text-fg-subtle">{row.id}</code>
+                  <span className="min-w-0 flex-1 truncate font-medium text-fg-strong">
+                    {row.name}
+                  </span>
+                  {row.exclusions.length > 0 && (
+                    <span className="text-[11px] text-fg-subtle">
+                      {t('pages.policies.planExclusions', {
+                        targets: row.exclusions.join(', '),
+                      })}
+                    </span>
+                  )}
+                  <Badge tone="neutral">
+                    {t('pages.policies.planScore', { n: row.score })}
+                  </Badge>
+                  <Badge tone={PLAN_TONE[row.effective] ?? 'neutral'}>
+                    {t(`pages.policies.plan.${row.effective}`)}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      )}
     </div>
   )
+}
+
+const PLAN_TONE: Record<string, 'success' | 'warning' | 'neutral'> = {
+  enforce: 'success',
+  monitor: 'warning',
+  disabled: 'neutral',
 }
 
 function EffectiveRow({ label, value }: { label: string; value: string }) {

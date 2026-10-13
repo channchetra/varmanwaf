@@ -349,6 +349,9 @@ pub struct WafConfig {
     /// still applies.
     #[serde(default)]
     pub rule_scores: std::collections::HashMap<String, u32>,
+    /// Per-rule excluded request targets (`rule id -> targets`).
+    #[serde(default)]
+    pub rule_target_exclusions: std::collections::HashMap<String, Vec<String>>,
 }
 
 /// Default for [`WafConfig::engine_mode`]: follow the process-wide
@@ -1857,6 +1860,11 @@ impl RuleCache {
             monitor_managed_rules: w.monitor_managed_rules.clone(),
             disabled_rules: w.disabled_rules.clone(),
             rule_scores: w.rule_scores.clone(),
+            rule_target_exclusions: w
+                .rule_target_exclusions
+                .iter()
+                .map(|entry| (entry.rule_id.clone(), entry.targets.clone()))
+                .collect(),
         }
     }
 

@@ -21,8 +21,8 @@ use varman_protocol::control_plane::{
     BasicAuthConfig, BasicAuthCredential, BotProtectionConfig, CacheRule,
     ChallengeConfig, CustomErrorPage, FailoverMode, GeoConfig,
     GlobalCacheSettings, HealthCheckConfig, IpAccessRule, RateLimitRule,
-    RewriteOperation, RewriteRule, RouteConfig, RuleBundle, Site,
-    SiteCacheSettings, SiteConfig, SitePolicy, SslConfig, UpstreamConfig,
+    RewriteOperation, RewriteRule, RouteConfig, RuleBundle, RuleTargetExclusions,
+    Site, SiteCacheSettings, SiteConfig, SitePolicy, SslConfig, UpstreamConfig,
     UpstreamPeer, WafConfig, WafRule,
 };
 
@@ -809,6 +809,7 @@ fn waf_config_to_proto(
         openapi_spec,
         disabled_rules: Vec::new(),
         rule_scores: HashMap::new(),
+        rule_target_exclusions: Vec::new(),
     }
 }
 
@@ -847,6 +848,11 @@ fn waf_config_with_policy(
     config.monitor_managed_rules = effective.monitor_managed_rules;
     config.disabled_rules = effective.disabled_rules;
     config.rule_scores = effective.rule_scores.into_iter().collect();
+    config.rule_target_exclusions = effective
+        .rule_target_exclusions
+        .into_iter()
+        .map(|(rule_id, targets)| RuleTargetExclusions { rule_id, targets })
+        .collect();
     config.engine_mode = effective.engine_mode;
     config.enabled = (effective.waf_enabled || config.engine_mode != "inherit")
         && any_group_enabled;

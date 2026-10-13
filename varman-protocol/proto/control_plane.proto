@@ -401,6 +401,16 @@ message WafConfig {
   // plane.
   repeated string disabled_rules = 48;
   map<string, uint32> rule_scores = 49;
+
+  // Per-rule excluded request targets: a rule whose match depends on one
+  // of the listed sources (path, query, body, header, cookie, user_agent,
+  // host, method) is suppressed.
+  repeated RuleTargetExclusions rule_target_exclusions = 50;
+}
+
+message RuleTargetExclusions {
+  string rule_id = 1;
+  repeated string targets = 2;
 }
 
 enum WafMode {

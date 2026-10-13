@@ -233,6 +233,17 @@
       "editorDescription": "Revision {{revision}} · used by {{sites}} site(s)",
       "layerSaved": "Layer saved",
       "layerSaveFailed": "Could not save the layer",
+      "preview": "Preview plan",
+      "previewFailed": "Could not compile the preview",
+      "planTitle": "Compiled rule plan",
+      "planHint": "What the data plane will do with each managed rule, with the draft applied.",
+      "planScore": "score {{n}}",
+      "planExclusions": "excl. {{targets}}",
+      "plan": {
+        "enforce": "Enforce",
+        "monitor": "Monitor",
+        "disabled": "Disabled"
+      },
       "removeLayer": "Remove layer",
       "keepInheriting": "Keep inheriting",
       "layers": {
@@ -269,6 +280,10 @@
         "ruleTags": "Tags",
         "ruleTuningHint": "Per-rule tuning applied to every site following this policy: monitor records findings without enforcing, disable skips the rule entirely, score override replaces its anomaly contribution.",
         "tunedCount": "{{n}} rule(s) tuned",
+        "excludeTargets": "Excluded targets",
+        "excludeTargetsHint": "A match that depends on an excluded target is suppressed.",
+        "selectorTags": "Tag selector: {{tags}}",
+        "selectorSeverity": "Severity ≥ {{n}} selector",
         "override": {
           "default": "Default",
           "monitor": "Monitor",
@@ -304,6 +319,8 @@
       "modeDerived": "derived from rules",
       "disabledRules": "Disabled rules",
       "ruleScores": "Score overrides",
+      "planTitle": "Compiled rule plan",
+      "planHint": "What the data plane will do with each managed rule for this site.",
       "rulesTitle": "Custom rules ({{n}})",
       "noRules": "No policy rules reach this site.",
       "effectiveUnavailable": "Effective configuration is unavailable right now."

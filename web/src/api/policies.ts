@@ -87,14 +87,31 @@ export interface CustomRulesLayerConfig {
 }
 
 /**
- * One managed-rule tuning entry inside a `rule_overrides` layer.
+ * One managed-rule tuning entry inside a `rule_overrides` layer. The entry
+ * addresses rules by exactly one of `rule_id`, `tags` or `severity_min`.
  * `score` is required for `score_override` and rejected otherwise.
  */
 export interface RuleOverrideEntry {
-  rule_id: string
+  rule_id?: string
+  tags?: string[]
+  severity_min?: number
   action: 'default' | 'disable' | 'monitor' | 'score_override'
   score?: number
+  /** Request targets excluded from the addressed rules' evaluation. */
+  exclude_targets?: string[]
 }
+
+/** Request targets a rule override may exclude. */
+export const EXCLUSION_TARGETS = [
+  'path',
+  'query',
+  'body',
+  'header',
+  'cookie',
+  'user_agent',
+  'host',
+  'method',
+] as const
 
 /** `rule_overrides` layer payload. */
 export interface RuleOverridesLayerConfig {
@@ -123,6 +140,21 @@ export interface EffectiveEngine {
   monitor_managed_rules: string[]
   disabled_rules: string[]
   rule_scores: Record<string, number>
+  rule_target_exclusions: Record<string, string[]>
+}
+
+/** One row of the compiled managed-rule plan. */
+export interface RulePlanEntry {
+  id: string
+  name: string
+  severity: number
+  action: string
+  tags: string[]
+  stacks: string[]
+  strict_only: boolean
+  effective: 'enforce' | 'monitor' | 'disabled'
+  score: number
+  exclusions: string[]
 }
 
 export interface EffectiveConfig {
@@ -136,6 +168,24 @@ export interface EffectiveConfig {
   rules: PolicyRule[]
   overrides: RuleOverrideEntry[]
   effective: EffectiveEngine
+  /** Compiled managed-rule plan for the effective engine. */
+  plan: RulePlanEntry[]
+}
+
+/** Draft preview request (`POST /policies/preview`). */
+export interface PreviewPolicyRequest {
+  policy_id?: string
+  site_id?: string
+  layers?: Partial<Record<PolicyLayerKind, unknown>>
+}
+
+export interface PolicyPreview {
+  engine: EngineLayerConfig
+  crs: CrsLayerConfig
+  rules: PolicyRule[]
+  overrides: RuleOverrideEntry[]
+  effective: EffectiveEngine
+  plan: RulePlanEntry[]
 }
 
 export interface SitePolicyView {
@@ -204,6 +254,9 @@ export const policiesApi = {
 
   effectiveConfig: (siteId: string) =>
     apiClient.get<EffectiveConfig>(`/sites/${siteId}/effective-config`),
+
+  preview: (payload: PreviewPolicyRequest) =>
+    apiClient.post<PolicyPreview>('/policies/preview', payload),
 }
 
 export const policyKeys = {

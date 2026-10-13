@@ -2112,6 +2112,11 @@ fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
         // contribution.
         disabled_rules: cfg.disabled_rules.iter().cloned().collect(),
         rule_scores: cfg.rule_scores.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+        rule_target_exclusions: cfg
+            .rule_target_exclusions
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
     };
     WafEngine::new(&engine_config)
 }
@@ -2459,6 +2464,7 @@ impl TryFrom<&PluginConf> for WafPlugin {
             monitor_custom_rules: Default::default(),
             disabled_rules: Default::default(),
             rule_scores: Default::default(),
+            rule_target_exclusions: Default::default(),
         };
 
         Ok(Self {
@@ -3781,6 +3787,7 @@ ml_threshold = 0.75
             monitor_managed_rules: Vec::new(),
             disabled_rules: Vec::new(),
             rule_scores: Default::default(),
+            rule_target_exclusions: Default::default(),
         }
     }
 
@@ -3899,6 +3906,23 @@ ml_threshold = 0.75
         // Off mode skips the rule entirely.
         cfg.custom_rules = vec![rule(CacheWafMode::Off)];
         assert_eq!(build_site_engine(&cfg).inspect(&r).action, WafAction::Pass);
+    }
+
+    #[test]
+    fn site_engine_applies_target_exclusions() {
+        let mut r = probe("");
+        r.path = "/.git/config".into();
+
+        let mut cfg = cache_waf_config(false, Vec::new(), Vec::new());
+        assert_eq!(build_site_engine(&cfg).inspect(&r).action, WafAction::Block);
+
+        // Excluding the path suppresses the path-based managed rule.
+        cfg.rule_target_exclusions =
+            [("VARMAN-1020".to_string(), vec!["path".to_string()])]
+                .into_iter()
+                .collect();
+        let v = build_site_engine(&cfg).inspect(&r);
+        assert_eq!(v.action, WafAction::Pass, "details: {}", v.details);
     }
 
     #[test]

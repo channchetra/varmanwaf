@@ -107,6 +107,12 @@ pub struct WafEngineConfig {
     /// severity-derived anomaly contribution (the rule's own action still
     /// applies, so a Block rule with an override still blocks).
     pub rule_scores: std::collections::HashMap<String, u32>,
+    /// Per-rule excluded request targets: a rule whose match depends on one
+    /// of these sources is suppressed. Targets are `path`, `query`, `body`,
+    /// `header`, `cookie`, `user_agent`, `host` and `method`. Aggregates
+    /// (`cf.waf.score.*`) are not request targets, so exclusions never
+    /// suppress score-consumer rules.
+    pub rule_target_exclusions: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl Default for WafEngineConfig {
@@ -127,6 +133,7 @@ impl Default for WafEngineConfig {
             monitor_custom_rules: std::collections::HashSet::new(),
             disabled_rules: std::collections::HashSet::new(),
             rule_scores: std::collections::HashMap::new(),
+            rule_target_exclusions: std::collections::HashMap::new(),
         }
     }
 }
@@ -209,6 +216,86 @@ struct RuleRec<'a> {
     monitored: bool,
 }
 
+/// Owned storage for an evaluation context with excluded request targets
+/// neutralized. Built only for rules that carry target exclusions, so the
+/// hot path pays nothing when no exclusions are configured.
+struct FilteredCtx {
+    method: String,
+    path: String,
+    full_uri: String,
+    host: String,
+    user_agent: String,
+    body: Option<String>,
+    headers: Vec<(String, String)>,
+    cookies: Vec<(String, String)>,
+}
+
+impl FilteredCtx {
+    fn new(base: EvalContext<'_>, exclusions: &[String]) -> Self {
+        let excluded = |target: &str| exclusions.iter().any(|t| t == target);
+        let path_excluded = excluded("path");
+        let query_excluded = excluded("query");
+        Self {
+            method: if excluded("method") {
+                String::new()
+            } else {
+                base.method.to_string()
+            },
+            path: if path_excluded {
+                String::new()
+            } else {
+                base.path.to_string()
+            },
+            // The full-URI view composites path and query, so excluding
+            // either removes it as well.
+            full_uri: if path_excluded || query_excluded {
+                String::new()
+            } else {
+                base.full_uri.to_string()
+            },
+            host: if excluded("host") {
+                String::new()
+            } else {
+                base.host.to_string()
+            },
+            user_agent: if excluded("user_agent") {
+                String::new()
+            } else {
+                base.user_agent.to_string()
+            },
+            body: if excluded("body") {
+                None
+            } else {
+                base.body.map(str::to_string)
+            },
+            headers: if excluded("header") {
+                Vec::new()
+            } else {
+                base.headers.to_vec()
+            },
+            cookies: if excluded("cookie") {
+                Vec::new()
+            } else {
+                base.cookies.to_vec()
+            },
+        }
+    }
+
+    fn as_ctx<'a>(&'a self, base: EvalContext<'a>) -> EvalContext<'a> {
+        EvalContext {
+            method: &self.method,
+            path: &self.path,
+            full_uri: &self.full_uri,
+            host: &self.host,
+            user_agent: &self.user_agent,
+            body: self.body.as_deref(),
+            headers: &self.headers,
+            cookies: &self.cookies,
+            ..base
+        }
+    }
+}
+
 /// Multi-stage WAF detection engine. Clone is intentionally not derived —
 /// share an `Arc<WafEngine>` instead so the Aho-Corasick automaton stays put.
 /// A typed body field (form member / JSON member) above this decoded length
@@ -233,6 +320,7 @@ pub struct WafEngine {
     monitor_custom_rules: std::collections::HashSet<String>,
     disabled_rules: std::collections::HashSet<String>,
     rule_scores: std::collections::HashMap<String, u32>,
+    rule_target_exclusions: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl std::fmt::Debug for WafEngine {
@@ -280,6 +368,7 @@ impl WafEngine {
             monitor_custom_rules: config.monitor_custom_rules.clone(),
             disabled_rules: config.disabled_rules.clone(),
             rule_scores: config.rule_scores.clone(),
+            rule_target_exclusions: config.rule_target_exclusions.clone(),
         }
     }
 
@@ -1107,7 +1196,22 @@ impl WafEngine {
             // Managed rules see the blocking-only score snapshot; custom
             // rules see the full aggregate.
             let rule_ctx = if is_managed { &block_ctx } else { &ctx };
-            if !evaluate(&rule.expression, rule_ctx) {
+            let mut matched = evaluate(&rule.expression, rule_ctx);
+            // Target exclusions suppress a match only when the rule no
+            // longer matches against the context with those targets
+            // removed: a finding independent of the excluded source stays.
+            if matched {
+                let targets = self
+                    .rule_target_exclusions
+                    .get(rule.id.as_str())
+                    .filter(|targets| !targets.is_empty());
+                if let Some(targets) = targets {
+                    let filtered = FilteredCtx::new(*rule_ctx, targets);
+                    matched =
+                        evaluate(&rule.expression, &filtered.as_ctx(*rule_ctx));
+                }
+            }
+            if !matched {
                 continue;
             }
             let rule_monitored = self.rule_monitored(rule);
@@ -1495,6 +1599,59 @@ mod tests {
         assert_eq!(v.action, WafAction::Block);
         assert_eq!(v.breakdown.total, base.breakdown.total - 4);
         assert_eq!(v.breakdown.block_total, base.breakdown.block_total - 4);
+    }
+
+    #[test]
+    fn target_exclusions_suppress_dependent_matches_only() {
+        let r = req("GET", "/.git/config", "");
+        assert_eq!(engine().inspect(&r).action, WafAction::Block);
+
+        // Excluding the path suppresses the path-based rule entirely.
+        let cfg = WafEngineConfig {
+            rule_target_exclusions: [(
+                "VARMAN-1020".to_string(),
+                vec!["path".to_string()],
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let v = WafEngine::new(&cfg).inspect(&r);
+        assert_eq!(v.action, WafAction::Pass, "details: {}", v.details);
+        assert!(!v.matched_rules.contains(&"VARMAN-1020".to_string()));
+
+        // An unrelated exclusion leaves the rule intact.
+        let cfg = WafEngineConfig {
+            rule_target_exclusions: [(
+                "VARMAN-1020".to_string(),
+                vec!["query".to_string()],
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let v = WafEngine::new(&cfg).inspect(&r);
+        assert!(v.matched_rules.contains(&"VARMAN-1020".to_string()));
+        assert_eq!(v.action, WafAction::Block);
+
+        // Score-consumer rules read aggregates, not request targets, so
+        // exclusions never suppress them.
+        let cfg = WafEngineConfig {
+            fast_path_block_on_critical: false,
+            rule_target_exclusions: [(
+                "VARMAN-1002".to_string(),
+                vec!["query".to_string()],
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let v = WafEngine::new(&cfg).inspect(&req(
+            "GET",
+            "/api/users",
+            "id=1' OR 1=1 --",
+        ));
+        assert!(v.matched_rules.contains(&"VARMAN-1002".to_string()));
     }
 
     #[test]
