@@ -2584,8 +2584,22 @@ impl Plugin for WafPlugin {
             // have run, so without this call the bytes we read are lost: the
             // proxy replays nothing while the upstream waits for the declared
             // Content-Length and the request stalls. Enabling the buffer
-            // first makes every byte we read replayable (64 KiB cap, matching
-            // the inspection limit).
+            // first makes every byte we read replayable.
+            //
+            // The replay buffer is exactly 64 KiB and a single read can return
+            // a full 64 KiB, so a second read after any consumed byte can
+            // cross the limit, truncate the replay and stall the upstream
+            // (observed live as a hang on bodies above 64 KiB). The safe rule:
+            // read the whole body only when the declared Content-Length fits
+            // the replay window; otherwise read exactly one chunk and let the
+            // stream (tail) inspection cover everything after it.
+            const REPLAY_LIMIT: usize = 64 * 1024;
+            let content_length = headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, value)| value.trim().parse::<usize>().ok());
+            let read_whole =
+                content_length.is_some_and(|len| len <= REPLAY_LIMIT);
             session.enable_retry_buffering();
             let mut interrupted = false;
             // Slow-upload defense: the whole read pass must finish within the
@@ -2642,10 +2656,37 @@ impl Plugin for WafPlugin {
                     body_truncated = true;
                     break;
                 }
+                if !read_whole {
+                    // A body larger than the replay window: one chunk is all
+                    // we can consume without risking a truncated replay; the
+                    // stream (tail) inspection covers the remainder.
+                    interrupted = true;
+                    body_truncated = true;
+                    break;
+                }
                 if !capture_body && log_body_prefix.limit_hit() {
                     interrupted = true;
                     break;
                 }
+            }
+            if session.retry_buffer_truncated() {
+                // The replay can no longer be trusted (a content-length that
+                // under-declared the body, or an unforeseen read path).
+                // Refusing explicitly beats stalling the upstream forever.
+                tracing::warn!(
+                    limit = REPLAY_LIMIT,
+                    "request body exceeded the replay window; refused"
+                );
+                let mut response = block_page(
+                    &request_id,
+                    &format!(
+                        "request body exceeds the {} byte replay window",
+                        REPLAY_LIMIT
+                    ),
+                );
+                response.status = http::StatusCode::PAYLOAD_TOO_LARGE;
+                emit_generated_access(agent.as_ref(), &request_id, &response);
+                return Ok(RequestPluginResult::Respond(response));
             }
             if interrupted {
                 log_body_prefix.interrupted();
