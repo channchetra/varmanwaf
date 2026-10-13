@@ -26,6 +26,10 @@ pub mod security_events {
         pub path: Option<String>,
         pub rule_id: Option<String>,
         pub rule_name: Option<String>,
+        /// Which protection produced the event: `managed` / `waf` /
+        /// `ip_geo` / `bot` / `rate_limit` / `challenge`. NULL on rows
+        /// recorded before the column existed.
+        pub event_type: Option<String>,
         pub action: String,
         pub score: Option<i32>,
         #[sea_orm(column_type = "Text")]

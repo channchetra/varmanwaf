@@ -40,6 +40,12 @@ pub struct Claims {
     /// Token class, see [`TOKEN_TYPE_DASHBOARD`] / [`TOKEN_TYPE_AGENT`].
     #[serde(default)]
     pub typ: String,
+    /// Account `token_version` at mint time. A mismatch against the account
+    /// row means the token predates a credential change and is refused.
+    /// Absent in tokens minted before the field existed, which deserialises
+    /// as 0 — the pre-revocation epoch.
+    #[serde(default)]
+    pub ver: i64,
 }
 
 impl Claims {
@@ -110,6 +116,7 @@ fn build_claims(
     email: String,
     role: String,
     typ: &str,
+    token_version: i64,
     expiration_hours: i64,
 ) -> Claims {
     let now = Utc::now();
@@ -124,6 +131,7 @@ fn build_claims(
         iat: now.timestamp(),
         iss: ISSUER.to_string(),
         typ: typ.to_string(),
+        ver: token_version,
     }
 }
 
@@ -132,6 +140,7 @@ pub fn create_token(
     user_id: Uuid,
     email: &str,
     role: &str,
+    token_version: i64,
     secret: &str,
     expiration_hours: i64,
 ) -> Result<String, JwtError> {
@@ -140,6 +149,7 @@ pub fn create_token(
         email,
         role,
         TOKEN_TYPE_DASHBOARD,
+        token_version,
         secret,
         expiration_hours,
     )
@@ -151,6 +161,7 @@ pub fn create_refresh_token(
     user_id: Uuid,
     email: &str,
     role: &str,
+    token_version: i64,
     secret: &str,
     expiration_hours: i64,
 ) -> Result<String, JwtError> {
@@ -159,6 +170,7 @@ pub fn create_refresh_token(
         email,
         role,
         TOKEN_TYPE_REFRESH,
+        token_version,
         secret,
         expiration_hours,
     )
@@ -175,6 +187,7 @@ pub fn create_agent_token(
         "",
         crate::auth::jwt::AGENT_ROLE,
         TOKEN_TYPE_AGENT,
+        0,
         secret,
         expiration_hours,
     )
@@ -185,6 +198,7 @@ fn create_token_with_type(
     email: &str,
     role: &str,
     typ: &str,
+    token_version: i64,
     secret: &str,
     expiration_hours: i64,
 ) -> Result<String, JwtError> {
@@ -193,6 +207,7 @@ fn create_token_with_type(
         email.to_string(),
         role.to_string(),
         typ,
+        token_version,
         expiration_hours,
     );
     encode(
@@ -272,13 +287,15 @@ mod tests {
     #[test]
     fn roundtrip_dashboard_token() {
         let id = Uuid::new_v4();
-        let token = create_token(id, "ops@example.com", role::ADMIN, SECRET, 1)
-            .expect("token");
+        let token =
+            create_token(id, "ops@example.com", role::ADMIN, 0, SECRET, 1)
+                .expect("token");
         let claims = verify_token(&token, SECRET).expect("verify");
         assert_eq!(claims.sub, id.to_string());
         assert_eq!(claims.email, "ops@example.com");
         assert_eq!(claims.role, role::ADMIN);
         assert_eq!(claims.iss, ISSUER);
+        assert_eq!(claims.ver, 0);
         assert!(!claims.is_agent());
         assert!(claims.exp > claims.iat);
     }
@@ -286,7 +303,7 @@ mod tests {
     #[test]
     fn wrong_secret_is_rejected() {
         let token =
-            create_token(Uuid::new_v4(), "a@b.c", role::VIEWER, SECRET, 1)
+            create_token(Uuid::new_v4(), "a@b.c", role::VIEWER, 0, SECRET, 1)
                 .unwrap();
         assert!(matches!(
             verify_token(&token, "another-secret"),
@@ -301,7 +318,7 @@ mod tests {
         assert!(verify_user_token(&agent, SECRET).is_err());
 
         let user =
-            create_token(Uuid::new_v4(), "a@b.c", role::ADMIN, SECRET, 1)
+            create_token(Uuid::new_v4(), "a@b.c", role::ADMIN, 0, SECRET, 1)
                 .unwrap();
         assert!(verify_user_token(&user, SECRET).is_ok());
         assert!(verify_agent_token(&user, SECRET).is_err());
@@ -312,9 +329,29 @@ mod tests {
     fn refresh_tokens_cannot_call_the_api() {
         let id = Uuid::new_v4();
         let refresh =
-            create_refresh_token(id, "a@b.c", role::ADMIN, SECRET, 24).unwrap();
+            create_refresh_token(id, "a@b.c", role::ADMIN, 3, SECRET, 24)
+                .unwrap();
         assert!(verify_refresh_token(&refresh, SECRET).is_ok());
         assert!(verify_user_token(&refresh, SECRET).is_err());
+        let claims = verify_token(&refresh, SECRET).unwrap();
+        assert_eq!(claims.ver, 3);
+    }
+
+    /// Tokens minted before `ver` existed deserialize as version 0, so a
+    /// control plane upgrade does not invalidate every live session.
+    #[test]
+    fn legacy_tokens_without_ver_default_to_zero() {
+        let legacy: Claims = serde_json::from_value(serde_json::json!({
+            "sub": Uuid::new_v4().to_string(),
+            "email": "old@example.com",
+            "role": role::ADMIN,
+            "exp": 4_102_444_800i64,
+            "iat": 1_760_000_000i64,
+            "iss": ISSUER,
+            "typ": TOKEN_TYPE_DASHBOARD,
+        }))
+        .expect("legacy claim set");
+        assert_eq!(legacy.ver, 0);
     }
 
     #[test]

@@ -20,6 +20,12 @@ pub struct Model {
     pub action: String,
     #[sea_orm(column_type = "JsonBinary")]
     pub known_bots_whitelist: Json,
+    /// IP group whose ranges count as verified bot networks.
+    pub verified_ip_group_id: Option<Uuid>,
+    /// Treat the referenced group's ranges as verified bots by client IP.
+    pub ip_verification_enabled: bool,
+    /// Confirm whitelisted bot user agents via reverse DNS.
+    pub dns_verification_enabled: bool,
     pub updated_at: DateTimeUtc,
 }
 

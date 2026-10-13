@@ -15,7 +15,10 @@ pub use expression::{
     evaluate, parse_expression, EvalContext, Expression, Field, FieldKind,
     Operator, Value,
 };
-pub use managed::default_managed_rules;
+pub use managed::{
+    default_managed_rules, managed_rule_catalogue, ManagedRuleInfo,
+    MANAGED_RULE_IDS,
+};
 pub use signatures::{
     detect_expr_injection, detect_sqli, detect_xss, AttackCategory,
     SignatureEngine, SignatureHit, SignaturePattern,

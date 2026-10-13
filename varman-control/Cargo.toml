@@ -1,6 +1,6 @@
 [package]
 name = "varman-control"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "VarmanWAF control plane: REST API for the dashboard, gRPC control plane for agents"
 license = "Apache-2.0"
@@ -18,7 +18,7 @@ anyhow = { workspace = true }
 # which reload their settings without blocking the request path.
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
-axum = { workspace = true }
+axum = { workspace = true, features = ["multipart"] }
 # Encodes the stored basic-auth passwords into the `Authorization` payload the
 # data plane compares against.
 base64 = { workspace = true }
@@ -27,6 +27,10 @@ chrono = { workspace = true }
 # Drives the provider response streams and the SSE chat endpoint.
 futures-util = { workspace = true }
 hex = { workspace = true }
+hmac = { workspace = true }
+ring = { workspace = true }
+maxminddb = { workspace = true }
+lettre = { workspace = true }
 jsonwebtoken = { workspace = true }
 # Parses the API allowlist entries (addresses and CIDR ranges).
 ipnet = { workspace = true }
@@ -54,6 +58,7 @@ serde_json = { workspace = true }
 passkey-server = { version = "0.1.4", features = ["send"] }
 rcgen = { workspace = true }
 sha2 = { workspace = true }
+sysinfo = { workspace = true }
 time = { workspace = true }
 x509-parser = { workspace = true }
 # TLS termination for the dashboard listener. Same provider (`ring`) as the
@@ -64,7 +69,7 @@ rustls = { version = "0.23", default-features = false, features = [
     "std",
     "tls12",
 ] }
-rustls-pemfile = "2"
+rustls-pemfile = { workspace = true }
 tokio-rustls = { version = "0.26", default-features = false, features = [
     "ring",
     "logging",
@@ -81,8 +86,9 @@ tokio = { workspace = true, features = [
     "time",
 ] }
 tokio-stream = { workspace = true, features = ["sync"] }
-tonic = { workspace = true }
+tonic = { workspace = true, features = ["tls-ring"] }
 tower-http = { workspace = true }
+tower = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 

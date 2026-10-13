@@ -9,8 +9,8 @@ use axum::Json;
 use axum::Router;
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
-    Set,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait,
+    PaginatorTrait, QueryFilter, Set, TransactionError, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -22,6 +22,7 @@ use crate::auth::middleware::AuthUser;
 use crate::auth::password::{
     hash_password, validate_password, verify_password,
 };
+use crate::auth::token_version_valid;
 use crate::auth::{create_refresh_token, create_token, verify_refresh_token};
 use crate::models::{role, user};
 
@@ -34,8 +35,18 @@ pub struct UserResponse {
     pub email: String,
     pub name: Option<String>,
     pub role: String,
+    /// The console walks first-login accounts through a password change.
+    pub must_change_password: bool,
+    /// Disabled accounts cannot sign in; shown in the admin user list.
+    pub disabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Most recent successful login (any method), resolved from the login
+    /// history; `None` when the account has never signed in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_login_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_login_ip: Option<String>,
 }
 
 impl From<user::Model> for UserResponse {
@@ -45,8 +56,14 @@ impl From<user::Model> for UserResponse {
             email: model.email,
             name: model.name,
             role: model.role,
+            must_change_password: model.must_change_password,
+            disabled: model.disabled,
             created_at: model.created_at,
             updated_at: model.updated_at,
+            // Resolved per query by the admin list endpoint (it joins the
+            // login history); everywhere else the fields stay absent.
+            last_login_at: None,
+            last_login_ip: None,
         }
     }
 }
@@ -91,6 +108,12 @@ pub struct ChangePasswordRequest {
 pub struct UpdateProfileRequest {
     #[serde(default)]
     pub name: Option<String>,
+    /// The login name. Changing it requires `current_password` and revokes
+    /// every outstanding token (their e-mail claim goes stale).
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub current_password: Option<String>,
 }
 
 /// Bootstrap status, consumed by the frontend before showing the login form.
@@ -123,13 +146,22 @@ async fn status(
     Ok(Json(AuthStatus {
         needs_setup: count == 0,
         registration_open: state.config.allow_registration || count == 0,
-        passkey_enabled: state.config.passkey_enabled,
+        // The runtime master switch (instance_settings KV) overrides the
+        // static boot config, so the login form hides the passkey option as
+        // soon as an operator turns it off - no restart needed.
+        passkey_enabled: crate::api::passkeys::passkey_enabled(
+            &state.db,
+            state.config.passkey_enabled,
+        )
+        .await?,
     }))
 }
 
 /// `POST /api/v1/auth/login`
 async fn login(
     State(state): State<AppState>,
+    connect_info: Option<axum::Extension<crate::tls::ConnInfo>>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
     let email = normalise_email(&payload.email)?;
@@ -156,11 +188,39 @@ async fn login(
         tracing::debug!(%email, "login failed: wrong password");
         return Err(ApiError::Unauthorized(INVALID_CREDENTIALS.to_string()));
     }
+    if account.disabled {
+        tracing::debug!(%email, "login failed: account disabled");
+        return Err(ApiError::Unauthorized("account is disabled".to_string()));
+    }
 
     tracing::info!(%email, user_id = %account.id, role = %account.role, "user logged in");
+
+    // The login history + geo anomaly check runs detached: the response
+    // must not wait on an online geo API. Only *successful* logins are
+    // recorded — this is the audit baseline, not a brute-force log.
+    let db = state.db.clone();
+    let user_id = account.id;
+    let login_email = account.email.clone();
+    tokio::spawn(async move {
+        crate::notify::login_anomaly::record_login(
+            &db,
+            user_id,
+            &login_email,
+            &headers,
+            connect_info.map(|info| info.0.peer_addr.ip()),
+            true,
+        )
+        .await;
+    });
+
     issue_tokens(&state, account)
         .map(|body| (StatusCode::OK, Json(body)).into_response())
 }
+
+/// Advisory-lock key serialising first-account decisions across concurrent
+/// registrations. Arbitrary but process-independent; two control planes on
+/// the same database must agree on it, which a constant guarantees.
+const REGISTER_ADVISORY_LOCK_KEY: i64 = 0x5069_6E67_5741_4601;
 
 /// `POST /api/v1/auth/register`
 async fn register(
@@ -171,39 +231,59 @@ async fn register(
     validate_password(&payload.password)
         .map_err(|err| ApiError::BadRequest(err.to_string()))?;
 
-    let existing = user::Entity::find().count(&state.db).await?;
-    if existing > 0 && !state.config.allow_registration {
-        return Err(ApiError::Forbidden(
-            "registration is disabled on this server".to_string(),
-        ));
-    }
+    // The "is this the first account" decision, the duplicate check and the
+    // insert run inside one transaction guarded by an advisory lock: two
+    // racing registrations must not both observe zero users and mint two
+    // administrators. The lock releases with the transaction; the e-mail
+    // unique constraint stays as the last line of defence.
+    let allow_registration = state.config.allow_registration;
+    let txn_email = email.clone();
+    let password = payload.password;
+    let name = non_empty(&payload.name);
+    let account = state
+        .db
+        .transaction(|txn| {
+            Box::pin(async move {
+                txn.execute_unprepared(&format!(
+                    "SELECT pg_advisory_xact_lock({REGISTER_ADVISORY_LOCK_KEY})"
+                ))
+                .await?;
 
-    let taken = user::Entity::find()
-        .filter(user::Column::Email.eq(email.clone()))
-        .one(&state.db)
-        .await?;
-    if taken.is_some() {
-        return Err(ApiError::Conflict(format!(
-            "an account for {email} already exists"
-        )));
-    }
+                let existing = user::Entity::find().count(txn).await?;
+                if existing > 0 && !allow_registration {
+                    return Err(ApiError::Forbidden(
+                        "registration is disabled on this server".to_string(),
+                    ));
+                }
 
-    // The very first account always becomes the administrator; everybody else
-    // is a read-only viewer until an admin promotes them.
-    let assigned_role = if existing == 0 {
-        role::ADMIN
-    } else {
-        role::VIEWER
-    };
+                let taken = user::Entity::find()
+                    .filter(user::Column::Email.eq(txn_email.clone()))
+                    .one(txn)
+                    .await?;
+                if taken.is_some() {
+                    return Err(ApiError::Conflict(format!(
+                        "an account for {txn_email} already exists"
+                    )));
+                }
 
-    let account = create_user(
-        &state,
-        &email,
-        &payload.password,
-        non_empty(&payload.name),
-        assigned_role,
-    )
-    .await?;
+                // The very first account always becomes the administrator;
+                // everybody else is a read-only viewer until an admin
+                // promotes them.
+                let assigned_role = if existing == 0 {
+                    role::ADMIN
+                } else {
+                    role::VIEWER
+                };
+
+                create_user(txn, &txn_email, &password, name, assigned_role)
+                    .await
+            })
+        })
+        .await
+        .map_err(|err| match err {
+            TransactionError::Connection(db) => ApiError::from(db),
+            TransactionError::Transaction(api) => api,
+        })?;
 
     tracing::info!(
         %email,
@@ -236,6 +316,15 @@ async fn refresh(
             ApiError::Unauthorized("account no longer exists".to_string())
         })?;
 
+    if account.disabled {
+        return Err(ApiError::Unauthorized("account is disabled".to_string()));
+    }
+    if !token_version_valid(claims.ver, &account) {
+        return Err(ApiError::Unauthorized(
+            "session revoked: credentials changed since this token was issued"
+                .to_string(),
+        ));
+    }
     if !role::is_valid(&account.role) {
         return Err(ApiError::Unauthorized(format!(
             "account has an unknown role '{}'",
@@ -272,6 +361,8 @@ async fn update_profile(
         .await?
         .ok_or_else(|| ApiError::NotFound("account not found".to_string()))?;
 
+    let old_email = account.email.clone();
+    let password_hash = account.password_hash.clone();
     let mut active: user::ActiveModel = account.into();
     if let Some(name) = payload.name {
         let trimmed = name.trim();
@@ -285,6 +376,41 @@ async fn update_profile(
         } else {
             Some(trimmed.to_string())
         });
+    }
+    if let Some(raw) = payload.email {
+        let email = normalise_email(&raw)?;
+        if email != old_email {
+            // Changing the login name is a sensitive identity change: the
+            // current password keeps a hijacked session from locking the
+            // operator out, and the token bump invalidates every token whose
+            // e-mail claim went stale — the console must sign in again.
+            require_current_password(
+                payload.current_password.as_deref().ok_or_else(|| {
+                    ApiError::BadRequest(
+                        "the current password is required to change the login name"
+                            .to_string(),
+                    )
+                })?,
+                &password_hash,
+            )?;
+            let taken = user::Entity::find()
+                .filter(user::Column::Email.eq(email.clone()))
+                .one(&state.db)
+                .await?;
+            if taken.is_some() {
+                return Err(ApiError::Conflict(format!(
+                    "an account for {email} already exists"
+                )));
+            }
+            active.email = Set(email.clone());
+            active.token_version = Set(active.token_version.unwrap() + 1);
+            tracing::info!(
+                user_id = %current.id,
+                old_email = %old_email,
+                new_email = %email,
+                "login name changed"
+            );
+        }
     }
     active.updated_at = Set(Utc::now());
 
@@ -332,6 +458,11 @@ async fn change_password(
     let mut active: user::ActiveModel = account.into();
     active.password_hash = Set(hash_password(&payload.new_password)
         .map_err(|err| ApiError::BadRequest(err.to_string()))?);
+    // The first-login gate only demands one successful change.
+    active.must_change_password = Set(false);
+    // A password change revokes every token minted before it, including the
+    // one this request was authenticated with.
+    active.token_version = Set(active.token_version.unwrap() + 1);
     active.updated_at = Set(Utc::now());
     active.update(&state.db).await?;
 
@@ -347,7 +478,7 @@ const DUMMY_HASH: &str =
     "$2b$10$Q9V0Z7rQZ3h8YqQZQZQZQeQ9V0Z7rQZ3h8YqQZQZQZQZQZQZQZQZu";
 
 /// Lower-cases and structurally validates an e-mail address.
-fn normalise_email(raw: &str) -> Result<String, ApiError> {
+pub(crate) fn normalise_email(raw: &str) -> Result<String, ApiError> {
     let email = raw.trim().to_lowercase();
     let (local, domain) = email.split_once('@').ok_or_else(|| {
         ApiError::BadRequest("invalid e-mail address".to_string())
@@ -367,8 +498,11 @@ fn normalise_email(raw: &str) -> Result<String, ApiError> {
 }
 
 /// Inserts a new user row with a freshly hashed password.
+///
+/// Accepts any connection so the registration transaction can run it on its
+/// own transaction handle.
 pub async fn create_user(
-    state: &AppState,
+    db: &impl ConnectionTrait,
     email: &str,
     password: &str,
     name: Option<String>,
@@ -388,10 +522,13 @@ pub async fn create_user(
         password_hash: Set(password_hash),
         name: Set(name),
         role: Set(assigned_role.to_string()),
+        disabled: Set(false),
+        must_change_password: Set(false),
+        token_version: Set(0),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
     };
-    active.insert(&state.db).await.map_err(ApiError::from)
+    active.insert(db).await.map_err(ApiError::from)
 }
 
 /// Mints an access/refresh pair for `account`.
@@ -407,6 +544,7 @@ pub(crate) fn issue_tokens(
         account.id,
         &account.email,
         &account.role,
+        account.token_version,
         secret,
         state.jwt_expiration_hours(),
     )
@@ -415,6 +553,7 @@ pub(crate) fn issue_tokens(
         account.id,
         &account.email,
         &account.role,
+        account.token_version,
         secret,
         state.refresh_expiration_hours(),
     )
@@ -456,6 +595,9 @@ mod tests {
             password_hash: "$2b$10$secret".into(),
             name: Some("Ops".into()),
             role: role::ADMIN.into(),
+            disabled: false,
+            must_change_password: false,
+            token_version: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

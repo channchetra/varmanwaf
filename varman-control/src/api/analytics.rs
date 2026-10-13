@@ -117,6 +117,10 @@ pub struct Summary {
     pub unique_ips: i64,
     pub cache_hits: i64,
     pub cache_hit_rate: f64,
+    /// Outbound bytes served straight from the edge cache
+    /// (`SUM(response_size) FILTER (WHERE cache_status = 'hit')`) — the
+    /// traffic the origin did not have to produce within the window.
+    pub cache_saved_bytes: i64,
     pub avg_latency_ms: i64,
     pub max_latency_ms: i64,
     pub client_errors: i64,
@@ -132,6 +136,7 @@ pub struct TimeBucket {
     pub bucket: DateTime<Utc>,
     pub requests: i64,
     pub cache_hits: i64,
+    pub cache_saved_bytes: i64,
     pub client_errors: i64,
     pub server_errors: i64,
     pub avg_latency_ms: i64,
@@ -329,6 +334,10 @@ async fn summary(
         "SELECT COUNT(*) AS requests, \
                 COUNT(DISTINCT client_ip) AS unique_ips, \
                 COUNT(*) FILTER (WHERE cache_status = 'hit') AS cache_hits, \
+                COUNT(*) FILTER (WHERE cache_status IN \
+                    ('hit', 'miss', 'expired', 'stale', 'stale-updating', \
+                     'revalidated', 'revalidated-nocache')) AS cache_participating, \
+                COALESCE(SUM(response_size) FILTER (WHERE cache_status = 'hit'), 0)::BIGINT AS cache_saved_bytes, \
                 COALESCE(AVG(total_latency_ms), 0)::BIGINT AS avg_latency_ms, \
                 COALESCE(MAX(total_latency_ms), 0)::BIGINT AS max_latency_ms, \
                 COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500) AS client_errors, \
@@ -355,8 +364,12 @@ async fn summary(
 
     let requests: i64 = read(&access, "requests");
     let cache_hits: i64 = read(&access, "cache_hits");
-    let cache_hit_rate = if requests > 0 {
-        cache_hits as f64 / requests as f64
+    // Hit rate over cache-participating requests only: traffic that never
+    // consulted the cache (other sites, scanner noise, plugin answers,
+    // cache disabled) would otherwise dilute the ratio toward zero.
+    let cache_participating: i64 = read(&access, "cache_participating");
+    let cache_hit_rate = if cache_participating > 0 {
+        cache_hits as f64 / cache_participating as f64
     } else {
         0.0
     };
@@ -369,6 +382,7 @@ async fn summary(
         unique_ips: read(&access, "unique_ips"),
         cache_hits,
         cache_hit_rate,
+        cache_saved_bytes: read(&access, "cache_saved_bytes"),
         avg_latency_ms: read(&access, "avg_latency_ms"),
         max_latency_ms: read(&access, "max_latency_ms"),
         client_errors: read(&access, "client_errors"),
@@ -406,6 +420,7 @@ async fn requests_over_time(
         "SELECT date_trunc('{interval}', timestamp) AS bucket, \
                 COUNT(*) AS requests, \
                 COUNT(*) FILTER (WHERE cache_status = 'hit') AS cache_hits, \
+                COALESCE(SUM(response_size) FILTER (WHERE cache_status = 'hit'), 0)::BIGINT AS cache_saved_bytes, \
                 COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500) AS client_errors, \
                 COUNT(*) FILTER (WHERE status_code >= 500) AS server_errors, \
                 COALESCE(AVG(total_latency_ms), 0)::BIGINT AS avg_latency_ms \
@@ -421,6 +436,7 @@ async fn requests_over_time(
                 .unwrap_or_else(Utc::now),
             requests: get_value::<i64>(row, "requests"),
             cache_hits: get_value::<i64>(row, "cache_hits"),
+            cache_saved_bytes: get_value::<i64>(row, "cache_saved_bytes"),
             client_errors: get_value::<i64>(row, "client_errors"),
             server_errors: get_value::<i64>(row, "server_errors"),
             avg_latency_ms: get_value::<i64>(row, "avg_latency_ms"),

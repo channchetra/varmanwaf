@@ -17,6 +17,11 @@ pub struct Model {
     pub ip_ranges: Vec<String>,
     pub action: String,
     pub is_global: bool,
+    /// Subscription source kind: `builtin` (compiled-in vendor snapshot),
+    /// `url` (operator-supplied source), `None` (manual ranges only).
+    pub subscription_kind: Option<String>,
+    /// Whether the automatic sync scheduler refreshes this group.
+    pub subscription_enabled: bool,
     #[sea_orm(column_type = "Text")]
     pub source_url: Option<String>,
     pub sync_interval_minutes: Option<i32>,

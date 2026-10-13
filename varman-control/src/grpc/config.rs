@@ -19,9 +19,11 @@ use sea_orm::{
 use uuid::Uuid;
 use varman_protocol::control_plane::{
     BasicAuthConfig, BasicAuthCredential, BotProtectionConfig, CacheRule,
-    ChallengeConfig, CustomErrorPage, GeoConfig, IpAccessRule, RateLimitRule,
-    RewriteOperation, RewriteRule, RouteConfig, RuleBundle, Site, SiteConfig,
-    SslConfig, UpstreamConfig, UpstreamPeer, WafConfig, WafRule,
+    ChallengeConfig, CustomErrorPage, FailoverMode, GeoConfig,
+    GlobalCacheSettings, HealthCheckConfig, IpAccessRule, RateLimitRule,
+    RewriteOperation, RewriteRule, RouteConfig, RuleBundle, Site,
+    SiteCacheSettings, SiteConfig, SitePolicy, SslConfig, UpstreamConfig,
+    UpstreamPeer, WafConfig, WafRule,
 };
 
 use crate::api::challenge::challenge_level;
@@ -439,6 +441,33 @@ fn cache_rule_to_proto(
     }
 }
 
+/// Maps the site's cache-limit columns onto the proto message; `None` when
+/// the site overrides nothing (no cap, no type map), which keeps old bundles
+/// byte-identical.
+fn site_cache_settings_to_proto(
+    site: &site::Model,
+) -> Option<SiteCacheSettings> {
+    let type_limits: Option<std::collections::HashMap<String, u32>> = site
+        .cache_type_limits_mb
+        .as_ref()
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .map(|limits: std::collections::HashMap<String, i32>| {
+            limits
+                .into_iter()
+                .map(|(key, value)| (key, value.max(0) as u32))
+                .collect()
+        });
+    if site.cache_max_file_size_mb.is_none() && type_limits.is_none() {
+        return None;
+    }
+    Some(SiteCacheSettings {
+        max_file_size_mb: site
+            .cache_max_file_size_mb
+            .map(|value| value.max(0) as u32),
+        type_max_file_size_mb: type_limits.unwrap_or_default(),
+    })
+}
+
 fn ssl_to_proto(
     row: &site_ssl::Model,
     certs: &[site_certificates::Model],
@@ -580,12 +609,35 @@ fn pools_to_proto(
         if peers.is_empty() {
             continue;
         }
+        // The agent synthesizes the data-plane probe URL from this message;
+        // stored values are clamped so a bad row can never produce a
+        // zero-frequency or zero-timeout probe.
+        let health_check = if pool.health_check_enabled {
+            Some(HealthCheckConfig {
+                enabled: true,
+                path: if pool.health_check_path.starts_with('/') {
+                    pool.health_check_path.clone()
+                } else {
+                    "/".to_string()
+                },
+                interval_seconds: pool.health_check_interval_seconds.max(1)
+                    as u32,
+                timeout_ms: pool.health_check_timeout_ms.max(1) as u32,
+                unhealthy_threshold: pool
+                    .health_check_unhealthy_threshold
+                    .max(1) as u32,
+                healthy_threshold: pool.health_check_healthy_threshold.max(1)
+                    as u32,
+            })
+        } else {
+            None
+        };
         configs.push(UpstreamConfig {
             name: pool.name.clone(),
             peers,
             // LB_ROUND_ROBIN — the legacy enum, superseded by `algo`.
             algorithm: 0,
-            health_check: None,
+            health_check,
             connection_timeout_ms: 0,
             read_timeout_ms: 0,
             write_timeout_ms: 0,
@@ -650,9 +702,15 @@ fn routes_to_proto(
         .collect()
 }
 
-/// Derives the site-wide WAF switches from the rules that are actually enabled,
-/// merged with the site's `waf_settings` posture row when present. A missing
-/// row keeps the historical behavior: everything enforced at the normal level.
+/// Builds the site's WAF configuration from the enabled rules, merged with
+/// the site's `waf_settings` posture row when present. A missing row keeps
+/// the historical behavior: the mode is derived from the rules and the
+/// paranoia level stays at the default.
+///
+/// The engine switch is explicit (`waf_settings.waf_enabled`, default on);
+/// the evaluation mode and paranoia level come from the posture row's
+/// explicit columns. The rule-derived mode is only the legacy fallback for
+/// sites whose posture row has not been created yet.
 fn waf_config_to_proto(
     rules: &[WafRule],
     groups: &[rule_groups::Model],
@@ -661,13 +719,16 @@ fn waf_config_to_proto(
     let active: Vec<&WafRule> = rules.iter().filter(|r| r.enabled).collect();
 
     // Blocking wins over monitoring, monitoring wins over off.
-    let mode = if active.iter().any(|r| r.mode == WAF_MODE_BLOCK) {
+    let derived_mode = if active.iter().any(|r| r.mode == WAF_MODE_BLOCK) {
         WAF_MODE_BLOCK
     } else if active.iter().any(|r| r.mode == WAF_MODE_MONITOR) {
         WAF_MODE_MONITOR
     } else {
         WAF_MODE_OFF
     };
+    let mode = settings
+        .map(|s| mode::to_proto(&s.mode))
+        .unwrap_or(derived_mode);
 
     let has_tag = |needle: &str| {
         active.iter().any(|rule| {
@@ -680,49 +741,52 @@ fn waf_config_to_proto(
     let any_group_enabled =
         groups.is_empty() || groups.iter().any(|group| group.enabled);
 
-    let (advanced_mode, monitor_categories, monitor_stacks) = settings
+    let (
+        waf_enabled,
+        advanced_mode,
+        paranoia_level,
+        monitor_categories,
+        monitor_stacks,
+        monitor_managed_rules,
+    ) = settings
         .map(|s| {
             (
+                s.waf_enabled,
                 s.advanced_mode,
+                s.paranoia_level,
                 s.monitor_categories.clone(),
                 s.monitor_stacks.clone(),
+                s.monitor_managed_rules.clone(),
             )
         })
-        .unwrap_or_else(|| (false, Vec::new(), Vec::new()));
+        .unwrap_or_else(|| {
+            (true, false, 2, Vec::new(), Vec::new(), Vec::new())
+        });
 
+    // VarmanWAF's per-site engine selection: `inherit` follows the
+    // process-wide switch; an explicit mode opts the site into inspection.
     let engine_mode = settings
         .map(|s| s.engine_mode.clone())
         .filter(|mode| !mode.is_empty())
         .unwrap_or_else(|| "inherit".to_string());
-
     let virtual_patches = settings
         .map(|s| s.virtual_patches.clone())
         .unwrap_or_default();
     let openapi_spec =
         settings.map(|s| s.openapi_spec.clone()).unwrap_or_default();
 
-    // Advanced mode (strict + body inspection) and monitor downgrades are
-    // meaningful only with the WAF on; a site with no custom rules but an
-    // explicit posture still gets the managed ruleset. An explicit engine
-    // mode likewise opts the site into inspection.
-    let enabled = (!active.is_empty()
-        || advanced_mode
-        || !monitor_categories.is_empty()
-        || !monitor_stacks.is_empty()
-        || engine_mode != "inherit")
-        && any_group_enabled;
+    // The engine switch is explicit; rules only feed the mode fallback and
+    // the per-category switches below. An explicit engine mode likewise
+    // opts the site into inspection.
+    let enabled =
+        (waf_enabled || engine_mode != "inherit") && any_group_enabled;
 
     WafConfig {
         enabled,
         mode,
-        // Paranoia level is derived from the highest severity in use (1-5 maps
-        // onto the 1-4 range the protocol allows).
-        paranoia_level: active
-            .iter()
-            .map(|rule| rule.severity)
-            .max()
-            .map(|severity| severity.clamp(1, 4))
-            .unwrap_or(1),
+        // Detection sensitivity is a site-level setting; it is deliberately
+        // decoupled from rule severity.
+        paranoia_level: paranoia_level.clamp(1, 4) as u32,
         sqli_detection: has_tag("sqli") || has_tag("sql-injection"),
         xss_detection: has_tag("xss"),
         rce_detection: has_tag("rce") || has_tag("command-injection"),
@@ -738,10 +802,10 @@ fn waf_config_to_proto(
         advanced_mode,
         monitor_categories,
         monitor_stacks,
+        monitor_managed_rules,
         engine_mode,
         virtual_patches,
         openapi_spec,
-        monitor_managed_rules: Vec::new(),
     }
 }
 
@@ -892,12 +956,35 @@ async fn load_bot_protection(
         .await
 }
 
+/// Expands the IP group referenced by the bot protection row into the CIDR
+/// ranges the agent should treat as verified bot networks. Only enabled rows
+/// with IP verification turned on produce ranges.
+async fn load_verified_bot_ranges(
+    db: &DatabaseConnection,
+    row: Option<&bot_protection::Model>,
+) -> Result<Vec<String>, sea_orm::DbErr> {
+    let Some(gid) = row
+        .filter(|row| row.ip_verification_enabled)
+        .and_then(|row| row.verified_ip_group_id)
+    else {
+        return Ok(Vec::new());
+    };
+    let ranges = ip_groups::Entity::find_by_id(gid)
+        .filter(ip_groups::Column::Enabled.eq(true))
+        .one(db)
+        .await?
+        .map(|group| group.ip_ranges)
+        .unwrap_or_default();
+    Ok(ranges)
+}
+
 /// Converts stored bot protection settings into the protocol representation.
 ///
 /// The whitelist is stored as a JSON array of strings; malformed entries are
 /// skipped so a bad edit in the control plane can never break agent config.
 fn bot_protection_to_proto(
     row: Option<&bot_protection::Model>,
+    verified_bot_ranges: Vec<String>,
 ) -> BotProtectionConfig {
     let Some(row) = row else {
         return BotProtectionConfig {
@@ -909,7 +996,7 @@ fn bot_protection_to_proto(
             behavioral_analysis: false,
             ip_verification_enabled: false,
             dns_verification_enabled: false,
-            verified_bot_ranges: Vec::new(),
+            verified_bot_ranges,
         };
     };
 
@@ -931,9 +1018,9 @@ fn bot_protection_to_proto(
         js_detection: row.js_detection,
         tls_fingerprint: row.tls_fingerprint,
         behavioral_analysis: row.behavioral_analysis,
-        ip_verification_enabled: false,
-        dns_verification_enabled: false,
-        verified_bot_ranges: Vec::new(),
+        ip_verification_enabled: row.ip_verification_enabled,
+        dns_verification_enabled: row.dns_verification_enabled,
+        verified_bot_ranges,
     }
 }
 
@@ -1024,13 +1111,35 @@ pub async fn build_rule_bundle(
     let err_pages = load_error_pages(db).await?;
     let certificates = load_certificates(db, site_row.id).await?;
     let bot = load_bot_protection(db, site_row.id).await?;
+    let verified_bot_ranges =
+        load_verified_bot_ranges(db, bot.as_ref()).await?;
     let mtls = load_mtls(db, site_row.id).await?;
     // A missing settings row means observation mode was never switched on, so
-    // the data plane keeps enforcing.
-    let observation_mode = defense_settings::Entity::find_by_id(1)
-        .one(db)
-        .await?
-        .is_some_and(|row| row.observation_mode);
+    // the data plane keeps enforcing; the failover default likewise falls
+    // back to fail-open.
+    let defense_row = defense_settings::Entity::find_by_id(1).one(db).await?;
+    let observation_mode =
+        defense_row.as_ref().is_some_and(|row| row.observation_mode);
+    let default_fail_open =
+        defense_row.as_ref().is_none_or(|row| row.default_fail_open);
+    // Every bundle carries the complete domain → failover policy registry so
+    // the agent can resolve a site's disconnected behaviour even for hosts
+    // whose rule bundle was never synced.
+    let site_policies = load_site_policies(db).await?;
+    // Global cache ceiling + site-level cache limits; both optional so an
+    // old row shape (or a read failure short of an error) degrades to the
+    // agent-side defaults.
+    let cache_settings_row = crate::api::cache_settings::load(db).await.ok();
+    let global_cache =
+        cache_settings_row.as_ref().map(|row| GlobalCacheSettings {
+            max_file_size_mb: Some(row.max_file_size_mb.max(0) as u32),
+            max_space_mb: Some(row.max_space_mb.max(0) as u32),
+            master_enabled: Some(row.master_enabled),
+            default_edge_ttl_seconds: Some(
+                row.default_edge_ttl_seconds.max(0) as u32
+            ),
+        });
+    let site_cache_settings = site_cache_settings_to_proto(site_row);
 
     let custom_rules: Vec<WafRule> =
         rules_rows.iter().map(rule_to_proto).collect();
@@ -1064,20 +1173,69 @@ pub async fn build_rule_bundle(
             .map(|row| ssl_to_proto(row, &certificates, &mtls)),
         upstreams: pools_to_proto(&pools, &upstreams),
         routes: routes_to_proto(&routes, &pools, &upstreams, &route_groups),
-        bot_protection: Some(bot_protection_to_proto(bot.as_ref())),
+        bot_protection: Some(bot_protection_to_proto(
+            bot.as_ref(),
+            verified_bot_ranges,
+        )),
         basic_auth: basic_auth_to_proto(basic_auth.as_ref()),
         observation_mode,
-        // Failover policies, the global fail-open default and the cache
-        // ceilings arrive with the agent/control-plane batch; until then the
-        // bundle carries the neutral defaults.
-        site_policies: Vec::new(),
-        default_fail_open: None,
-        global_cache: None,
-        cache_settings: None,
+        site_policies,
+        default_fail_open: Some(default_fail_open),
+        global_cache,
+        cache_settings: site_cache_settings,
     };
 
     bundle.config_hash = fingerprint(&bundle);
     Ok(bundle)
+}
+
+/// Maps a `sites.failover_policy` string onto the proto enum; unknown values
+/// degrade to `inherit`, matching the agent-side fallback direction.
+fn failover_mode_of(policy: &str) -> FailoverMode {
+    match policy {
+        "open" => FailoverMode::FailoverOpen,
+        "closed" => FailoverMode::FailoverClosed,
+        _ => FailoverMode::FailoverInherit,
+    }
+}
+
+/// Builds the complete domain → failover-policy registry across all sites.
+/// One lightweight query; the result rides in every `RuleBundle`.
+async fn load_site_policies(
+    db: &DatabaseConnection,
+) -> Result<Vec<SitePolicy>, sea_orm::DbErr> {
+    let rows = site::Entity::find()
+        .order_by_asc(site::Column::Domain)
+        .all(db)
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| SitePolicy {
+            domain: row.domain.clone(),
+            alternate_domains: row.alternate_domains.clone(),
+            mode: failover_mode_of(&row.failover_policy) as i32,
+        })
+        .collect())
+}
+
+/// Merges a site's hand-entered trusted-proxy ranges with the ranges of the
+/// IP groups it references. Only enabled groups contribute (a disabled group
+/// stops widening the trust scope); duplicates are removed. Agents receive
+/// only the merged flat list, so the data plane stays group-agnostic.
+fn merge_trusted_proxy_ranges(
+    site_ranges: &[String],
+    group_ids: &[Uuid],
+    groups: &HashMap<Uuid, Vec<String>>,
+) -> Vec<String> {
+    let mut merged = site_ranges.to_vec();
+    for group_id in group_ids {
+        if let Some(ranges) = groups.get(group_id) {
+            merged.extend(ranges.iter().cloned());
+        }
+    }
+    merged.sort();
+    merged.dedup();
+    merged
 }
 
 /// Builds a [`SiteConfig`] for the given sites, or for every site when
@@ -1103,6 +1261,27 @@ pub async fn build_site_config(
     }
     let rows = query.all(db).await?;
 
+    // Resolve every trusted-proxy IP group the sites reference in one query;
+    // disabled groups are skipped so they stop widening the trust scope.
+    let mut group_ids: Vec<Uuid> = rows
+        .iter()
+        .flat_map(|row| row.trusted_proxy_group_ids.iter().copied())
+        .collect();
+    group_ids.sort();
+    group_ids.dedup();
+    let group_ranges: HashMap<Uuid, Vec<String>> = if group_ids.is_empty() {
+        HashMap::new()
+    } else {
+        ip_groups::Entity::find()
+            .filter(ip_groups::Column::Enabled.eq(true))
+            .filter(ip_groups::Column::Id.is_in(group_ids))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|group| (group.id, group.ip_ranges))
+            .collect()
+    };
+
     let mut sites = Vec::with_capacity(rows.len());
     let mut updated_at = Utc.timestamp_opt(0, 0).unwrap();
     for row in &rows {
@@ -1117,7 +1296,14 @@ pub async fn build_site_config(
             alternate_domains: row.alternate_domains.clone(),
             status: site_status_proto(&row.status),
             rules: Some(bundle),
-            ..Default::default()
+            trust_proxy_headers: row.trust_proxy_headers,
+            trusted_header: row.trusted_header.clone(),
+            trust_last_hop: row.trust_last_hop,
+            trusted_proxy_ranges: merge_trusted_proxy_ranges(
+                &row.trusted_proxy_ranges,
+                &row.trusted_proxy_group_ids,
+                &group_ranges,
+            ),
         });
     }
 
@@ -1169,6 +1355,46 @@ mod tests {
     }
 
     #[test]
+    fn failover_fields_change_the_fingerprint() {
+        let bundle = RuleBundle {
+            site_id: Uuid::nil().to_string(),
+            ..Default::default()
+        };
+
+        // A site switching its policy must re-push its bundle.
+        let mut per_site = bundle.clone();
+        per_site.site_policies = vec![SitePolicy {
+            domain: "shop.example.com".to_string(),
+            alternate_domains: vec!["m.shop.example.com".to_string()],
+            mode: failover_mode_of("closed") as i32,
+        }];
+        assert_ne!(fingerprint(&bundle), fingerprint(&per_site));
+        // INHERIT degrades to the same encoding as the field's absence, so a
+        // no-op edit does not manufacture a spurious hash change.
+        let mut inherit = bundle.clone();
+        inherit.site_policies = vec![SitePolicy {
+            domain: "shop.example.com".to_string(),
+            alternate_domains: Vec::new(),
+            mode: failover_mode_of("inherit") as i32,
+        }];
+        assert_ne!(fingerprint(&bundle), fingerprint(&inherit));
+
+        // The global default is `optional`: set is encoded, unset is not.
+        let mut default_open = bundle.clone();
+        default_open.default_fail_open = Some(false);
+        assert_ne!(fingerprint(&bundle), fingerprint(&default_open));
+    }
+
+    #[test]
+    fn unknown_failover_policies_degrade_to_inherit() {
+        assert_eq!(failover_mode_of("open"), FailoverMode::FailoverOpen);
+        assert_eq!(failover_mode_of("closed"), FailoverMode::FailoverClosed);
+        for policy in ["inherit", "", "bogus"] {
+            assert_eq!(failover_mode_of(policy), FailoverMode::FailoverInherit);
+        }
+    }
+
+    #[test]
     fn json_objects_become_string_maps() {
         let value = serde_json::json!({ "token": "abc", "retries": 3 });
         let map = json_to_string_map(&Some(value));
@@ -1192,6 +1418,9 @@ mod tests {
                 1,
                 "bingbot"
             ]),
+            verified_ip_group_id: None,
+            ip_verification_enabled: false,
+            dns_verification_enabled: false,
             updated_at: Utc::now(),
         }
     }
@@ -1199,7 +1428,7 @@ mod tests {
     #[test]
     fn bot_protection_proto_skips_malformed_whitelist_entries() {
         let row = bot_row(true, true);
-        let proto = bot_protection_to_proto(Some(&row));
+        let proto = bot_protection_to_proto(Some(&row), Vec::new());
         assert!(proto.enabled);
         assert_eq!(proto.action, action::to_proto("challenge"));
         assert_eq!(
@@ -1209,12 +1438,29 @@ mod tests {
 
         // UA analysis disabled means the data plane has nothing to enforce.
         let row = bot_row(true, false);
-        assert!(!bot_protection_to_proto(Some(&row)).enabled);
+        assert!(!bot_protection_to_proto(Some(&row), Vec::new()).enabled);
 
         // No row yet: disabled defaults.
-        let proto = bot_protection_to_proto(None);
+        let proto = bot_protection_to_proto(None, Vec::new());
         assert!(!proto.enabled);
         assert!(proto.known_bots_whitelist.is_empty());
+    }
+
+    #[test]
+    fn bot_protection_proto_carries_verification_flags() {
+        let mut row = bot_row(true, true);
+        row.ip_verification_enabled = true;
+        row.dns_verification_enabled = true;
+        let proto = bot_protection_to_proto(
+            Some(&row),
+            vec!["192.168.0.0/16".to_string()],
+        );
+        assert!(proto.ip_verification_enabled);
+        assert!(proto.dns_verification_enabled);
+        assert_eq!(
+            proto.verified_bot_ranges,
+            vec!["192.168.0.0/16".to_string()]
+        );
     }
 
     #[test]
@@ -1240,7 +1486,9 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.mode, WAF_MODE_MONITOR);
         assert!(config.sqli_detection);
-        assert_eq!(config.paranoia_level, 3);
+        // Without a posture row the paranoia level stays at the default
+        // instead of riding on rule severity.
+        assert_eq!(config.paranoia_level, 2);
         assert!(!config.advanced_mode);
         assert!(config.monitor_categories.is_empty());
         assert!(config.monitor_stacks.is_empty());
@@ -1255,8 +1503,17 @@ mod tests {
         disabled.enabled = false;
         let config =
             waf_config_to_proto(&[rule_to_proto(&disabled)], &[], None);
-        assert!(!config.enabled);
+        // The engine switch is explicit now: a disabled rule only drops the
+        // derived mode, the managed engine itself stays on.
+        assert!(config.enabled);
         assert_eq!(config.mode, WAF_MODE_OFF);
+
+        // An explicit off switch turns the config off regardless of rules.
+        let mut off =
+            waf_settings_row(Uuid::nil(), true, Vec::new(), Vec::new());
+        off.waf_enabled = false;
+        let config = waf_config_to_proto(&monitoring, &[], Some(&off));
+        assert!(!config.enabled);
     }
 
     fn waf_settings_row(
@@ -1265,15 +1522,35 @@ mod tests {
         categories: Vec<String>,
         stacks: Vec<String>,
     ) -> waf_settings::Model {
+        waf_settings_row_with_rules(
+            site_id,
+            advanced_mode,
+            categories,
+            stacks,
+            Vec::new(),
+        )
+    }
+
+    fn waf_settings_row_with_rules(
+        site_id: Uuid,
+        advanced_mode: bool,
+        categories: Vec<String>,
+        stacks: Vec<String>,
+        managed_rules: Vec<String>,
+    ) -> waf_settings::Model {
         waf_settings::Model {
             id: Uuid::new_v4(),
             site_id,
+            waf_enabled: true,
+            mode: mode::OFF.into(),
+            paranoia_level: 2,
             advanced_mode,
             engine_mode: "inherit".into(),
             virtual_patches: String::new(),
             openapi_spec: String::new(),
             monitor_categories: categories,
             monitor_stacks: stacks,
+            monitor_managed_rules: managed_rules,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -1321,21 +1598,77 @@ mod tests {
         assert_eq!(config.monitor_categories, vec!["sqli", "ssti"]);
         assert_eq!(config.monitor_stacks, vec!["java"]);
 
-        // An explicit engine mode flows through and opts the site into
-        // inspection even without rules.
-        let mut enforcing =
-            waf_settings_row(Uuid::nil(), false, vec![], vec![]);
-        enforcing.engine_mode = "varman".into();
-        let config = waf_config_to_proto(&[], &[], Some(&enforcing));
+        // A per-rule managed downgrade alone also enables the config and
+        // flows through verbatim.
+        let per_rule = waf_settings_row_with_rules(
+            Uuid::nil(),
+            false,
+            Vec::new(),
+            Vec::new(),
+            vec!["VARMAN-1010".into()],
+        );
+        let config = waf_config_to_proto(&[], &[], Some(&per_rule));
         assert!(config.enabled);
-        assert_eq!(config.engine_mode, "varman");
-        // Absent settings default to `inherit` (process-wide mode).
-        let config = waf_config_to_proto(&rules, &[], None);
-        assert_eq!(config.engine_mode, "inherit");
+        assert_eq!(config.monitor_managed_rules, vec!["VARMAN-1010"]);
 
-        // No rules and no settings row: the pre-existing disabled default.
+        // No rules and no settings row: the engine defaults to on — the
+        // managed ruleset ships enabled for every site until switched off.
         let config = waf_config_to_proto(&[], &[], None);
-        assert!(!config.enabled);
+        assert!(config.enabled);
+        assert_eq!(config.mode, WAF_MODE_OFF);
+    }
+
+    #[test]
+    fn site_mode_and_paranoia_come_from_the_settings_row() {
+        let blocking = rule::Model {
+            id: Uuid::new_v4(),
+            group_id: None,
+            site_id: Uuid::nil(),
+            name: "r".into(),
+            description: None,
+            expression: "true".into(),
+            action: action::BLOCK.into(),
+            severity: 5,
+            tags: vec!["sqli".into()],
+            enabled: true,
+            mode: mode::BLOCK.into(),
+            priority: 0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let rules = vec![rule_to_proto(&blocking)];
+
+        // A settings row wins over the rule derivation: an explicit monitor
+        // mode stays monitor even when every rule enforces block.
+        let mut row =
+            waf_settings_row(Uuid::nil(), false, Vec::new(), Vec::new());
+        row.mode = mode::MONITOR.into();
+        let config = waf_config_to_proto(&rules, &[], Some(&row));
+        assert_eq!(config.mode, WAF_MODE_MONITOR);
+
+        // A site without custom rules but with an explicit block mode runs
+        // the engine in block — the mode no longer silently rides on the
+        // rules (the legacy "no rules means off" trap).
+        let mut row =
+            waf_settings_row(Uuid::nil(), false, Vec::new(), Vec::new());
+        row.mode = mode::BLOCK.into();
+        let config = waf_config_to_proto(&[], &[], Some(&row));
+        assert!(config.enabled);
+        assert_eq!(config.mode, WAF_MODE_BLOCK);
+
+        // Paranoia level is site-configured, not severity-derived: a
+        // severity-5 rule no longer raises the sensitivity.
+        let mut row =
+            waf_settings_row(Uuid::nil(), false, Vec::new(), Vec::new());
+        row.mode = mode::BLOCK.into();
+        row.paranoia_level = 1;
+        let config = waf_config_to_proto(&rules, &[], Some(&row));
+        assert_eq!(config.paranoia_level, 1);
+
+        // Out-of-range stored values are clamped to the protocol range.
+        row.paranoia_level = 9;
+        let config = waf_config_to_proto(&rules, &[], Some(&row));
+        assert_eq!(config.paranoia_level, 4);
     }
 
     fn pool_model(
@@ -1351,6 +1684,12 @@ mod tests {
             lb_algorithm: lb_algorithm.into(),
             sni: sni.map(Into::into),
             verify_cert: None,
+            health_check_enabled: false,
+            health_check_path: "/".into(),
+            health_check_interval_seconds: 10,
+            health_check_timeout_ms: 3000,
+            health_check_unhealthy_threshold: 2,
+            health_check_healthy_threshold: 1,
             is_default,
             created_at: Utc::now(),
         }
@@ -1420,6 +1759,53 @@ mod tests {
         assert_eq!(configs[0].verify_cert, Some(false));
     }
 
+    #[test]
+    fn pools_carry_health_check_only_when_enabled() {
+        let nodes_of =
+            |pool_id: Uuid| vec![node_model(pool_id, "10.0.0.1:8080", 1)];
+
+        // Disabled: no health check message at all — the agent stays on its
+        // default TCP probe.
+        let pool = pool_model("plain", "round_robin", None, false);
+        let nodes = nodes_of(pool.id);
+        let configs = pools_to_proto(&[pool], &nodes);
+        assert_eq!(configs[0].health_check, None);
+
+        // Enabled: every knob rides through, normalized path included.
+        let mut pool = pool_model("plain", "round_robin", None, false);
+        let nodes = nodes_of(pool.id);
+        pool.health_check_enabled = true;
+        pool.health_check_path = "/healthz".into();
+        pool.health_check_interval_seconds = 15;
+        pool.health_check_timeout_ms = 2000;
+        pool.health_check_unhealthy_threshold = 3;
+        pool.health_check_healthy_threshold = 2;
+        let configs = pools_to_proto(&[pool], &nodes);
+        let hc = configs[0].health_check.as_ref().expect("health check");
+        assert!(hc.enabled);
+        assert_eq!(hc.path, "/healthz");
+        assert_eq!(hc.interval_seconds, 15);
+        assert_eq!(hc.timeout_ms, 2000);
+        assert_eq!(hc.unhealthy_threshold, 3);
+        assert_eq!(hc.healthy_threshold, 2);
+
+        // A corrupt row (zeroes) is clamped instead of producing a
+        // zero-timeout probe downstream.
+        let mut pool = pool_model("corrupt", "round_robin", None, false);
+        let nodes = nodes_of(pool.id);
+        pool.health_check_enabled = true;
+        pool.health_check_interval_seconds = 0;
+        pool.health_check_timeout_ms = 0;
+        pool.health_check_unhealthy_threshold = 0;
+        pool.health_check_healthy_threshold = 0;
+        let configs = pools_to_proto(&[pool], &nodes);
+        let hc = configs[0].health_check.as_ref().expect("health check");
+        assert_eq!(hc.interval_seconds, 1);
+        assert_eq!(hc.timeout_ms, 1);
+        assert_eq!(hc.unhealthy_threshold, 1);
+        assert_eq!(hc.healthy_threshold, 1);
+    }
+
     fn route_model(
         enabled: bool,
         priority: Option<i32>,
@@ -1480,6 +1866,8 @@ mod tests {
             ip_ranges: vec!["10.0.0.0/8".into(), "192.168.0.0/16".into()],
             action: "allow".into(),
             is_global: false,
+            subscription_kind: None,
+            subscription_enabled: true,
             source_url: None,
             sync_interval_minutes: None,
             last_synced_at: None,
@@ -1520,6 +1908,32 @@ mod tests {
         assert!(protos.is_empty());
     }
 
+    #[test]
+    fn trusted_proxy_ranges_merge_site_and_group_entries() {
+        let group_id = Uuid::nil();
+        let groups = HashMap::from([(
+            group_id,
+            vec!["10.0.0.0/8".to_string(), "203.0.113.0/24".to_string()],
+        )]);
+        let site = vec!["10.0.0.0/8".to_string(), "192.0.2.1/32".to_string()];
+
+        // Site entries and group ranges union; duplicates collapse.
+        let merged = merge_trusted_proxy_ranges(&site, &[group_id], &groups);
+        assert_eq!(
+            merged,
+            vec![
+                "10.0.0.0/8".to_string(),
+                "192.0.2.1/32".to_string(),
+                "203.0.113.0/24".to_string(),
+            ]
+        );
+
+        // A group the loader skipped (disabled or deleted) widens nothing.
+        let missing =
+            merge_trusted_proxy_ranges(&site, &[Uuid::max()], &groups);
+        assert_eq!(missing, site);
+    }
+
     fn ip_rule_model(
         group_id: Option<Uuid>,
         ip_ranges: Vec<String>,
@@ -1547,6 +1961,8 @@ mod tests {
             ip_ranges: ranges.iter().map(|r| r.to_string()).collect(),
             action: "allow".into(),
             is_global: false,
+            subscription_kind: None,
+            subscription_enabled: true,
             source_url: None,
             sync_interval_minutes: None,
             last_synced_at: None,

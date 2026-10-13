@@ -133,7 +133,7 @@ async fn create(
     .await?;
 
     tracing::info!(page_id = %model.id, status_code = model.status_code, "error page created");
-    notify_all_config_changed(&state).await;
+    notify_all_config_changed(&state, Some(&current.email)).await;
 
     Ok((StatusCode::CREATED, Json(model)).into_response())
 }
@@ -181,7 +181,7 @@ async fn update(
 
     let updated = active.update(&state.db).await?;
     tracing::info!(page_id = %target, "error page updated");
-    notify_all_config_changed(&state).await;
+    notify_all_config_changed(&state, Some(&current.email)).await;
 
     Ok(Json(updated))
 }
@@ -201,7 +201,7 @@ async fn remove(
         .await?;
 
     tracing::info!(page_id = %target, "error page deleted");
-    notify_all_config_changed(&state).await;
+    notify_all_config_changed(&state, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

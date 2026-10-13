@@ -860,7 +860,7 @@ async fn set_observation_mode(
         active.observation_mode = Set(enabled);
         active.updated_at = Set(Utc::now());
         active.update(&ctx.state.db).await.map_err(db_error)?;
-        notify_all_config_changed(ctx.state).await;
+        notify_all_config_changed(ctx.state, Some(ctx.actor)).await;
         tracing::info!(
             actor = %ctx.actor,
             enabled,
@@ -907,7 +907,7 @@ async fn set_site_status(
         active.status = Set(status.clone());
         active.update(&ctx.state.db).await.map_err(db_error)?;
         sites::touch_site(ctx.state, id).await.map_err(api_error)?;
-        notify_config_changed(ctx.state, id).await;
+        notify_config_changed(ctx.state, id, Some(ctx.actor)).await;
         tracing::info!(
             actor = %ctx.actor,
             site_id = %id,

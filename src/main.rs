@@ -1139,7 +1139,12 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn main() {
-    // Check if VarmanWAF mode is requested (via subcommand or VARMAN_MODE env)
+    // Same rationale as varman::main: the graph pulls in two rustls crypto
+    // providers (ring + aws-lc-rs), so install ring explicitly before any
+    // TLS listener or client initialises. No-op if already installed.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    // Check if VarmanWAF mode is requested (via subcommand or PINGWAF_MODE env)
     if cli::is_varman_mode() {
         varman::main();
         return;

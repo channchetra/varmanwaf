@@ -193,6 +193,32 @@ async fn check_stale_agents(
             "agent marked offline (stale heartbeat)"
         );
 
+        crate::notify::emit(crate::notify::AlertEvent {
+            event_type: crate::models::event_type::AGENT_OFFLINE.to_string(),
+            severity: crate::models::severity::CRITICAL,
+            title: format!("Agent {} went offline", row.hostname),
+            message: format!(
+                "Agent '{}' ({}, {}) stopped sending heartbeats; the last \
+                 one arrived {}. Sites bound to it run on their cached \
+                 configuration until it reconnects.",
+                row.hostname,
+                row.id,
+                row.ip_address,
+                row.last_heartbeat
+                    .map(|ts| ts.to_rfc3339())
+                    .unwrap_or_else(|| "never".to_string()),
+            ),
+            details: Some(serde_json::json!({
+                "agent_id": row.id,
+                "hostname": row.hostname,
+                "ip_address": row.ip_address,
+                "site_id": row.site_id,
+                "last_heartbeat": row.last_heartbeat,
+            })),
+            dedup_key: Some(row.id.to_string()),
+        })
+        .await;
+
         // Send webhook notification
         if let Some(url) = &monitor_config.webhook_url {
             let event = AgentOfflineEvent {
@@ -225,6 +251,24 @@ async fn check_stale_agents(
                 hostname = %row.hostname,
                 "agent marked online (reconnected)"
             );
+
+            crate::notify::emit(crate::notify::AlertEvent {
+                event_type: crate::models::event_type::AGENT_ONLINE.to_string(),
+                severity: crate::models::severity::INFO,
+                title: format!("Agent {} is back online", row.hostname),
+                message: format!(
+                    "Agent '{}' ({}, {}) reconnected to the control plane.",
+                    row.hostname, row.id, row.ip_address
+                ),
+                details: Some(serde_json::json!({
+                    "agent_id": row.id,
+                    "hostname": row.hostname,
+                    "ip_address": row.ip_address,
+                    "site_id": row.site_id,
+                })),
+                dedup_key: Some(row.id.to_string()),
+            })
+            .await;
 
             if let Some(url) = &monitor_config.webhook_url {
                 let event = AgentOnlineEvent {

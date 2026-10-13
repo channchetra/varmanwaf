@@ -40,6 +40,14 @@ pub struct UpdateBotRequest {
     pub action: Option<String>,
     #[serde(default)]
     pub known_bots_whitelist: Option<serde_json::Value>,
+    #[serde(default)]
+    pub ip_verification_enabled: Option<bool>,
+    #[serde(default)]
+    pub dns_verification_enabled: Option<bool>,
+    /// IP group treated as verified bot networks. A value replaces the
+    /// reference (an empty string clears it); omission leaves it unchanged.
+    #[serde(default)]
+    pub verified_ip_group_id: Option<String>,
 }
 
 /// Routes contributed to `/api/v1`.
@@ -107,14 +115,62 @@ async fn update_bot(
         }
         active.known_bots_whitelist = Set(whitelist);
     }
+    if let Some(enabled) = payload.ip_verification_enabled {
+        active.ip_verification_enabled = Set(enabled);
+    }
+    if let Some(enabled) = payload.dns_verification_enabled {
+        active.dns_verification_enabled = Set(enabled);
+    }
+    if let Some(group) = payload.verified_ip_group_id {
+        if group.is_empty() {
+            active.verified_ip_group_id = Set(None);
+        } else {
+            let group_id = parse_uuid(&group, "verified ip group id")?;
+            ensure_verified_group_usable(&state, id, group_id).await?;
+            active.verified_ip_group_id = Set(Some(group_id));
+        }
+    }
     active.updated_at = Set(chrono::Utc::now());
 
     let updated = active.update(&state.db).await?;
     tracing::info!(site_id = %id, "bot protection updated");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(Json(updated))
+}
+
+/// Ensures the IP group referenced as the verified-bot source is usable: it
+/// must exist, be enabled and be reachable by this site (global or linked).
+async fn ensure_verified_group_usable(
+    state: &AppState,
+    site_id: Uuid,
+    group_id: Uuid,
+) -> Result<(), ApiError> {
+    let group = crate::models::ip_groups::Entity::find_by_id(group_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("ip group not found".to_string()))?;
+    if !group.enabled {
+        return Err(ApiError::BadRequest(
+            "the referenced ip group is disabled".to_string(),
+        ));
+    }
+    if group.is_global {
+        return Ok(());
+    }
+    let linked = crate::models::ip_group_sites::Entity::find()
+        .filter(crate::models::ip_group_sites::Column::SiteId.eq(site_id))
+        .filter(crate::models::ip_group_sites::Column::IpGroupId.eq(group_id))
+        .one(&state.db)
+        .await?
+        .is_some();
+    if !linked {
+        return Err(ApiError::BadRequest(
+            "the referenced ip group is not linked to this site".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Finds the bot_protection row for a site, creating a default one if absent.
@@ -141,6 +197,9 @@ async fn find_or_create(
         behavioral_analysis: Set(false),
         action: Set("challenge".to_string()),
         known_bots_whitelist: Set(serde_json::json!([])),
+        verified_ip_group_id: Set(None),
+        ip_verification_enabled: Set(false),
+        dns_verification_enabled: Set(false),
         updated_at: Set(now),
     }
     .insert(&state.db)

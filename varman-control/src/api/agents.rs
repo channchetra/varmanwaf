@@ -27,7 +27,9 @@ use crate::api::keys::mint_key;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::grpc::config::now_timestamp;
-use crate::models::{agent, agent_status, host_sample, permission, site};
+use crate::models::{
+    agent, agent_status, api_key, host_sample, permission, site,
+};
 
 /// `varman.CommandType` values, spelled out so the control plane does not depend
 /// on prost's enum variant naming.
@@ -61,11 +63,18 @@ pub struct AgentResponse {
     pub api_key_id: Option<Uuid>,
     pub config_hash: Option<String>,
     pub last_heartbeat: Option<DateTime<Utc>>,
+    /// When the agent last applied a full site config; null = never synced.
+    pub last_config_sync_at: Option<DateTime<Utc>>,
+    /// When the agent last applied a per-site rule bundle; null = never.
+    pub last_policy_sync_at: Option<DateTime<Utc>>,
     pub registered_at: DateTime<Utc>,
     /// True while the agent holds an open heartbeat stream.
     pub connected: bool,
     /// Commands waiting for the agent to reconnect.
     pub pending_commands: usize,
+    /// Whether the gRPC control plane the agents connect to serves TLS.
+    /// `false` means plaintext traffic (degraded mode).
+    pub grpc_tls: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -276,9 +285,26 @@ async fn list(
             .into_iter()
             .map(|row| row.id)
             .collect();
-        // Unassigned agents are hidden from non-admins: they cannot be attributed
-        // to a tenant.
-        condition = condition.add(agent::Column::SiteId.is_in(owned));
+        // Agents are visible to their owner, mirroring the config-push
+        // visibility (`agent_visible_site_ids`): a bound agent shows under the
+        // site it is bound to, and an unbound one — which serves every site of
+        // its API key's user — shows to that user as well.
+        let key_ids: Vec<Uuid> = api_key::Entity::find()
+            .filter(api_key::Column::UserId.eq(current.id))
+            .all(&state.db)
+            .await?
+            .into_iter()
+            .map(|key| key.id)
+            .collect();
+        condition = condition.add(
+            Condition::any()
+                .add(agent::Column::SiteId.is_in(owned))
+                .add(
+                    Condition::all()
+                        .add(agent::Column::SiteId.is_null())
+                        .add(agent::Column::ApiKeyId.is_in(key_ids)),
+                ),
+        );
     }
     if let Some(id) = site_filter {
         condition = condition.add(agent::Column::SiteId.eq(id));
@@ -580,11 +606,26 @@ pub async fn load_agent(
         .ok_or_else(|| ApiError::NotFound(format!("agent {id} not found")))?;
 
     if !current.is_admin() {
-        let Some(site_id) = row.site_id else {
-            return Err(ApiError::NotFound(format!("agent {id} not found")));
-        };
-        // `load_site_read` hides sites owned by somebody else behind a 404.
-        load_site_read(&state.db, site_id, current).await?;
+        if let Some(site_id) = row.site_id {
+            // `load_site_read` hides sites owned by somebody else behind a 404.
+            load_site_read(&state.db, site_id, current).await?;
+        } else {
+            // An unbound agent serves every site of its API key's owner —
+            // visible only to that owner (mirrors `agent_visible_site_ids`).
+            let owned_by_caller = match row.api_key_id {
+                Some(key_id) => api_key::Entity::find_by_id(key_id)
+                    .one(&state.db)
+                    .await?
+                    .map(|key| key.user_id == current.id)
+                    .unwrap_or(false),
+                None => false,
+            };
+            if !owned_by_caller {
+                return Err(ApiError::NotFound(format!(
+                    "agent {id} not found"
+                )));
+            }
+        }
     }
     Ok(row)
 }
@@ -629,9 +670,12 @@ async fn enrich(
             api_key_id: row.api_key_id,
             config_hash: row.config_hash,
             last_heartbeat: row.last_heartbeat,
+            last_config_sync_at: row.last_config_sync_at,
+            last_policy_sync_at: row.last_policy_sync_at,
             registered_at: row.registered_at,
             connected,
             pending_commands: state.agents.pending_count(&row.id).await,
+            grpc_tls: state.config.grpc_tls_enabled(),
         });
     }
     Ok(out)

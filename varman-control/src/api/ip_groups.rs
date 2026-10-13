@@ -22,7 +22,8 @@ use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::grpc::notify_config_changed;
 use crate::models::{
-    ip_access_rules, ip_group_sites, ip_groups, site, site_routes,
+    bot_protection, ip_access_rules, ip_group_sites, ip_groups, site,
+    site_routes,
 };
 
 /// Valid IP group actions.
@@ -32,6 +33,18 @@ pub mod ip_group_action {
 
     pub fn is_valid(action: &str) -> bool {
         matches!(action, BLOCK | ALLOW)
+    }
+}
+
+/// Subscription source kinds. `builtin` groups are seeded from the snapshots
+/// compiled into the binary and can only be created by the seeder, `url`
+/// groups fetch an operator-supplied source, and `None` means manual ranges.
+pub mod subscription_kind {
+    pub const BUILTIN: &str = "builtin";
+    pub const URL: &str = "url";
+
+    pub fn is_valid(kind: &str) -> bool {
+        matches!(kind, BUILTIN | URL)
     }
 }
 
@@ -74,6 +87,8 @@ pub struct CreateRequest {
     pub sync_interval_minutes: Option<i32>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub subscription_enabled: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -94,6 +109,8 @@ pub struct UpdateRequest {
     pub sync_interval_minutes: Option<i32>,
     #[serde(default)]
     pub enabled: Option<bool>,
+    #[serde(default)]
+    pub subscription_enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -262,6 +279,13 @@ async fn create(
     }
 
     let timestamp = chrono::Utc::now();
+    // Groups created through the API are manual or URL subscriptions; the
+    // `builtin` kind is reserved for the seeder's snapshot-backed groups.
+    let subscription_kind = if source_url.is_some() {
+        Some(subscription_kind::URL.to_string())
+    } else {
+        None
+    };
     let model = ip_groups::ActiveModel {
         id: Set(Uuid::new_v4()),
         name: Set(payload.name.trim().to_string()),
@@ -269,6 +293,8 @@ async fn create(
         ip_ranges: Set(ip_ranges),
         action: Set(payload.action),
         is_global: Set(payload.is_global),
+        subscription_kind: Set(subscription_kind),
+        subscription_enabled: Set(payload.subscription_enabled),
         source_url: Set(source_url),
         sync_interval_minutes: Set(normalise_interval(
             payload.sync_interval_minutes,
@@ -311,6 +337,14 @@ async fn update(
 ) -> Result<Json<ip_groups::Model>, ApiError> {
     let target = parse_uuid(&group_id, "IP group id")?;
     let row = find_group(&state, target).await?;
+    if row.subscription_kind.as_deref() == Some(subscription_kind::BUILTIN)
+        && payload.source_url.is_some()
+    {
+        return Err(ApiError::BadRequest(
+            "built-in subscription groups cannot change their source URL"
+                .to_string(),
+        ));
+    }
     let mut active: ip_groups::ActiveModel = row.into();
 
     if let Some(name) = non_empty(&payload.name) {
@@ -340,6 +374,13 @@ async fn update(
             crate::subscription::validate_source_url(url)
                 .map_err(ApiError::BadRequest)?;
         }
+        // Clearing the source URL turns the group back into manual ranges.
+        let kind = if stored.is_some() {
+            Some(subscription_kind::URL.to_string())
+        } else {
+            None
+        };
+        active.subscription_kind = Set(kind);
         active.source_url = Set(stored);
     }
     if let Some(interval) = payload.sync_interval_minutes {
@@ -348,11 +389,14 @@ async fn update(
     if let Some(enabled) = payload.enabled {
         active.enabled = Set(enabled);
     }
+    if let Some(sub_enabled) = payload.subscription_enabled {
+        active.subscription_enabled = Set(sub_enabled);
+    }
     active.updated_at = Set(chrono::Utc::now());
 
     let updated = active.update(&state.db).await?;
     tracing::info!(group_id = %target, "IP group updated");
-    propagate_group_change(&state, target).await;
+    propagate_group_change(&state, target, Some(&_current.email)).await;
 
     Ok(Json(updated))
 }
@@ -383,14 +427,16 @@ async fn remove(
         .await?;
 
     tracing::info!(group_id = %target, "IP group deleted");
-    propagate_group_change(&state, target).await;
+    propagate_group_change(&state, target, Some(&_current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 /// Sites whose agent configuration embeds this group: explicitly associated
-/// sites, sites whose access rules reference it, and sites whose routes are
-/// gated on it. Used to push config updates after a group mutation.
+/// sites, sites whose access rules reference it, sites whose routes are
+/// gated on it, sites trusting it for their proxy scope, and sites using it
+/// as their verified-bot source. Used to push config updates after a group
+/// mutation.
 async fn affected_sites(
     db: &sea_orm::DatabaseConnection,
     group_id: Uuid,
@@ -410,19 +456,43 @@ async fn affected_sites(
         .select_only()
         .column(site_routes::Column::SiteId)
         .into_query();
+    let bot_verified = bot_protection::Entity::find()
+        .filter(bot_protection::Column::VerifiedIpGroupId.eq(group_id))
+        .select_only()
+        .column(bot_protection::Column::SiteId)
+        .into_query();
 
     let mut ids: Vec<Uuid> = site::Entity::find()
         .filter(
             site::Column::Id
                 .in_subquery(associated)
                 .or(site::Column::Id.in_subquery(referencing))
-                .or(site::Column::Id.in_subquery(gating)),
+                .or(site::Column::Id.in_subquery(gating))
+                .or(site::Column::Id.in_subquery(bot_verified)),
         )
         .select_only()
         .column(site::Column::Id)
         .into_tuple()
         .all(db)
         .await?;
+
+    // The trusted-proxy group references live in a uuid[] column, which has
+    // no portable containment predicate; the table is small and this only
+    // runs on group mutations, so scan it in the application instead.
+    let trusting: Vec<(Uuid, Vec<Uuid>)> = site::Entity::find()
+        .select_only()
+        .column(site::Column::Id)
+        .column(site::Column::TrustedProxyGroupIds)
+        .into_tuple()
+        .all(db)
+        .await?;
+    ids.extend(
+        trusting
+            .into_iter()
+            .filter(|(_, group_ids)| group_ids.contains(&group_id))
+            .map(|(site_id, _)| site_id),
+    );
+
     ids.sort();
     ids.dedup();
     Ok(ids)
@@ -430,7 +500,11 @@ async fn affected_sites(
 
 /// Touches and notifies every site affected by a group change. Best-effort:
 /// the mutation itself already succeeded, so failures only warn.
-async fn propagate_group_change(state: &AppState, group_id: Uuid) {
+async fn propagate_group_change(
+    state: &AppState,
+    group_id: Uuid,
+    actor: Option<&str>,
+) {
     let site_ids = match affected_sites(&state.db, group_id).await {
         Ok(ids) => ids,
         Err(err) => {
@@ -450,7 +524,7 @@ async fn propagate_group_change(state: &AppState, group_id: Uuid) {
                 "failed to touch site after IP group change"
             );
         }
-        notify_config_changed(state, sid).await;
+        notify_config_changed(state, sid, actor).await;
     }
 }
 
@@ -545,7 +619,7 @@ async fn set_sites(
     affected.dedup();
     for sid in affected {
         touch_site(&state, sid).await?;
-        notify_config_changed(&state, sid).await;
+        notify_config_changed(&state, sid, Some(&_current.email)).await;
     }
 
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -562,8 +636,9 @@ async fn sync_now(
     let target = parse_uuid(&group_id, "IP group id")?;
     let group = find_group(&state, target).await?;
 
-    let updated =
-        sync_subscription(&state, group).await.map_err(|message| {
+    let updated = sync_subscription(&state, group, Some(&_current.email))
+        .await
+        .map_err(|message| {
             tracing::warn!(
                 group_id = %target,
                 error = %message,
@@ -582,23 +657,46 @@ async fn sync_now(
 
 /// Fetches the group's subscription source and persists the result.
 ///
-/// A failed fetch never touches `ip_ranges`: the group keeps serving its
-/// previous ranges and only `last_sync_error` records the failure.
+/// `builtin` groups resolve against the snapshots compiled into the binary;
+/// everything else fetches its `source_url` over HTTP. A failed sync never
+/// touches `ip_ranges`: the group keeps serving its previous ranges and only
+/// `last_sync_error` records the failure.
 async fn sync_subscription(
     state: &AppState,
     group: ip_groups::Model,
+    actor: Option<&str>,
 ) -> Result<ip_groups::Model, String> {
-    let source_url = match &group.source_url {
-        Some(url) => url.clone(),
-        None => {
-            return Err("IP group has no subscription source URL".to_string())
+    let fetched: Result<Vec<String>, String> = match group
+        .subscription_kind
+        .as_deref()
+    {
+        Some(subscription_kind::BUILTIN) => {
+            match crate::subscription::builtin_snapshot(group.id) {
+                Some(snapshot) => Ok(snapshot
+                    .ranges
+                    .iter()
+                    .map(|range| range.to_string())
+                    .collect()),
+                None => {
+                    Err("built-in subscription group has no matching snapshot"
+                        .to_string())
+                },
+            }
+        },
+        _ => {
+            let source_url = match &group.source_url {
+                Some(url) => url.clone(),
+                None => {
+                    return Err(
+                        "IP group has no subscription source URL".to_string()
+                    )
+                },
+            };
+            let client = crate::subscription::subscription_client();
+            crate::subscription::fetch_subscription_ranges(&client, &source_url)
+                .await
         },
     };
-
-    let client = crate::subscription::subscription_client();
-    let fetched =
-        crate::subscription::fetch_subscription_ranges(&client, &source_url)
-            .await;
 
     let mut active: ip_groups::ActiveModel = group.clone().into();
     match fetched {
@@ -613,7 +711,7 @@ async fn sync_subscription(
                 .await
                 .map_err(|err| err.to_string())?;
             if changed {
-                propagate_group_change(state, group.id).await;
+                propagate_group_change(state, group.id, actor).await;
             }
             tracing::info!(
                 group_id = %group.id,
@@ -632,6 +730,35 @@ async fn sync_subscription(
                     "failed to record the IP group sync error"
                 );
             }
+            // A stale allow/block list is a silent security drift: alert so
+            // an expired subscription URL is noticed. The notification dedup
+            // window keeps the periodic retry from repeating it.
+            crate::notify::emit(crate::notify::AlertEvent {
+                event_type: crate::models::event_type::CONFIG_SYNC_FAILED
+                    .to_string(),
+                severity: crate::models::severity::WARNING,
+                title: format!(
+                    "IP group '{}' subscription sync failed",
+                    group.name
+                ),
+                message: format!(
+                    "Refreshing the IP group '{}' from {} failed: \
+                     {message}. The group keeps serving its previous \
+                     ranges.",
+                    group.name,
+                    group
+                        .source_url
+                        .as_deref()
+                        .unwrap_or("its built-in snapshot")
+                ),
+                details: Some(serde_json::json!({
+                    "group_id": group.id,
+                    "source_url": group.source_url,
+                    "error": message,
+                })),
+                dedup_key: Some(group.id.to_string()),
+            })
+            .await;
             Err(message)
         },
     }
@@ -639,11 +766,12 @@ async fn sync_subscription(
 
 /// Launches the background scheduler that refreshes subscriptions.
 ///
-/// Every 60 seconds it syncs every enabled group that has a source URL and a
-/// positive `sync_interval_minutes` (`NULL` means manual-only) whose
-/// `last_synced_at` is older than the interval — or that has never synced. The
-/// first tick fires immediately, so a freshly seeded subscription populates
-/// right after boot without blocking startup.
+/// Every 60 seconds it syncs every enabled group that carries a subscription
+/// (built-in snapshot or source URL) and a positive `sync_interval_minutes`
+/// (`NULL` means manual-only) whose `last_synced_at` is older than the
+/// interval — or that has never synced. The first tick fires immediately, so
+/// a freshly seeded subscription populates right after boot without blocking
+/// startup.
 pub fn start_subscription_sync_scheduler(
     state: AppState,
 ) -> tokio::task::JoinHandle<()> {
@@ -667,7 +795,14 @@ pub fn start_subscription_sync_scheduler(
 async fn sync_due_groups(state: &AppState) -> Result<(), sea_orm::DbErr> {
     let candidates = ip_groups::Entity::find()
         .filter(ip_groups::Column::Enabled.eq(true))
-        .filter(ip_groups::Column::SourceUrl.is_not_null())
+        .filter(ip_groups::Column::SubscriptionEnabled.eq(true))
+        // The raw source_url check keeps pre-0.25 URL groups (whose
+        // subscription_kind is NULL) syncing after the upgrade.
+        .filter(
+            ip_groups::Column::SubscriptionKind
+                .is_in([subscription_kind::BUILTIN, subscription_kind::URL])
+                .or(ip_groups::Column::SourceUrl.is_not_null()),
+        )
         .filter(ip_groups::Column::SyncIntervalMinutes.is_not_null())
         .all(&state.db)
         .await?;
@@ -692,7 +827,7 @@ async fn sync_due_groups(state: &AppState) -> Result<(), sea_orm::DbErr> {
             name = %group.name,
             "syncing IP group subscription"
         );
-        if let Err(message) = sync_subscription(state, group).await {
+        if let Err(message) = sync_subscription(state, group, None).await {
             tracing::warn!(
                 error = %message,
                 "scheduled IP group subscription sync failed"
@@ -712,4 +847,61 @@ async fn find_group(
         .ok_or_else(|| {
             ApiError::NotFound(format!("IP group {group_id} not found"))
         })
+}
+
+/// Seeds the built-in subscription groups (Google, Yandex) on startup.
+///
+/// Idempotent: rows that already exist are left untouched, so operator edits
+/// to a built-in group (action, enabled, ranges) survive restarts. The
+/// snapshot ships with the binary, so the seeded ranges are current at
+/// insert time and `last_synced_at` starts "now" — the daily scheduler then
+/// rebuilds the ranges from the same snapshot on every release.
+pub async fn seed_builtin_groups(
+    db: &sea_orm::DatabaseConnection,
+) -> Result<(), sea_orm::DbErr> {
+    for snapshot in crate::subscription::BUILTIN_SNAPSHOTS {
+        if ip_groups::Entity::find_by_id(snapshot.group_id)
+            .one(db)
+            .await?
+            .is_some()
+        {
+            continue;
+        }
+        let now = chrono::Utc::now();
+        ip_groups::ActiveModel {
+            id: Set(snapshot.group_id),
+            name: Set(snapshot.name.to_string()),
+            description: Set(Some(snapshot.description.to_string())),
+            ip_ranges: Set(snapshot
+                .ranges
+                .iter()
+                .map(|range| range.to_string())
+                .collect()),
+            // The action is a starting point only: the ranges are vendor
+            // infrastructure, and whether they mean "allow" or "block" is
+            // the operator's call once a rule or gate references the group.
+            action: Set(ip_group_action::ALLOW.to_string()),
+            is_global: Set(true),
+            subscription_kind: Set(Some(
+                subscription_kind::BUILTIN.to_string(),
+            )),
+            subscription_enabled: Set(true),
+            source_url: Set(None),
+            sync_interval_minutes: Set(Some(1440)),
+            last_synced_at: Set(Some(now)),
+            last_sync_error: Set(None),
+            enabled: Set(true),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(db)
+        .await?;
+        tracing::info!(
+            group_id = %snapshot.group_id,
+            name = snapshot.name,
+            ip_count = snapshot.ranges.len(),
+            "seeded built-in IP group subscription"
+        );
+    }
+    Ok(())
 }

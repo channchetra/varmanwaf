@@ -150,6 +150,18 @@ impl ControlPlaneService {
             })
     }
 
+    /// Reads the agent token from the `x-agent-token` request metadata, the
+    /// transport-level credential for the client-streaming ship RPCs (their
+    /// message bodies carry no token field).
+    fn metadata_token<T>(request: &Request<T>) -> String {
+        request
+            .metadata()
+            .get("x-agent-token")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string()
+    }
+
     /// Sites this agent is allowed to see: its own binding, or every site owned
     /// by the user that issued its API key.
     async fn visible_sites(
@@ -206,7 +218,7 @@ impl ControlPlaneTrait for ControlPlaneService {
 
         // The API key is only ever presented here; everything afterwards uses the
         // agent token minted below.
-        let (key, owner) = authenticate_api_key(&self.db, &payload.api_key)
+        let (key, _owner) = authenticate_api_key(&self.db, &payload.api_key)
             .await
             .map_err(|err| {
                 tracing::warn!(error = %err, hostname = %payload.hostname, "agent registration rejected");
@@ -232,10 +244,14 @@ impl ControlPlaneTrait for ControlPlaneService {
 
         let now = Utc::now();
         let status = agent_status::ONLINE.to_string();
-        let site_id = match existing.as_ref().and_then(|row| row.site_id) {
-            Some(id) => Some(id),
-            None => resolve_default_site(&self.db, owner.id).await?,
-        };
+        // Agents are never auto-bound to a site: a binding narrows
+        // `visible_sites` to that single site, so an agent registered while its
+        // owner had one site silently stopped receiving every later site — the
+        // new site's config push found no bound agent and was skipped, leaving
+        // certificates pending with nothing on the edge to issue them. An
+        // unbound agent serves all of the owner's sites; a future manual
+        // binding API can narrow the scope explicitly.
+        let site_id = None;
 
         let row = match existing {
             Some(row) => {
@@ -276,6 +292,8 @@ impl ControlPlaneTrait for ControlPlaneService {
                     config_hash: Set(None),
                     last_heartbeat: Set(Some(now)),
                     registered_at: Set(now),
+                    last_config_sync_at: Set(None),
+                    last_policy_sync_at: Set(None),
                     public_ip: Set(optional(&payload.public_ip)),
                     private_ip: Set(optional(&payload.private_ip)),
                 }
@@ -431,6 +449,30 @@ impl ControlPlaneTrait for ControlPlaneService {
                 },
                 Err(err) => {
                     tracing::error!(site_id = %site_row.id, error = %err, "could not build rule bundle");
+                    crate::notify::emit(crate::notify::AlertEvent {
+                        event_type:
+                            crate::models::event_type::CONFIG_SYNC_FAILED
+                                .to_string(),
+                        severity: crate::models::severity::CRITICAL,
+                        title: format!(
+                            "Configuration sync failed for site {}",
+                            site_row.domain
+                        ),
+                        message: format!(
+                            "The rule bundle for site '{}' could not be \
+                             built; agents keep running their last synced \
+                             configuration. Error: {err}",
+                            site_row.domain
+                        ),
+                        details: Some(serde_json::json!({
+                            "site_id": site_row.id,
+                            "domain": site_row.domain,
+                            "agent_id": row.id,
+                            "error": err.to_string(),
+                        })),
+                        dedup_key: Some(site_row.id.to_string()),
+                    })
+                    .await;
                     bundles.push(Err(Status::internal(format!(
                         "could not build the rule bundle for site {}: {err}",
                         site_row.id
@@ -466,6 +508,8 @@ impl ControlPlaneTrait for ControlPlaneService {
         &self,
         request: Request<Streaming<LogEntry>>,
     ) -> Result<Response<LogAck>, Status> {
+        let agent = self.authorize(&Self::metadata_token(&request)).await?;
+        let authenticated_id = agent.id;
         let mut inbound = request.into_inner();
         let batch_size = self.config.log_batch_size.max(1);
 
@@ -488,6 +532,18 @@ impl ControlPlaneTrait for ControlPlaneService {
                     }));
                 },
             };
+            if !message.agent_id.is_empty()
+                && message.agent_id != authenticated_id.to_string()
+            {
+                // A foreign stamp is dropped rather than persisted under the
+                // authenticated identity; the rest of the batch continues.
+                tracing::warn!(
+                    claimed = %message.agent_id,
+                    agent_id = %authenticated_id,
+                    "log entry stamped with a foreign agent_id"
+                );
+                continue;
+            }
             received += 1;
 
             let site_id = parse_optional_uuid(&message.site_id);
@@ -545,6 +601,8 @@ impl ControlPlaneTrait for ControlPlaneService {
         &self,
         request: Request<Streaming<CertEventEntry>>,
     ) -> Result<Response<CertEventAck>, Status> {
+        let agent = self.authorize(&Self::metadata_token(&request)).await?;
+        let authenticated_id = agent.id;
         let mut inbound = request.into_inner();
         let batch_size = self.config.log_batch_size.max(1);
         let mut received: u64 = 0;
@@ -568,7 +626,46 @@ impl ControlPlaneTrait for ControlPlaneService {
                     }));
                 },
             };
+            if !message.agent_id.is_empty()
+                && message.agent_id != authenticated_id.to_string()
+            {
+                tracing::warn!(
+                    claimed = %message.agent_id,
+                    agent_id = %authenticated_id,
+                    "certificate event stamped with a foreign agent_id"
+                );
+                continue;
+            }
             received += 1;
+            // ACME failures surface as raw ERROR-level events: raise an
+            // alert so a renewal that keeps failing is not discovered
+            // through an expired certificate.
+            if message.level.eq_ignore_ascii_case("error") {
+                crate::notify::emit(crate::notify::AlertEvent {
+                    event_type: crate::models::event_type::CERT_RENEWAL_FAILED
+                        .to_string(),
+                    severity: crate::models::severity::CRITICAL,
+                    title: "Certificate renewal failed".to_string(),
+                    message: if message.message.is_empty() {
+                        "An ACME issuance or renewal attempt failed on the \
+                         edge; see the certificate events for details."
+                            .to_string()
+                    } else {
+                        message.message.clone()
+                    },
+                    details: Some(serde_json::json!({
+                        "agent_id": message.agent_id,
+                        "site_id": message.site_id,
+                        "certificate_id": message.certificate_id,
+                        "target": message.target,
+                    })),
+                    dedup_key: Some(format!(
+                        "{}:{}",
+                        message.site_id, message.target
+                    )),
+                })
+                .await;
+            }
             batch.push(certificate_events::ActiveModel {
                 id: Set(Uuid::new_v4()),
                 certificate_id: Set(parse_optional_uuid(
@@ -606,6 +703,8 @@ impl ControlPlaneTrait for ControlPlaneService {
         &self,
         request: Request<Streaming<MetricBatch>>,
     ) -> Result<Response<MetricAck>, Status> {
+        let agent = self.authorize(&Self::metadata_token(&request)).await?;
+        let authenticated_id = agent.id;
         let mut inbound = request.into_inner();
         let batch_size = self.config.log_batch_size.max(1);
 
@@ -620,6 +719,14 @@ impl ControlPlaneTrait for ControlPlaneService {
             let Some(agent_id) = parse_optional_uuid(&batch.agent_id) else {
                 continue;
             };
+            if agent_id != authenticated_id {
+                tracing::warn!(
+                    claimed = %batch.agent_id,
+                    agent_id = %authenticated_id,
+                    "metric batch stamped with a foreign agent_id"
+                );
+                continue;
+            }
 
             // Metrics double as liveness proof: touching the heartbeat keeps an
             // agent that only ships metrics from being marked offline, and the
@@ -736,12 +843,31 @@ async fn persist_heartbeat(
     if message.memory_usage_bytes > 0 {
         active.memory_bytes = Set(Some(message.memory_usage_bytes as i64));
     }
+    // Sync timestamps come from the agent's own clock, but they only feed
+    // the dashboard's "last synced" display, so a skewed clock cannot make
+    // a healthy agent look offline.
+    if let Some(ts) = message.last_config_sync_at {
+        if let Some(at) =
+            DateTime::from_timestamp(ts.seconds, ts.nanos.max(0) as u32)
+        {
+            active.last_config_sync_at = Set(Some(at));
+        }
+    }
+    if let Some(ts) = message.last_policy_sync_at {
+        if let Some(at) =
+            DateTime::from_timestamp(ts.seconds, ts.nanos.max(0) as u32)
+        {
+            active.last_policy_sync_at = Set(Some(at));
+        }
+    }
 
     if let Err(err) = active.update(db).await {
         tracing::warn!(%agent_id, error = %err, "could not persist heartbeat");
     }
 
     persist_site_certificates(db, &message.site_statuses).await;
+
+    sweep_stale_pending_certificates(db).await;
 
     sweep_offline_agents(db).await;
 }
@@ -778,6 +904,8 @@ async fn persist_site_certificates(
 
         // The guard keeps a steady fleet from writing the same values every
         // heartbeat: only rows whose status or expiry actually change match.
+        // A live certificate also clears whatever failure the stale-pending
+        // sweep recorded for the order that produced it.
         let result = site_certificates::Entity::update_many()
             .col_expr(
                 site_certificates::Column::Status,
@@ -786,6 +914,10 @@ async fn persist_site_certificates(
             .col_expr(
                 site_certificates::Column::ExpiresAt,
                 Expr::value(expires_at),
+            )
+            .col_expr(
+                site_certificates::Column::FailureReason,
+                Expr::value(Option::<String>::None),
             )
             .col_expr(site_certificates::Column::UpdatedAt, Expr::value(now))
             .filter(site_certificates::Column::SiteId.eq(site_id))
@@ -806,6 +938,16 @@ async fn persist_site_certificates(
                     %expires_at,
                     "recorded edge certificate state"
                 );
+                notify_certificate_state(
+                    site_id,
+                    row_status,
+                    expires_at,
+                    now,
+                    crate::notify::global()
+                        .map(|manager| manager.settings().cert_expiry_warn_days)
+                        .unwrap_or(30),
+                )
+                .await;
             },
             Ok(_) => {},
             Err(err) => {
@@ -816,6 +958,144 @@ async fn persist_site_certificates(
                 );
             },
         }
+    }
+}
+
+/// How long an ACME order may sit in `pending` with no sign of life before
+/// the control plane gives up on it and marks the row `failed`.
+const PENDING_CERTIFICATE_GRACE: chrono::Duration =
+    chrono::Duration::minutes(30);
+
+/// Marks ACME certificate rows `failed` when their order has been pending
+/// longer than [`PENDING_CERTIFICATE_GRACE`], recording why.
+///
+/// Issuance runs entirely on the edge, so a wedged order — the CA
+/// unreachable, a stalled DNS provider, a challenge that never validates —
+/// otherwise leaves the row in `pending` forever and the dashboard spins
+/// with no explanation. Only ACME rows (no stored PEM, an ACME email set)
+/// are swept: an uploaded certificate can be marked pending by hand and is
+/// not the control plane's to fail. `updated_at` is the last time anyone
+/// touched the row — the request that (re)armed the order — which is what
+/// the grace window is measured from.
+async fn sweep_stale_pending_certificates(db: &DatabaseConnection) {
+    let now = Utc::now();
+    let cutoff = now - PENDING_CERTIFICATE_GRACE;
+    let stale = match site_certificates::Entity::find()
+        .filter(site_certificates::Column::Status.eq(cert_status::PENDING))
+        .filter(site_certificates::Column::CertPem.is_null())
+        .filter(site_certificates::Column::AcmeEmail.is_not_null())
+        .filter(site_certificates::Column::UpdatedAt.lt(cutoff))
+        .all(db)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "could not sweep stale pending certificates"
+            );
+            return;
+        },
+    };
+
+    for row in stale {
+        let reason = format!(
+            "ACME issuance did not finish within {} minutes of the last \
+             request. The edge may be offline, the CA or DNS provider may \
+             be unreachable, or the challenge never validated — see the \
+             certificate events for the raw ACME log.",
+            PENDING_CERTIFICATE_GRACE.num_minutes(),
+        );
+        let cert_id = row.id;
+        let site_id = row.site_id;
+        let mut active: site_certificates::ActiveModel = row.into();
+        active.status = Set(cert_status::FAILED.to_string());
+        active.failure_reason = Set(Some(reason.clone()));
+        active.updated_at = Set(now);
+        if let Err(err) = active.update(db).await {
+            tracing::warn!(
+                %cert_id,
+                error = %err,
+                "could not fail stale pending certificate"
+            );
+            continue;
+        }
+        tracing::info!(
+            %cert_id,
+            %site_id,
+            "stale pending certificate marked failed"
+        );
+        // Best-effort, like every certificate event: recording must never
+        // break the sweep.
+        let event = certificate_events::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            certificate_id: Set(Some(cert_id)),
+            site_id: Set(Some(site_id)),
+            event_type: Set("issuance_failed".to_string()),
+            message: Set(reason),
+            details: Set(None),
+            created_at: Set(now),
+        };
+        if let Err(err) = event.insert(db).await {
+            tracing::warn!(%err, "failed to write certificate event");
+        }
+    }
+}
+
+/// Raises certificate alerts when the edge reports a state transition:
+/// expiry inside the configurable warning window, or a certificate that
+/// has expired. Repeats are suppressed by the notification dedup.
+async fn notify_certificate_state(
+    site_id: Uuid,
+    status: &str,
+    expires_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+    warn_days: u32,
+) {
+    if status == cert_status::EXPIRED {
+        crate::notify::emit(crate::notify::AlertEvent {
+            event_type: crate::models::event_type::CERT_EXPIRED.to_string(),
+            severity: crate::models::severity::CRITICAL,
+            title: format!("Certificate for {site_id} has expired"),
+            message: format!(
+                "The certificate of site {site_id} expired at {expires_at}. \
+                 Browsers will refuse connections until it is renewed."
+            ),
+            details: Some(serde_json::json!({
+                "site_id": site_id,
+                "expires_at": expires_at.to_rfc3339(),
+            })),
+            // Same shape as the hourly scanner's key, so a heartbeat and a
+            // sweep describing the same expiry suppress each other.
+            dedup_key: Some(format!("{site_id}:{}", expires_at.date_naive())),
+        })
+        .await;
+        return;
+    }
+
+    let warn_from = now + chrono::Duration::days(i64::from(warn_days));
+    if status == cert_status::ACTIVE && expires_at <= warn_from {
+        let days_left = (expires_at - now).num_days().max(0);
+        crate::notify::emit(crate::notify::AlertEvent {
+            event_type: crate::models::event_type::CERT_EXPIRING.to_string(),
+            severity: crate::models::severity::WARNING,
+            title: format!(
+                "Certificate for {site_id} expires in {days_left} day(s)"
+            ),
+            message: format!(
+                "The certificate of site {site_id} expires on {expires_at} \
+                 ({days_left} day(s) left). Check that automatic renewal is \
+                 succeeding; a failed renewal leads to an outage."
+            ),
+            details: Some(serde_json::json!({
+                "site_id": site_id,
+                "expires_at": expires_at.to_rfc3339(),
+                "days_left": days_left,
+            })),
+            // One alert per site and expiry date, not per heartbeat.
+            dedup_key: Some(format!("{site_id}:{}", expires_at.date_naive())),
+        })
+        .await;
     }
 }
 
@@ -850,6 +1130,7 @@ async fn persist_host_samples(
             })
             .collect()
     };
+    let latest = kept.last().copied();
     let rows: Vec<host_sample::ActiveModel> = kept
         .into_iter()
         .map(|sample| host_sample::ActiveModel {
@@ -890,7 +1171,85 @@ async fn persist_host_samples(
         return;
     }
 
+    // Threshold check on the newest sample of the batch.
+    if let Some(sample) = latest {
+        check_agent_resources(agent_id, sample).await;
+    }
+
     sweep_host_samples(db).await;
+}
+
+/// Consecutive over-threshold samples per agent and metric, so a single busy
+/// moment does not page anyone. Two samples in a row must breach.
+static RESOURCE_STRIKES: LazyLock<Mutex<HashMap<(Uuid, &'static str), u8>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Evaluates one agent sample against the notification thresholds and raises
+/// `agent.resource` alerts for metrics that stayed over for two samples.
+async fn check_agent_resources(agent_id: Uuid, sample: &HostSample) {
+    let Some(manager) = crate::notify::global() else {
+        return;
+    };
+    let settings = manager.settings();
+
+    let memory_percent = if sample.memory_total_bytes > 0 {
+        (sample.memory_used_bytes as f32 / sample.memory_total_bytes as f32)
+            * 100.0
+    } else {
+        0.0
+    };
+    let disk_percent = if sample.disk_total_bytes > 0 {
+        (sample.disk_used_bytes as f32 / sample.disk_total_bytes as f32) * 100.0
+    } else {
+        0.0
+    };
+    let metrics: [(&'static str, f32, u8); 3] = [
+        ("cpu", sample.cpu_usage_percent as f32, settings.cpu_percent),
+        ("memory", memory_percent, settings.memory_percent),
+        ("disk", disk_percent, settings.disk_percent),
+    ];
+
+    for (metric, value, threshold) in metrics {
+        let key = (agent_id, metric);
+        let over = value >= f32::from(threshold);
+        let strikes = {
+            let mut map =
+                RESOURCE_STRIKES.lock().unwrap_or_else(|e| e.into_inner());
+            let entry = map.entry(key).or_insert(0);
+            if over {
+                *entry = entry.saturating_add(1);
+            } else {
+                *entry = 0;
+            }
+            *entry
+        };
+        if over && strikes == 2 {
+            let severity = if value >= f32::from(threshold) + 5.0 {
+                crate::models::severity::CRITICAL
+            } else {
+                crate::models::severity::WARNING
+            };
+            manager
+                .dispatch(crate::notify::AlertEvent {
+                    event_type: crate::models::event_type::AGENT_RESOURCE
+                        .to_string(),
+                    severity,
+                    title: format!("Agent {agent_id}: {metric} usage high"),
+                    message: format!(
+                        "Agent {agent_id} reports {metric} usage at \
+                         {value:.1}% (threshold {threshold}%)."
+                    ),
+                    details: Some(serde_json::json!({
+                        "agent_id": agent_id,
+                        "metric": metric,
+                        "value_percent": format!("{value:.1}"),
+                        "threshold_percent": threshold,
+                    })),
+                    dedup_key: Some(format!("{agent_id}:{metric}")),
+                })
+                .await;
+        }
+    }
 }
 
 /// Ages out samples past the retention window, at most once an hour.
@@ -1306,6 +1665,7 @@ fn security_event_row(
         path: Set(optional(&entry.path)),
         rule_id: Set(truncate(&entry.waf_rule_id, MAX_RULE_ID)),
         rule_name: Set(truncate(&entry.waf_rule_name, MAX_RULE_NAME)),
+        event_type: Set(optional(&entry.waf_event_type)),
         action: Set(truncate(waf_action, MAX_ACTION)
             .unwrap_or_else(|| action::LOG.to_string())),
         score: Set(if entry.waf_score == 0 {
@@ -1422,6 +1782,7 @@ fn security_event_document(
 
         rule_id: entry.waf_rule_id.clone(),
         rule_name: optional(&entry.waf_rule_name),
+        event_type: optional(&entry.waf_event_type),
         action: if waf_action.is_empty() {
             action::LOG.to_string()
         } else {
@@ -1473,24 +1834,6 @@ fn positive_u32(value: u32) -> Option<u32> {
         Some(value)
     } else {
         None
-    }
-}
-
-/// Binds a site to a newly registered agent when the API key owner has exactly
-/// one site; otherwise the agent stays unbound and can serve all of them.
-async fn resolve_default_site(
-    db: &DatabaseConnection,
-    user_id: Uuid,
-) -> Result<Option<Uuid>, Status> {
-    let owned = site::Entity::find()
-        .filter(site::Column::UserId.eq(user_id))
-        .all(db)
-        .await
-        .map_err(db_status)?;
-    if owned.len() == 1 {
-        Ok(Some(owned[0].id))
-    } else {
-        Ok(None)
     }
 }
 
@@ -1563,6 +1906,22 @@ fn positive_i32(value: i64) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_token_reads_the_x_agent_token_header() {
+        let mut request = tonic::Request::new(());
+        request
+            .metadata_mut()
+            .insert("x-agent-token", "abc.def.ghi".parse().unwrap());
+        assert_eq!(
+            ControlPlaneService::metadata_token(&request),
+            "abc.def.ghi"
+        );
+        assert_eq!(
+            ControlPlaneService::metadata_token(&tonic::Request::new(())),
+            ""
+        );
+    }
 
     #[test]
     fn blanks_become_nulls() {

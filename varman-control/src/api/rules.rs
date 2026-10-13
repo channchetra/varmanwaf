@@ -168,7 +168,7 @@ async fn seed_defaults(
 
     if inserted > 0 {
         touch_site(&state, id).await?;
-        notify_config_changed(&state, id).await;
+        notify_config_changed(&state, id, Some(&current.email)).await;
     }
 
     Ok(Json(serde_json::json!({
@@ -300,7 +300,7 @@ async fn create_group(
 
     tracing::info!(site_id = %id, group_id = %model.id, "rule group created");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok((StatusCode::CREATED, Json(model)).into_response())
 }
@@ -340,7 +340,7 @@ async fn update_group(
     let updated = active.update(&state.db).await?;
     tracing::info!(site_id = %id, group_id = %target, "rule group updated");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(Json(updated))
 }
@@ -363,7 +363,7 @@ async fn delete_group(
 
     tracing::info!(site_id = %id, group_id = %target, "rule group deleted");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -456,7 +456,7 @@ async fn create_rule(
 
     tracing::info!(site_id = %id, rule_id = %model.id, "rule created");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok((StatusCode::CREATED, Json(model)).into_response())
 }
@@ -546,7 +546,7 @@ async fn update_rule(
     let updated = active.update(&state.db).await?;
     tracing::info!(site_id = %id, rule_id = %target, "rule updated");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(Json(updated))
 }
@@ -566,7 +566,7 @@ async fn delete_rule(
 
     tracing::info!(site_id = %id, rule_id = %target, "rule deleted");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

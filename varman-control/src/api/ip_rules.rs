@@ -338,7 +338,7 @@ async fn create(
 
     tracing::info!(site_id = %id, rule_id = %model.id, "IP access rule created");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     let names = group_names(&state.db, std::slice::from_ref(&model)).await?;
     Ok((StatusCode::CREATED, Json(to_response(model, &names))).into_response())
@@ -413,7 +413,7 @@ async fn update(
     let updated = active.update(&state.db).await?;
     tracing::info!(site_id = %id, rule_id = %target, "IP access rule updated");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     let names = group_names(&state.db, std::slice::from_ref(&updated)).await?;
     Ok(Json(to_response(updated, &names)))
@@ -436,7 +436,7 @@ async fn remove(
 
     tracing::info!(site_id = %id, rule_id = %target, "IP access rule deleted");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -478,7 +478,7 @@ async fn bulk_import(
 
     tracing::info!(site_id = %id, rule_id = %model.id, count = ip_ranges.len(), "bulk IP import");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok((
         StatusCode::CREATED,

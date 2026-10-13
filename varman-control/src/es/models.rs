@@ -120,6 +120,10 @@ pub struct SecurityEventDocument {
     pub rule_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule_name: Option<String>,
+    /// Which protection produced the event (`managed`/`waf`/`ip_geo`/`bot`/
+    /// `rate_limit`/`challenge`); absent on pre-0.21 documents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
     pub action: String,
     pub score: u32,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -18,6 +18,9 @@ pub struct Model {
     pub id: i32,
     /// When true, every protective action becomes observe-only.
     pub observation_mode: bool,
+    /// Default disconnected behaviour for sites whose `failover_policy` is
+    /// `inherit`: true keeps proxying, false answers 503.
+    pub default_fail_open: bool,
     pub updated_at: DateTimeUtc,
 }
 

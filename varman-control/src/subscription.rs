@@ -9,8 +9,17 @@
 //! Parsing never panics on foreign payloads: entries that do not parse as an
 //! IP/CIDR are skipped, and an empty result is reported to the caller so a
 //! broken upstream cannot wipe an existing group.
+//!
+//! The module also carries the compiled-in [`BUILTIN_SNAPSHOTS`]: vendor
+//! range lists bundled with the binary so groups can track them without any
+//! outbound fetch. Google and Yandex publish crawler networks; Cloudflare
+//! publishes its edge network, which sites behind Cloudflare reference from
+//! their trusted-proxy scope. DuckDuckGo is intentionally absent — it
+//! publishes no official IP list, so its crawler is verified through the
+//! bot-protection reverse-DNS check instead.
 
 use serde_json::Value;
+use uuid::Uuid;
 
 /// Builds the HTTP client used for subscription fetches. Redirects may only
 /// stay on http/https so a source cannot bounce the fetcher onto another
@@ -154,6 +163,261 @@ fn valid_range(line: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+/// Fixed ids for the built-in subscription groups seeded at startup.
+/// Constant ids keep the seeding idempotent across restarts and upgrades.
+pub const BUILTIN_GOOGLE_GROUP_ID: Uuid =
+    uuid::uuid!("9e770000-0000-4000-8000-000000000001");
+pub const BUILTIN_YANDEX_GROUP_ID: Uuid =
+    uuid::uuid!("9e770000-0000-4000-8000-000000000002");
+pub const BUILTIN_CLOUDFLARE_GROUP_ID: Uuid =
+    uuid::uuid!("9e770000-0000-4000-8000-000000000003");
+
+/// A vendor IP range snapshot compiled into the binary.
+pub struct BuiltinSnapshot {
+    /// Stable key stored in `ip_groups.subscription_kind` is always
+    /// `"builtin"`; the snapshot itself is resolved by the group's fixed id.
+    pub group_id: Uuid,
+    pub name: &'static str,
+    pub description: &'static str,
+    pub ranges: &'static [&'static str],
+}
+
+/// Compiled-in snapshots of vendor-published networks.
+///
+/// `GOOGLE_RANGES` mirrors `https://www.gstatic.com/ipranges/goog.json`
+/// (fetched 2026-10-08) and covers all Google-owned networks, not only
+/// Googlebot. `YANDEX_RANGES` mirrors the list published at
+/// `https://yandex.com/ips` (fetched 2026-10-08). `CLOUDFLARE_RANGES`
+/// mirrors `https://www.cloudflare.com/ips/` (fetched 2026-10-08) and
+/// covers Cloudflare's edge networks — the direct peers of sites proxied
+/// through Cloudflare. None of them change often; refreshes ship with new
+/// releases.
+pub static BUILTIN_SNAPSHOTS: &[BuiltinSnapshot] = &[
+    BuiltinSnapshot {
+        group_id: BUILTIN_GOOGLE_GROUP_ID,
+        name: "Google",
+        description: "Built-in snapshot of Google's published networks \
+                      (gstatic.com/ipranges/goog.json). Covers all \
+                      Google-owned networks, not just Googlebot.",
+        ranges: GOOGLE_RANGES,
+    },
+    BuiltinSnapshot {
+        group_id: BUILTIN_YANDEX_GROUP_ID,
+        name: "Yandex",
+        description: "Built-in snapshot of the crawler networks Yandex \
+                      publishes at yandex.com/ips.",
+        ranges: YANDEX_RANGES,
+    },
+    BuiltinSnapshot {
+        group_id: BUILTIN_CLOUDFLARE_GROUP_ID,
+        name: "Cloudflare",
+        description: "Built-in snapshot of the edge networks Cloudflare \
+                      publishes at cloudflare.com/ips. Reference this group \
+                      in a site's trusted-proxy scope when the site sits \
+                      behind Cloudflare.",
+        ranges: CLOUDFLARE_RANGES,
+    },
+];
+
+/// Resolves a built-in snapshot by the fixed group id.
+pub fn builtin_snapshot(group_id: Uuid) -> Option<&'static BuiltinSnapshot> {
+    BUILTIN_SNAPSHOTS
+        .iter()
+        .find(|snapshot| snapshot.group_id == group_id)
+}
+
+static GOOGLE_RANGES: &[&str] = &[
+    "104.154.0.0/15",
+    "104.196.0.0/14",
+    "104.237.160.0/19",
+    "107.167.160.0/19",
+    "107.178.192.0/18",
+    "108.170.192.0/18",
+    "108.177.0.0/17",
+    "108.59.80.0/20",
+    "130.211.0.0/16",
+    "136.107.0.0/16",
+    "136.108.0.0/14",
+    "136.112.0.0/13",
+    "136.120.0.0/22",
+    "136.121.8.0/21",
+    "136.124.0.0/15",
+    "136.22.160.0/20",
+    "136.22.176.0/21",
+    "136.22.184.0/23",
+    "136.22.186.0/24",
+    "136.22.2.0/23",
+    "136.22.4.0/23",
+    "136.22.8.0/22",
+    "136.23.39.0/24",
+    "136.23.48.0/20",
+    "136.23.64.0/18",
+    "136.64.0.0/11",
+    "142.250.0.0/15",
+    "146.148.0.0/17",
+    "152.238.0.0/16",
+    "152.239.128.0/17",
+    "162.120.128.0/17",
+    "162.216.148.0/22",
+    "162.222.176.0/21",
+    "172.110.32.0/21",
+    "172.217.0.0/16",
+    "172.253.0.0/16",
+    "173.194.0.0/16",
+    "173.255.112.0/20",
+    "177.176.0.0/16",
+    "177.178.0.0/15",
+    "177.208.0.0/15",
+    "179.193.128.0/17",
+    "179.199.0.0/17",
+    "179.67.0.0/17",
+    "179.69.128.0/17",
+    "186.242.0.0/17",
+    "186.245.0.0/16",
+    "187.126.128.0/17",
+    "187.78.0.0/17",
+    "187.79.0.0/17",
+    "189.105.128.0/17",
+    "189.106.0.0/15",
+    "189.24.128.0/17",
+    "189.48.0.0/16",
+    "189.49.128.0/17",
+    "189.70.0.0/15",
+    "189.82.0.0/15",
+    "191.0.128.0/17",
+    "191.2.0.0/15",
+    "191.212.0.0/15",
+    "191.216.128.0/17",
+    "191.218.0.0/17",
+    "191.220.0.0/15",
+    "191.40.128.0/17",
+    "191.44.128.0/17",
+    "191.45.128.0/17",
+    "191.46.0.0/15",
+    "192.104.160.0/23",
+    "192.158.28.0/22",
+    "192.178.0.0/15",
+    "193.186.4.0/24",
+    "199.192.112.0/22",
+    "199.223.232.0/21",
+    "199.36.154.0/23",
+    "199.36.156.0/24",
+    "200.226.0.0/16",
+    "207.175.0.0/16",
+    "207.223.160.0/20",
+    "208.117.224.0/19",
+    "208.65.152.0/22",
+    "208.68.108.0/22",
+    "208.81.188.0/22",
+    "209.85.128.0/17",
+    "216.239.32.0/19",
+    "216.252.220.0/22",
+    "216.58.192.0/19",
+    "216.73.80.0/20",
+    "23.236.48.0/20",
+    "23.251.128.0/19",
+    "34.0.0.0/15",
+    "34.128.0.0/10",
+    "34.16.0.0/12",
+    "34.2.0.0/16",
+    "34.3.0.0/23",
+    "34.3.16.0/20",
+    "34.3.3.0/24",
+    "34.3.32.0/19",
+    "34.3.4.0/24",
+    "34.3.64.0/18",
+    "34.3.8.0/21",
+    "34.32.0.0/11",
+    "34.4.0.0/14",
+    "34.64.0.0/10",
+    "34.8.0.0/13",
+    "35.184.0.0/13",
+    "35.192.0.0/14",
+    "35.196.0.0/15",
+    "35.198.0.0/16",
+    "35.199.0.0/17",
+    "35.199.128.0/18",
+    "35.200.0.0/13",
+    "35.208.0.0/12",
+    "35.224.0.0/12",
+    "35.240.0.0/13",
+    "35.252.0.0/14",
+    "64.15.112.0/20",
+    "64.233.160.0/19",
+    "66.102.0.0/20",
+    "66.249.64.0/19",
+    "70.32.128.0/19",
+    "72.14.192.0/18",
+    "74.114.24.0/21",
+    "74.125.0.0/16",
+    "8.228.0.0/14",
+    "8.232.0.0/14",
+    "8.236.0.0/15",
+    "8.34.208.0/20",
+    "8.35.192.0/20",
+    "8.8.4.0/24",
+    "8.8.8.0/24",
+    "2001:4860::/32",
+    "2404:6800::/32",
+    "2404:f340::/32",
+    "2600:1900::/29",
+    "2605:ef80::/32",
+    "2606:40::/32",
+    "2606:73c0::/32",
+    "2607:1c0:241:40::/60",
+    "2607:1c0:300::/40",
+    "2607:f8b0::/32",
+    "2620:11a:a000::/40",
+    "2620:120:e000::/40",
+    "2800:3f0::/32",
+    "2a00:1450::/32",
+    "2c0f:fb50::/32",
+];
+
+static YANDEX_RANGES: &[&str] = &[
+    "141.8.128.0/18",
+    "178.154.128.0/18",
+    "185.32.187.0/24",
+    "213.180.192.0/19",
+    "37.140.128.0/18",
+    "37.9.64.0/18",
+    "5.255.192.0/18",
+    "5.45.192.0/18",
+    "77.88.0.0/18",
+    "84.252.160.0/19",
+    "87.250.224.0/19",
+    "90.156.176.0/20",
+    "92.255.112.0/20",
+    "93.158.128.0/18",
+    "95.108.128.0/17",
+    "2a02:6b8::/29",
+];
+
+static CLOUDFLARE_RANGES: &[&str] = &[
+    "103.21.244.0/22",
+    "103.22.200.0/22",
+    "103.31.4.0/22",
+    "104.16.0.0/13",
+    "104.24.0.0/14",
+    "108.162.192.0/18",
+    "131.0.72.0/22",
+    "141.101.64.0/18",
+    "162.158.0.0/15",
+    "172.64.0.0/13",
+    "173.245.48.0/20",
+    "188.114.96.0/20",
+    "190.93.240.0/20",
+    "197.234.240.0/22",
+    "198.41.128.0/17",
+    "2400:cb00::/32",
+    "2405:8100::/32",
+    "2405:b500::/32",
+    "2606:4700::/32",
+    "2803:f800::/32",
+    "2a06:98c0::/29",
+    "2c0f:f248::/32",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +489,32 @@ mod tests {
         // No scheme and no host are both rejected.
         assert!(validate_source_url("www.cloudflare.com/ips-v4").is_err());
         assert!(validate_source_url("http://").is_err());
+    }
+
+    #[test]
+    fn builtin_snapshots_are_non_empty_and_valid() {
+        for snapshot in BUILTIN_SNAPSHOTS {
+            assert!(!snapshot.ranges.is_empty(), "{}", snapshot.name);
+            for range in snapshot.ranges {
+                let base = range.split('/').next().unwrap_or(range);
+                assert!(
+                    base.parse::<std::net::IpAddr>().is_ok(),
+                    "{}: invalid range {range}",
+                    snapshot.name
+                );
+            }
+        }
+        assert_eq!(BUILTIN_SNAPSHOTS.len(), 3);
+    }
+
+    #[test]
+    fn builtin_snapshot_resolves_by_group_id() {
+        let google = builtin_snapshot(BUILTIN_GOOGLE_GROUP_ID).unwrap();
+        assert_eq!(google.name, "Google");
+        let yandex = builtin_snapshot(BUILTIN_YANDEX_GROUP_ID).unwrap();
+        assert_eq!(yandex.name, "Yandex");
+        let cloudflare = builtin_snapshot(BUILTIN_CLOUDFLARE_GROUP_ID).unwrap();
+        assert_eq!(cloudflare.name, "Cloudflare");
+        assert!(builtin_snapshot(Uuid::new_v4()).is_none());
     }
 }
