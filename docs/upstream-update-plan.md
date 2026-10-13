@@ -63,8 +63,10 @@ Rules:
 
 | Batch | Scope | Status |
 |---|---|---|
-| 1 | Foundation crates: `pingap-acme`, `pingap-config`, `pingap-core`, `pingap-proxy`, `pingap-upstream` | **Landed** (see below) |
-| 2 | Agent + protocol + server model: `varman-agent` config push fields, `varman-protocol` proto additions, `varman-control` (97 files), `src` start-up, then the plugin's cache/error-page/challenge/bot_dns consumers | Planned |
+| 1 | Foundation crates: `pingap-acme`, `pingap-config`, `pingap-core`, `pingap-proxy`, `pingap-upstream` | **Landed** (v0.22.0) |
+| 2a | Protocol + agent model: proto fields, `varman-agent` cache/client/config, run-mode boxing | **Landed** (v0.22.1) |
+| 2b | Control plane (110 files) + `src` start-up | Next |
+
 | 3 | WAF engine + plugin: `pingap-plugin/src/waf.rs` upstream evolution (body staging, posture), `varman-waf` engine posture/grading, `varman-challenge`, verified-bots wiring | Planned |
 | 4 | Dashboard: `web` (82 files) — merge upstream pages/features into the rebranded dashboard, keep the Varman pages | Planned |
 | 5 | Feature branches (`config-versioning-and-notifications`, `per-site-failover`) once main is synced | Planned |
