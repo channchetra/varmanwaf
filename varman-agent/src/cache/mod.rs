@@ -1262,7 +1262,19 @@ impl RuleCache {
 
         self.inner.rcu(|current| {
             let mut updated = (**current).clone();
-            updated.config_hash = config.config_hash.as_str().into();
+            // The agent's reported hash is the per-site bundle fingerprint -
+            // the value `SyncRules` compares for delta sync and the control
+            // plane publishes for apply-status. The full-config fingerprint
+            // is a different value and only a fallback for configs that
+            // carry no bundles.
+            updated.config_hash = config
+                .sites
+                .iter()
+                .filter_map(|site| site.rules.as_ref())
+                .map(|rules| rules.config_hash.as_str())
+                .next()
+                .unwrap_or(config.config_hash.as_str())
+                .into();
             updated.policy_revision = config
                 .sites
                 .iter()
@@ -2376,8 +2388,36 @@ mod tests {
     }
 
     #[test]
-    fn new_format_roundtrips() {
-        let cached = CachedRules {
+    fn site_config_reports_the_bundle_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache =
+            RuleCache::new(dir.path().to_path_buf(), "test".to_string())
+                .expect("cache");
+        let config = proto::SiteConfig {
+            sites: vec![proto::Site {
+                id: "site-1".to_string(),
+                domain: "example.com".to_string(),
+                rules: Some(proto::RuleBundle {
+                    site_id: "site-1".to_string(),
+                    config_hash: "bundle-hash".to_string(),
+                    policy_revision: 7,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            config_hash: "config-hash".to_string(),
+            updated_at: None,
+        };
+        cache.update_from_site_config(&config).unwrap();
+        // The per-site bundle fingerprint is what SyncRules and
+        // apply-status compare; the full-config fingerprint is a different
+        // value and must not overwrite it.
+        assert_eq!(&*cache.config_hash(), "bundle-hash");
+        assert_eq!(cache.policy_revision(), 7);
+    }
+
+    #[test]
+    fn new_format_roundtrips() {        let cached = CachedRules {
             sites: [(
                 "site-1".to_string(),
                 Arc::new(SiteRules {

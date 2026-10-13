@@ -809,9 +809,17 @@ impl ControlPlaneTrait for ControlPlaneService {
         );
 
         // The caller echoed no hash here, but recording the served one lets the
-        // dashboard detect drift on the next heartbeat.
+        // dashboard detect drift on the next heartbeat. The per-site bundle
+        // fingerprint is the value every other path reports.
+        let served_hash = config
+            .sites
+            .iter()
+            .filter_map(|site| site.rules.as_ref())
+            .map(|rules| rules.config_hash.clone())
+            .next()
+            .unwrap_or_else(|| config.config_hash.clone());
         let mut active: agent::ActiveModel = row.into();
-        active.config_hash = Set(Some(config.config_hash.clone()));
+        active.config_hash = Set(Some(served_hash));
         active.last_heartbeat = Set(Some(Utc::now()));
         if let Err(err) = active.update(&self.db).await {
             tracing::warn!(error = %err, "could not persist served config hash");
