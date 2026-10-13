@@ -37,6 +37,26 @@ pub mod m20240101_000029_agent_blocked_ips;
 pub mod m20240101_000030_waf_settings;
 pub mod m20240101_000031_waf_engine_mode;
 pub mod m20240101_000032_waf_virtual_patches;
+pub mod m20240101_000033_waf_settings_monitor_managed_rules;
+pub mod m20240101_000034_security_events_event_type;
+pub mod m20240101_000035_site_proxy_trust;
+pub mod m20240101_000036_user_account_controls;
+pub mod m20240101_000037_instance_settings;
+pub mod m20240101_000038_users_token_version;
+pub mod m20240101_000039_site_trusted_proxy_ranges;
+pub mod m20240101_000040_bot_ip_dns_verification;
+pub mod m20240101_000041_ip_group_subscriptions;
+pub mod m20240101_000042_waf_engine_switch;
+pub mod m20240101_000043_site_trusted_proxy_group_ids;
+pub mod m20240101_000044_agent_sync_timestamps;
+pub mod m20240101_000045_config_versions;
+pub mod m20240101_000046_notifications;
+pub mod m20240101_000047_site_failover;
+pub mod m20240101_000048_login_history;
+pub mod m20240101_000049_waf_settings_mode_and_paranoia;
+pub mod m20240101_000050_pool_health_check;
+pub mod m20240101_000051_certificate_failure_reason;
+pub mod m20240101_000052_cache_settings;
 
 use sea_orm_migration::prelude::*;
 
@@ -81,6 +101,30 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000030_waf_settings::Migration),
             Box::new(m20240101_000031_waf_engine_mode::Migration),
             Box::new(m20240101_000032_waf_virtual_patches::Migration),
+            Box::new(
+                m20240101_000033_waf_settings_monitor_managed_rules::Migration,
+            ),
+            Box::new(m20240101_000034_security_events_event_type::Migration),
+            Box::new(m20240101_000035_site_proxy_trust::Migration),
+            Box::new(m20240101_000036_user_account_controls::Migration),
+            Box::new(m20240101_000037_instance_settings::Migration),
+            Box::new(m20240101_000038_users_token_version::Migration),
+            Box::new(m20240101_000039_site_trusted_proxy_ranges::Migration),
+            Box::new(m20240101_000040_bot_ip_dns_verification::Migration),
+            Box::new(m20240101_000041_ip_group_subscriptions::Migration),
+            Box::new(m20240101_000042_waf_engine_switch::Migration),
+            Box::new(m20240101_000043_site_trusted_proxy_group_ids::Migration),
+            Box::new(m20240101_000044_agent_sync_timestamps::Migration),
+            Box::new(m20240101_000045_config_versions::Migration),
+            Box::new(m20240101_000046_notifications::Migration),
+            Box::new(m20240101_000047_site_failover::Migration),
+            Box::new(m20240101_000048_login_history::Migration),
+            Box::new(
+                m20240101_000049_waf_settings_mode_and_paranoia::Migration,
+            ),
+            Box::new(m20240101_000050_pool_health_check::Migration),
+            Box::new(m20240101_000051_certificate_failure_reason::Migration),
+            Box::new(m20240101_000052_cache_settings::Migration),
         ]
     }
 }
@@ -92,7 +136,7 @@ mod tests {
     #[test]
     fn migrations_are_ordered_and_unique() {
         let migrations = Migrator::migrations();
-        assert_eq!(migrations.len(), 32);
+        assert_eq!(migrations.len(), 52);
         let names: Vec<String> =
             migrations.iter().map(|m| m.name().to_owned()).collect();
         let mut sorted = names.clone();
