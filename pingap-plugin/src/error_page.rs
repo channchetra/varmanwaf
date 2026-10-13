@@ -864,6 +864,7 @@ template = '{"error":"rate_limit_exceeded","request_id":"{{ request_id }}"}'
                             }],
                             ..Default::default()
                         }),
+                        ..Default::default()
                     }],
                     config_hash: "hash-1".to_string(),
                     updated_at: None,
@@ -925,6 +926,7 @@ template = '{"error":"rate_limit_exceeded","request_id":"{{ request_id }}"}'
                             }],
                             ..Default::default()
                         }),
+                        ..Default::default()
                     }],
                     config_hash: "hash-1".to_string(),
                     updated_at: None,

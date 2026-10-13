@@ -6,8 +6,19 @@ use serde::{Deserialize, Serialize};
 /// locally, and ships logs/metrics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
-    /// gRPC server URL (e.g., "http://localhost:9090")
+    /// gRPC server URL (e.g., "https://localhost:9090" — TLS is the
+    /// control plane's default; "http://" only for explicitly degraded
+    /// deployments)
     pub server_url: String,
+    /// Optional PEM file with the CA (or chain) that signed the control
+    /// plane's certificate; defaults to the bundled webpki roots.
+    #[serde(default)]
+    pub server_ca_cert: Option<String>,
+    /// Inline PEM with the CA (or chain) to trust, injected in all-in-one
+    /// mode where the self-signed control-plane certificate lives in the
+    /// database and no file exists. Takes precedence over `server_ca_cert`.
+    #[serde(default)]
+    pub server_ca_pem: Option<String>,
     /// API key for authentication with control plane
     pub api_key: String,
     /// Unique identifier for this agent (auto-generated if empty)
@@ -33,7 +44,13 @@ pub struct AgentConfig {
     /// Maximum reconnection delay in milliseconds
     #[serde(default = "default_reconnect_max_delay")]
     pub reconnect_max_delay_ms: u64,
-    /// Whether to fail-open when disconnected (true = allow traffic, false = use cached rules)
+    /// Fallback traffic policy while the control plane is unreachable and a
+    /// host has no synced rules. The per-site failover policies and the
+    /// control-plane-wide default (synced into the rule cache) take
+    /// precedence; this local setting only applies in standalone mode or
+    /// before the first sync completes. `true` (the default) keeps
+    /// proxying through the base engine; `false` answers 503 for such
+    /// hosts.
     #[serde(default = "default_fail_open")]
     pub fail_open: bool,
     /// Host probe sampling interval in seconds
@@ -85,7 +102,9 @@ fn default_metrics_ship_interval() -> u64 {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
-            server_url: "http://localhost:9090".to_string(),
+            server_url: "https://localhost:9090".to_string(),
+            server_ca_cert: None,
+            server_ca_pem: None,
             api_key: String::new(),
             agent_id: String::new(),
             heartbeat_interval_secs: default_heartbeat_interval(),

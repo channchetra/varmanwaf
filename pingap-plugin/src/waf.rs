@@ -2160,6 +2160,7 @@ impl WafPlugin {
             query_string: request_data.query.clone(),
             rule_id: verdict.matched_rules.first().cloned().unwrap_or_default(),
             rule_name: rule_name.to_string(),
+            event_type: "waf".to_string(),
             action: action_str(&verdict.action).to_string(),
             score: verdict.score as u32,
             details: verdict.details.clone(),
@@ -3620,6 +3621,7 @@ impl WafPlugin {
                 query_string: facts.query,
                 rule_id: rule_id.to_string(),
                 rule_name: "stream-inspection".to_string(),
+                event_type: "waf".to_string(),
                 action: "block".to_string(),
                 score: 40,
                 details: detail.to_string(),
@@ -3700,6 +3702,7 @@ ml_threshold = 0.75
             openapi_spec: String::new(),
             monitor_categories,
             monitor_stacks,
+            monitor_managed_rules: Vec::new(),
         }
     }
 
@@ -4113,6 +4116,7 @@ advanced_mode = true
                         ],
                         ..Default::default()
                     }),
+                    ..Default::default()
                 }],
                 config_hash: "hash-1".to_string(),
                 updated_at: None,
@@ -4152,6 +4156,7 @@ advanced_mode = true
                         }],
                         ..Default::default()
                     }),
+                    ..Default::default()
                 }],
                 config_hash: "hash-1".to_string(),
                 updated_at: None,
@@ -4308,6 +4313,7 @@ advanced_mode = true
                         }),
                         ..Default::default()
                     }),
+                    ..Default::default()
                 }],
                 config_hash,
                 updated_at: None,
@@ -4478,6 +4484,7 @@ advanced_mode = true
                         }),
                         ..Default::default()
                     }),
+                    ..Default::default()
                 }],
                 config_hash,
                 updated_at: None,
@@ -4757,6 +4764,7 @@ advanced_mode = true
                         }],
                         ..Default::default()
                     }),
+                    ..Default::default()
                 }],
                 config_hash: "hash-1".to_string(),
                 updated_at: None,
@@ -4809,6 +4817,7 @@ advanced_mode = true
                         }),
                         ..Default::default()
                     }),
+                    ..Default::default()
                 }],
                 config_hash: "hash-1".to_string(),
                 updated_at: None,
@@ -5202,9 +5211,13 @@ advanced_mode = true
                             js_detection: false,
                             tls_fingerprint: false,
                             behavioral_analysis: false,
+                            ip_verification_enabled: false,
+                            dns_verification_enabled: false,
+                            verified_bot_ranges: Vec::new(),
                         }),
                         ..Default::default()
                     }),
+                    ..Default::default()
                 }],
                 config_hash: "hash-1".to_string(),
                 updated_at: None,
@@ -5222,6 +5235,8 @@ advanced_mode = true
             js_detection: true,
             tls_fingerprint: false,
             behavioral_analysis: false,
+            dns_verification_enabled: false,
+            verified_bot_ranges: Vec::new(),
         });
         let browser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
@@ -5254,6 +5269,8 @@ advanced_mode = true
             js_detection: false,
             tls_fingerprint: true,
             behavioral_analysis: false,
+            dns_verification_enabled: false,
+            verified_bot_ranges: Vec::new(),
         });
         let browser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
@@ -5305,6 +5322,8 @@ advanced_mode = true
             js_detection: false,
             tls_fingerprint: false,
             behavioral_analysis: true,
+            dns_verification_enabled: false,
+            verified_bot_ranges: Vec::new(),
         });
         let browser = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
         assert!(matches!(
@@ -5384,6 +5403,8 @@ advanced_mode = true
             js_detection: false,
             tls_fingerprint: false,
             behavioral_analysis: false,
+            dns_verification_enabled: false,
+            verified_bot_ranges: Vec::new(),
         });
 
         assert!(matches!(
@@ -5555,6 +5576,7 @@ advanced_mode = true
                         rate_limit_rules: rules,
                         ..Default::default()
                     }),
+                    ..Default::default()
                 }],
                 config_hash: "hash-1".to_string(),
                 updated_at: None,

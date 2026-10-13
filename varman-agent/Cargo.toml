@@ -1,6 +1,6 @@
 [package]
 name = "varman-agent"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 license = "Apache-2.0"
 description = "VarmanWAF data-plane agent: connects to the control plane over gRPC, caches WAF rules locally with disk persistence, and ships logs and metrics back."
@@ -13,7 +13,10 @@ test-util = []
 [dependencies]
 varman-protocol = { path = "../varman-protocol" }
 pingap-cache = { workspace = true }
-tonic = { workspace = true }
+# Host-keyed caches must key on the same canonical form the request path
+# produces (pingap_core::get_host -> normalize_host).
+pingap-core = { workspace = true }
+tonic = { workspace = true, features = ["tls-ring", "tls-webpki-roots"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs"] }
 tokio-stream = { workspace = true, features = ["sync"] }
 # "rc" adds serde impls for Arc, so the rule cache can store sites as
@@ -28,7 +31,8 @@ uuid = { workspace = true }
 prost-types = { workspace = true }
 dashmap = { workspace = true }
 arc-swap = { workspace = true }
-futures = { workspace = true }
+# Jitters the reconnect backoff so a fleet of agents never retries in lockstep.
+rand = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

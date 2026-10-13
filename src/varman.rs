@@ -55,11 +55,11 @@ use varman_control::ServerConfig;
 /// The operating mode for VarmanWAF.
 pub enum RunMode {
     /// Control plane only: REST API + gRPC server + PostgreSQL
-    Server(ServerConfig),
+    Server(Box<ServerConfig>),
     /// Data plane only: connects to a remote control plane
-    Agent(AgentConfig),
+    Agent(Box<AgentConfig>),
     /// Both control plane and data plane in a single process
-    AllInOne(ServerConfig, AgentConfig),
+    AllInOne(Box<ServerConfig>, Box<AgentConfig>),
 }
 
 /// Convert CLI server options into a `ServerConfig`.
@@ -119,6 +119,11 @@ fn agent_config_from_opts(opts: &AgentOpts) -> AgentConfig {
         probe_interval_secs: varman_agent::probe::DEFAULT_INTERVAL_SECS,
         probe_disk_path: "/".to_string(),
         metrics_ship_interval_secs: opts.metrics_ship_interval_secs,
+        // The all-in-one control plane's certificate may be self-signed and
+        // its PEM is injected after start-up; both default to the bundled
+        // roots.
+        server_ca_cert: None,
+        server_ca_pem: None,
     }
 }
 
@@ -144,6 +149,11 @@ fn agent_config_from_all_in_one(opts: &AllInOneOpts) -> AgentConfig {
         probe_interval_secs: varman_agent::probe::DEFAULT_INTERVAL_SECS,
         probe_disk_path: "/".to_string(),
         metrics_ship_interval_secs: opts.metrics_ship_interval_secs,
+        // The all-in-one control plane's certificate may be self-signed and
+        // its PEM is injected after start-up; both default to the bundled
+        // roots.
+        server_ca_cert: None,
+        server_ca_pem: None,
     }
 }
 
@@ -160,15 +170,15 @@ fn extract_port(addr: &str) -> &str {
 pub fn build_run_mode(cli: VarmanCli) -> RunMode {
     match cli.command {
         VarmanCommand::Server(ref opts) => {
-            RunMode::Server(server_config_from_opts(opts))
+            RunMode::Server(Box::new(server_config_from_opts(opts)))
         },
         VarmanCommand::Agent(ref opts) => {
-            RunMode::Agent(agent_config_from_opts(opts))
+            RunMode::Agent(Box::new(agent_config_from_opts(opts)))
         },
         VarmanCommand::AllInOne(ref opts) => {
             let server_config = server_config_from_all_in_one(opts);
             let agent_config = agent_config_from_all_in_one(opts);
-            RunMode::AllInOne(server_config, agent_config)
+            RunMode::AllInOne(Box::new(server_config), Box::new(agent_config))
         },
         VarmanCommand::User { .. }
         | VarmanCommand::Mode { .. }
@@ -1250,7 +1260,7 @@ pub async fn run(mode: RunMode) -> anyhow::Result<()> {
                 grpc_addr = %config.grpc_addr,
                 "starting VarmanWAF in Server mode (control plane only)"
             );
-            varman_control::start_server(config).await
+            varman_control::start_server(*config).await
         },
         RunMode::Agent(config) => {
             info!(
@@ -1258,7 +1268,7 @@ pub async fn run(mode: RunMode) -> anyhow::Result<()> {
                 cache_dir = %config.cache_dir,
                 "starting VarmanWAF in Agent mode (data plane only)"
             );
-            let agent = varman_agent::start_agent(config).await?;
+            let agent = varman_agent::start_agent(*config).await?;
             info!("VarmanWAF agent is running, starting data plane proxy");
 
             // Start the data plane proxy in the background
@@ -1297,7 +1307,7 @@ pub async fn run(mode: RunMode) -> anyhow::Result<()> {
 
             // Start the agent in the background first.
             // It will retry connecting to the server until it comes up.
-            let agent = match varman_agent::start_agent(agent_config).await {
+            let agent = match varman_agent::start_agent(*agent_config).await {
                 Ok(agent) => Some(agent),
                 Err(e) => {
                     error!(error = %e, "failed to start agent, continuing with server only");
@@ -1318,7 +1328,7 @@ pub async fn run(mode: RunMode) -> anyhow::Result<()> {
             };
 
             // Run the server (blocks until shutdown signal)
-            let result = varman_control::start_server(server_config).await;
+            let result = varman_control::start_server(*server_config).await;
 
             // Gracefully shut down the agent
             if let Some(agent) = agent {
@@ -1485,6 +1495,8 @@ mod tests {
             bot_protection: None,
             basic_auth: None,
             observation_mode: false,
+            cache_settings: None,
+            proxy_trust: Default::default(),
         }
     }
 

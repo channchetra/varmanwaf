@@ -80,6 +80,11 @@ message AgentHeartbeat {
   // block commands plus auto-blocks triggered by WAF/rate-limit verdicts.
   // The control plane reconciles its copy of the list against this report.
   repeated BlockedIp blocked_ips = 15;
+
+  // When the agent last applied a full site config / a per-site rule
+  // bundle from the control plane. Absent = never synced.
+  google.protobuf.Timestamp last_config_sync_at = 16;
+  google.protobuf.Timestamp last_policy_sync_at = 17;
 }
 
 // One dynamically blocked IP as enforced at the edge.
@@ -261,6 +266,67 @@ message RuleBundle {
   // Observation mode: every protection (WAF, IP/geo rules, bot protection,
   // rate limiting) keeps detecting but only records; the request proceeds.
   bool observation_mode = 23;
+
+  // Per-site failover policy registry: every bundle carries the complete
+  // domain → policy map for ALL sites, so the agent can resolve a site's
+  // disconnected behaviour even for hosts whose rule bundle was never
+  // synced (the only situation in which the policy is consulted).
+  repeated SitePolicy site_policies = 24;
+
+  // Control-plane-wide default for hosts absent from `site_policies`.
+  // Explicit presence (`optional`): an old server leaves the field unset,
+  // which the agent must distinguish from an explicit `false`.
+  optional bool default_fail_open = 25;
+
+  // Deployment-wide cache ceiling (single-file cap, total disk budget,
+  // master switch, default edge TTL). Absent = old server: the agent falls
+  // back to its built-in defaults.
+  optional GlobalCacheSettings global_cache = 26;
+
+  // Site-level cache limits (single-file cap + per-content-type caps).
+  // Absent = no site-level override.
+  optional SiteCacheSettings cache_settings = 27;
+}
+
+// Deployment-wide cache limits, mirrored from the `cache_settings` table.
+message GlobalCacheSettings {
+  // Largest single cacheable object, in megabytes (0 = old-server default
+  // of 16 MiB applies).
+  optional uint32 max_file_size_mb = 1;
+  // Total disk budget across all sites, in megabytes; 0 = unlimited.
+  optional uint32 max_space_mb = 2;
+  // Master switch: false removes the cache plugin from the generated
+  // configuration entirely.
+  optional bool master_enabled = 3;
+  // Edge TTL (seconds) used when a cache rule does not configure one;
+  // 0 = no fallback.
+  optional uint32 default_edge_ttl_seconds = 4;
+}
+
+// One site's cache limits. Values the site did not set are absent and the
+// consumer falls back: type limit → site cap → global cap.
+message SiteCacheSettings {
+  // Site-level single-file cap in megabytes; absent = follow the global
+  // ceiling.
+  optional uint32 max_file_size_mb = 1;
+  // Per-content-type single-file caps keyed by
+  // html/css/js/image/font/media/other.
+  map<string, uint32> type_max_file_size_mb = 2;
+}
+
+// How one site behaves while the control plane is unreachable and the host
+// has no synced rule bundle.
+enum FailoverMode {
+  FAILOVER_INHERIT = 0;  // Follow `default_fail_open`
+  FAILOVER_OPEN = 1;     // Keep proxying through the base engine
+  FAILOVER_CLOSED = 2;   // Answer 503
+}
+
+// One site's entry in the failover policy registry.
+message SitePolicy {
+  string domain = 1;
+  repeated string alternate_domains = 2;
+  FailoverMode mode = 3;
 }
 
 // Site-wide HTTP basic authentication. Enforced by the WAF plugin, which sits
@@ -322,6 +388,11 @@ message WafConfig {
   // Per-site SecLang virtual-patch source and JSON OpenAPI document.
   string virtual_patches = 45;
   string openapi_spec = 46;
+
+  // Individual managed rule ids (e.g. "VARMAN-1010") downgraded to
+  // monitor-only at this site. Unknown ids are ignored by the data plane.
+  // (Upstream field, renumbered: 44-46 are VarmanWAF's.)
+  repeated string monitor_managed_rules = 47;
 }
 
 enum WafMode {
@@ -468,6 +539,18 @@ message BotProtectionConfig {
   // When set, a per-IP request burst above the edge-local threshold receives
   // the configured action (browser-spoofing floods).
   bool behavioral_analysis = 6;
+
+  // Verify claiming bots by their client IP: a request whose IP falls inside
+  // `verified_bot_ranges` is treated as a verified bot regardless of its UA.
+  // (Upstream fields, renumbered: 4-6 are VarmanWAF's.)
+  bool ip_verification_enabled = 7;
+  // Confirm whitelisted bot user agents via reverse DNS (PTR must resolve
+  // back to a known bot domain that also points at the client IP).
+  bool dns_verification_enabled = 8;
+  // CIDR ranges of verified bot networks, expanded by the control plane from
+  // the IP group the site's bot protection references (the agent never sees
+  // group identities).
+  repeated string verified_bot_ranges = 9;
 }
 
 message RewriteRule {
@@ -628,6 +711,19 @@ message Site {
   repeated string alternate_domains = 4;
   SiteStatusEnum status = 5;
   RuleBundle rules = 6;
+  // The site sits behind a CDN / reverse proxy: the real client IP used by
+  // IP access control, rate limiting, challenges and logs is taken from a
+  // forwarded header instead of the direct TCP peer.
+  bool trust_proxy_headers = 7;
+  // Lower-case header the client IP is read from; empty = x-forwarded-for.
+  string trusted_header = 8;
+  // Trust the last XFF entry (appended by the nearest proxy) instead of the
+  // client-supplied first one.
+  bool trust_last_hop = 9;
+  // CIDR ranges of proxies allowed to influence the resolved client IP.
+  // Only a direct peer inside one of these ranges may set the forwarded
+  // header; an empty list means no proxy is trusted.
+  repeated string trusted_proxy_ranges = 10;
 }
 
 enum SiteStatusEnum {
@@ -677,6 +773,9 @@ message LogEntry {
   string waf_details = 53;
   repeated string waf_matched_tags = 54;
   string waf_rule_name = 55;        // Display name of the rule that fired
+  // Which protection produced the event: "managed"|"waf"|"ip_geo"|"bot"|
+  // "rate_limit"|"challenge". Drives dashboard deep links; empty on old data.
+  string waf_event_type = 56;
 
   // Performance
   uint64 total_latency_ms = 60;

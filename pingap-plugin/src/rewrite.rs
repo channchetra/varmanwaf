@@ -1876,6 +1876,7 @@ rules = '[{"id":"h","direction":"response","operations":[{"type":"set_header","n
                         rewrite_rules,
                         ..Default::default()
                     }),
+                    ..Default::default()
                 }],
                 config_hash: "hash-1".to_string(),
                 updated_at: None,

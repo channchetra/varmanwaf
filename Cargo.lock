@@ -8014,11 +8014,13 @@ dependencies = [
  "socket2",
  "sync_wrapper",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tower",
  "tower-layer",
  "tower-service",
  "tracing",
+ "webpki-roots 1.0.9",
 ]
 
 [[package]]
@@ -8530,15 +8532,16 @@ dependencies = [
 
 [[package]]
 name = "varman-agent"
-version = "0.1.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "arc-swap",
  "chrono",
  "dashmap 6.2.1",
- "futures",
  "pingap-cache",
+ "pingap-core",
  "prost-types 0.14.4",
+ "rand 0.10.3",
  "serde",
  "serde_json",
  "tempfile",
@@ -8626,7 +8629,7 @@ dependencies = [
 
 [[package]]
 name = "varman-protocol"
-version = "0.1.0"
+version = "0.22.0"
 dependencies = [
  "prost 0.14.4",
  "prost-types 0.14.4",

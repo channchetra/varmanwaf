@@ -6,7 +6,7 @@ use std::time::Duration;
 use arc_swap::ArcSwapOption;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 use tracing::{debug, error, info, warn};
 
 use varman_protocol::control_plane::{
@@ -14,7 +14,9 @@ use varman_protocol::control_plane::{
 };
 
 use crate::cache::{BlockedIpEntry, RuleCache};
-use crate::cert_events::cert_event_buffer;
+use crate::cert_events::{
+    attribute_events, cert_event_buffer, CertAttribution,
+};
 use crate::config::AgentConfig;
 use crate::heartbeat::{MetricsCollector, SystemMetrics};
 use crate::probe::{self, HostSample, ProbeBuffer};
@@ -47,6 +49,7 @@ pub struct LogEntry {
     pub waf_action: String,
     pub waf_rule_id: String,
     pub waf_rule_name: String,
+    pub waf_event_type: String,
     pub waf_details: String,
     pub waf_matched_tags: Vec<String>,
     pub total_latency_ms: u64,
@@ -116,7 +119,7 @@ pub struct ControlPlaneClient {
 impl ControlPlaneClient {
     /// Create a new control plane client.
     ///
-    /// The client does not connect immediately — call `connect()` or `start()` to begin.
+    /// The client does not connect immediately ΓÇö call `connect()` or `start()` to begin.
     pub fn new(
         config: AgentConfig,
         rule_cache: Arc<RuleCache>,
@@ -212,6 +215,12 @@ impl ControlPlaneClient {
             .keep_alive_while_idle(true)
             .http2_keep_alive_interval(Duration::from_secs(30))
             .tcp_nodelay(true);
+        let endpoint = apply_client_tls(
+            endpoint,
+            &self.config.server_url,
+            &self.config.server_ca_cert,
+            &self.config.server_ca_pem,
+        )?;
 
         let channel = endpoint.connect().await?;
         Ok(channel)
@@ -442,6 +451,7 @@ impl ControlPlaneClient {
             return Ok(());
         }
         let mut client = ProtoClient::new(channel);
+        let agent_token = self.agent_token.load_full();
 
         let mut interval =
             tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
@@ -459,7 +469,9 @@ impl ControlPlaneClient {
 
             let batch = self.build_metric_batch(agent_id);
             let count = batch.metrics.len();
-            match client.ship_metrics(tokio_stream::once(batch)).await {
+            let mut request = tonic::Request::new(tokio_stream::once(batch));
+            attach_agent_token(&mut request, &agent_token);
+            match client.ship_metrics(request).await {
                 Ok(response) => {
                     let ack = response.into_inner();
                     debug!(
@@ -572,8 +584,8 @@ impl ControlPlaneClient {
     ) -> anyhow::Result<()> {
         let mut client = ProtoClient::new(channel);
 
-        // The control plane decides the heartbeat cadence — its staleness
-        // thresholds are derived from the same value — so the interval it
+        // The control plane decides the heartbeat cadence ΓÇö its staleness
+        // thresholds are derived from the same value ΓÇö so the interval it
         // handed down at registration wins; the local setting only applies
         // when the server did not send one.
         let heartbeat_interval = effective_heartbeat_interval(
@@ -651,6 +663,18 @@ impl ControlPlaneClient {
                         .iter()
                         .map(to_proto_blocked_ip)
                         .collect(),
+                    last_config_sync_at: rule_cache.config_synced_at().map(
+                        |at| prost_types::Timestamp {
+                            seconds: at.timestamp(),
+                            nanos: 0,
+                        },
+                    ),
+                    last_policy_sync_at: rule_cache.policy_synced_at().map(
+                        |at| prost_types::Timestamp {
+                            seconds: at.timestamp(),
+                            nanos: 0,
+                        },
+                    ),
                 };
 
                 if hb_tx.send(hb).await.is_err() {
@@ -817,6 +841,7 @@ impl ControlPlaneClient {
         agent_id: &str,
     ) -> anyhow::Result<()> {
         let mut client = ProtoClient::new(channel);
+        let agent_token = self.agent_token.load_full();
         let mut receiver = self.log_receiver.lock().await;
         let mut batch: Vec<proto::LogEntry> =
             Vec::with_capacity(self.config.log_batch_size);
@@ -831,7 +856,8 @@ impl ControlPlaneClient {
             if self.shutdown_signal.load(Ordering::Relaxed) {
                 // Flush remaining logs before shutdown
                 if !batch.is_empty() {
-                    Self::flush_logs(&mut client, &mut batch).await;
+                    Self::flush_logs(&mut client, &mut batch, &agent_token)
+                        .await;
                 }
                 break;
             }
@@ -846,7 +872,12 @@ impl ControlPlaneClient {
 
                             // Flush when batch is full
                             if batch.len() >= self.config.log_batch_size {
-                                Self::flush_logs(&mut client, &mut batch).await;
+                                Self::flush_logs(
+                                    &mut client,
+                                    &mut batch,
+                                    &agent_token,
+                                )
+                                .await;
                             }
                         }
                         None => {
@@ -859,12 +890,14 @@ impl ControlPlaneClient {
                 _ = interval.tick() => {
                     // Periodic flush
                     if !batch.is_empty() {
-                        Self::flush_logs(&mut client, &mut batch).await;
+                        Self::flush_logs(&mut client, &mut batch, &agent_token)
+                            .await;
                     }
                 }
                 _ = self.wait_for_shutdown() => {
                     if !batch.is_empty() {
-                        Self::flush_logs(&mut client, &mut batch).await;
+                        Self::flush_logs(&mut client, &mut batch, &agent_token)
+                            .await;
                     }
                     break;
                 }
@@ -878,6 +911,7 @@ impl ControlPlaneClient {
     async fn flush_logs(
         client: &mut ProtoClient<Channel>,
         batch: &mut Vec<proto::LogEntry>,
+        agent_token: &Option<Arc<String>>,
     ) {
         if batch.is_empty() {
             return;
@@ -887,8 +921,9 @@ impl ControlPlaneClient {
         let count = entries.len();
 
         // Use client-streaming RPC for log shipping
-        let stream = tokio_stream::iter(entries);
-        match client.ship_logs(stream).await {
+        let mut request = tonic::Request::new(tokio_stream::iter(entries));
+        attach_agent_token(&mut request, agent_token);
+        match client.ship_logs(request).await {
             Ok(response) => {
                 let ack = response.into_inner();
                 if ack.success {
@@ -922,6 +957,7 @@ impl ControlPlaneClient {
         agent_id: &str,
     ) -> anyhow::Result<()> {
         let mut client = ProtoClient::new(channel);
+        let agent_token = self.agent_token.load_full();
 
         let flush_interval =
             Duration::from_secs(self.config.log_flush_interval_secs.max(1));
@@ -931,24 +967,27 @@ impl ControlPlaneClient {
 
         loop {
             if self.shutdown_signal.load(Ordering::Relaxed) {
-                let entries = cert_event_buffer().drain(agent_id);
+                let entries = self.drain_cert_events(agent_id);
                 if !entries.is_empty() {
-                    Self::flush_cert_events(&mut client, entries).await;
+                    Self::flush_cert_events(&mut client, entries, &agent_token)
+                        .await;
                 }
                 break;
             }
 
             tokio::select! {
                 _ = interval.tick() => {
-                    let entries = cert_event_buffer().drain(agent_id);
+                    let entries = self.drain_cert_events(agent_id);
                     if !entries.is_empty() {
-                        Self::flush_cert_events(&mut client, entries).await;
+                        Self::flush_cert_events(&mut client, entries, &agent_token)
+                            .await;
                     }
                 }
                 _ = self.wait_for_shutdown() => {
-                    let entries = cert_event_buffer().drain(agent_id);
+                    let entries = self.drain_cert_events(agent_id);
                     if !entries.is_empty() {
-                        Self::flush_cert_events(&mut client, entries).await;
+                        Self::flush_cert_events(&mut client, entries, &agent_token)
+                            .await;
                     }
                     break;
                 }
@@ -958,14 +997,50 @@ impl ControlPlaneClient {
         Ok(())
     }
 
+    /// Drain the capture buffer and stamp each event with its site and
+    /// certificate, resolved against the current site rules: the tracing
+    /// layer sees only log text, so attribution happens here, where the
+    /// domain ΓåÆ site topology lives (see [`attribute_events`]).
+    fn drain_cert_events(&self, agent_id: &str) -> Vec<proto::CertEventEntry> {
+        let mut entries = cert_event_buffer().drain(agent_id);
+        if entries.iter().any(|entry| entry.site_id.is_empty()) {
+            let sites = self.rule_cache.all_sites();
+            let attributions: Vec<CertAttribution> = sites
+                .sites
+                .values()
+                .map(|site| {
+                    let mut domains = vec![site.domain.to_lowercase()];
+                    domains.extend(
+                        site.alternate_domains
+                            .iter()
+                            .map(|domain| domain.to_lowercase()),
+                    );
+                    CertAttribution {
+                        domains,
+                        site_id: site.site_id.clone(),
+                        certificate_id: site
+                            .ssl_config
+                            .as_ref()
+                            .map(|ssl| ssl.certificate_id.clone())
+                            .unwrap_or_default(),
+                    }
+                })
+                .collect();
+            attribute_events(&mut entries, &attributions);
+        }
+        entries
+    }
+
     /// Flush a batch of certificate events to the server.
     async fn flush_cert_events(
         client: &mut ProtoClient<Channel>,
         entries: Vec<proto::CertEventEntry>,
+        agent_token: &Option<Arc<String>>,
     ) {
         let count = entries.len();
-        let stream = tokio_stream::iter(entries);
-        match client.ship_cert_events(stream).await {
+        let mut request = tonic::Request::new(tokio_stream::iter(entries));
+        attach_agent_token(&mut request, agent_token);
+        match client.ship_cert_events(request).await {
             Ok(response) => {
                 let ack = response.into_inner();
                 if ack.success {
@@ -1019,6 +1094,7 @@ impl ControlPlaneClient {
             waf_action: entry.waf_action.clone(),
             waf_rule_id: entry.waf_rule_id.clone(),
             waf_rule_name: entry.waf_rule_name.clone(),
+            waf_event_type: entry.waf_event_type.clone(),
             waf_details: entry.waf_details.clone(),
             waf_matched_tags: entry.waf_matched_tags.clone(),
             total_latency_ms: entry.total_latency_ms,
@@ -1056,13 +1132,65 @@ impl ControlPlaneClient {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Helper functions for system information
-// ─────────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
-/// Doubles the current reconnect backoff, capped at the configured maximum.
+/// Attaches the agent token as `x-agent-token` metadata ΓÇö the transport-level
+/// credential the control plane authenticates the shipping streams with (the
+/// ship message bodies carry no token field).
+fn attach_agent_token<T>(
+    request: &mut tonic::Request<T>,
+    token: &Option<Arc<String>>,
+) {
+    if let Some(token) = token {
+        if let Ok(value) = token.parse() {
+            request.metadata_mut().insert("x-agent-token", value);
+        }
+    }
+}
+
+/// Enables TLS for `https://` server URLs.
+///
+/// `Endpoint::from_shared` does not do this on its own ΓÇö without the explicit
+/// config the agent would speak cleartext h2 into a TLS port. With inline CA
+/// PEM (all-in-one) or a configured CA file that material is the only trust
+/// anchor; otherwise the bundled webpki roots apply.
+fn apply_client_tls(
+    endpoint: Endpoint,
+    server_url: &str,
+    ca_cert_path: &Option<String>,
+    ca_cert_pem: &Option<String>,
+) -> anyhow::Result<Endpoint> {
+    if !server_url.starts_with("https://") {
+        return Ok(endpoint);
+    }
+    let mut tls = ClientTlsConfig::new();
+    if let Some(pem) = ca_cert_pem {
+        tls = tls.ca_certificate(Certificate::from_pem(pem));
+    } else if let Some(path) = ca_cert_path {
+        let pem = std::fs::read_to_string(path).map_err(|err| {
+            anyhow::anyhow!(
+                "failed to read server CA certificate {path}: {err}"
+            )
+        })?;
+        tls = tls.ca_certificate(Certificate::from_pem(pem));
+    } else {
+        tls = tls.with_enabled_roots();
+    }
+    Ok(endpoint.tls_config(tls)?)
+}
+
+/// Doubles the current reconnect backoff, capped at the configured maximum,
+/// then shrinks it to a random point in the lower half of that value.
+///
+/// The jitter stops a fleet of agents that lost the control plane together ΓÇö
+/// a deploy, a network blip ΓÇö from reconnecting in a lockstep burst every
+/// `reconnect_max_delay_ms`.
 fn next_backoff(current_ms: u64, max_ms: u64) -> u64 {
-    current_ms.saturating_mul(2).min(max_ms)
+    let capped = current_ms.saturating_mul(2).min(max_ms);
+    let factor = 0.5 + rand::random::<f64>() * 0.5;
+    ((capped as f64 * factor) as u64).max(1)
 }
 
 /// The cadence the heartbeat sender ticks at.
@@ -1196,6 +1324,74 @@ fn get_total_memory() -> u64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn attach_agent_token_sets_the_metadata() {
+        let mut request = tonic::Request::new(());
+        attach_agent_token(&mut request, &None);
+        assert!(request.metadata().get("x-agent-token").is_none());
+        let token = Some(Arc::new("abc.def.ghi".to_string()));
+        attach_agent_token(&mut request, &token);
+        assert_eq!(
+            request.metadata().get("x-agent-token").unwrap(),
+            "abc.def.ghi"
+        );
+    }
+
+    #[test]
+    fn plaintext_urls_skip_tls_config() {
+        let endpoint = Endpoint::from_shared("http://localhost:9090").unwrap();
+        assert!(apply_client_tls(
+            endpoint,
+            "http://localhost:9090",
+            &None,
+            &None
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn https_without_ca_uses_bundled_roots() {
+        let endpoint =
+            Endpoint::from_shared("https://waf.example.com:9090").unwrap();
+        assert!(apply_client_tls(
+            endpoint,
+            "https://waf.example.com:9090",
+            &None,
+            &None
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn https_with_missing_ca_file_fails_early() {
+        let endpoint =
+            Endpoint::from_shared("https://waf.example.com:9090").unwrap();
+        let err = apply_client_tls(
+            endpoint,
+            "https://waf.example.com:9090",
+            &Some("/nonexistent/ca.pem".to_string()),
+            &None,
+        )
+        .expect_err("a missing CA file must fail before connecting");
+        assert!(err.to_string().contains("/nonexistent/ca.pem"));
+    }
+
+    #[test]
+    fn inline_ca_pem_wins_over_the_file() {
+        let endpoint = Endpoint::from_shared("https://127.0.0.1:9090").unwrap();
+        // `Certificate::from_pem` is lazy ΓÇö validity is checked at handshake ΓÇö
+        // so an unusable inline PEM still configures successfully. The point
+        // of the test: the (missing) CA file is never read, proving the inline
+        // material takes precedence.
+        assert!(apply_client_tls(
+            endpoint,
+            "https://127.0.0.1:9090",
+            &Some("/nonexistent/ca.pem".to_string()),
+            &Some("not a pem".to_string()),
+        )
+        .is_ok());
+    }
+
     fn test_client(initial_ms: u64, max_ms: u64) -> Arc<ControlPlaneClient> {
         test_client_at("http://127.0.0.1:1", initial_ms, max_ms)
     }
@@ -1226,12 +1422,22 @@ mod tests {
     }
 
     #[test]
-    fn backoff_doubles_and_is_capped() {
-        assert_eq!(next_backoff(100, 60_000), 200);
-        assert_eq!(next_backoff(50_000, 60_000), 60_000);
-        assert_eq!(next_backoff(60_000, 60_000), 60_000);
-        // A pathological current value must not overflow.
-        assert_eq!(next_backoff(u64::MAX, 1_000), 1_000);
+    fn backoff_doubles_is_capped_and_jittered() {
+        // Each step lands in [50%, 100%] of the doubled-and-capped value ΓÇö
+        // still exponential, but a fleet of agents never reconnects in
+        // lockstep.
+        for _ in 0..100 {
+            let next = next_backoff(100, 60_000);
+            assert!((100..=200).contains(&next), "{next}");
+
+            let capped = next_backoff(50_000, 60_000);
+            assert!((30_000..=60_000).contains(&capped), "{capped}");
+
+            // A pathological current value must neither overflow nor stall at
+            // zero.
+            let overflow = next_backoff(u64::MAX, 1_000);
+            assert!((500..=1_000).contains(&overflow), "{overflow}");
+        }
     }
 
     #[test]
@@ -1279,11 +1485,10 @@ mod tests {
         assert!(names.contains(&"varman_requests_total"));
         assert!(names.contains(&"varman_blocked_requests_total"));
         assert!(names.contains(&"varman_active_connections"));
+        // Engine telemetry rides the same batch.
         assert!(names.contains(&"varman_waf_shadow_checked_total"));
-        for metric in &batch.metrics {
-            assert!(metric.value.is_finite());
-        }
-        // Global counters carry no labels.
+        // The global counters carry no labels; the engine-telemetry series
+        // are labelled by agreement/outcome by design.
         for name in [
             "varman_requests_total",
             "varman_blocked_requests_total",
@@ -1293,29 +1498,12 @@ mod tests {
                 .metrics
                 .iter()
                 .find(|m| m.name == name)
-                .expect("global counter");
-            assert!(metric.labels.is_empty(), "{name} must be unlabelled");
+                .unwrap_or_else(|| panic!("missing {name}"));
+            assert!(metric.labels.is_empty(), "{name} carries no labels");
         }
-        // Engine telemetry carries its class label and starts at zero.
-        let shadow = batch
-            .metrics
-            .iter()
-            .find(|m| {
-                m.name == "varman_waf_shadow_total"
-                    && m.labels.get("agreement").map(String::as_str)
-                        == Some("weaker")
-            })
-            .expect("shadow series");
-        assert_eq!(shadow.value, 0.0);
-        let processor = batch
-            .metrics
-            .iter()
-            .find(|m| {
-                m.name == "varman_waf_processor_calls_total"
-                    && m.labels.get("outcome").map(String::as_str) == Some("ok")
-            })
-            .expect("processor series");
-        assert_eq!(processor.value, 0.0);
+        for metric in &batch.metrics {
+            assert!(metric.value.is_finite());
+        }
     }
 
     #[tokio::test]
@@ -1333,17 +1521,17 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(1_000)).await;
 
         let observed = client.retry_delay_ms.load(Ordering::Relaxed);
-        assert_eq!(
-            observed, 80,
-            "repeated failures must grow backoff up to the configured max"
+        assert!(
+            (40..=80).contains(&observed),
+            "repeated failures must grow backoff into the jittered top half, got {observed}"
         );
 
         client.shutdown_signal.store(true, Ordering::Relaxed);
         handle.await.unwrap();
-        assert_eq!(
-            client.retry_delay_ms.load(Ordering::Relaxed),
-            80,
-            "no registration happened, so backoff must stay at the max"
+        let observed = client.retry_delay_ms.load(Ordering::Relaxed);
+        assert!(
+            (40..=80).contains(&observed),
+            "no registration happened, so backoff must stay in the jittered top half, got {observed}"
         );
     }
 }

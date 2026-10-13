@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use dashmap::DashMap;
 use pingap_cache::quota;
+use pingap_core::normalize_host;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
@@ -28,6 +30,23 @@ pub struct CachedRules {
     pub sites: HashMap<String, Arc<SiteRules>>,
     /// Domain → site_id index for fast lookup
     pub domain_index: HashMap<String, String>,
+    /// Domain → disconnected (failover) policy, covering every site the
+    /// control plane knows about — including ones whose rule bundle this
+    /// agent has not (yet) received. Consulted when a host has no synced
+    /// rules, which is exactly when `sites` cannot answer.
+    #[serde(default)]
+    pub failover_registry: HashMap<String, FailoverMode>,
+    /// Control-plane-wide default for hosts absent from
+    /// `failover_registry`. `None` when the server never sent it (old
+    /// control plane), which makes the agent fall back to its local
+    /// `config.fail_open`.
+    #[serde(default)]
+    pub global_fail_open: Option<bool>,
+    /// Deployment-wide cache ceiling; `None` when the server never sent it
+    /// (old control plane) — the generator and quota logic then fall back to
+    /// their built-in defaults.
+    #[serde(default)]
+    pub global_cache: Option<GlobalCacheSettings>,
     /// When the cache was last updated from the server
     pub updated_at: DateTime<Utc>,
     /// Hash of the configuration (for delta sync). An `Arc` so the hot path
@@ -40,6 +59,9 @@ impl Default for CachedRules {
         Self {
             sites: HashMap::new(),
             domain_index: HashMap::new(),
+            failover_registry: HashMap::new(),
+            global_fail_open: None,
+            global_cache: None,
             updated_at: Utc::now(),
             config_hash: Arc::from(""),
         }
@@ -79,6 +101,61 @@ pub struct SiteRules {
     /// WAF, IP/geo rules, bot protection and rate limiting only record.
     #[serde(default)]
     pub observation_mode: bool,
+    /// Site-level cache limits; `None` when the site overrides nothing and
+    /// every limit follows the global ceiling.
+    #[serde(default)]
+    pub cache_settings: Option<SiteCacheSettings>,
+    /// Forwarded-header client IP resolution; disabled when the site has no
+    /// CDN / reverse proxy in front of it.
+    #[serde(default)]
+    pub proxy_trust: ProxyTrustConfig,
+}
+
+/// Site-level forwarded-header trust: which header carries the real client
+/// IP, whether only the nearest proxy's entry is believed, and which peers
+/// are allowed to influence the resolution at all.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyTrustConfig {
+    /// Trust forwarded headers at all.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Lower-case header name; empty means `x-forwarded-for`.
+    #[serde(default)]
+    pub header: String,
+    /// Take the last XFF entry (added by the nearest proxy) instead of the
+    /// first one, which the client can spoof.
+    #[serde(default = "default_true")]
+    pub last_hop_only: bool,
+    /// CIDR ranges of proxies allowed to influence the resolved client IP.
+    /// Empty = trust nothing (the TCP peer is always used).
+    #[serde(default)]
+    pub trusted_ranges: Vec<String>,
+}
+
+impl Default for ProxyTrustConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            header: String::new(),
+            last_hop_only: true,
+            trusted_ranges: Vec::new(),
+        }
+    }
+}
+
+impl ProxyTrustConfig {
+    /// Effective header name; empty resolves to `x-forwarded-for`.
+    pub fn effective_header(&self) -> &str {
+        if self.header.is_empty() {
+            "x-forwarded-for"
+        } else {
+            &self.header
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl SiteRules {
@@ -92,6 +169,114 @@ impl SiteRules {
     pub fn is_paused(&self) -> bool {
         self.status == site_status::PAUSED
     }
+}
+
+/// How a host behaves while the control plane is unreachable and it has no
+/// synced rule bundle. Local mirror of `proto::FailoverMode`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FailoverMode {
+    /// Follow the control-plane-wide `global_fail_open` default.
+    #[default]
+    Inherit,
+    /// Keep proxying through the base engine.
+    Open,
+    /// Answer 503.
+    Closed,
+}
+
+impl From<i32> for FailoverMode {
+    fn from(value: i32) -> Self {
+        match value {
+            1 => FailoverMode::Open,
+            2 => FailoverMode::Closed,
+            0 => FailoverMode::Inherit,
+            // A newer control plane may know modes this agent does not.
+            // Failover is an availability switch, so degrade to the next
+            // resolution layer instead of guessing a stricter behaviour.
+            other => {
+                warn!(
+                    value = other,
+                    "unknown failover mode from the control plane, treating as inherit"
+                );
+                FailoverMode::Inherit
+            },
+        }
+    }
+}
+
+/// Folds the per-site policy registry of one bundle into a domain-keyed map,
+/// covering primary and alternate domains alike. Keys are normalised
+/// (lowercase) to match what `pingap_core::get_host` produces on the lookup
+/// side, so a `EXAMPLE.com` entry in the control plane still resolves.
+fn failover_registry_from(
+    policies: &[proto::SitePolicy],
+) -> HashMap<String, FailoverMode> {
+    let mut registry = HashMap::with_capacity(policies.len());
+    for policy in policies {
+        let mode = FailoverMode::from(policy.mode);
+        registry.insert(normalize_host(&policy.domain), mode);
+        for alt in &policy.alternate_domains {
+            registry.insert(normalize_host(alt), mode);
+        }
+    }
+    registry
+}
+
+/// Exact lookup with wildcard fallback, mirroring the routing layer's
+/// `HostSelector::Suffix` semantics: `*.example.com` covers strict
+/// subdomains only, never the apex itself. `www.a.example.com` tries the
+/// exact key first, then `*.a.example.com`, `*.example.com`, … — most
+/// specific wildcard wins, so a wildcard site never shadows an exact one
+/// and a longer wildcard beats a shorter one.
+///
+/// Exact hits cost a single lookup and no allocation; the wildcard walk
+/// only runs on a miss and reuses one buffer.
+fn lookup_with_wildcard<'a, V>(
+    map: &'a HashMap<String, V>,
+    domain: &str,
+) -> Option<&'a V> {
+    if let Some(value) = map.get(domain) {
+        return Some(value);
+    }
+    let mut buf = String::with_capacity(domain.len() + 2);
+    let mut rest = domain;
+    while let Some((_, suffix)) = rest.split_once('.') {
+        if suffix.is_empty() {
+            break;
+        }
+        buf.clear();
+        buf.push_str("*.");
+        buf.push_str(suffix);
+        if let Some(value) = map.get(&buf) {
+            return Some(value);
+        }
+        rest = suffix;
+    }
+    None
+}
+
+/// The site's effective WAF enforcement state: `(engine mode, observation)`.
+/// A missing WAF config means the engine is off.
+fn site_enforcement(site: Option<&SiteRules>) -> (WafMode, bool) {
+    match site {
+        Some(s) => (
+            s.waf_config
+                .as_ref()
+                .map(|c| c.mode)
+                .unwrap_or(WafMode::Off),
+            s.observation_mode,
+        ),
+        None => (WafMode::Off, false),
+    }
+}
+
+/// True when the state enforces WAF block verdicts (block mode without
+/// observation), i.e. WAF auto-blocks may be produced.
+fn waf_enforcing(state: (WafMode, bool)) -> bool {
+    state.0 == WafMode::Block && !state.1
 }
 
 /// Persisted site status values, matching `models::sites::site_status` on the
@@ -155,6 +340,8 @@ pub struct WafConfig {
     pub monitor_categories: Vec<String>,
     #[serde(default)]
     pub monitor_stacks: Vec<String>,
+    #[serde(default)]
+    pub monitor_managed_rules: Vec<String>,
 }
 
 /// Default for [`WafConfig::engine_mode`]: follow the process-wide
@@ -176,7 +363,15 @@ impl From<i32> for WafMode {
         match v {
             1 => Self::Monitor,
             2 => Self::Block,
-            _ => Self::Off,
+            0 => Self::Off,
+            // A newer control plane may know modes this agent does not.
+            // Silently treating the site as off would disable its WAF for
+            // the whole upgrade window; enforcing (block) matches the
+            // fail-close convention used by `WafAction`.
+            unknown => {
+                warn!(value = unknown, "unknown waf mode; enforcing as block");
+                Self::Block
+            },
         }
     }
 }
@@ -336,6 +531,53 @@ pub struct CacheRule {
     pub enabled: bool,
 }
 
+/// Deployment-wide cache ceiling, mirrored from the control plane's
+/// `cache_settings` row. Absent fields fall back to the built-in defaults
+/// the agent used before the ceiling existed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct GlobalCacheSettings {
+    #[serde(default)]
+    pub max_file_size_mb: Option<u32>,
+    #[serde(default)]
+    pub max_space_mb: Option<u32>,
+    #[serde(default)]
+    pub master_enabled: Option<bool>,
+    #[serde(default)]
+    pub default_edge_ttl_seconds: Option<u32>,
+}
+
+impl GlobalCacheSettings {
+    /// Built-in default: the ceiling the configuration generator hardcoded
+    /// before the setting existed.
+    pub fn max_file_size_mb(&self) -> u32 {
+        self.max_file_size_mb.unwrap_or(16)
+    }
+
+    /// `0` = unlimited (no `?max_size=` on the cache directory).
+    pub fn max_space_mb(&self) -> u32 {
+        self.max_space_mb.unwrap_or(0)
+    }
+
+    pub fn master_enabled(&self) -> bool {
+        self.master_enabled.unwrap_or(true)
+    }
+
+    /// `0` = no fallback TTL for rules without an explicit one.
+    pub fn default_edge_ttl_seconds(&self) -> u32 {
+        self.default_edge_ttl_seconds.unwrap_or(0)
+    }
+}
+
+/// Site-level cache limits, mirrored from the `sites` cache columns. `None`
+/// fields fall back level by level: type limit → site cap → global cap.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SiteCacheSettings {
+    #[serde(default)]
+    pub max_file_size_mb: Option<u32>,
+    #[serde(default)]
+    pub type_max_file_size_mb: HashMap<String, u32>,
+}
+
 // ─── Challenge ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,7 +607,17 @@ impl From<i32> for ChallengeLevel {
             1 => Self::NonInteractive,
             2 => Self::Managed,
             3 => Self::Interactive,
-            _ => Self::None,
+            0 => Self::None,
+            // A newer control plane may know levels this agent does not.
+            // Degrading to `None` would silently stop challenging; the
+            // strongest level keeps the protection fail-close.
+            unknown => {
+                warn!(
+                    value = unknown,
+                    "unknown challenge level; enforcing as interactive"
+                );
+                Self::Interactive
+            },
         }
     }
 }
@@ -383,6 +635,11 @@ pub struct BotProtectionConfig {
     pub tls_fingerprint: bool,
     /// Per-IP request bursts receive the configured action.
     pub behavioral_analysis: bool,
+    /// Expanded CIDR ranges of the configured verified-bot IP group; a
+    /// client IP inside any of them counts as a verified bot.
+    pub verified_bot_ranges: Vec<String>,
+    /// Verify known crawler user agents by DNS reverse + forward lookups.
+    pub dns_verification_enabled: bool,
 }
 
 // ─── Basic Auth ─────────────────────────────────────────────
@@ -645,6 +902,11 @@ pub struct RuleCache {
     /// recorded here is what keeps a bundle naming no site at all - the first
     /// one, before the control plane has answered - from wiping those.
     quota_domains: Mutex<HashSet<String>>,
+    /// Unix seconds of the last successful full-config application; 0 = never.
+    last_config_sync_at: AtomicI64,
+    /// Unix seconds of the last successful single-site rule bundle
+    /// application; 0 = never.
+    last_policy_sync_at: AtomicI64,
 }
 
 impl RuleCache {
@@ -659,6 +921,8 @@ impl RuleCache {
             cache_dir: cache_dir.clone(),
             agent_id,
             quota_domains: Mutex::new(HashSet::new()),
+            last_config_sync_at: AtomicI64::new(0),
+            last_policy_sync_at: AtomicI64::new(0),
         });
 
         // Ensure cache directory exists
@@ -705,15 +969,31 @@ impl RuleCache {
     /// otherwise be unenforceable anyway.
     pub fn apply_cache_quotas(&self) {
         let rules = self.inner.load();
+        // The global disk budget is the ceiling every site quota is clamped
+        // against: an unlimited site (`0`) may use up to the budget, a
+        // capped site is lowered to `min(site, global)`. No budget (`0`)
+        // leaves the site quotas untouched.
+        let global_space_mb = rules
+            .global_cache
+            .as_ref()
+            .map(|g| u64::from(g.max_space_mb()))
+            .unwrap_or(0);
         let mut tracked: HashMap<String, u64> = HashMap::new();
         for site in rules.sites.values() {
-            let quota_mb = site
+            let mut quota_mb = site
                 .cache_rules
                 .iter()
                 .filter(|rule| rule.enabled && rule.cache_eligible)
                 .map(|rule| u64::from(rule.disk_quota_mb))
                 .max()
                 .unwrap_or(0);
+            if global_space_mb > 0 {
+                quota_mb = if quota_mb == 0 {
+                    global_space_mb
+                } else {
+                    quota_mb.min(global_space_mb)
+                };
+            }
             for domain in site.all_domains() {
                 if domain.is_empty() {
                     continue;
@@ -865,24 +1145,53 @@ impl RuleCache {
         let domain = site_rules.domain.clone();
         let alternate_domains = site_rules.alternate_domains.clone();
 
+        // Capture the pre-sync enforcement state: leaving it (block mode,
+        // observation off) invalidates the site's WAF auto-blocks.
+        let previous = self
+            .inner
+            .load()
+            .sites
+            .get(&site_id)
+            .map(|s| site_enforcement(Some(s)));
+
         // Swap in updated rules
         self.inner.rcu(|current| {
             let mut updated = (**current).clone();
-            // Remove old domain index entries for this site
+            // Remove old domain index entries for this site. Removal keys
+            // are normalised the same way as insertion keys below, so an
+            // entry written as `EXAMPLE.com` is still findable for cleanup.
             if let Some(old_site) = updated.sites.get(&site_id) {
-                updated.domain_index.remove(&old_site.domain);
+                updated
+                    .domain_index
+                    .remove(&normalize_host(&old_site.domain));
                 for alt in &old_site.alternate_domains {
-                    updated.domain_index.remove(alt);
+                    updated.domain_index.remove(&normalize_host(alt));
                 }
             }
             // Insert new site
-            updated.domain_index.insert(domain.clone(), site_id.clone());
+            updated
+                .domain_index
+                .insert(normalize_host(&domain), site_id.clone());
             for alt in &alternate_domains {
-                updated.domain_index.insert(alt.clone(), site_id.clone());
+                updated
+                    .domain_index
+                    .insert(normalize_host(alt), site_id.clone());
             }
             updated
                 .sites
                 .insert(site_id.clone(), Arc::clone(&site_rules));
+            // Every bundle carries the complete failover registry, so one
+            // push refreshes it wholesale — including wholesale deletions
+            // (an empty registry must replace a stale non-empty one).
+            updated.failover_registry =
+                failover_registry_from(&bundle.site_policies);
+            if let Some(default_fail_open) = bundle.default_fail_open {
+                updated.global_fail_open = Some(default_fail_open);
+            }
+            if let Some(global_cache) = &bundle.global_cache {
+                updated.global_cache =
+                    Some(Self::convert_global_cache(global_cache));
+            }
             updated.config_hash = bundle.config_hash.as_str().into();
             updated.updated_at = Utc::now();
             Arc::new(updated)
@@ -894,10 +1203,28 @@ impl RuleCache {
         // ceilings have to follow before the next write is accounted.
         self.apply_cache_quotas();
 
+        // The site left enforcing mode: drop its stale WAF auto-blocks so
+        // monitor/observation mode is not silently overridden by blocks the
+        // engine issued under the previous configuration.
+        let current = self
+            .inner
+            .load()
+            .sites
+            .get(&site_id)
+            .map(|s| site_enforcement(Some(s)));
+        if previous.is_some_and(waf_enforcing)
+            && !current.is_some_and(waf_enforcing)
+        {
+            self.clear_waf_auto_blocks(&site_id);
+        }
+
         // Persist asynchronously (best effort)
         if let Err(e) = self.persist_to_disk() {
             warn!(error = %e, "Failed to persist rule cache to disk");
         }
+
+        self.last_policy_sync_at
+            .store(Utc::now().timestamp(), Ordering::Relaxed);
 
         Ok(())
     }
@@ -907,10 +1234,40 @@ impl RuleCache {
         &self,
         config: &proto::SiteConfig,
     ) -> anyhow::Result<()> {
+        // Pre-sync enforcement state per site, so leaving enforcing mode
+        // (block → monitor/off, observation on) drops the site's stale
+        // WAF auto-blocks after the swap.
+        let previous: HashMap<String, (WafMode, bool)> = self
+            .inner
+            .load()
+            .sites
+            .iter()
+            .map(|(id, s)| (id.clone(), site_enforcement(Some(s))))
+            .collect();
+
         self.inner.rcu(|current| {
             let mut updated = (**current).clone();
             updated.config_hash = config.config_hash.as_str().into();
             updated.updated_at = Utc::now();
+
+            // The bundles embed the same registry in every site; one pass
+            // over whichever bundle carries it is enough. Replacement is
+            // unconditional so deleting the last policy also clears the
+            // agent-side registry.
+            for site in &config.sites {
+                if let Some(ref bundle) = site.rules {
+                    updated.failover_registry =
+                        failover_registry_from(&bundle.site_policies);
+                    if let Some(default_fail_open) = bundle.default_fail_open {
+                        updated.global_fail_open = Some(default_fail_open);
+                    }
+                    if let Some(global_cache) = &bundle.global_cache {
+                        updated.global_cache =
+                            Some(Self::convert_global_cache(global_cache));
+                    }
+                    break;
+                }
+            }
 
             for site in &config.sites {
                 if let Some(ref bundle) = site.rules {
@@ -918,24 +1275,55 @@ impl RuleCache {
                     // Override domain from site-level field
                     if !site.domain.is_empty() {
                         // Remove old domain index
-                        updated.domain_index.remove(&site_rules.domain);
+                        updated
+                            .domain_index
+                            .remove(&normalize_host(&site_rules.domain));
                         site_rules.domain = site.domain.clone();
                     }
                     site_rules.site_id = site.id.clone();
                     site_rules.alternate_domains =
                         site.alternate_domains.clone();
                     site_rules.status = site_status_str(site.status);
+                    site_rules.proxy_trust = ProxyTrustConfig {
+                        enabled: site.trust_proxy_headers,
+                        header: site.trusted_header.clone(),
+                        last_hop_only: site.trust_last_hop,
+                        trusted_ranges: site.trusted_proxy_ranges.clone(),
+                    };
 
                     // Update domain index
-                    updated
-                        .domain_index
-                        .insert(site_rules.domain.clone(), site.id.clone());
+                    updated.domain_index.insert(
+                        normalize_host(&site_rules.domain),
+                        site.id.clone(),
+                    );
                     for alt in &site_rules.alternate_domains {
                         updated
                             .domain_index
-                            .insert(alt.clone(), site.id.clone());
+                            .insert(normalize_host(alt), site.id.clone());
                     }
                     updated.sites.insert(site.id.clone(), Arc::new(site_rules));
+                }
+            }
+
+            // A full site config is authoritative: sites the control plane
+            // no longer lists are dropped here together with their domain
+            // index entries, so a deleted site stops being served from
+            // stale cached rules (they would otherwise survive every sync
+            // and even a restart via the disk cache).
+            let known: std::collections::HashSet<&String> =
+                config.sites.iter().map(|s| &s.id).collect();
+            let ghost_ids: Vec<String> = updated
+                .sites
+                .keys()
+                .filter(|id| !known.contains(*id))
+                .cloned()
+                .collect();
+            for id in &ghost_ids {
+                if let Some(old) = updated.sites.remove(id) {
+                    updated.domain_index.remove(&normalize_host(&old.domain));
+                    for alt in &old.alternate_domains {
+                        updated.domain_index.remove(&normalize_host(alt));
+                    }
                 }
             }
 
@@ -949,9 +1337,38 @@ impl RuleCache {
 
         self.apply_cache_quotas();
 
+        // Sites the control plane deleted lose every dynamic block — the
+        // entries would otherwise linger until expiry and reload from disk.
+        let current = self.inner.load();
+        for id in previous.keys() {
+            if !current.sites.contains_key(id) {
+                self.clear_site_blocks(id);
+            }
+        }
+        drop(current);
+
+        // Sites that left enforcing mode lose their WAF auto-blocks, the
+        // same way as on a single-bundle update.
+        for site in config.sites.iter().filter(|s| !s.id.is_empty()) {
+            let current = self
+                .inner
+                .load()
+                .sites
+                .get(&site.id)
+                .map(|s| site_enforcement(Some(s)));
+            if previous.get(&site.id).copied().is_some_and(waf_enforcing)
+                && !current.is_some_and(waf_enforcing)
+            {
+                self.clear_waf_auto_blocks(&site.id);
+            }
+        }
+
         if let Err(e) = self.persist_to_disk() {
             warn!(error = %e, "Failed to persist rule cache to disk");
         }
+
+        self.last_config_sync_at
+            .store(Utc::now().timestamp(), Ordering::Relaxed);
 
         Ok(())
     }
@@ -960,10 +1377,30 @@ impl RuleCache {
     ///
     /// Hot path: only the `Arc` is cloned, the rules themselves are shared
     /// with the cache.
+    ///
+    /// An exact-miss falls back to wildcard sites: `www.a.example.com`
+    /// tries `*.a.example.com`, then `*.example.com`, and so on — the same
+    /// semantics `pingap_location`'s `HostSelector::Suffix` uses for
+    /// routing, so a wildcard site routed to a location no longer loses
+    /// its WAF rules, cache policy, challenge and error pages.
     pub fn get_site_rules(&self, domain: &str) -> Option<Arc<SiteRules>> {
         let rules = self.inner.load();
-        let site_id = rules.domain_index.get(domain)?;
+        let site_id = lookup_with_wildcard(&rules.domain_index, domain)?;
         rules.sites.get(site_id).cloned()
+    }
+
+    /// The site's disconnected policy for `domain`, when the control plane
+    /// has one registered (primary or alternate domain match, including a
+    /// wildcard match with the same fallback as [`Self::get_site_rules`]).
+    pub fn failover_for_domain(&self, domain: &str) -> Option<FailoverMode> {
+        let rules = self.inner.load();
+        lookup_with_wildcard(&rules.failover_registry, domain).copied()
+    }
+
+    /// The control-plane-wide fail-open default, when it has ever been
+    /// synced. `None` means the agent must fall back to its local setting.
+    pub fn global_fail_open(&self) -> Option<bool> {
+        self.inner.load().global_fail_open
     }
 
     /// Look up site rules by site ID.
@@ -986,6 +1423,26 @@ impl RuleCache {
         self.inner.load().config_hash.clone()
     }
 
+    /// When a full site config was last applied successfully, for the
+    /// heartbeat's sync report.
+    pub fn config_synced_at(&self) -> Option<DateTime<Utc>> {
+        self.sync_marker(&self.last_config_sync_at)
+    }
+
+    /// When a single-site rule bundle was last applied successfully.
+    pub fn policy_synced_at(&self) -> Option<DateTime<Utc>> {
+        self.sync_marker(&self.last_policy_sync_at)
+    }
+
+    fn sync_marker(&self, cell: &AtomicI64) -> Option<DateTime<Utc>> {
+        let secs = cell.load(Ordering::Relaxed);
+        if secs <= 0 {
+            None
+        } else {
+            Utc.timestamp_opt(secs, 0).single()
+        }
+    }
+
     // ─── IP Blocking ────────────────────────────────────────
 
     /// Check if an IP is dynamically blocked for a given site.
@@ -1002,6 +1459,26 @@ impl RuleCache {
                 }
             },
             None => false,
+        }
+    }
+
+    /// The reason an IP is dynamically blocked for a site, or `None`. The
+    /// reason prefix (`"waf: "` / `"rate limit: "`) identifies which policy
+    /// produced the block so callers can downgrade WAF-originated blocks
+    /// without touching rate-limit or control-plane-issued ones.
+    pub fn blocked_reason(&self, site_id: &str, ip: &str) -> Option<String> {
+        let key = format!("{}:{}", site_id, ip);
+        match self.blocked_ips.get(&key) {
+            Some(entry) => {
+                if entry.is_expired() {
+                    drop(entry);
+                    self.blocked_ips.remove(&key);
+                    None
+                } else {
+                    Some(entry.reason.clone())
+                }
+            },
+            None => None,
         }
     }
 
@@ -1046,6 +1523,69 @@ impl RuleCache {
                 warn!(error = %e, "Failed to persist blocked IPs");
             }
         }
+    }
+
+    /// Drop every WAF auto-block (`"waf: "` reason) for a site, keeping
+    /// rate-limit and control-plane-issued blocks. Returns the number of
+    /// entries removed. Used when a site leaves enforcing mode (block →
+    /// monitor/off, or observation mode switched on): the stale auto-blocks
+    /// would otherwise keep refusing clients for up to the full window even
+    /// though the engine no longer produces block verdicts.
+    pub fn clear_waf_auto_blocks(&self, site_id: &str) -> usize {
+        let prefix = format!("{site_id}:");
+        let stale: Vec<String> = self
+            .blocked_ips
+            .iter()
+            .filter(|e| {
+                e.key().starts_with(&prefix)
+                    && !e.value().is_expired()
+                    && e.value().reason.starts_with("waf: ")
+            })
+            .map(|e| e.key().clone())
+            .collect();
+        let removed = stale.len();
+        for key in &stale {
+            self.blocked_ips.remove(key);
+        }
+        if removed > 0 {
+            info!(
+                site_id = %site_id,
+                removed,
+                "cleared WAF auto-blocks after leaving enforcing mode"
+            );
+            if let Err(e) = self.persist_blocked_ips() {
+                warn!(error = %e, "Failed to persist blocked IPs");
+            }
+        }
+        removed
+    }
+
+    /// Drop every dynamic block for a site, regardless of origin. Used when
+    /// the site itself is deleted: its entries would otherwise linger until
+    /// their expiry (and be re-loaded from disk on restart).
+    pub fn clear_site_blocks(&self, site_id: &str) -> usize {
+        let prefix = format!("{site_id}:");
+        let stale: Vec<String> = self
+            .blocked_ips
+            .iter()
+            .filter(|e| e.key().starts_with(&prefix))
+            .map(|e| e.key().clone())
+            .collect();
+        let removed = stale.len();
+        for key in &stale {
+            self.blocked_ips.remove(key);
+        }
+        if removed > 0 {
+            debug!(
+                site_id = %site_id,
+                removed,
+                "cleared blocks for removed site"
+            );
+            if let Err(e) = self.persist_blocked_ips() {
+                warn!(error = %e, "Failed to persist blocked IPs");
+            }
+        }
+        removed
     }
 
     /// Clean up expired IP blocks.
@@ -1228,6 +1768,31 @@ impl RuleCache {
                 .as_ref()
                 .map(Self::convert_basic_auth),
             observation_mode: bundle.observation_mode,
+            proxy_trust: ProxyTrustConfig::default(),
+            cache_settings: bundle
+                .cache_settings
+                .as_ref()
+                .map(Self::convert_site_cache_settings),
+        }
+    }
+
+    fn convert_global_cache(
+        g: &proto::GlobalCacheSettings,
+    ) -> GlobalCacheSettings {
+        GlobalCacheSettings {
+            max_file_size_mb: g.max_file_size_mb,
+            max_space_mb: g.max_space_mb,
+            master_enabled: g.master_enabled,
+            default_edge_ttl_seconds: g.default_edge_ttl_seconds,
+        }
+    }
+
+    fn convert_site_cache_settings(
+        s: &proto::SiteCacheSettings,
+    ) -> SiteCacheSettings {
+        SiteCacheSettings {
+            max_file_size_mb: s.max_file_size_mb,
+            type_max_file_size_mb: s.type_max_file_size_mb.clone(),
         }
     }
 
@@ -1282,6 +1847,7 @@ impl RuleCache {
             openapi_spec: w.openapi_spec.clone(),
             monitor_categories: w.monitor_categories.clone(),
             monitor_stacks: w.monitor_stacks.clone(),
+            monitor_managed_rules: w.monitor_managed_rules.clone(),
         }
     }
 
@@ -1374,6 +1940,8 @@ impl RuleCache {
             js_detection: b.js_detection,
             tls_fingerprint: b.tls_fingerprint,
             behavioral_analysis: b.behavioral_analysis,
+            verified_bot_ranges: b.verified_bot_ranges.clone(),
+            dns_verification_enabled: b.dns_verification_enabled,
         }
     }
 
@@ -1500,7 +2068,10 @@ impl RuleCache {
             write_timeout_ms: u.write_timeout_ms,
             pool_id: u.pool_id.clone(),
             sni: u.sni.clone(),
-            verify_cert: u.verify_cert,
+            // Verification is opt-in: an unset flag means lenient (do not
+            // verify the origin certificate), matching the control plane's
+            // default. Explicit true keeps strict validation.
+            verify_cert: Some(u.verify_cert.unwrap_or(false)),
             is_default: u.is_default,
         }
     }
@@ -1561,6 +2132,212 @@ mod tests {
         assert_eq!(site.upstreams.len(), 1);
         assert!(site.upstreams[0].pool_id.is_empty());
         assert!(!site.upstreams[0].is_default);
+        // The failover fields default sensibly on a cache written before
+        // they existed: an empty registry and an unsynced global default.
+        assert!(cached.failover_registry.is_empty());
+        assert_eq!(cached.global_fail_open, None);
+    }
+
+    #[test]
+    fn failover_registry_covers_alternate_domains() {
+        use proto::SitePolicy;
+        let policies = [SitePolicy {
+            domain: "example.com".to_string(),
+            alternate_domains: vec!["m.example.com".to_string()],
+            mode: proto::FailoverMode::FailoverClosed as i32,
+        }];
+        let registry = failover_registry_from(&policies);
+        assert_eq!(registry.get("example.com"), Some(&FailoverMode::Closed));
+        assert_eq!(registry.get("m.example.com"), Some(&FailoverMode::Closed));
+        assert_eq!(registry.get("other.example.com"), None);
+    }
+
+    #[test]
+    fn unknown_failover_modes_degrade_to_inherit() {
+        assert_eq!(FailoverMode::from(0), FailoverMode::Inherit);
+        assert_eq!(FailoverMode::from(1), FailoverMode::Open);
+        assert_eq!(FailoverMode::from(2), FailoverMode::Closed);
+        assert_eq!(FailoverMode::from(99), FailoverMode::Inherit);
+    }
+
+    #[test]
+    fn clear_waf_auto_blocks_removes_only_waf_reasons() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache =
+            RuleCache::new(dir.path().to_path_buf(), "test".to_string())
+                .unwrap();
+
+        cache.block_ip("site-1", "203.0.113.1", None, "waf: sqli probe");
+        cache.block_ip("site-1", "203.0.113.2", None, "rate limit: login");
+        cache.block_ip("site-1", "203.0.113.3", None, "manual abuse");
+        cache.block_ip("site-2", "203.0.113.1", None, "waf: other site");
+
+        let removed = cache.clear_waf_auto_blocks("site-1");
+        assert_eq!(removed, 1);
+        assert_eq!(cache.blocked_reason("site-1", "203.0.113.1"), None);
+        assert_eq!(
+            cache.blocked_reason("site-1", "203.0.113.2").as_deref(),
+            Some("rate limit: login")
+        );
+        assert_eq!(
+            cache.blocked_reason("site-1", "203.0.113.3").as_deref(),
+            Some("manual abuse")
+        );
+        // Another site's WAF auto-blocks are untouched.
+        assert_eq!(
+            cache.blocked_reason("site-2", "203.0.113.1").as_deref(),
+            Some("waf: other site")
+        );
+
+        // Clearing again is a no-op.
+        assert_eq!(cache.clear_waf_auto_blocks("site-1"), 0);
+    }
+
+    #[test]
+    fn update_from_site_config_removes_deleted_sites() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache =
+            RuleCache::new(dir.path().to_path_buf(), "test".to_string())
+                .unwrap();
+
+        let site = |id: &str, domain: &str| proto::Site {
+            id: id.to_string(),
+            name: id.to_string(),
+            domain: domain.to_string(),
+            alternate_domains: Vec::new(),
+            status: 0,
+            rules: Some(proto::RuleBundle {
+                site_id: id.to_string(),
+                config_hash: "hash".to_string(),
+                ..Default::default()
+            }),
+            trust_proxy_headers: false,
+            trusted_header: String::new(),
+            trust_last_hop: false,
+            trusted_proxy_ranges: Vec::new(),
+        };
+        cache
+            .update_from_site_config(&proto::SiteConfig {
+                sites: vec![
+                    site("site-1", "a.example.com"),
+                    site("site-2", "b.example.com"),
+                ],
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(cache.get_site_rules_by_id("site-2").is_some());
+        cache.block_ip("site-2", "203.0.113.1", None, "waf: stale");
+
+        // A sync without site-2 drops the site, its domain index entries
+        // and its dynamic blocks — it must not keep serving from stale
+        // cached rules.
+        cache
+            .update_from_site_config(&proto::SiteConfig {
+                sites: vec![site("site-1", "a.example.com")],
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(cache.get_site_rules_by_id("site-2").is_none());
+        assert!(cache.get_site_rules("b.example.com").is_none());
+        assert_eq!(cache.blocked_reason("site-2", "203.0.113.1"), None);
+        // The surviving site is untouched.
+        assert!(cache.get_site_rules_by_id("site-1").is_some());
+    }
+
+    #[test]
+    fn wildcard_sites_resolve_subdomains_via_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache =
+            RuleCache::new(dir.path().to_path_buf(), "test".to_string())
+                .unwrap();
+
+        let policies = vec![
+            proto::SitePolicy {
+                domain: "*.example.com".to_string(),
+                alternate_domains: Vec::new(),
+                mode: proto::FailoverMode::FailoverClosed as i32,
+            },
+            proto::SitePolicy {
+                domain: "app.example.com".to_string(),
+                alternate_domains: Vec::new(),
+                mode: proto::FailoverMode::FailoverOpen as i32,
+            },
+        ];
+        let site = |id: &str, domain: &str| proto::Site {
+            id: id.to_string(),
+            name: id.to_string(),
+            domain: domain.to_string(),
+            alternate_domains: Vec::new(),
+            status: 0,
+            rules: Some(proto::RuleBundle {
+                site_id: id.to_string(),
+                config_hash: "hash".to_string(),
+                site_policies: policies.clone(),
+                ..Default::default()
+            }),
+            trust_proxy_headers: false,
+            trusted_header: String::new(),
+            trust_last_hop: false,
+            trusted_proxy_ranges: Vec::new(),
+        };
+        cache
+            .update_from_site_config(&proto::SiteConfig {
+                sites: vec![
+                    site("site-exact", "app.example.com"),
+                    site("site-wild", "*.example.com"),
+                    site("site-deep", "*.a.example.com"),
+                ],
+                ..Default::default()
+            })
+            .unwrap();
+
+        let id_of = |domain: &str| {
+            cache.get_site_rules(domain).map(|r| r.site_id.clone())
+        };
+
+        // An exact site always wins over any wildcard.
+        assert_eq!(id_of("app.example.com").as_deref(), Some("site-exact"));
+        // Direct subdomains fall back to the wildcard site — before this
+        // fix a wildcard site lost its WAF rules, cache policy, challenge
+        // and error pages entirely.
+        assert_eq!(id_of("foo.example.com").as_deref(), Some("site-wild"));
+        // The most specific wildcard wins for deeper names.
+        assert_eq!(id_of("a.example.com").as_deref(), Some("site-wild"));
+        assert_eq!(id_of("www.a.example.com").as_deref(), Some("site-deep"));
+        // The apex itself is not covered by a wildcard — the same
+        // semantics as `HostSelector::Suffix` in the routing layer.
+        assert!(cache.get_site_rules("example.com").is_none());
+
+        // The failover registry follows the same fallback, so a wildcard
+        // site's disconnected policy actually applies to its subdomains.
+        assert_eq!(
+            cache.failover_for_domain("app.example.com"),
+            Some(FailoverMode::Open)
+        );
+        assert_eq!(
+            cache.failover_for_domain("foo.example.com"),
+            Some(FailoverMode::Closed)
+        );
+        assert_eq!(cache.failover_for_domain("example.com"), None);
+    }
+
+    #[test]
+    fn unknown_waf_mode_enforces_fail_close() {
+        assert_eq!(WafMode::from(0), WafMode::Off);
+        assert_eq!(WafMode::from(1), WafMode::Monitor);
+        assert_eq!(WafMode::from(2), WafMode::Block);
+        // An unknown enum value from a newer control plane must not switch
+        // the site's WAF off for the upgrade window.
+        assert_eq!(WafMode::from(7), WafMode::Block);
+    }
+
+    #[test]
+    fn unknown_challenge_level_enforces_fail_close() {
+        assert_eq!(ChallengeLevel::from(0), ChallengeLevel::None);
+        assert_eq!(ChallengeLevel::from(3), ChallengeLevel::Interactive);
+        // Degrading to None would silently stop challenging; the strongest
+        // level keeps the protection.
+        assert_eq!(ChallengeLevel::from(9), ChallengeLevel::Interactive);
     }
 
     #[test]
@@ -1583,6 +2360,8 @@ mod tests {
                     error_pages: Vec::new(),
                     basic_auth: None,
                     observation_mode: false,
+                    proxy_trust: ProxyTrustConfig::default(),
+                    cache_settings: None,
                     ssl_config: None,
                     upstreams: vec![UpstreamConfig {
                         name: "default".to_string(),
@@ -1614,12 +2393,23 @@ mod tests {
             .into_iter()
             .collect(),
             domain_index: HashMap::new(),
+            failover_registry: HashMap::from([(
+                "example.com".to_string(),
+                FailoverMode::Closed,
+            )]),
+            global_fail_open: Some(true),
+            global_cache: None,
             updated_at: Utc::now(),
             config_hash: "abc".into(),
         };
         let json = serde_json::to_string(&cached).expect("serialize");
         let back: CachedRules =
             serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            back.failover_registry.get("example.com"),
+            Some(&FailoverMode::Closed)
+        );
+        assert_eq!(back.global_fail_open, Some(true));
         let site = back.sites.get("site-1").expect("site present");
         assert_eq!(site.routes.len(), 1);
         assert_eq!(site.routes[0].path, "/api");
@@ -1689,6 +2479,94 @@ mod tests {
         assert!(ssl.mtls_revoked_fingerprints.is_empty());
         assert!(ssl.mtls_organization.is_empty());
         assert!(ssl.mtls_requires_cert());
+        // The cache ceiling fields default when a pre-ceiling cache loads.
+        assert!(cached.global_cache.is_none());
+        assert!(site.cache_settings.is_none());
+    }
+
+    #[test]
+    fn global_space_clamps_site_quotas() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache =
+            RuleCache::new(dir.path().to_path_buf(), "test".to_string())
+                .unwrap();
+        const DOMAIN: &str = "clamp-test.example.com";
+
+        let site = |quota_mb: u32| {
+            Arc::new(SiteRules {
+                site_id: "site-1".to_string(),
+                domain: DOMAIN.to_string(),
+                alternate_domains: Vec::new(),
+                status: site_status::ACTIVE.to_string(),
+                waf_config: None,
+                rate_limit_rules: Vec::new(),
+                ip_access_rules: Vec::new(),
+                geo_config: None,
+                cache_rules: vec![CacheRule {
+                    id: "r1".to_string(),
+                    name: "static".to_string(),
+                    match_expression: String::new(),
+                    edge_ttl_seconds: 300,
+                    browser_ttl_seconds: 60,
+                    disk_quota_mb: quota_mb,
+                    cache_eligible: true,
+                    cache_key_headers: Vec::new(),
+                    respect_origin_headers: true,
+                    stale_while_revalidate_seconds: 0,
+                    enabled: true,
+                }],
+                challenge_config: None,
+                rewrite_rules: Vec::new(),
+                error_pages: Vec::new(),
+                ssl_config: None,
+                upstreams: Vec::new(),
+                routes: Vec::new(),
+                bot_protection: None,
+                basic_auth: None,
+                observation_mode: false,
+                proxy_trust: ProxyTrustConfig::default(),
+                cache_settings: None,
+            })
+        };
+        let store = |global_space_mb: Option<u32>, quota_mb: u32| {
+            cache.inner.store(Arc::new(CachedRules {
+                sites: [(DOMAIN.to_string(), site(quota_mb))]
+                    .into_iter()
+                    .collect(),
+                domain_index: HashMap::new(),
+                failover_registry: HashMap::new(),
+                global_fail_open: None,
+                global_cache: global_space_mb.map(|max_space_mb| {
+                    GlobalCacheSettings {
+                        max_space_mb: Some(max_space_mb),
+                        ..Default::default()
+                    }
+                }),
+                updated_at: Utc::now(),
+                config_hash: Arc::from(""),
+            }));
+        };
+
+        // No budget: the site quota passes through untouched.
+        store(None, 2048);
+        cache.apply_cache_quotas();
+        assert_eq!(quota::configured_quota_mb(DOMAIN), Some(2048));
+
+        // A budget caps an explicit site quota.
+        store(Some(1024), 2048);
+        cache.apply_cache_quotas();
+        assert_eq!(quota::configured_quota_mb(DOMAIN), Some(1024));
+
+        // An unlimited site is capped at the budget.
+        store(Some(1024), 0);
+        cache.apply_cache_quotas();
+        assert_eq!(quota::configured_quota_mb(DOMAIN), Some(1024));
+
+        // No budget at all leaves unlimited as unlimited — parking 0 clears
+        // the parked ceiling entirely (`configured_quota_mb` answers None).
+        store(None, 0);
+        cache.apply_cache_quotas();
+        assert_eq!(quota::configured_quota_mb(DOMAIN), None);
     }
 
     #[test]
@@ -1713,6 +2591,10 @@ mod tests {
                 }],
                 ..Default::default()
             }),
+            trust_proxy_headers: false,
+            trusted_header: String::new(),
+            trust_last_hop: false,
+            trusted_proxy_ranges: Vec::new(),
         };
         assert_eq!(site_status_str(site.status), site_status::PAUSED);
         let rules =
@@ -1744,6 +2626,10 @@ mod tests {
                 }),
                 ..Default::default()
             }),
+            trust_proxy_headers: false,
+            trusted_header: String::new(),
+            trust_last_hop: false,
+            trusted_proxy_ranges: Vec::new(),
         };
         let rules =
             RuleCache::convert_bundle(site.rules.as_ref().expect("bundle"));

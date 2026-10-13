@@ -931,6 +931,7 @@ cookie_secret = "test-secret"
                             challenge: challenge.clone(),
                             ..Default::default()
                         }),
+                        ..Default::default()
                     },
                     proto::Site {
                         id: "site-2".to_string(),
@@ -943,6 +944,7 @@ cookie_secret = "test-secret"
                             config_hash: "hash-1".to_string(),
                             ..Default::default()
                         }),
+                        ..Default::default()
                     },
                 ],
                 config_hash: "hash-1".to_string(),

@@ -741,6 +741,7 @@ fn waf_config_to_proto(
         engine_mode,
         virtual_patches,
         openapi_spec,
+        monitor_managed_rules: Vec::new(),
     }
 }
 
@@ -906,6 +907,9 @@ fn bot_protection_to_proto(
             js_detection: false,
             tls_fingerprint: false,
             behavioral_analysis: false,
+            ip_verification_enabled: false,
+            dns_verification_enabled: false,
+            verified_bot_ranges: Vec::new(),
         };
     };
 
@@ -927,6 +931,9 @@ fn bot_protection_to_proto(
         js_detection: row.js_detection,
         tls_fingerprint: row.tls_fingerprint,
         behavioral_analysis: row.behavioral_analysis,
+        ip_verification_enabled: false,
+        dns_verification_enabled: false,
+        verified_bot_ranges: Vec::new(),
     }
 }
 
@@ -1060,6 +1067,13 @@ pub async fn build_rule_bundle(
         bot_protection: Some(bot_protection_to_proto(bot.as_ref())),
         basic_auth: basic_auth_to_proto(basic_auth.as_ref()),
         observation_mode,
+        // Failover policies, the global fail-open default and the cache
+        // ceilings arrive with the agent/control-plane batch; until then the
+        // bundle carries the neutral defaults.
+        site_policies: Vec::new(),
+        default_fail_open: None,
+        global_cache: None,
+        cache_settings: None,
     };
 
     bundle.config_hash = fingerprint(&bundle);
@@ -1103,6 +1117,7 @@ pub async fn build_site_config(
             alternate_domains: row.alternate_domains.clone(),
             status: site_status_proto(&row.status),
             rules: Some(bundle),
+            ..Default::default()
         });
     }
 
