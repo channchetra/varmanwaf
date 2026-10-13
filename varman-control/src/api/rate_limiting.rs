@@ -257,7 +257,7 @@ async fn create(
 
     tracing::info!(site_id = %id, rule_id = %model.id, "rate limit rule created");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok((StatusCode::CREATED, Json(model)).into_response())
 }
@@ -334,7 +334,7 @@ async fn update(
     let updated = active.update(&state.db).await?;
     tracing::info!(site_id = %id, rule_id = %target, "rate limit rule updated");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(Json(updated))
 }
@@ -356,7 +356,7 @@ async fn remove(
 
     tracing::info!(site_id = %id, rule_id = %target, "rate limit rule deleted");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

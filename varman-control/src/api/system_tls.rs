@@ -36,7 +36,7 @@ use crate::pki::tls::{describe, generate_self_signed, MAX_SERVER_CERT_DAYS};
 /// Validity of a generated self-signed certificate, in days. Long enough that
 /// an operator does not have to regenerate it, short enough that it is not
 /// mistaken for a long-lived trust anchor.
-const DEFAULT_SELF_SIGNED_DAYS: i64 = 825;
+pub const DEFAULT_SELF_SIGNED_DAYS: i64 = 825;
 
 /// Routes contributed to `/api/v1`.
 pub fn routes() -> Router<AppState> {

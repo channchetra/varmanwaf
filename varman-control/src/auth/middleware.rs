@@ -8,20 +8,28 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use uuid::Uuid;
 
+use sea_orm::{DatabaseConnection, EntityTrait};
+
 use crate::api::error::error_response;
 use crate::api::state::AppState;
 use crate::auth::jwt::{verify_user_token, Claims, JwtError};
-use crate::models::role;
+use crate::models::{role, user};
 
 /// Scheme prefix accepted in the `Authorization` header.
 const BEARER_PREFIX: &str = "Bearer ";
 
 /// Identity of the caller behind a request.
+///
+/// Resolved against the database on every request: disabled accounts are
+/// refused immediately, and a role change takes effect without waiting for
+/// the access token to expire.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthUser {
     pub id: Uuid,
     pub email: String,
     pub role: String,
+    /// The console forces a password (and name) change before any mutation.
+    pub must_change_password: bool,
 }
 
 impl AuthUser {
@@ -34,6 +42,7 @@ impl AuthUser {
             id,
             email: email.into(),
             role: role.into(),
+            must_change_password: false,
         }
     }
 
@@ -53,17 +62,6 @@ impl AuthUser {
     }
 }
 
-impl From<&Claims> for AuthUser {
-    fn from(claims: &Claims) -> Self {
-        AuthUser {
-            // Already validated by `from_request_parts` before we get here.
-            id: claims.subject_id().unwrap_or_else(|_| Uuid::nil()),
-            email: claims.email.clone(),
-            role: claims.role.clone(),
-        }
-    }
-}
-
 /// Rejection returned by [`AuthUser`]; always renders as `401`/`403`.
 #[derive(Debug)]
 pub enum AuthError {
@@ -77,6 +75,8 @@ pub enum AuthError {
     ExpiredToken,
     /// Valid identity, insufficient role.
     Forbidden(String),
+    /// Reading the account back from the database failed.
+    Internal(String),
 }
 
 impl std::fmt::Display for AuthError {
@@ -91,6 +91,7 @@ impl std::fmt::Display for AuthError {
             AuthError::InvalidToken(msg) => write!(f, "invalid token: {msg}"),
             AuthError::ExpiredToken => f.write_str("token expired"),
             AuthError::Forbidden(msg) => write!(f, "forbidden: {msg}"),
+            AuthError::Internal(msg) => write!(f, "storage error: {msg}"),
         }
     }
 }
@@ -102,6 +103,7 @@ impl AuthError {
         match self {
             AuthError::Forbidden(_) => "forbidden",
             AuthError::ExpiredToken => "token_expired",
+            AuthError::Internal(_) => "internal",
             _ => "unauthorized",
         }
     }
@@ -109,6 +111,7 @@ impl AuthError {
     fn status(&self) -> StatusCode {
         match self {
             AuthError::Forbidden(_) => StatusCode::FORBIDDEN,
+            AuthError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::UNAUTHORIZED,
         }
     }
@@ -173,6 +176,50 @@ pub fn bearer_token(parts: &Parts) -> Result<String, AuthError> {
     Ok(token.to_string())
 }
 
+/// Resolves verified token claims against the account table: the token only
+/// proves the identity; the account row is the source of truth for
+/// existence, the disabled flag, the current role and the token version.
+/// Shared by the REST extractors and the MCP endpoint so both enforce the
+/// same database-level checks.
+pub async fn authenticate_user(
+    db: &DatabaseConnection,
+    claims: &Claims,
+) -> Result<AuthUser, AuthError> {
+    let id = claims.subject_id().map_err(|err| {
+        AuthError::InvalidToken(format!("subject is not a UUID: {err}"))
+    })?;
+
+    let account = user::Entity::find_by_id(id)
+        .one(db)
+        .await
+        .map_err(|err| AuthError::Internal(err.to_string()))?
+        .ok_or(AuthError::InvalidToken(
+            "account no longer exists".to_string(),
+        ))?;
+    if account.disabled {
+        return Err(AuthError::Forbidden("account is disabled".to_string()));
+    }
+    if !super::token_version_valid(claims.ver, &account) {
+        return Err(AuthError::InvalidToken(
+            "session revoked: credentials changed since this token was issued"
+                .to_string(),
+        ));
+    }
+    if !role::is_valid(&account.role) {
+        return Err(AuthError::InvalidToken(format!(
+            "account has an unknown role '{}'",
+            account.role
+        )));
+    }
+
+    Ok(AuthUser {
+        id,
+        email: account.email,
+        role: account.role,
+        must_change_password: account.must_change_password,
+    })
+}
+
 impl<S> FromRequestParts<S> for AuthUser
 where
     S: Send + Sync,
@@ -187,20 +234,7 @@ where
         let app_state = AppState::from_ref(state);
         let token = bearer_token(parts)?;
         let claims = verify_user_token(&token, app_state.jwt_secret())?;
-        let id = claims.subject_id().map_err(|err| {
-            AuthError::InvalidToken(format!("subject is not a UUID: {err}"))
-        })?;
-        if !role::is_valid(&claims.role) {
-            return Err(AuthError::InvalidToken(format!(
-                "unknown role '{}'",
-                claims.role
-            )));
-        }
-        Ok(AuthUser {
-            id,
-            email: claims.email.clone(),
-            role: claims.role.clone(),
-        })
+        authenticate_user(&app_state.db, &claims).await
     }
 }
 

@@ -65,6 +65,11 @@ pub struct TurnRequest {
     pub user_email: String,
     pub conversation_id: Uuid,
     pub message: String,
+    /// Optional hint about the console page the user is viewing, injected
+    /// into this turn's system prompt only (never persisted or replayed).
+    /// Client-supplied and unprivileged — informational context, not an
+    /// authorization input.
+    pub page_context: Option<String>,
     /// Whether write tools may be invoked (settings opt-in ∧ admin role).
     pub can_write: bool,
 }
@@ -167,9 +172,17 @@ async fn execute(
     }
 
     let mut messages = Vec::with_capacity(history.len() + 1);
+    let mut system_prompt = effective_system_prompt(settings);
+    if let Some(page) = request.page_context.as_deref() {
+        // Informational only: tells the model where in the console the
+        // question is coming from. Trimmed and length-capped by the API.
+        system_prompt.push_str(&format!(
+            "\n\nThe user is currently viewing the console page: {page}"
+        ));
+    }
     messages.push(json!({
         "role": "system",
-        "content": effective_system_prompt(settings),
+        "content": system_prompt,
     }));
     messages.extend(wire_context(&history));
 

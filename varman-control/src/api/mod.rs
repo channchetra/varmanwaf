@@ -6,14 +6,17 @@
 
 pub mod agents;
 pub mod ai;
+pub mod ai_rate_limit;
 pub mod analytics;
 pub mod api_protection;
 pub mod auth;
 pub mod blocked_ips;
 pub mod bot;
 pub mod cache;
+pub mod cache_settings;
 pub mod challenge;
 pub mod common;
+pub mod config_versions;
 pub mod debug;
 pub mod defense;
 pub mod error;
@@ -23,20 +26,25 @@ pub mod ip_groups;
 pub mod ip_rules;
 pub mod keys;
 pub mod log_retention;
+pub mod login_security;
 pub mod logs;
 pub mod mcp;
 pub mod mtls;
+pub mod notifications;
 pub mod passkeys;
+pub mod rate_limit;
 pub mod rate_limiting;
 pub mod rewrite;
 pub mod rules;
 pub mod self_protection;
 pub mod settings;
 pub mod site_basic_auth;
+pub mod site_failover;
 pub mod sites;
 pub mod ssl;
 pub mod state;
 pub mod system_tls;
+pub mod users;
 pub mod waf_settings;
 
 use crate::frontend::serve_frontend;
@@ -50,6 +58,9 @@ use axum::routing::get;
 use axum::Json;
 use axum::Router;
 use serde_json::json;
+use std::future::Future;
+use std::sync::{LazyLock, Mutex};
+use std::time::Duration;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -69,6 +80,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(sites::routes())
         .merge(site_basic_auth::routes())
         .merge(keys::routes())
+        .merge(users::routes())
         .merge(agents::routes())
         .merge(rules::routes())
         .merge(rate_limiting::routes())
@@ -87,17 +99,26 @@ pub fn build_router(state: AppState) -> Router {
         .merge(bot::routes())
         .merge(challenge::routes())
         .merge(waf_settings::routes())
+        .merge(site_failover::routes())
         .merge(rewrite::routes())
         .merge(error_pages::routes())
         .merge(debug::routes())
         .merge(system_tls::routes())
         .merge(defense::routes())
+        .merge(cache_settings::routes())
         .merge(api_protection::routes())
         .merge(ai::routes())
         .merge(mcp::routes())
+        .merge(config_versions::routes())
+        .merge(notifications::routes())
+        .merge(login_security::routes())
         .route("/health", get(health))
         .route("/version", get(version))
-        .fallback(api_not_found);
+        .fallback(api_not_found)
+        // The limiter covers the whole API surface but only ever matches the
+        // credential endpoints (see `bucket_for`), which is also what keeps
+        // passkey logins — registered by a different module — covered.
+        .layer(middleware::from_fn(rate_limit::auth_rate_limit));
 
     let mut root = Router::new()
         .nest(API_PREFIX, api)
@@ -115,6 +136,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let redirect = RedirectState {
         tls_enabled: state.control_tls.is_enabled(),
+        public_host: config.public_host.clone(),
     };
     root.layer(middleware::from_fn_with_state(
         redirect,
@@ -193,9 +215,12 @@ fn build_cors(origins: &[String]) -> CorsLayer {
 ///
 /// Deliberately smaller than [`AppState`] — the middleware needs no database,
 /// which is what lets its connection handling be tested over real sockets.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct RedirectState {
     pub tls_enabled: bool,
+    /// Pinned redirect target (`PINGWAF_PUBLIC_HOST`); `None` reuses the
+    /// request's `Host` header.
+    pub public_host: Option<String>,
 }
 
 /// Sends cleartext requests to the HTTPS listener.
@@ -224,7 +249,7 @@ async fn redirect_cleartext_to_https(
         return next.run(request).await;
     }
 
-    match https_location(&request) {
+    match https_location(&state, &request) {
         // `308` keeps the method and body, which a `301` would not.
         Some(location) => (
             StatusCode::PERMANENT_REDIRECT,
@@ -239,12 +264,24 @@ async fn redirect_cleartext_to_https(
 }
 
 /// The `https://` URL of the request, when the Host header allows building one.
-fn https_location(request: &Request) -> Option<HeaderValue> {
-    let host = request
-        .headers()
-        .get(axum::http::header::HOST)?
-        .to_str()
-        .ok()?;
+///
+/// A configured `PINGWAF_PUBLIC_HOST` pins the target instead: behind a
+/// reverse proxy the client's `Host` header is whatever the caller sent, and
+/// an attacker controlling it would otherwise steer the redirect — and every
+/// client that follows it — anywhere they like.
+fn https_location(
+    state: &RedirectState,
+    request: &Request,
+) -> Option<HeaderValue> {
+    let host = match &state.public_host {
+        Some(host) => host.clone(),
+        None => request
+            .headers()
+            .get(axum::http::header::HOST)?
+            .to_str()
+            .ok()?
+            .to_string(),
+    };
     let target = request
         .uri()
         .path_and_query()
@@ -259,22 +296,68 @@ pub(crate) fn is_health_probe(path: &str) -> bool {
 }
 
 /// `GET /healthz` and `GET /api/v1/health` — verifies the database is reachable.
+///
+/// Answers are reused for a few seconds: container and load-balancer probes
+/// hit these paths on a short schedule, and without a cache a database that
+/// has slowed down turns every probe into one more query piling onto it.
 async fn health(State(state): State<AppState>) -> Response {
-    match state.db.ping().await {
-        Ok(()) => (
+    let healthy = health_probe(
+        &HEALTH_CACHE,
+        HEALTH_CACHE_TTL,
+        std::time::Instant::now(),
+        || state.db.ping(),
+    )
+    .await;
+    if healthy {
+        (
             StatusCode::OK,
             Json(json!({ "status": "ok", "database": "up" })),
         )
-            .into_response(),
-        Err(err) => {
-            tracing::error!(error = %err, "database health check failed");
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({ "status": "degraded", "database": "down" })),
-            )
-                .into_response()
-        },
+            .into_response()
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "status": "degraded", "database": "down" })),
+        )
+            .into_response()
     }
+}
+
+/// How long a health answer is reused before the database is probed again.
+const HEALTH_CACHE_TTL: Duration = Duration::from_secs(5);
+
+/// Outcome of the last health probe: when it was taken and what it found.
+static HEALTH_CACHE: LazyLock<Mutex<Option<(std::time::Instant, bool)>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// Answers from `cache` while it is fresh, otherwise awaits `probe` and
+/// records its outcome. `now` is injected so tests can age the cache.
+async fn health_probe<F, Fut, E>(
+    cache: &Mutex<Option<(std::time::Instant, bool)>>,
+    ttl: Duration,
+    now: std::time::Instant,
+    probe: F,
+) -> bool
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<(), E>>,
+    E: std::fmt::Display,
+{
+    let cached = cache
+        .lock()
+        .expect("health cache poisoned")
+        .filter(|(at, _)| now.duration_since(*at) < ttl);
+    if let Some((_, healthy)) = cached {
+        return healthy;
+    }
+
+    let result = probe().await;
+    let healthy = result.is_ok();
+    if let Err(err) = result {
+        tracing::error!(error = %err, "database health check failed");
+    }
+    *cache.lock().expect("health cache poisoned") = Some((now, healthy));
+    healthy
 }
 
 /// `GET /api/v1/version` — build metadata the frontend shows in the footer.
@@ -284,6 +367,9 @@ async fn version(State(state): State<AppState>) -> Json<serde_json::Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "api": API_PREFIX,
         "registration_open": state.config.allow_registration,
+        // False = the gRPC control plane serves plaintext (degraded mode);
+        // the dashboard shows a banner so the operator notices.
+        "grpc_tls": state.config.grpc_tls_enabled(),
     }))
 }
 
@@ -322,12 +408,19 @@ mod tests {
         let _ = build_cors(&["not a header value".to_string()]);
     }
 
+    fn redirect_state(public_host: Option<&str>) -> RedirectState {
+        RedirectState {
+            tls_enabled: true,
+            public_host: public_host.map(str::to_string),
+        }
+    }
+
     #[test]
     fn the_redirect_target_keeps_the_path_query_and_port() {
-        let location = https_location(&request(
-            "/api/v1/sites?page=2",
-            Some("waf.example.com:9080"),
-        ))
+        let location = https_location(
+            &redirect_state(None),
+            &request("/api/v1/sites?page=2", Some("waf.example.com:9080")),
+        )
         .unwrap();
         assert_eq!(
             location,
@@ -336,11 +429,106 @@ mod tests {
 
         // An empty path still points at the root.
         assert_eq!(
-            https_location(&request("/", Some("localhost:9080"))).unwrap(),
+            https_location(
+                &redirect_state(None),
+                &request("/", Some("localhost:9080"))
+            )
+            .unwrap(),
             "https://localhost:9080/"
         );
         // Without a Host header there is nothing to redirect to.
-        assert!(https_location(&request("/", None)).is_none());
+        assert!(https_location(&redirect_state(None), &request("/", None))
+            .is_none());
+    }
+
+    #[test]
+    fn the_public_host_pins_the_redirect_target() {
+        // The caller-supplied Host is ignored when one is configured — the
+        // redirect cannot be steered by the request.
+        let location = https_location(
+            &redirect_state(Some("waf.example.com")),
+            &request("/api/v1/sites", Some("attacker.example.net")),
+        )
+        .unwrap();
+        assert_eq!(location, "https://waf.example.com/api/v1/sites");
+
+        // It also covers requests that carry no Host header at all, which the
+        // Host-based fallback would have to let through unredirected.
+        assert_eq!(
+            https_location(
+                &redirect_state(Some("waf.example.com")),
+                &request("/", None)
+            )
+            .unwrap(),
+            "https://waf.example.com/"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_health_answer_is_cached_for_the_ttl() {
+        let cache: std::sync::Mutex<Option<(std::time::Instant, bool)>> =
+            std::sync::Mutex::new(None);
+        let calls = std::cell::Cell::new(0u32);
+        let start = std::time::Instant::now();
+        let probe = || {
+            calls.set(calls.get() + 1);
+            async { Err::<(), _>("db down") }
+        };
+
+        // Unhealthy answers are cached like any other outcome.
+        assert!(
+            !health_probe(&cache, Duration::from_secs(5), start, probe).await
+        );
+        assert!(
+            !health_probe(
+                &cache,
+                Duration::from_secs(5),
+                start + Duration::from_secs(4),
+                probe
+            )
+            .await
+        );
+        assert_eq!(calls.get(), 1);
+
+        // Once the ttl has passed a fresh probe runs.
+        assert!(
+            !health_probe(
+                &cache,
+                Duration::from_secs(5),
+                start + Duration::from_secs(5),
+                probe
+            )
+            .await
+        );
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_fresh_healthy_answer_short_circuits_the_probe() {
+        let cache: std::sync::Mutex<Option<(std::time::Instant, bool)>> =
+            std::sync::Mutex::new(None);
+        let calls = std::cell::Cell::new(0u32);
+        let start = std::time::Instant::now();
+        let probe = || {
+            calls.set(calls.get() + 1);
+            async { Ok::<(), std::convert::Infallible>(()) }
+        };
+
+        assert!(
+            health_probe(&cache, Duration::from_secs(5), start, probe).await
+        );
+        // While the cache is fresh the database is not asked again — that is
+        // the point: probes must not pile onto a struggling database.
+        assert!(
+            health_probe(
+                &cache,
+                Duration::from_secs(5),
+                start + Duration::from_secs(1),
+                || async { Err::<(), _>("no connection") }
+            )
+            .await
+        );
+        assert_eq!(calls.get(), 1);
     }
 
     #[test]
@@ -378,7 +566,10 @@ mod tests {
             .route("/dashboard", get(|| async { "ok" }))
             .route("/healthz", get(|| async { "ok" }))
             .layer(middleware::from_fn_with_state(
-                RedirectState { tls_enabled: true },
+                RedirectState {
+                    tls_enabled: true,
+                    public_host: None,
+                },
                 redirect_cleartext_to_https,
             ));
 

@@ -44,6 +44,12 @@ pub struct SecurityQuery {
     pub country_code: Option<String>,
     /// Exact request id, e.g. when correlating with an `X-Request-ID` header.
     pub request_id: Option<String>,
+    /// Protection type filter: `managed` / `waf` / `ip_geo` / `bot` /
+    /// `rate_limit` / `challenge`. Untyped (pre-migration) rows never match.
+    pub event_type: Option<String>,
+    /// When true, matches only rows with no owning site — traffic that arrived
+    /// without a `Host` header. Mutually exclusive with `site_id`.
+    pub unassigned: Option<bool>,
     /// Free-text search over the request target and host (OR).
     pub q: Option<String>,
 }
@@ -66,8 +72,29 @@ pub struct AccessQuery {
     pub min_latency_ms: Option<i64>,
     /// Exact request id, e.g. when correlating with an `X-Request-ID` header.
     pub request_id: Option<String>,
+    /// When true, matches only rows with no owning site — traffic that arrived
+    /// without a `Host` header. Mutually exclusive with `site_id`.
+    pub unassigned: Option<bool>,
     /// Free-text search over the request target and host (OR).
     pub q: Option<String>,
+}
+
+/// Resolves the [`SecurityQuery::unassigned`] / [`AccessQuery::unassigned`]
+/// flag: 400 when combined with an explicit site, otherwise the caller decides
+/// what "no site" means for the table being queried.
+fn check_unassigned(
+    unassigned: Option<bool>,
+    site_id: &Option<String>,
+) -> Result<bool, ApiError> {
+    if unassigned != Some(true) {
+        return Ok(false);
+    }
+    if non_empty(site_id).is_some() {
+        return Err(ApiError::BadRequest(
+            "'unassigned' and 'site_id' are mutually exclusive".to_string(),
+        ));
+    }
+    Ok(true)
 }
 
 /// Retention endpoint payload.
@@ -249,11 +276,18 @@ async fn list_security(
     let scope = resolve_scope(&state.db, &query.site_id, &current).await?;
     let (from, to) = resolve_window(&query.from, &query.to)?;
     let pagination = query.pagination.normalise();
+    let unassigned = check_unassigned(query.unassigned, &query.site_id)?;
 
     let mut condition = Condition::all()
         .add(security_event::Column::Timestamp.gte(from))
         .add(security_event::Column::Timestamp.lt(to));
     condition = apply_scope(condition, &scope, security_event::Column::SiteId);
+    if unassigned {
+        // Unassigned rows carry no site, so scoped users (whose allow-list
+        // never contains NULL) simply match nothing — the admin-only global
+        // view is the one where this filter is meaningful.
+        condition = condition.add(security_event::Column::SiteId.is_null());
+    }
 
     if let Some(ip) = non_empty(&query.client_ip) {
         condition =
@@ -284,6 +318,12 @@ async fn list_security(
         condition =
             condition.add(security_event::Column::RequestId.eq(request_id));
     }
+    if let Some(event_type) = non_empty(&query.event_type) {
+        condition = condition.add(text_filter(
+            security_event::Column::EventType,
+            &event_type.to_lowercase(),
+        ));
+    }
     if let Some(q) = non_empty(&query.q) {
         condition = condition.add(free_text_filter(
             security_event::Column::Path,
@@ -311,11 +351,15 @@ async fn list_access(
     let scope = resolve_scope(&state.db, &query.site_id, &current).await?;
     let (from, to) = resolve_window(&query.from, &query.to)?;
     let pagination = query.pagination.normalise();
+    let unassigned = check_unassigned(query.unassigned, &query.site_id)?;
 
     let mut condition = Condition::all()
         .add(access_log::Column::Timestamp.gte(from))
         .add(access_log::Column::Timestamp.lt(to));
     condition = apply_scope(condition, &scope, access_log::Column::SiteId);
+    if unassigned {
+        condition = condition.add(access_log::Column::SiteId.is_null());
+    }
 
     if let Some(ip) = non_empty(&query.client_ip) {
         condition =
@@ -621,6 +665,18 @@ mod tests {
     #[test]
     fn retention_defaults_are_sane() {
         assert_eq!(default_retention_days(), 30);
+    }
+
+    #[test]
+    fn unassigned_rejects_explicit_site() {
+        let site = Some("01936b1a-0000-7000-8000-000000000000".to_string());
+        assert!(check_unassigned(Some(true), &site).is_err());
+        // The flag off (absent or false) never conflicts with a site filter.
+        assert!(!check_unassigned(Some(false), &site).unwrap());
+        assert!(!check_unassigned(None, &site).unwrap());
+        // On its own, `unassigned` is valid and meaningful.
+        assert!(check_unassigned(Some(true), &None).unwrap());
+        assert!(!check_unassigned(None, &None).unwrap());
     }
 
     #[test]

@@ -159,7 +159,7 @@ async fn update_challenge(
     let updated = active.update(&state.db).await?;
     tracing::info!(site_id = %id, "challenge settings updated");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(Json(updated))
 }

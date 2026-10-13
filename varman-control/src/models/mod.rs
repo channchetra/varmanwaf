@@ -56,14 +56,21 @@ pub use api_protection::{
     control_plane_access_logs as control_plane_access_log,
 };
 pub use certificates::site_certificates;
+pub use config_versions as config_version;
 pub use control_plane_tls::{
     control_plane_certificates as control_plane_certificate,
     source as tls_source,
 };
 pub use host_samples::host_samples as host_sample;
+pub use instance_settings::instance_settings as instance_setting;
+pub use login_histories::{geo_source, login_history};
 pub use mtls::{
     ca_source, client_cert_status, mtls_cas as mtls_ca,
     mtls_client_certificates as mtls_client_certificate,
+};
+pub use notifications::{
+    channel_kind, event_type, notification_channels as notification_channel,
+    notification_events as notification_event, severity,
 };
 pub use passkeys::{
     passkey_credentials as passkey_credential, passkey_states as passkey_state,
@@ -78,6 +85,7 @@ pub use security_events::{
 pub use sites::{
     acme_challenge, route_match_type, site_routes, site_ssl, site_status,
     site_upstream_pools, site_upstreams, sites as site, tls_version,
+    trusted_header,
 };
 pub use users::{api_keys as api_key, permission, role, users as user};
 

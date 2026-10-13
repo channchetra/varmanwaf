@@ -24,7 +24,7 @@ pub mod resources;
 pub mod tools;
 
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
@@ -36,13 +36,22 @@ use crate::api::state::AppState;
 pub use auth::McpPrincipal;
 use tools::ToolContext;
 
+/// Maximum number of JSON-RPC messages accepted in one batch request.
+pub const MAX_BATCH_SIZE: usize = 16;
+
+/// Maximum accepted request body (`tools/call` arguments are small JSON
+/// documents; the control plane never ships bulk data through MCP).
+pub const MAX_BODY_BYTES: usize = 256 * 1024;
+
 /// Routes contributed to the root router (outside `/api/v1`, so the path is
 /// exactly `/mcp`).
 pub fn routes() -> Router<AppState> {
-    Router::new().route(
-        "/mcp",
-        post(handle_post).get(handle_get).delete(handle_delete),
-    )
+    Router::new()
+        .route(
+            "/mcp",
+            post(handle_post).get(handle_get).delete(handle_delete),
+        )
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
 }
 
 /// An error that aborts a stateless method.
@@ -59,6 +68,29 @@ impl RpcError {
             message: message.into(),
         }
     }
+
+    fn invalid_request(message: impl Into<String>) -> Self {
+        Self {
+            code: protocol::INVALID_REQUEST,
+            message: message.into(),
+        }
+    }
+}
+
+/// Validates a batch envelope before any message is dispatched: empty and
+/// oversized batches are rejected with a single error, per the JSON-RPC
+/// guidance for batches beyond the server's processing capacity.
+fn validate_batch(items: &[Value]) -> Result<(), RpcError> {
+    if items.is_empty() {
+        return Err(RpcError::invalid_request("empty JSON-RPC batch"));
+    }
+    if items.len() > MAX_BATCH_SIZE {
+        return Err(RpcError::invalid_request(format!(
+            "JSON-RPC batch exceeds the limit of {} messages",
+            MAX_BATCH_SIZE
+        )));
+    }
+    Ok(())
 }
 
 /// Handles the methods that need no database access. `None` means the method
@@ -242,14 +274,11 @@ pub async fn handle_post(
     };
 
     let response = match message {
-        Value::Array(items) => {
-            if items.is_empty() {
-                Some(protocol::error(
-                    &Value::Null,
-                    protocol::INVALID_REQUEST,
-                    "empty JSON-RPC batch",
-                ))
-            } else {
+        Value::Array(items) => match validate_batch(&items) {
+            Err(err) => {
+                Some(protocol::error(&Value::Null, err.code, err.message))
+            },
+            Ok(()) => {
                 let mut replies = Vec::with_capacity(items.len());
                 for item in &items {
                     if let Some(reply) =
@@ -259,7 +288,7 @@ pub async fn handle_post(
                     }
                 }
                 (!replies.is_empty()).then_some(Value::Array(replies))
-            }
+            },
         },
         single => handle_message(&state, &principal, &single).await,
     };
@@ -354,5 +383,24 @@ mod tests {
 
         let failed = tool_content(&json!({ "error": "boom" }), true);
         assert_eq!(failed["isError"], true);
+    }
+
+    #[test]
+    fn batch_envelope_is_validated() {
+        let one = [json!({ "method": "ping", "id": 1 })];
+        assert!(validate_batch(&one).is_ok());
+
+        let empty: Vec<Value> = Vec::new();
+        assert_eq!(
+            validate_batch(&empty).unwrap_err().code,
+            protocol::INVALID_REQUEST
+        );
+
+        let oversized: Vec<Value> = (0..=MAX_BATCH_SIZE)
+            .map(|i| json!({ "method": "ping", "id": i }))
+            .collect();
+        let err = validate_batch(&oversized).unwrap_err();
+        assert_eq!(err.code, protocol::INVALID_REQUEST);
+        assert!(err.message.contains(&MAX_BATCH_SIZE.to_string()));
     }
 }

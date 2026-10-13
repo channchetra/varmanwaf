@@ -153,7 +153,7 @@ async fn update(
         "site basic auth updated"
     );
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(Json(to_view(&updated)?))
 }

@@ -6,7 +6,10 @@
 //!   key's `read` / `write` permissions deciding what the session may call.
 //!   `write` additionally requires the key's owner to be an administrator.
 //! - a console **JWT** — the same tokens the dashboard uses; `admin` maps to
-//!   read+write, `viewer` to read-only.
+//!   read+write, `viewer` to read-only. Beyond the signature, the account
+//!   row is re-checked on every request exactly like the REST API: disabled
+//!   accounts, revoked sessions (token version) and the forced first-login
+//!   password change all refuse access here too.
 //!
 //! Everything else (agent tokens, expired keys, unknown roles) is rejected
 //! with `401`, matching the REST API.
@@ -21,7 +24,8 @@ use uuid::Uuid;
 use crate::api::error::{error_response, ApiError};
 use crate::api::keys::authenticate_api_key;
 use crate::api::state::AppState;
-use crate::auth::jwt::{verify_user_token, Claims};
+use crate::auth::jwt::verify_user_token;
+use crate::auth::middleware::{authenticate_user, AuthError, AuthUser};
 use crate::models::{api_key, permission, role, user};
 
 /// Identity behind an MCP request, with its effective capabilities.
@@ -102,6 +106,15 @@ fn map_key_error(err: ApiError) -> McpAuthError {
     }
 }
 
+/// Maps a REST auth failure onto the MCP rejection: policy rejections
+/// (disabled account) keep their `403`, identity failures are `401`.
+fn map_auth_error(err: AuthError) -> McpAuthError {
+    match err {
+        AuthError::Forbidden(message) => McpAuthError::forbidden(message),
+        other => McpAuthError::unauthorized(other.to_string()),
+    }
+}
+
 /// Builds the principal for an API-key caller.
 fn key_principal(
     key: &api_key::Model,
@@ -125,24 +138,20 @@ fn key_principal(
     })
 }
 
-/// Builds the principal for a JWT caller.
-fn jwt_principal(claims: &Claims) -> Result<McpPrincipal, McpAuthError> {
-    if !role::is_valid(&claims.role) {
-        return Err(McpAuthError::unauthorized(format!(
-            "unknown role '{}'",
-            claims.role
-        )));
+/// Builds the principal for a JWT caller from the freshly loaded account.
+fn jwt_principal(user: &AuthUser) -> Result<McpPrincipal, McpAuthError> {
+    if user.must_change_password {
+        return Err(McpAuthError::forbidden(
+            "replace the initial password before using MCP",
+        ));
     }
-    let subject = claims.subject_id().map_err(|err| {
-        McpAuthError::unauthorized(format!("subject is not a UUID: {err}"))
-    })?;
     Ok(McpPrincipal {
-        subject,
-        email: claims.email.clone(),
-        label: claims.email.clone(),
+        subject: user.id,
+        email: user.email.clone(),
+        label: user.email.clone(),
         key_id: None,
         can_read: true,
-        can_write: claims.role == role::ADMIN,
+        can_write: user.is_admin(),
     })
 }
 
@@ -185,7 +194,10 @@ where
         let claims = verify_user_token(token, app_state.jwt_secret()).map_err(
             |err| McpAuthError::unauthorized(format!("invalid token: {err}")),
         )?;
-        jwt_principal(&claims)
+        let user = authenticate_user(&app_state.db, &claims)
+            .await
+            .map_err(map_auth_error)?;
+        jwt_principal(&user)
     }
 }
 
@@ -215,6 +227,9 @@ mod tests {
             password_hash: String::new(),
             name: None,
             role: role.to_string(),
+            disabled: false,
+            must_change_password: false,
+            token_version: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -260,23 +275,23 @@ mod tests {
 
     #[test]
     fn roles_map_onto_capabilities() {
-        let mut claims = Claims {
-            sub: Uuid::new_v4().to_string(),
-            email: "admin@example.com".into(),
-            role: role::ADMIN.into(),
-            exp: 0,
-            iat: 0,
-            iss: String::new(),
-            typ: String::new(),
-        };
-        assert!(jwt_principal(&claims).unwrap().can_write);
+        let admin =
+            AuthUser::new(Uuid::new_v4(), "admin@example.com", role::ADMIN);
+        assert!(jwt_principal(&admin).unwrap().can_write);
 
-        claims.role = role::VIEWER.into();
-        let viewer = jwt_principal(&claims).unwrap();
+        let viewer =
+            AuthUser::new(Uuid::new_v4(), "v@example.com", role::VIEWER);
+        let viewer = jwt_principal(&viewer).unwrap();
         assert!(viewer.can_read);
         assert!(!viewer.can_write);
+    }
 
-        claims.role = "agent".into();
-        assert!(jwt_principal(&claims).is_err());
+    #[test]
+    fn forced_password_change_blocks_mcp() {
+        let mut user =
+            AuthUser::new(Uuid::new_v4(), "fresh@example.com", role::ADMIN);
+        user.must_change_password = true;
+        let err = jwt_principal(&user).unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
     }
 }

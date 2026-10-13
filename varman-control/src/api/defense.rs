@@ -39,6 +39,10 @@ pub struct UpdateDefenseRequest {
     /// When present, sets the observation mode switch.
     #[serde(default)]
     pub observation_mode: Option<bool>,
+    /// When present, sets the default disconnected behaviour for sites
+    /// whose `failover_policy` is `inherit`.
+    #[serde(default)]
+    pub default_fail_open: Option<bool>,
 }
 
 /// `GET /api/v1/settings/defense` — administrators only.
@@ -58,28 +62,35 @@ async fn update(
 ) -> Result<Json<defense_settings::Model>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
 
-    let Some(observation_mode) = payload.observation_mode else {
+    if payload.observation_mode.is_none() && payload.default_fail_open.is_none()
+    {
         return Err(ApiError::BadRequest(
-            "provide observation_mode".to_string(),
+            "provide observation_mode or default_fail_open".to_string(),
         ));
-    };
+    }
 
     let row = load(&state.db).await?;
     let mut active: defense_settings::ActiveModel = row.into();
-    active.observation_mode = Set(observation_mode);
+    if let Some(observation_mode) = payload.observation_mode {
+        active.observation_mode = Set(observation_mode);
+    }
+    if let Some(default_fail_open) = payload.default_fail_open {
+        active.default_fail_open = Set(default_fail_open);
+    }
     active.updated_at = Set(Utc::now());
 
     let updated = active.update(&state.db).await?;
     tracing::info!(
         actor = %current.id,
         observation_mode = updated.observation_mode,
+        default_fail_open = updated.default_fail_open,
         "defense settings updated"
     );
 
     // The flag rides inside every rule bundle, so each site's fingerprint
     // changes; push the new configuration now instead of waiting for the
     // watcher or the next periodic sync.
-    notify_all_config_changed(&state).await;
+    notify_all_config_changed(&state, None).await;
 
     Ok(Json(updated))
 }
@@ -109,7 +120,7 @@ pub async fn start_watch_task(state: AppState) -> tokio::task::JoinHandle<()> {
                 observation_mode = row.observation_mode,
                 "defense settings changed outside the API, pushing to agents"
             );
-            notify_all_config_changed(&state).await;
+            notify_all_config_changed(&state, None).await;
         }
     })
 }
@@ -131,6 +142,7 @@ pub async fn load(
     let insert = defense_settings::ActiveModel {
         id: Set(SETTINGS_ID),
         observation_mode: Set(false),
+        default_fail_open: Set(true),
         updated_at: Set(Utc::now()),
     };
     let ignore_conflict = OnConflict::column(defense_settings::Column::Id)

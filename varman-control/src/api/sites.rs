@@ -8,10 +8,11 @@ use axum::Json;
 use axum::Router;
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::api::common::{
@@ -27,6 +28,7 @@ use crate::models::{
     acme_challenge, cache_rules, ip_groups, rate_limit_rules, route_match_type,
     rule, rule_groups, site, site_certificates, site_routes, site_ssl,
     site_status, site_upstream_pools, site_upstreams, tls_version,
+    trusted_header,
 };
 
 /// Public representation of a site.
@@ -41,6 +43,25 @@ pub struct SiteResponse {
     pub plan: String,
     /// Disk budget, in MiB, the agents may use for this site's cache.
     pub cache_quota_mb: i32,
+    /// Site-level single-file cache cap in MiB; `None` follows the global
+    /// ceiling.
+    pub cache_max_file_size_mb: Option<i32>,
+    /// Per-content-type single-file caps in MiB, keyed by
+    /// `html/css/js/image/font/media/other`; missing keys follow
+    /// `cache_max_file_size_mb`.
+    pub cache_type_limits_mb: Option<HashMap<String, i32>>,
+    /// Security features key on the forwarded-header client IP.
+    pub trust_proxy_headers: bool,
+    /// Lower-case forwarded header the client IP is read from.
+    pub trusted_header: String,
+    /// Trust the last XFF entry (nearest proxy) instead of the first.
+    pub trust_last_hop: bool,
+    /// CIDR ranges of proxies allowed to influence the resolved client IP;
+    /// an empty list trusts nothing.
+    pub trusted_proxy_ranges: Vec<String>,
+    /// IP groups whose ranges are merged into `trusted_proxy_ranges` when
+    /// the agent configuration is built.
+    pub trusted_proxy_group_ids: Vec<Uuid>,
     pub user_id: Uuid,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -56,6 +77,15 @@ impl From<site::Model> for SiteResponse {
             status: model.status,
             plan: model.plan,
             cache_quota_mb: model.cache_quota_mb,
+            cache_max_file_size_mb: model.cache_max_file_size_mb,
+            cache_type_limits_mb: model
+                .cache_type_limits_mb
+                .and_then(|value| serde_json::from_value(value).ok()),
+            trust_proxy_headers: model.trust_proxy_headers,
+            trusted_header: model.trusted_header,
+            trust_last_hop: model.trust_last_hop,
+            trusted_proxy_ranges: model.trusted_proxy_ranges,
+            trusted_proxy_group_ids: model.trusted_proxy_group_ids,
             user_id: model.user_id,
             created_at: model.created_at,
             updated_at: model.updated_at,
@@ -187,6 +217,25 @@ pub struct UpdateSiteRequest {
     pub status: Option<String>,
     #[serde(default)]
     pub plan: Option<String>,
+    /// Security features key on the forwarded-header client IP.
+    #[serde(default)]
+    pub trust_proxy_headers: Option<bool>,
+    /// Lower-case forwarded header the client IP is read from; an empty
+    /// string resets it to `x-forwarded-for`.
+    #[serde(default)]
+    pub trusted_header: Option<String>,
+    /// Trust the last XFF entry (nearest proxy) instead of the first.
+    #[serde(default)]
+    pub trust_last_hop: Option<bool>,
+    /// CIDR ranges of proxies allowed to influence the resolved client IP;
+    /// an empty list trusts nothing. Entries are validated as CIDR (a bare
+    /// IP expands to a /32 or /128).
+    #[serde(default)]
+    pub trusted_proxy_ranges: Option<Vec<String>>,
+    /// IP groups whose ranges merge into the effective trusted-proxy scope.
+    /// Every id must reference an existing IP group.
+    #[serde(default)]
+    pub trusted_proxy_group_ids: Option<Vec<Uuid>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -233,6 +282,28 @@ pub struct CreatePoolRequest {
     /// `None` keeps the proxy default (certificate verification on).
     #[serde(default)]
     pub verify_cert: Option<bool>,
+    /// Enable an active HTTP health check for this pool's nodes. Off keeps
+    /// the agent's data plane on its default bare TCP probe.
+    #[serde(default)]
+    pub health_check_enabled: Option<bool>,
+    /// Probe path; must start with `/`. Default `/`.
+    #[serde(default)]
+    pub health_check_path: Option<String>,
+    /// Seconds between probe rounds (5-3600; the data plane aligns to 10s
+    /// grid steps). Default 10.
+    #[serde(default)]
+    pub health_check_interval_seconds: Option<i32>,
+    /// Probe connect/read timeout in milliseconds (100-30000). Default 3000.
+    #[serde(default)]
+    pub health_check_timeout_ms: Option<i32>,
+    /// Consecutive failed probes before a node is marked unhealthy (1-10).
+    /// Default 2.
+    #[serde(default)]
+    pub health_check_unhealthy_threshold: Option<i32>,
+    /// Consecutive successful probes before a node is marked healthy (1-10).
+    /// Default 1.
+    #[serde(default)]
+    pub health_check_healthy_threshold: Option<i32>,
 }
 
 fn default_lb_algorithm() -> String {
@@ -250,6 +321,93 @@ pub struct UpdatePoolRequest {
     pub sni: Option<String>,
     #[serde(default)]
     pub verify_cert: Option<bool>,
+    #[serde(default)]
+    pub health_check_enabled: Option<bool>,
+    /// `Some("")` resets the probe path to `/`.
+    #[serde(default)]
+    pub health_check_path: Option<String>,
+    #[serde(default)]
+    pub health_check_interval_seconds: Option<i32>,
+    #[serde(default)]
+    pub health_check_timeout_ms: Option<i32>,
+    #[serde(default)]
+    pub health_check_unhealthy_threshold: Option<i32>,
+    #[serde(default)]
+    pub health_check_healthy_threshold: Option<i32>,
+}
+
+/// A pool's health check posture with defaults applied, ready for storage
+/// and protocol translation. `enabled = false` keeps the other values (they
+/// ride along so flipping the switch later needs no re-entry).
+#[derive(Debug, Clone)]
+pub(crate) struct PoolHealthCheck {
+    pub enabled: bool,
+    pub path: String,
+    pub interval_seconds: i32,
+    pub timeout_ms: i32,
+    pub unhealthy_threshold: i32,
+    pub healthy_threshold: i32,
+}
+
+impl PoolHealthCheck {
+    pub(crate) fn default_values() -> Self {
+        Self {
+            enabled: false,
+            path: "/".to_string(),
+            interval_seconds: 10,
+            timeout_ms: 3000,
+            unhealthy_threshold: 2,
+            healthy_threshold: 1,
+        }
+    }
+
+    /// Overlays the optional request fields onto `self`.
+    pub(crate) fn apply_update(&mut self, payload: &UpdatePoolRequest) {
+        if let Some(enabled) = payload.health_check_enabled {
+            self.enabled = enabled;
+        }
+        if let Some(path) = non_empty(&payload.health_check_path) {
+            self.path = path;
+        }
+        if let Some(v) = payload.health_check_interval_seconds {
+            self.interval_seconds = v;
+        }
+        if let Some(v) = payload.health_check_timeout_ms {
+            self.timeout_ms = v;
+        }
+        if let Some(v) = payload.health_check_unhealthy_threshold {
+            self.unhealthy_threshold = v;
+        }
+        if let Some(v) = payload.health_check_healthy_threshold {
+            self.healthy_threshold = v;
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), ApiError> {
+        let path = &self.path;
+        if !path.starts_with('/')
+            || path.contains([' ', '?', '#'])
+            || path.len() > 255
+        {
+            return Err(ApiError::BadRequest(
+                "health_check_path must start with '/', without spaces, '?' \
+                 or '#', and be at most 255 characters"
+                    .to_string(),
+            ));
+        }
+        let in_range = |name: &str, v: i32, min: i32, max: i32| {
+            (min..=max).contains(&v).then_some(()).ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "health_check {name} must be between {min} and {max}"
+                ))
+            })
+        };
+        in_range("interval_seconds", self.interval_seconds, 5, 3600)?;
+        in_range("timeout_ms", self.timeout_ms, 100, 30_000)?;
+        in_range("unhealthy_threshold", self.unhealthy_threshold, 1, 10)?;
+        in_range("healthy_threshold", self.healthy_threshold, 1, 10)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -446,14 +604,22 @@ impl TlsPosture {
             next.hsts_max_age = age;
         }
 
-        let (Some(min), Some(max)) = (
-            tls_version::rank(&next.min_tls_version),
-            next.max_tls_version.as_deref().and_then(tls_version::rank),
-        ) else {
+        let Some(min) = tls_version::rank(&next.min_tls_version) else {
             return Err(ApiError::BadRequest(format!(
                 "unsupported TLS version (supported: {})",
                 tls_version::ALL.join(", ")
             )));
+        };
+        // An absent upper bound is the "no ceiling" default a fresh site_ssl
+        // row carries: every version up to the newest one is acceptable.
+        let max = match next.max_tls_version.as_deref() {
+            None => tls_version::ALL.len() - 1,
+            Some(raw) => tls_version::rank(raw).ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "unsupported TLS version (supported: {})",
+                    tls_version::ALL.join(", ")
+                ))
+            })?,
         };
         if min > max {
             return Err(ApiError::BadRequest(format!(
@@ -498,20 +664,23 @@ impl TlsPosture {
 
 /// Applies a TLS posture request to the site's `site_ssl` row, creating the row
 /// when the site has none. Returns the stored posture.
-pub(crate) async fn save_tls_posture(
-    state: &AppState,
+///
+/// Takes the connection explicitly so callers can run it inside a transaction
+/// (a certificate created with `activate` must not survive a failed posture).
+pub(crate) async fn save_tls_posture<C: ConnectionTrait>(
+    db: &C,
     site: &site::Model,
     req: &TlsPostureRequest,
 ) -> Result<TlsPosture, ApiError> {
     let existing = site_ssl::Entity::find()
         .filter(site_ssl::Column::SiteId.eq(site.id))
-        .one(&state.db)
+        .one(db)
         .await?;
 
     if let Some(cert_id) = req.certificate_id {
         let owned = site_certificates::Entity::find_by_id(cert_id)
             .filter(site_certificates::Column::SiteId.eq(site.id))
-            .one(&state.db)
+            .one(db)
             .await?
             .is_some();
         if !owned {
@@ -531,7 +700,7 @@ pub(crate) async fn save_tls_posture(
         Some(row) => {
             let mut active: site_ssl::ActiveModel = row.into();
             next.apply_to(&mut active);
-            active.update(&state.db).await?;
+            active.update(db).await?;
         },
         None => {
             let mut active = site_ssl::ActiveModel {
@@ -562,7 +731,7 @@ pub(crate) async fn save_tls_posture(
                 created_at: Set(Utc::now()),
             };
             next.apply_to(&mut active);
-            active.insert(&state.db).await?;
+            active.insert(db).await?;
         },
     }
 
@@ -733,6 +902,14 @@ async fn create(
         status: Set(status),
         plan: Set(plan),
         cache_quota_mb: Set(crate::defaults::DEFAULT_CACHE_QUOTA_MB),
+        cache_max_file_size_mb: Set(None),
+        cache_type_limits_mb: Set(None),
+        trust_proxy_headers: Set(false),
+        trusted_header: Set(crate::models::trusted_header::DEFAULT.to_string()),
+        trust_last_hop: Set(true),
+        failover_policy: Set("inherit".to_string()),
+        trusted_proxy_ranges: Set(Vec::new()),
+        trusted_proxy_group_ids: Set(Vec::new()),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
     }
@@ -741,6 +918,7 @@ async fn create(
 
     // Every site starts with a default origin pool; the first origin node
     // goes into it.
+    let defaults = PoolHealthCheck::default_values();
     let pool = site_upstream_pools::ActiveModel {
         id: Set(Uuid::new_v4()),
         site_id: Set(id),
@@ -750,7 +928,13 @@ async fn create(
             .upstream_tls
             .filter(|tls| *tls)
             .map(|_| origin_host(&upstream_address).to_string())),
-        verify_cert: Set(None),
+        verify_cert: Set(Some(false)),
+        health_check_enabled: Set(defaults.enabled),
+        health_check_path: Set(defaults.path.clone()),
+        health_check_interval_seconds: Set(defaults.interval_seconds),
+        health_check_timeout_ms: Set(defaults.timeout_ms),
+        health_check_unhealthy_threshold: Set(defaults.unhealthy_threshold),
+        health_check_healthy_threshold: Set(defaults.healthy_threshold),
         is_default: Set(true),
         created_at: Set(timestamp),
     }
@@ -776,8 +960,42 @@ async fn create(
         tracing::error!(%id, error = %err, "failed to seed built-in rules");
     }
 
+    // Every new site gets an SSL row with https enabled: without it the data
+    // plane's `ssl.enabled` gate stays closed and a later ACME request would
+    // sit pending forever - the user would have to know to flip a hidden
+    // switch before certificate issuance can even start.
+    site_ssl::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        site_id: Set(id),
+        cert_pem: Set(None),
+        key_pem: Set(None),
+        issuer: Set(None),
+        domain: Set(domain.clone()),
+        expires_at: Set(None),
+        auto_renew: Set(true),
+        acme_email: Set(None),
+        acme_challenge_type: Set(None),
+        acme_dns_provider: Set(None),
+        acme_dns_config: Set(None),
+        https_enabled: Set(true),
+        min_tls_version: Set(tls_version::TLS_12.to_string()),
+        max_tls_version: Set(None),
+        self_signed: Set(false),
+        certificate_id: Set(None),
+        mtls_enabled: Set(false),
+        mtls_client_ca: Set(None),
+        mtls_organization: Set(None),
+        mtls_require_client_cert: Set(false),
+        hsts_enabled: Set(false),
+        hsts_max_age: Set(0),
+        always_use_https: Set(false),
+        created_at: Set(timestamp),
+    }
+    .insert(&state.db)
+    .await?;
+
     tracing::info!(%id, %domain, upstream = %upstream_address, owner = %current.id, "site created");
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok((StatusCode::CREATED, Json(SiteResponse::from(model))).into_response())
 }
@@ -888,11 +1106,66 @@ async fn update(
         }
         active.plan = Set(plan);
     }
+    if let Some(value) = payload.trust_proxy_headers {
+        active.trust_proxy_headers = Set(value);
+    }
+    if let Some(header) = payload.trusted_header {
+        let header = header.trim().to_ascii_lowercase();
+        if !header.is_empty() && !trusted_header::is_valid(&header) {
+            return Err(ApiError::BadRequest(format!(
+                "unknown trusted header '{header}'"
+            )));
+        }
+        active.trusted_header = Set(if header.is_empty() {
+            trusted_header::DEFAULT.to_string()
+        } else {
+            header
+        });
+    }
+    if let Some(value) = payload.trust_last_hop {
+        active.trust_last_hop = Set(value);
+    }
+    if let Some(ranges) = &payload.trusted_proxy_ranges {
+        let mut normalized = Vec::with_capacity(ranges.len());
+        for range in ranges {
+            match parse_proxy_range(range) {
+                Some(parsed) => {
+                    if !normalized.contains(&parsed) {
+                        normalized.push(parsed);
+                    }
+                },
+                None => {
+                    return Err(ApiError::BadRequest(format!(
+                        "'{range}' is not a valid IP or CIDR range"
+                    )));
+                },
+            }
+        }
+        active.trusted_proxy_ranges = Set(normalized);
+    }
+    if let Some(group_ids) = &payload.trusted_proxy_group_ids {
+        let mut normalized: Vec<Uuid> = Vec::with_capacity(group_ids.len());
+        for group_id in group_ids {
+            let exists = ip_groups::Entity::find_by_id(*group_id)
+                .one(&state.db)
+                .await?
+                .is_some();
+            if !exists {
+                return Err(ApiError::BadRequest(format!(
+                    "IP group {group_id} does not exist"
+                )));
+            }
+            if !normalized.contains(group_id) {
+                normalized.push(*group_id);
+            }
+        }
+        active.trusted_proxy_group_ids = Set(normalized);
+    }
     active.updated_at = Set(Utc::now());
 
     let updated = active.update(&state.db).await?;
     tracing::info!(%id, "site updated");
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(Json(updated.into()))
 }
@@ -910,7 +1183,7 @@ async fn remove(
     site::Entity::delete_by_id(id).exec(&state.db).await?;
 
     tracing::info!(%id, owner = %current.id, "site deleted");
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -963,7 +1236,7 @@ async fn create_upstream(
 
     tracing::info!(site_id = %id, upstream = %model.id, pool = %pool_id, "upstream added");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok((StatusCode::CREATED, Json(model)).into_response())
 }
@@ -1018,7 +1291,7 @@ async fn update_upstream(
 
     tracing::info!(site_id = %id, upstream = %target, "upstream updated");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(Json(updated))
 }
@@ -1043,7 +1316,7 @@ async fn delete_upstream(
 
     tracing::info!(site_id = %id, upstream = %target, "upstream removed");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -1084,13 +1357,41 @@ async fn create_pool(
     let sni = non_empty(&payload.sni);
     validate_pool(&name, &lb_algorithm, sni.as_deref())?;
 
+    let mut health_check = PoolHealthCheck::default_values();
+    health_check.enabled = payload.health_check_enabled.unwrap_or(false);
+    if let Some(path) = non_empty(&payload.health_check_path) {
+        health_check.path = path;
+    }
+    if let Some(v) = payload.health_check_interval_seconds {
+        health_check.interval_seconds = v;
+    }
+    if let Some(v) = payload.health_check_timeout_ms {
+        health_check.timeout_ms = v;
+    }
+    if let Some(v) = payload.health_check_unhealthy_threshold {
+        health_check.unhealthy_threshold = v;
+    }
+    if let Some(v) = payload.health_check_healthy_threshold {
+        health_check.healthy_threshold = v;
+    }
+    health_check.validate()?;
+
     let model = site_upstream_pools::ActiveModel {
         id: Set(Uuid::new_v4()),
         site_id: Set(id),
         name: Set(name),
         lb_algorithm: Set(lb_algorithm),
         sni: Set(sni),
-        verify_cert: Set(payload.verify_cert),
+        // Origin certificate verification is opt-in: self-signed origins are
+        // the common case, so a pool starts lenient and the operator flips
+        // "must trust origin certificate" for strict validation.
+        verify_cert: Set(payload.verify_cert.or(Some(false))),
+        health_check_enabled: Set(health_check.enabled),
+        health_check_path: Set(health_check.path),
+        health_check_interval_seconds: Set(health_check.interval_seconds),
+        health_check_timeout_ms: Set(health_check.timeout_ms),
+        health_check_unhealthy_threshold: Set(health_check.unhealthy_threshold),
+        health_check_healthy_threshold: Set(health_check.healthy_threshold),
         is_default: Set(false),
         created_at: Set(Utc::now()),
     }
@@ -1099,7 +1400,7 @@ async fn create_pool(
 
     tracing::info!(site_id = %id, pool = %model.id, "origin pool added");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok((StatusCode::CREATED, Json(model)).into_response())
 }
@@ -1123,6 +1424,20 @@ async fn update_pool(
             ApiError::NotFound(format!("pool {target} not found"))
         })?;
 
+    // Overlay the patch on the current health-check configuration and
+    // validate it before anything is written: a rejected update must not
+    // persist a half-applied or invalid row.
+    let mut health_check = PoolHealthCheck {
+        enabled: row.health_check_enabled,
+        path: row.health_check_path.clone(),
+        interval_seconds: row.health_check_interval_seconds,
+        timeout_ms: row.health_check_timeout_ms,
+        unhealthy_threshold: row.health_check_unhealthy_threshold,
+        healthy_threshold: row.health_check_healthy_threshold,
+    };
+    health_check.apply_update(&payload);
+    health_check.validate()?;
+
     let mut active: site_upstream_pools::ActiveModel = row.into();
     if let Some(name) = non_empty(&payload.name) {
         active.name = Set(name);
@@ -1137,6 +1452,13 @@ async fn update_pool(
     if let Some(verify_cert) = payload.verify_cert {
         active.verify_cert = Set(Some(verify_cert));
     }
+    active.health_check_enabled = Set(health_check.enabled);
+    active.health_check_path = Set(health_check.path);
+    active.health_check_interval_seconds = Set(health_check.interval_seconds);
+    active.health_check_timeout_ms = Set(health_check.timeout_ms);
+    active.health_check_unhealthy_threshold =
+        Set(health_check.unhealthy_threshold);
+    active.health_check_healthy_threshold = Set(health_check.healthy_threshold);
 
     let updated = active.update(&state.db).await?;
     validate_pool(
@@ -1147,7 +1469,7 @@ async fn update_pool(
 
     tracing::info!(site_id = %id, pool = %target, "origin pool updated");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(Json(updated))
 }
@@ -1201,7 +1523,7 @@ async fn delete_pool(
 
     tracing::info!(site_id = %id, pool = %target, "origin pool removed");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -1260,7 +1582,7 @@ async fn create_route(
 
     tracing::info!(site_id = %id, route = %model.id, "route added");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok((StatusCode::CREATED, Json(model)).into_response())
 }
@@ -1325,7 +1647,7 @@ async fn update_route(
 
     tracing::info!(site_id = %id, route = %target, "route updated");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(Json(updated))
 }
@@ -1350,7 +1672,7 @@ async fn delete_route(
 
     tracing::info!(site_id = %id, route = %target, "route removed");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -1418,7 +1740,7 @@ async fn upsert_ssl(
     {
         tls.https_enabled = Some(true);
     }
-    let posture = save_tls_posture(&state, &site, &tls).await?;
+    let posture = save_tls_posture(&state.db, &site, &tls).await?;
 
     let existing = site_ssl::Entity::find()
         .filter(site_ssl::Column::SiteId.eq(id))
@@ -1492,7 +1814,7 @@ async fn upsert_ssl(
 
     // Bump the site so that agents notice the configuration changed.
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(Json(model.into()))
 }
@@ -1513,7 +1835,7 @@ async fn delete_ssl(
 
     tracing::info!(site_id = %id, "SSL configuration removed");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -1849,6 +2171,27 @@ fn origin_host(address: &str) -> &str {
     host.trim_start_matches('[').trim_end_matches(']')
 }
 
+/// Normalizes a proxy-trust entry into its canonical CIDR form.
+///
+/// A bare IP becomes a host range (`/32` for IPv4, `/128` for IPv6), which is
+/// what "trust exactly this proxy" reads like; a CIDR has its host bits
+/// masked away (so `10.0.0.5/24` renders as `10.0.0.0/24`) and duplicates
+/// collapse at the caller. `None` marks invalid input.
+pub fn parse_proxy_range(raw: &str) -> Option<String> {
+    let value = raw.trim();
+    if value.contains('/') {
+        value
+            .parse::<ipnet::IpNet>()
+            .ok()
+            .map(|net| net.trunc().to_string())
+    } else {
+        value
+            .parse::<std::net::IpAddr>()
+            .ok()
+            .map(|ip| ipnet::IpNet::from(ip).to_string())
+    }
+}
+
 /// Updates `sites.updated_at` so agents see a fresh configuration fingerprint.
 pub async fn touch_site(
     state: &AppState,
@@ -1868,6 +2211,34 @@ pub async fn touch_site(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proxy_ranges_normalize_to_canonical_cidr() {
+        assert_eq!(
+            parse_proxy_range("10.0.0.1").as_deref(),
+            Some("10.0.0.1/32")
+        );
+        assert_eq!(
+            parse_proxy_range(" 10.0.0.0/24 ").as_deref(),
+            Some("10.0.0.0/24")
+        );
+        assert_eq!(
+            parse_proxy_range("2001:db8::1").as_deref(),
+            Some("2001:db8::1/128")
+        );
+        assert_eq!(
+            parse_proxy_range("2001:db8::/32").as_deref(),
+            Some("2001:db8::/32")
+        );
+        // A host bit set inside the prefix is masked away.
+        assert_eq!(
+            parse_proxy_range("10.0.0.5/24").as_deref(),
+            Some("10.0.0.0/24")
+        );
+        assert!(parse_proxy_range("not-an-ip").is_none());
+        assert!(parse_proxy_range("10.0.0.0/33").is_none());
+        assert!(parse_proxy_range("").is_none());
+    }
 
     #[test]
     fn origin_addresses_are_normalized_to_host_port() {
@@ -1919,5 +2290,166 @@ mod tests {
         );
         assert_eq!(split_origin_host_port("[::1]"), Some(("::1", None)));
         assert_eq!(split_origin_host_port("::1"), None);
+    }
+
+    #[test]
+    fn pool_health_check_defaults_apply_and_validate() {
+        // No fields: everything falls back to the documented defaults and
+        // validates even while disabled.
+        let mut hc = PoolHealthCheck::default_values();
+        hc.validate().expect("defaults must validate");
+
+        // Update overlay: only the given fields change; the path keeps the
+        // caller's spelling and must still start with '/'.
+        let payload = UpdatePoolRequest {
+            health_check_enabled: Some(true),
+            health_check_path: Some("/healthz".to_string()),
+            health_check_interval_seconds: Some(30),
+            ..Default::default()
+        };
+        hc.apply_update(&payload);
+        assert!(hc.enabled);
+        assert_eq!(hc.path, "/healthz");
+        assert_eq!(hc.interval_seconds, 30);
+        assert_eq!(hc.timeout_ms, 3000);
+        assert_eq!(hc.unhealthy_threshold, 2);
+        assert_eq!(hc.healthy_threshold, 1);
+        hc.validate().expect("the overlaid posture must validate");
+
+        // A path without the leading slash is rejected, not normalized.
+        let mut hc = PoolHealthCheck::default_values();
+        hc.apply_update(&UpdatePoolRequest {
+            health_check_path: Some("healthz".to_string()),
+            ..Default::default()
+        });
+        assert!(hc.validate().is_err());
+    }
+
+    #[test]
+    fn pool_health_check_rejects_out_of_range_values() {
+        let cases = [
+            (
+                PoolHealthCheck {
+                    path: "no-slash".to_string(),
+                    ..PoolHealthCheck::default_values()
+                },
+                "must start with '/'",
+            ),
+            (
+                PoolHealthCheck {
+                    path: "/a b".to_string(),
+                    ..PoolHealthCheck::default_values()
+                },
+                "must start with '/'",
+            ),
+            (
+                PoolHealthCheck {
+                    path: "/a?b=1".to_string(),
+                    ..PoolHealthCheck::default_values()
+                },
+                "must start with '/'",
+            ),
+            (
+                PoolHealthCheck {
+                    interval_seconds: 4,
+                    ..PoolHealthCheck::default_values()
+                },
+                "interval_seconds must be between 5 and 3600",
+            ),
+            (
+                PoolHealthCheck {
+                    interval_seconds: 3601,
+                    ..PoolHealthCheck::default_values()
+                },
+                "interval_seconds must be between 5 and 3600",
+            ),
+            (
+                PoolHealthCheck {
+                    timeout_ms: 99,
+                    ..PoolHealthCheck::default_values()
+                },
+                "timeout_ms must be between 100 and 30000",
+            ),
+            (
+                PoolHealthCheck {
+                    timeout_ms: 30_001,
+                    ..PoolHealthCheck::default_values()
+                },
+                "timeout_ms must be between 100 and 30000",
+            ),
+            (
+                PoolHealthCheck {
+                    unhealthy_threshold: 0,
+                    ..PoolHealthCheck::default_values()
+                },
+                "unhealthy_threshold must be between 1 and 10",
+            ),
+            (
+                PoolHealthCheck {
+                    healthy_threshold: 11,
+                    ..PoolHealthCheck::default_values()
+                },
+                "healthy_threshold must be between 1 and 10",
+            ),
+        ];
+        for (hc, message) in cases {
+            let err = hc
+                .validate()
+                .expect_err("expected the invalid posture to be rejected")
+                .to_string();
+            assert!(err.contains(message), "{message}: {err}");
+        }
+    }
+
+    #[test]
+    fn pool_health_check_accepts_documented_bounds() {
+        let hc = PoolHealthCheck {
+            enabled: true,
+            path: "/healthz".to_string(),
+            interval_seconds: 3600,
+            timeout_ms: 30_000,
+            unhealthy_threshold: 10,
+            healthy_threshold: 10,
+        };
+        hc.validate().expect("upper bounds must validate");
+    }
+
+    #[test]
+    fn merged_treats_missing_max_tls_version_as_unbounded() {
+        let base = TlsPosture::unset();
+        // A fresh site_ssl row carries no max_tls_version: that is the "no
+        // ceiling" default and must not be rejected as unsupported.
+        let merged = base
+            .merged(&TlsPostureRequest {
+                https_enabled: Some(true),
+                ..Default::default()
+            })
+            .expect("an absent max_tls_version must validate");
+        assert!(merged.https_enabled);
+        assert_eq!(merged.max_tls_version, None);
+
+        // The newest version as the floor with no ceiling is valid too.
+        base.merged(&TlsPostureRequest {
+            min_tls_version: Some("1.3".to_string()),
+            ..Default::default()
+        })
+        .expect("min 1.3 with no ceiling must validate");
+
+        // An explicit ceiling that is not a known version stays rejected.
+        let err = base
+            .merged(&TlsPostureRequest {
+                max_tls_version: Some("9.9".to_string()),
+                ..Default::default()
+            })
+            .expect_err("an unknown max_tls_version must be rejected");
+        assert!(err.to_string().contains("unsupported TLS version"));
+
+        // An explicit ceiling below the floor stays rejected.
+        assert!(base
+            .merged(&TlsPostureRequest {
+                max_tls_version: Some("1.0".to_string()),
+                ..Default::default()
+            })
+            .is_err());
     }
 }

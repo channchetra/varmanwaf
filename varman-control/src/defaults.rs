@@ -61,6 +61,8 @@ pub async fn seed_ip_group_defaults(
         ip_ranges: Set(Vec::new()),
         action: Set("block".to_string()),
         is_global: Set(true),
+        subscription_kind: Set(Some("url".to_string())),
+        subscription_enabled: Set(true),
         source_url: Set(Some(CLOUDFLARE_IPS_URL.to_string())),
         sync_interval_minutes: Set(Some(1440)),
         last_synced_at: Set(None),

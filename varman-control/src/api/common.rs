@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::api::error::ApiError;
 use crate::auth::AuthUser;
-use crate::models::{acme_challenge, role, site};
+use crate::models::{acme_challenge, site};
 
 /// Default number of rows returned by a list endpoint.
 pub const DEFAULT_PAGE_SIZE: u64 = 50;
@@ -169,11 +169,20 @@ pub fn parse_optional_datetime(
     }
 }
 
-/// Guards against a `viewer` role performing a mutation.
+/// Guards against a non-admin role performing a mutation (`viewer` and
+/// `auditor` are read-only).
+///
+/// Accounts flagged `must_change_password` are also refused: the console
+/// walks them through the password change first.
 pub fn require_write(user: &AuthUser) -> Result<(), ApiError> {
-    if user.role == role::VIEWER {
+    if !user.is_admin() {
         return Err(ApiError::Forbidden(
-            "viewer accounts cannot modify resources".to_string(),
+            "this account cannot modify resources".to_string(),
+        ));
+    }
+    if user.must_change_password {
+        return Err(ApiError::Forbidden(
+            "change your password before making changes".to_string(),
         ));
     }
     Ok(())
@@ -581,6 +590,14 @@ mod tests {
             status: "active".to_string(),
             plan: "free".to_string(),
             cache_quota_mb: 1024,
+            cache_max_file_size_mb: None,
+            cache_type_limits_mb: None,
+            trust_proxy_headers: false,
+            trusted_header: crate::models::trusted_header::DEFAULT.to_string(),
+            trust_last_hop: true,
+            failover_policy: "inherit".to_string(),
+            trusted_proxy_ranges: Vec::new(),
+            trusted_proxy_group_ids: Vec::new(),
             created_at: timestamp,
             updated_at: timestamp,
         };

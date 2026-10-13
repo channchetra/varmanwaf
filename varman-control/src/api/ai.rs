@@ -1,11 +1,15 @@
 //! AI assistant endpoints: provider settings, conversations and the streaming
 //! chat turn.
 //!
-//! The assistant is an administrator feature — the provider key and the token
-//! spend are shared, and the tools it may call expose fleet-wide data. The
-//! chat endpoint answers with an SSE stream by default (`Accept:
-//! text/event-stream`); without that header it buffers the same events into
-//! one JSON object, which keeps `curl` and tests simple.
+//! Configuration (`/settings/ai*`) is administrator-only — the provider key
+//! and the token spend are shared, and the tools the assistant may call
+//! expose fleet-wide data. Conversations and the chat turn are open to every
+//! signed-in user: each conversation is owned by its creator (foreign access
+//! answers 404), write tools stay gated behind the admin role, and the chat
+//! endpoints are rate limited per user. The chat endpoint answers with an
+//! SSE stream by default (`Accept: text/event-stream`); without that header
+//! it buffers the same events into one JSON object, which keeps `curl` and
+//! tests simple.
 
 use std::convert::Infallible;
 
@@ -28,6 +32,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 use crate::ai::{self, ChatEvent, Provider, TurnRequest};
+use crate::api::ai_rate_limit;
 use crate::api::common::{parse_uuid, Page, Pagination};
 use crate::api::error::ApiError;
 use crate::api::site_basic_auth::SECRET_MASK;
@@ -35,11 +40,14 @@ use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::models::ai::MAX_TOOL_ROUNDS_LIMIT;
 use crate::models::{ai_conversation, ai_message, ai_setting};
+use crate::notify::secretbox;
 
 /// Longest user message accepted by the chat endpoint.
 const MAX_MESSAGE_CHARS: usize = 8_000;
 /// Longest manual conversation title (the column is `varchar(200)`).
 const TITLE_LIMIT: usize = 200;
+/// Longest "current page" hint a client may attach to a chat message.
+const MAX_PAGE_CONTEXT_CHARS: usize = 500;
 /// Messages returned per conversation detail response.
 const MAX_MESSAGES: u64 = 500;
 /// Events buffered between the chat loop and the HTTP response.
@@ -249,7 +257,11 @@ async fn update_settings(
     current.require_admin().map_err(ApiError::from)?;
 
     let stored = ai::load_settings(&state.db).await?;
-    let merged = apply_update(&stored, payload)?;
+    let mut merged = apply_update(&stored, payload)?;
+    // Seal the API key before it reaches the database. `apply_update`
+    // deliberately returns a plain-text merge (the test endpoint feeds the
+    // same merge straight into the provider without persisting it).
+    merged.api_key = secretbox::seal_string(&merged.api_key);
     tracing::info!(
         actor = %current.id,
         enabled = merged.enabled,
@@ -290,6 +302,10 @@ async fn test_settings(
         None => stored.clone(),
     };
     candidate.enabled = true;
+    // The stored key may be sealed (`enc:v1:`); the provider needs plain
+    // text. Clear-text legacy rows pass through untouched.
+    candidate.api_key =
+        secretbox::open_string(&candidate.api_key).unwrap_or_default();
 
     let provider = Provider::new(&candidate)
         .map_err(|err| ApiError::BadRequest(err.to_string()))?;
@@ -384,7 +400,6 @@ async fn list_conversations(
     current: AuthUser,
     Query(pagination): Query<Pagination>,
 ) -> Result<Json<Page<ConversationSummary>>, ApiError> {
-    current.require_admin().map_err(ApiError::from)?;
     let p = pagination.normalise();
 
     let query = ai_conversation::Entity::find()
@@ -407,7 +422,7 @@ async fn create_conversation(
     current: AuthUser,
     body: Option<Json<CreateConversationRequest>>,
 ) -> Result<(StatusCode, Json<ConversationSummary>), ApiError> {
-    current.require_admin().map_err(ApiError::from)?;
+    ai_rate_limit::check_user_limit("ai_create", current.id)?;
 
     let title = body
         .and_then(|Json(payload)| payload.title)
@@ -440,7 +455,6 @@ async fn show_conversation(
     current: AuthUser,
     Path(id): Path<String>,
 ) -> Result<Json<ConversationDetail>, ApiError> {
-    current.require_admin().map_err(ApiError::from)?;
     let conversation_id = parse_uuid(&id, "conversation id")?;
     let conversation =
         load_conversation(&state, &current, conversation_id).await?;
@@ -470,7 +484,6 @@ async fn delete_conversation(
     current: AuthUser,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    current.require_admin().map_err(ApiError::from)?;
     let conversation_id = parse_uuid(&id, "conversation id")?;
     let conversation =
         load_conversation(&state, &current, conversation_id).await?;
@@ -510,6 +523,12 @@ async fn load_conversation(
 #[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
     pub content: String,
+    /// Optional hint about which console page the user is looking at,
+    /// injected into this turn's system prompt only (never persisted).
+    /// Client-controlled and unprivileged: trimmed, length-capped, and not
+    /// consulted for tool authorization.
+    #[serde(default)]
+    pub page_path: Option<String>,
 }
 
 /// `POST /api/v1/ai/conversations/{id}/messages`
@@ -524,7 +543,7 @@ async fn send_message(
     headers: HeaderMap,
     Json(payload): Json<SendMessageRequest>,
 ) -> Result<Response, ApiError> {
-    current.require_admin().map_err(ApiError::from)?;
+    ai_rate_limit::check_user_limit("ai_chat", current.id)?;
     let conversation_id = parse_uuid(&id, "conversation id")?;
     load_conversation(&state, &current, conversation_id).await?;
 
@@ -539,6 +558,20 @@ async fn send_message(
             "message must be at most {MAX_MESSAGE_CHARS} characters"
         )));
     }
+    let page_context = payload
+        .page_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|hint| !hint.is_empty())
+        .map(str::to_string);
+    if let Some(hint) = &page_context {
+        if hint.chars().count() > MAX_PAGE_CONTEXT_CHARS {
+            return Err(ApiError::BadRequest(format!(
+                "page_path must be at most {MAX_PAGE_CONTEXT_CHARS} \
+                 characters"
+            )));
+        }
+    }
 
     let settings = ai::load_settings(&state.db).await?;
     if !settings.enabled {
@@ -548,10 +581,15 @@ async fn send_message(
         ));
     }
     let can_write = settings.allow_write_tools && current.is_admin();
-    let provider = Provider::new(&settings).map_err(|err| match err {
-        ai::ProviderError::Config(message) => ApiError::Conflict(message),
-        other => ApiError::Internal(other.to_string()),
-    })?;
+    // The stored key may be sealed; the provider needs plain text.
+    let mut provider_settings = settings.clone();
+    provider_settings.api_key =
+        secretbox::open_string(&settings.api_key).unwrap_or_default();
+    let provider =
+        Provider::new(&provider_settings).map_err(|err| match err {
+            ai::ProviderError::Config(message) => ApiError::Conflict(message),
+            other => ApiError::Internal(other.to_string()),
+        })?;
 
     tracing::info!(
         actor = %current.id,
@@ -569,6 +607,7 @@ async fn send_message(
             user_email: current.email.clone(),
             conversation_id,
             message: content,
+            page_context,
             can_write,
         },
         tx,

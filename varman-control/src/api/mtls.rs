@@ -292,6 +292,7 @@ async fn site_ssl_row(
 async fn sync_trust_anchor(
     state: &AppState,
     site: &crate::models::site::Model,
+    actor: Option<&str>,
 ) -> Result<(), ApiError> {
     let cas = mtls_ca::Entity::find()
         .filter(mtls_ca::Column::SiteId.eq(site.id))
@@ -329,7 +330,7 @@ async fn sync_trust_anchor(
     active.update(&state.db).await?;
 
     touch_site(state, site.id).await?;
-    notify_config_changed(state, site.id).await;
+    notify_config_changed(state, site.id, actor).await;
     Ok(())
 }
 
@@ -427,7 +428,7 @@ async fn create_ca(
     .await?;
 
     tracing::info!(site_id = %id, ca = %row.id, "mTLS CA added");
-    sync_trust_anchor(&state, &site).await?;
+    sync_trust_anchor(&state, &site, Some(&current.email)).await?;
 
     let response = CaCreatedResponse {
         ca: CaResponse::from_model(row, 0),
@@ -467,7 +468,7 @@ async fn delete_ca(
         .exec(&state.db)
         .await?;
     tracing::info!(site_id = %id, ca = %target, "mTLS CA removed");
-    sync_trust_anchor(&state, &site).await?;
+    sync_trust_anchor(&state, &site, Some(&current.email)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -593,7 +594,7 @@ async fn issue_certificate(
 
     tracing::info!(site_id = %id, certificate = %row.id, "mTLS client certificate issued");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     let response = ClientCertIssuedResponse {
         certificate: ClientCertResponse::from_model(row, Some(ca.name)),
@@ -640,7 +641,7 @@ async fn revoke_certificate(
 
     tracing::info!(site_id = %id, certificate = %target, "mTLS client certificate revoked");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
 
     let names = ca_names(&state, id).await?;
     let ca_name = names.get(&updated.ca_id).cloned();
@@ -677,7 +678,7 @@ async fn delete_certificate(
         .await?;
     tracing::info!(site_id = %id, certificate = %target, "mTLS client certificate removed");
     touch_site(&state, id).await?;
-    notify_config_changed(&state, id).await;
+    notify_config_changed(&state, id, Some(&current.email)).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
