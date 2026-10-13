@@ -4828,6 +4828,7 @@ dependencies = [
 name = "pingap-plugin"
 version = "0.21.1"
 dependencies = [
+ "TinyUFO",
  "ahash",
  "arc-swap",
  "async-trait",
@@ -4843,10 +4844,12 @@ dependencies = [
  "fancy-regex",
  "glob",
  "hex",
+ "hickory-resolver",
  "hmac-sha256",
  "hmac-sha512",
  "http",
  "humantime",
+ "ipnet",
  "jsonwebtoken",
  "mime_guess",
  "nanoid",
