@@ -18,6 +18,16 @@ pub struct Model {
     pub id: Uuid,
     #[sea_orm(unique)]
     pub site_id: Uuid,
+    /// Explicit engine switch; `false` short-circuits WAF evaluation for the
+    /// site regardless of rules or posture. A missing row means `true`.
+    pub waf_enabled: bool,
+    /// Site-level enforcement mode (`off` / `monitor` / `block`). This is the
+    /// authoritative switch; rule modes only feed the one-time migration
+    /// backfill. A missing row falls back to the legacy rule derivation.
+    pub mode: String,
+    /// Detection sensitivity (1-4). Decoupled from rule severity: a missing
+    /// row means the default 2.
+    pub paranoia_level: i32,
     pub advanced_mode: bool,
     /// Per-site engine mode: `inherit` (process default), `legacy`, `shadow`
     /// or `varman`.
@@ -28,6 +38,7 @@ pub struct Model {
     pub openapi_spec: String,
     pub monitor_categories: Vec<String>,
     pub monitor_stacks: Vec<String>,
+    pub monitor_managed_rules: Vec<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

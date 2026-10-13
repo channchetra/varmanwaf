@@ -77,6 +77,8 @@ varman-pprof = { workspace = true }
 anyhow = { workspace = true }
 pingora = { workspace = true }
 regex = { workspace = true }
+rustls = { workspace = true, features = ["ring"] }
+rcgen = { workspace = true }
 rust-embed = { version = "8.12.0", features = [
     "mime-guess",
     "compression",
@@ -385,6 +387,7 @@ reqwest = { version = "0.13.5", default-features = false, features = [
     "default-tls",
 ] }
 rustls = "0.23.40"
+rustls-pemfile = "2"
 rustls-pki-types = "1.15.1"
 rustc_version_runtime = "0.3.0"
 scopeguard = "1.2.0"
@@ -400,8 +403,20 @@ sha1 = "0.11.0"
 sha2 = { version = "0.11.0", default-features = false }
 strum = { version = "0.28.0", features = ["derive"] }
 substring = "1.4.5"
+ring = "0.17"
+maxminddb = "0.27"
+lettre = { version = "0.11", default-features = false, features = [
+    "builder",
+    "smtp-transport",
+    "tokio1",
+    "tokio1-rustls",
+    "ring",
+    "hostname",
+    "webpki-roots",
+] }
 sysinfo = { version = "0.39.6", features = [
     "system",
+    "disk",
 ], default-features = false }
 tempfile = "3.27.0"
 tera = { version = "2", default-features = false }

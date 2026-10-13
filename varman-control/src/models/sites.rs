@@ -15,6 +15,23 @@ pub mod site_status {
     }
 }
 
+/// Forwarded headers accepted in `sites.trusted_header`.
+pub mod trusted_header {
+    pub const X_FORWARDED_FOR: &str = "x-forwarded-for";
+    pub const X_REAL_IP: &str = "x-real-ip";
+    pub const CF_CONNECTING_IP: &str = "cf-connecting-ip";
+    pub const TRUE_CLIENT_IP: &str = "true-client-ip";
+
+    pub const ALL: [&str; 4] =
+        [X_FORWARDED_FOR, X_REAL_IP, CF_CONNECTING_IP, TRUE_CLIENT_IP];
+
+    pub const DEFAULT: &str = X_FORWARDED_FOR;
+
+    pub fn is_valid(value: &str) -> bool {
+        ALL.contains(&value)
+    }
+}
+
 /// `sites` — one protected site, served on one or more hostnames.
 pub mod sites {
     use super::*;
@@ -39,6 +56,36 @@ pub mod sites {
         pub plan: String,
         /// Disk budget, in MiB, the agents may use for this site's cache.
         pub cache_quota_mb: i32,
+        /// Site-level single-file cache cap, in MiB; `None` follows the
+        /// global `cache_settings.max_file_size_mb`. Validated against the
+        /// global ceiling at write time and clamped in the data plane.
+        pub cache_max_file_size_mb: Option<i32>,
+        /// Per-content-type single-file caps, in MiB, keyed by
+        /// `html/css/js/image/font/media/other`; a missing key follows
+        /// `cache_max_file_size_mb` (then the global ceiling). `None` when
+        /// the site does not override any type.
+        pub cache_type_limits_mb: Option<Json>,
+        /// The site sits behind a CDN / reverse proxy: security features key
+        /// on the forwarded-header client IP, not the direct TCP peer.
+        pub trust_proxy_headers: bool,
+        /// Lower-case forwarded header the client IP is read from.
+        pub trusted_header: String,
+        /// Take the last XFF entry (nearest proxy) instead of the first one,
+        /// which the client can spoof.
+        pub trust_last_hop: bool,
+        /// Behaviour while the control plane is unreachable and the host has
+        /// no synced rule bundle: `inherit` (follow the global default),
+        /// `open` (keep proxying) or `closed` (answer 503).
+        pub failover_policy: String,
+        /// CIDR ranges of proxies allowed to influence the resolved client
+        /// IP. Only connections from these peers read the forwarded header;
+        /// an empty list trusts nothing.
+        pub trusted_proxy_ranges: Vec<String>,
+        /// IP groups whose ranges are merged into `trusted_proxy_ranges`
+        /// when the agent configuration is built. Lets operators track
+        /// vendor-published proxy networks (e.g. the built-in Cloudflare
+        /// subscription) instead of pasting CIDRs by hand.
+        pub trusted_proxy_group_ids: Vec<Uuid>,
         pub created_at: DateTimeUtc,
         pub updated_at: DateTimeUtc,
     }
@@ -96,6 +143,20 @@ pub mod site_upstream_pools {
         pub sni: Option<String>,
         /// `None` keeps the proxy default (verification on).
         pub verify_cert: Option<bool>,
+        /// Active HTTP health check for this pool's nodes; `false` leaves the
+        /// agent's data plane on its default bare TCP probe.
+        pub health_check_enabled: bool,
+        /// Probe path; always starts with `/`.
+        pub health_check_path: String,
+        /// Seconds between probe rounds. The data plane's scheduler aligns
+        /// this to 10s grid steps, so values are effectively rounded up.
+        pub health_check_interval_seconds: i32,
+        /// Probe connect/read timeout in milliseconds.
+        pub health_check_timeout_ms: i32,
+        /// Consecutive failed probes before a node is marked unhealthy.
+        pub health_check_unhealthy_threshold: i32,
+        /// Consecutive successful probes before a node is marked healthy.
+        pub health_check_healthy_threshold: i32,
         pub is_default: bool,
         pub created_at: DateTimeUtc,
     }
@@ -154,7 +215,9 @@ pub mod site_routes {
 pub mod site_ssl {
     use super::*;
 
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[derive(
+        Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize,
+    )]
     #[sea_orm(table_name = "site_ssl")]
     pub struct Model {
         #[sea_orm(primary_key, auto_increment = false)]

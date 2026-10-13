@@ -48,7 +48,9 @@ use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
 use tracing::{error, info, warn};
-use varman_agent::cache::{CachedRules, RuleCache, SslConfig};
+use varman_agent::cache::{
+    CachedRules, HealthCheckConfig, RuleCache, SslConfig,
+};
 use varman_agent::config::AgentConfig;
 use varman_control::ServerConfig;
 
@@ -69,6 +71,9 @@ fn server_config_from_opts(opts: &ServerOpts) -> ServerConfig {
     config.db_url = opts.common.db_url.clone();
     config.http_addr = opts.common.admin_addr.clone();
     config.grpc_addr = opts.common.grpc_addr.clone();
+    config.grpc_tls_cert = opts.common.grpc_tls_cert.clone();
+    config.grpc_tls_key = opts.common.grpc_tls_key.clone();
+    config.grpc_tls_mode = opts.common.grpc_tls_mode;
     config.jwt_secret = opts.jwt_secret.clone();
     config.default_admin_email = opts.admin_email.clone();
     config.default_admin_password = opts.admin_password.clone();
@@ -83,6 +88,9 @@ fn server_config_from_all_in_one(opts: &AllInOneOpts) -> ServerConfig {
     config.db_url = opts.common.db_url.clone();
     config.http_addr = opts.common.admin_addr.clone();
     config.grpc_addr = opts.common.grpc_addr.clone();
+    config.grpc_tls_cert = opts.common.grpc_tls_cert.clone();
+    config.grpc_tls_key = opts.common.grpc_tls_key.clone();
+    config.grpc_tls_mode = opts.common.grpc_tls_mode;
     config.jwt_secret = opts.jwt_secret.clone();
     config.default_admin_email = opts.admin_email.clone();
     config.default_admin_password = opts.admin_password.clone();
@@ -100,6 +108,7 @@ fn apply_tls_opts(config: &mut ServerConfig, opts: &CommonOpts) {
     if !opts.tls_sans.is_empty() {
         config.tls_sans = opts.tls_sans.clone();
     }
+    config.public_host = opts.public_host.clone();
 }
 
 /// Convert CLI agent options into an `AgentConfig`.
@@ -108,6 +117,8 @@ fn agent_config_from_opts(opts: &AgentOpts) -> AgentConfig {
         server_url: opts.server_url.clone(),
         api_key: opts.api_key.clone(),
         agent_id: String::new(),
+        server_ca_cert: opts.server_ca_cert.clone(),
+        server_ca_pem: None,
         heartbeat_interval_secs: opts.heartbeat_interval_secs,
         cache_dir: opts.cache_dir.clone(),
         log_batch_size: opts.log_batch_size,
@@ -119,25 +130,39 @@ fn agent_config_from_opts(opts: &AgentOpts) -> AgentConfig {
         probe_interval_secs: varman_agent::probe::DEFAULT_INTERVAL_SECS,
         probe_disk_path: "/".to_string(),
         metrics_ship_interval_secs: opts.metrics_ship_interval_secs,
-        // The all-in-one control plane's certificate may be self-signed and
-        // its PEM is injected after start-up; both default to the bundled
-        // roots.
-        server_ca_cert: None,
-        server_ca_pem: None,
     }
 }
 
 /// Convert CLI all-in-one options into an `AgentConfig`.
 ///
 /// In all-in-one mode the agent connects to the local server via loopback.
+/// TLS is the default: the URL switches to `https://` and the CA is resolved
+/// at boot (an explicitly configured certificate file is trusted directly;
+/// otherwise `run` injects the self-signed control-plane certificate as
+/// inline PEM once the database is reachable).
 fn agent_config_from_all_in_one(opts: &AllInOneOpts) -> AgentConfig {
     // Derive the loopback gRPC URL from the configured gRPC address
     let port = extract_port(&opts.common.grpc_addr);
-    let server_url = format!("http://127.0.0.1:{port}");
+    let (server_url, server_ca_cert) =
+        match (&opts.common.grpc_tls_cert, &opts.common.grpc_tls_key) {
+            (Some(cert), Some(_)) => {
+                (format!("https://127.0.0.1:{port}"), Some(cert.clone()))
+            },
+            _ => match opts.common.grpc_tls_mode {
+                varman_control::config::GrpcTlsMode::Off => {
+                    (format!("http://127.0.0.1:{port}"), None)
+                },
+                varman_control::config::GrpcTlsMode::Tls => {
+                    (format!("https://127.0.0.1:{port}"), None)
+                },
+            },
+        };
     AgentConfig {
         server_url,
         api_key: opts.api_key.clone(),
         agent_id: String::new(),
+        server_ca_cert,
+        server_ca_pem: None,
         heartbeat_interval_secs: opts.heartbeat_interval_secs,
         cache_dir: opts.cache_dir.clone(),
         log_batch_size: opts.log_batch_size,
@@ -149,11 +174,6 @@ fn agent_config_from_all_in_one(opts: &AllInOneOpts) -> AgentConfig {
         probe_interval_secs: varman_agent::probe::DEFAULT_INTERVAL_SECS,
         probe_disk_path: "/".to_string(),
         metrics_ship_interval_secs: opts.metrics_ship_interval_secs,
-        // The all-in-one control plane's certificate may be self-signed and
-        // its PEM is injected after start-up; both default to the bundled
-        // roots.
-        server_ca_cert: None,
-        server_ca_pem: None,
     }
 }
 
@@ -182,7 +202,8 @@ pub fn build_run_mode(cli: VarmanCli) -> RunMode {
         },
         VarmanCommand::User { .. }
         | VarmanCommand::Mode { .. }
-        | VarmanCommand::Security { .. } => {
+        | VarmanCommand::Security { .. }
+        | VarmanCommand::Config { .. } => {
             unreachable!("maintenance commands do not build a run mode")
         },
     }
@@ -305,6 +326,32 @@ fn site_posture_plugins(
     names
 }
 
+/// Synthesizes the data-plane health check URL from the control plane's
+/// per-pool [`HealthCheckConfig`]. The URL host is the upstream (pool) name —
+/// pingap only uses it as the probe request's Host header, nothing resolves
+/// it — and the query carries the tunables `pingap-health` understands
+/// (`check_frequency`, `connection_timeout`/`read_timeout`, `failure`,
+/// `success`). Values are clamped so a corrupt cache entry can never produce
+/// a zero-timeout or zero-frequency probe.
+fn health_check_url(upstream_name: &str, hc: &HealthCheckConfig) -> String {
+    let path = if hc.path.is_empty() {
+        "/".to_string()
+    } else if hc.path.starts_with('/') {
+        hc.path.clone()
+    } else {
+        format!("/{}", hc.path)
+    };
+    format!(
+        "http://{upstream_name}{path}?check_frequency={}s&\
+         connection_timeout={}ms&read_timeout={}ms&failure={}&success={}",
+        hc.interval_seconds.max(1),
+        hc.timeout_ms.max(1),
+        hc.timeout_ms.max(1),
+        hc.unhealthy_threshold.max(1),
+        hc.healthy_threshold.max(1),
+    )
+}
+
 fn cached_rules_to_pingap_config(
     cached: &CachedRules,
     cache_dir: &Path,
@@ -354,16 +401,51 @@ fn cached_rules_to_pingap_config(
         toml::from_str::<PluginConf>(r###"category = "error_page""###)
             .unwrap_or_default(),
     );
-    if has_cache_rules {
+    // The cache master switch gates everything: with it off the data plane
+    // never sees a cache plugin, regardless of the rules any site carries.
+    let global_cache = cached.global_cache.clone().unwrap_or_default();
+    let cache_enabled = has_cache_rules && global_cache.master_enabled();
+    if cache_enabled {
         let mut cache_conf = PluginConf::new();
         cache_conf.insert(
             "category".to_string(),
             toml::Value::String("cache".to_string()),
         );
+        // The disk budget rides on the directory URL (`FileCacheParams`
+        // parses `?max_size=`): pingora's `ensure_disk_space` then evicts by
+        // LRU across every namespace sharing the backend. `0` = unlimited.
+        let directory = match global_cache.max_space_mb() {
+            0 => cache_dir.to_string_lossy().to_string(),
+            space_mb => {
+                format!("{}?max_size={space_mb}mb", cache_dir.to_string_lossy())
+            },
+        };
+        cache_conf
+            .insert("directory".to_string(), toml::Value::String(directory));
+        // pingora's default 1MB ceiling silently refuses to cache anything
+        // larger (the response header stage rejects it before the body ever
+        // fills). Magento-style merged JS/CSS bundles run several MB and are
+        // exactly the assets caching exists for, so the ceiling is raised
+        // here. `ByteSize` parses decimal units — the 16 MiB default is
+        // 16_000_000 bytes, comfortably above a ~10MB bundle. Actual disk
+        // usage stays bounded by each site's `disk_quota_mb` and the LRU
+        // eviction manager.
         cache_conf.insert(
-            "directory".to_string(),
-            toml::Value::String(cache_dir.to_string_lossy().to_string()),
+            "max_file_size".to_string(),
+            toml::Value::String(format!(
+                "{}mb",
+                global_cache.max_file_size_mb()
+            )),
         );
+        // A rule without an explicit edge TTL falls back to this floor;
+        // `0` (the default) keeps the old behaviour of no fallback at all.
+        let default_ttl = global_cache.default_edge_ttl_seconds();
+        if default_ttl > 0 {
+            cache_conf.insert(
+                "max_ttl".to_string(),
+                toml::Value::String(format!("{default_ttl}s")),
+            );
+        }
         plugins.insert(CACHE_PLUGIN_NAME.to_string(), cache_conf);
     }
     let mut location_plugins: Vec<String> = vec![
@@ -372,7 +454,7 @@ fn cached_rules_to_pingap_config(
         REWRITE_PLUGIN_NAME.to_string(),
         ERROR_PAGE_PLUGIN_NAME.to_string(),
     ];
-    if has_cache_rules {
+    if cache_enabled {
         location_plugins.push(CACHE_PLUGIN_NAME.to_string());
     }
 
@@ -416,6 +498,12 @@ fn cached_rules_to_pingap_config(
                 })
                 .collect();
 
+            // Multi-node pools get request-level protection by default:
+            // without backend stats the circuit breaker can never observe
+            // failures, and the control plane exposes no knobs for either.
+            // Single-node pools are left untouched — with no alternative
+            // backend an open breaker only short-circuits into 503.
+            let multi_peer = up.peers.len() > 1;
             let conf = UpstreamConf {
                 addrs,
                 algo: sanitize_algo(&up.algo),
@@ -424,7 +512,13 @@ fn cached_rules_to_pingap_config(
                 } else {
                     Some(up.sni.clone())
                 },
-                verify_cert: up.verify_cert,
+                // Verification is opt-in. Normalize here as well as in the
+                // agent's gRPC conversion: a rule cache restored from the
+                // persisted snapshot (sites.json) carries `verify_cert: null`
+                // and never passes through that conversion, and a `None` left
+                // intact means pingora's default - strict verification - so
+                // self-signed origins would 502 with InvalidCert.
+                verify_cert: Some(up.verify_cert.unwrap_or(false)),
                 connection_timeout: if up.connection_timeout_ms > 0 {
                     Some(Duration::from_millis(up.connection_timeout_ms as u64))
                 } else {
@@ -444,7 +538,17 @@ fn cached_rules_to_pingap_config(
                     .health_check
                     .as_ref()
                     .filter(|h| h.enabled)
-                    .map(|h| h.path.clone()),
+                    .map(|h| health_check_url(&name, h)),
+                enable_backend_stats: multi_peer.then_some(true),
+                circuit_break_max_consecutive_failures: multi_peer.then_some(5),
+                circuit_break_max_failure_percent: multi_peer.then_some(50),
+                circuit_break_min_requests_threshold: multi_peer.then_some(10),
+                circuit_break_open_duration: multi_peer
+                    .then_some(Duration::from_secs(10)),
+                // With several origins, a misjudged health check or an
+                // all-open breaker should degrade to the least-bad backend
+                // instead of failing the site with instant 503s.
+                enable_unhealthy_fallback: multi_peer.then_some(true),
                 ..Default::default()
             };
             if up.is_default {
@@ -489,6 +593,11 @@ fn cached_rules_to_pingap_config(
                     host: Some(host.clone()),
                     path: Some("/".to_string()),
                     plugins: Some(site_plugins.clone()),
+                    // The fallback must sort behind every route: with the
+                    // auto weight (128) any route whose priority was 127 or
+                    // less ranked below this catch-all `/` location and
+                    // never matched. Pin it to the floor instead.
+                    weight: Some(0),
                     ..Default::default()
                 },
             );
@@ -598,51 +707,44 @@ fn cached_rules_to_pingap_config(
         return None;
     }
 
-    // TLS is a per-server switch in pingap: `global_certificates` turns it on
-    // for every address that server listens on, so 80 and 443 cannot share
-    // one server — a merged listener ran plaintext HTTP through TLS
+    // TLS is a per-server switch in pingap: `global_certificates` turns it
+    // on for every address that server listens on, so 80 and 443 cannot
+    // share one server — a merged listener ran plaintext HTTP through TLS
     // handshakes, which also broke ACME HTTP-01 validation on port 80.
-    let has_certs = !certificates.is_empty();
-    let mut servers: HashMap<String, PingapServerConf> = HashMap::new();
-    if has_certs {
-        servers.insert(
-            "varman".to_string(),
-            PingapServerConf {
-                addr: "0.0.0.0:80".to_string(),
-                locations: Some(location_names.clone()),
-                global_certificates: Some(false),
-                ..Default::default()
-            },
-        );
-        servers.insert(
-            "varman_tls".to_string(),
-            PingapServerConf {
-                addr: "0.0.0.0:443".to_string(),
-                locations: Some(location_names),
-                global_certificates: Some(true),
-                client_ca_pem: (!mtls_ca_bundle.is_empty())
-                    .then_some(mtls_ca_bundle),
-                ..Default::default()
-            },
-        );
-    } else {
-        // Nothing to serve over TLS yet: bind only the plaintext port.
-        // Serving HTTP on 443 would train clients into a broken TLS
-        // endpoint; the next reload after the first certificate lands
-        // splits the listeners.
+    //
+    // 443 is bound even before the first certificate exists: the listener
+    // comes up with an empty provider and handshakes fail until issuance
+    // completes, but the moment a certificate is issued or uploaded the
+    // provider serves it — no restart, no listener rebuild. Binding 443
+    // only once a certificate existed left fresh deployments with the port
+    // closed until the whole process restarted.
+    if certificates.is_empty() {
         warn!(
-            "data plane: no certificates yet — binding 0.0.0.0:80 only; \
-             443 will open once a certificate is issued or uploaded"
-        );
-        servers.insert(
-            "varman".to_string(),
-            PingapServerConf {
-                addr: "0.0.0.0:80".to_string(),
-                locations: Some(location_names),
-                ..Default::default()
-            },
+            "data plane: no certificates yet — TLS handshakes on 443 will \
+             fail until one is issued or uploaded"
         );
     }
+    let mut servers: HashMap<String, PingapServerConf> = HashMap::new();
+    servers.insert(
+        "varman".to_string(),
+        PingapServerConf {
+            addr: "0.0.0.0:80".to_string(),
+            locations: Some(location_names.clone()),
+            global_certificates: Some(false),
+            ..Default::default()
+        },
+    );
+    servers.insert(
+        "varman_tls".to_string(),
+        PingapServerConf {
+            addr: "0.0.0.0:443".to_string(),
+            locations: Some(location_names),
+            global_certificates: Some(true),
+            client_ca_pem: (!mtls_ca_bundle.is_empty())
+                .then_some(mtls_ca_bundle),
+            ..Default::default()
+        },
+    );
 
     Some(PingapConfig {
         basic: BasicConf::default(),
@@ -1041,6 +1143,19 @@ pub async fn start_data_plane(
     );
     background_tasks.set_immediately(true);
     background_tasks.set_initial_delay(Some(Duration::from_secs(3)));
+    // A stalled ACME cycle is mirrored onto the `pingap::acme` target, which
+    // the agent's certificate-event capture ships to the control plane — so
+    // an issuance that hangs shows up in the panel's certificate log instead
+    // of only in the data plane's own log file.
+    background_tasks.set_on_stalled(Some(Box::new(|name, tasks, elapsed| {
+        warn!(
+            target: "pingap::acme",
+            name,
+            tasks,
+            elapsed,
+            "background tasks still running past the interval"
+        );
+    })));
     if acme_enabled {
         background_tasks.add_task(
             "lets_encrypt",
@@ -1179,29 +1294,26 @@ pub async fn start_data_plane(
                 last_hash = hash;
                 continue;
             };
-            let prev_toml = watcher_config_manager
-                .load_all_raw()
+            // Fetch-merge-save must be atomic with respect to ACME's own
+            // read-modify-write: an issuance completing while the reload was
+            // reading a PEM-less snapshot used to be clobbered by the reload
+            // save, dropping the certificate from storage (and then from the
+            // SNI table on the next provider rebuild).
+            let config = match watcher_config_manager
+                .update_raw(|prev_toml| {
+                    merge_config_state(&new_toml, &prev_toml)
+                })
                 .await
-                .unwrap_or_default();
-            let merged_toml = merge_config_state(&new_toml, &prev_toml);
-            let config = match PingapTomlConfig::from_toml(&merged_toml)
-                .and_then(|toml_config| toml_config.to_pingap_config(true))
             {
                 Ok(config) => config,
                 Err(e) => {
                     warn!(
                         error = %e,
-                        "data plane: merged reload config failed to parse, using freshly converted config"
+                        "data plane: merged reload config failed, using freshly converted config"
                     );
                     converted
                 },
             };
-            if let Ok(toml_config) = PingapTomlConfig::from_toml(&merged_toml)
-                && let Err(e) =
-                    watcher_config_manager.save_all(&toml_config).await
-            {
-                warn!(error = %e, "data plane: failed to persist merged config");
-            }
             watcher_config_manager.set_current_config(config.clone());
             if let Err(e) = try_init_upstreams(&config.upstreams, None) {
                 error!(error = %e, "data plane: reload upstreams failed");
@@ -1305,6 +1417,23 @@ pub async fn run(mode: RunMode) -> anyhow::Result<()> {
                 }
             }
 
+            // Pin the gRPC listener certificate: all-in-one serves TLS by
+            // default, so the embedded agent needs the console certificate
+            // (or the explicitly configured one) as its trust anchor.
+            match varman_control::embedded_agent_ca_pem(&server_config).await {
+                Ok(Some(pem)) => {
+                    agent_config.server_ca_pem = Some(pem);
+                },
+                Ok(None) => {},
+                Err(e) => {
+                    error!(
+                        error = %e,
+                        "failed to resolve the gRPC CA for the embedded agent; \
+                         it will fall back to its configured CA settings"
+                    );
+                },
+            }
+
             // Start the agent in the background first.
             // It will retry connecting to the server until it comes up.
             let agent = match varman_agent::start_agent(*agent_config).await {
@@ -1380,6 +1509,13 @@ async fn shutdown_signal() {
 
 /// Entry point called from main.rs when VarmanWAF mode is detected.
 pub fn main() {
+    // The dependency graph enables BOTH rustls crypto providers (ring via
+    // varman-server's rustls/tonic, aws-lc-rs via instant-acme/reqwest), so
+    // rustls refuses to pick one implicitly and panics on first TLS use.
+    // Install ring explicitly — the same provider the pingora rustls backend
+    // uses. `install_default` returns Err when already installed; ignore it.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Initialize tracing
     init_tracing();
 
@@ -1454,7 +1590,8 @@ fn log_directives(rust_log: Option<&str>) -> String {
 mod tests {
     use super::*;
     use varman_agent::cache::{
-        CachedRules, RouteConfig, SiteRules, UpstreamConfig, UpstreamPeer,
+        CacheRule as AgentCacheRule, CachedRules, GlobalCacheSettings,
+        ProxyTrustConfig, RouteConfig, SiteRules, UpstreamConfig, UpstreamPeer,
     };
 
     #[test]
@@ -1495,8 +1632,8 @@ mod tests {
             bot_protection: None,
             basic_auth: None,
             observation_mode: false,
+            proxy_trust: ProxyTrustConfig::default(),
             cache_settings: None,
-            proxy_trust: Default::default(),
         }
     }
 
@@ -1549,6 +1686,95 @@ mod tests {
         cached
     }
 
+    fn enabled_cache_rule(disk_quota_mb: u32) -> AgentCacheRule {
+        AgentCacheRule {
+            id: "rule-1".to_string(),
+            name: "static".to_string(),
+            match_expression: String::new(),
+            edge_ttl_seconds: 300,
+            browser_ttl_seconds: 60,
+            disk_quota_mb,
+            cache_eligible: true,
+            cache_key_headers: Vec::new(),
+            respect_origin_headers: true,
+            stale_while_revalidate_seconds: 0,
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn cache_plugin_conf_follows_global_settings() {
+        // Defaults (no global_cache): the historical shape — 16 MiB cap, no
+        // budget, no fallback TTL.
+        let mut site = site_rules("site1", "a.example.com");
+        site.cache_rules = vec![enabled_cache_rule(0)];
+        site.upstreams = vec![pool("", vec![peer("10.0.0.1:8080")])];
+        let mut cached = one_site_cache(site);
+        let config = cached_rules_to_pingap_config(
+            &cached,
+            Path::new("/tmp/varman-test-cache"),
+        )
+        .expect("config should build");
+        let cache_conf =
+            config.plugins.get(CACHE_PLUGIN_NAME).expect("cache plugin");
+        assert_eq!(
+            cache_conf.get("max_file_size").and_then(|v| v.as_str()),
+            Some("16mb")
+        );
+        assert_eq!(
+            cache_conf.get("directory").and_then(|v| v.as_str()),
+            Some("/tmp/varman-test-cache")
+        );
+        assert_eq!(cache_conf.get("max_ttl"), None);
+
+        // Global settings: cap, budget and fallback TTL all land in the
+        // generated configuration.
+        cached.global_cache = Some(GlobalCacheSettings {
+            max_file_size_mb: Some(64),
+            max_space_mb: Some(2048),
+            master_enabled: Some(true),
+            default_edge_ttl_seconds: Some(600),
+        });
+        let config = cached_rules_to_pingap_config(
+            &cached,
+            Path::new("/tmp/varman-test-cache"),
+        )
+        .expect("config should build");
+        let cache_conf =
+            config.plugins.get(CACHE_PLUGIN_NAME).expect("cache plugin");
+        assert_eq!(
+            cache_conf.get("max_file_size").and_then(|v| v.as_str()),
+            Some("64mb")
+        );
+        assert_eq!(
+            cache_conf.get("directory").and_then(|v| v.as_str()),
+            Some("/tmp/varman-test-cache?max_size=2048mb")
+        );
+        assert_eq!(
+            cache_conf.get("max_ttl").and_then(|v| v.as_str()),
+            Some("600s")
+        );
+
+        // Master switch off: no cache plugin at all, not even in locations.
+        cached.global_cache = Some(GlobalCacheSettings {
+            master_enabled: Some(false),
+            ..Default::default()
+        });
+        let config = cached_rules_to_pingap_config(
+            &cached,
+            Path::new("/tmp/varman-test-cache"),
+        )
+        .expect("config should build");
+        assert!(!config.plugins.contains_key(CACHE_PLUGIN_NAME));
+        for loc in config.locations.values() {
+            let plugins = loc.plugins.as_deref().unwrap_or(&[]);
+            assert!(
+                !plugins.iter().any(|name| name == CACHE_PLUGIN_NAME),
+                "master-off must drop the cache plugin from locations"
+            );
+        }
+    }
+
     #[test]
     fn single_pool_without_routes_matches_legacy_layout() {
         let mut site = site_rules("site1", "a.example.com");
@@ -1573,7 +1799,168 @@ mod tests {
         assert_eq!(loc.path.as_deref(), Some("/"));
         assert_eq!(loc.upstream.as_deref(), Some("site1_upstream"));
         assert_eq!(loc.host.as_deref(), Some("a.example.com"));
-        assert_eq!(loc.weight, None);
+        // The catch-all sorts behind every route: pinned to the floor so
+        // even priority-1 routes match first (see
+        // low_priority_routes_still_beat_the_site_fallback).
+        assert_eq!(loc.weight, Some(0));
+    }
+
+    #[test]
+    fn multi_peer_pool_defaults_to_stats_and_breaker() {
+        // P0-2 (NODE-EVALUATION-REPORT-20261009): the control plane exposes
+        // no knobs for backend stats or circuit breaking, so multi-node pools
+        // must get request-level protection by default — otherwise a bad
+        // origin is only caught by the 10s TCP probe and 5xx-style soft
+        // failures are never accounted for.
+        let mut site = site_rules("site1", "a.example.com");
+        site.upstreams =
+            vec![pool("", vec![peer("10.0.0.1:8080"), peer("10.0.0.2:8080")])];
+        let config = cached_rules_to_pingap_config(
+            &one_site_cache(site),
+            Path::new("/tmp/varman-test-cache"),
+        )
+        .expect("config should build");
+
+        let upstream = config
+            .upstreams
+            .get("site1_upstream")
+            .expect("legacy upstream key");
+        assert_eq!(upstream.enable_backend_stats, Some(true));
+        assert_eq!(upstream.circuit_break_max_consecutive_failures, Some(5));
+        assert_eq!(upstream.circuit_break_max_failure_percent, Some(50));
+        assert_eq!(upstream.circuit_break_min_requests_threshold, Some(10));
+        assert_eq!(
+            upstream.circuit_break_open_duration,
+            Some(Duration::from_secs(10))
+        );
+        // A misjudged health check or an all-open breaker must degrade to
+        // the least-bad origin instead of failing the site with 503s.
+        assert_eq!(upstream.enable_unhealthy_fallback, Some(true));
+
+        // Single-node pools stay untouched: with no alternative backend an
+        // open breaker would only short-circuit requests into 503.
+        let mut site = site_rules("site2", "b.example.com");
+        site.upstreams = vec![pool("", vec![peer("10.0.0.3:8080")])];
+        let config = cached_rules_to_pingap_config(
+            &one_site_cache(site),
+            Path::new("/tmp/varman-test-cache"),
+        )
+        .expect("config should build");
+
+        let upstream = config
+            .upstreams
+            .get("site2_upstream")
+            .expect("single upstream key");
+        assert_eq!(upstream.enable_backend_stats, None);
+        assert_eq!(upstream.circuit_break_max_consecutive_failures, None);
+        assert_eq!(upstream.circuit_break_max_failure_percent, None);
+        assert_eq!(upstream.enable_unhealthy_fallback, None);
+    }
+
+    #[test]
+    fn health_check_url_synthesis() {
+        let hc = HealthCheckConfig {
+            enabled: true,
+            path: "/healthz".to_string(),
+            interval_seconds: 15,
+            timeout_ms: 2000,
+            unhealthy_threshold: 3,
+            healthy_threshold: 2,
+        };
+        assert_eq!(
+            health_check_url("site1_upstream", &hc),
+            "http://site1_upstream/healthz?check_frequency=15s&\
+             connection_timeout=2000ms&read_timeout=2000ms&failure=3&\
+             success=2"
+        );
+
+        // Missing leading slash is normalized, empty path becomes "/".
+        let mut hc = hc.clone();
+        hc.path = "ping".to_string();
+        assert!(health_check_url("u", &hc).contains("u/ping?"));
+        hc.path = String::new();
+        assert!(health_check_url("u", &hc).contains("u/?"));
+
+        // Zeroes from a corrupt cache entry clamp to safe probe values.
+        let corrupt = HealthCheckConfig {
+            enabled: true,
+            path: "/".to_string(),
+            interval_seconds: 0,
+            timeout_ms: 0,
+            unhealthy_threshold: 0,
+            healthy_threshold: 0,
+        };
+        let url = health_check_url("u", &corrupt);
+        assert!(url.contains("check_frequency=1s&"));
+        assert!(url.contains("connection_timeout=1ms&"));
+        assert!(url.contains("failure=1&success=1"));
+    }
+
+    /// End-to-end over the config path: the server-side shape of a pool
+    /// carrying a health check (proto message → agent cache struct) must
+    /// survive the translation into a data-plane `UpstreamConf`, and the
+    /// synthesized URL must be accepted by `pingap-health` when the data
+    /// plane actually builds the upstream.
+    #[test]
+    fn health_check_flows_end_to_end_into_the_data_plane() {
+        let mut up =
+            pool("", vec![peer("10.0.0.1:8080"), peer("10.0.0.2:8080")]);
+        up.health_check = Some(HealthCheckConfig {
+            enabled: true,
+            path: "/healthz".to_string(),
+            interval_seconds: 15,
+            timeout_ms: 2000,
+            unhealthy_threshold: 3,
+            healthy_threshold: 2,
+        });
+        let mut site = site_rules("site1", "a.example.com");
+        site.upstreams = vec![up];
+        let config = cached_rules_to_pingap_config(
+            &one_site_cache(site),
+            Path::new("/tmp/varman-test-cache"),
+        )
+        .expect("config should build");
+
+        let conf = config
+            .upstreams
+            .get("site1_upstream")
+            .expect("multi-node upstream key");
+        assert_eq!(
+            conf.health_check.as_deref(),
+            Some(
+                "http://site1_upstream/healthz?check_frequency=15s&\
+                 connection_timeout=2000ms&read_timeout=2000ms&failure=3&\
+                 success=2"
+            )
+        );
+
+        // Building the upstream parses the health check URL for real: a
+        // malformed synthesis fails right here instead of at traffic time.
+        pingap_upstream::Upstream::new("site1_upstream", conf, None)
+            .expect("the synthesized health check URL must build");
+
+        // A disabled check keeps the data plane on its TCP-probe default.
+        let mut up = pool("", vec![peer("10.0.0.1:8080")]);
+        up.health_check = Some(HealthCheckConfig {
+            enabled: false,
+            path: "/healthz".to_string(),
+            interval_seconds: 15,
+            timeout_ms: 2000,
+            unhealthy_threshold: 3,
+            healthy_threshold: 2,
+        });
+        let mut site = site_rules("site2", "b.example.com");
+        site.upstreams = vec![up];
+        let config = cached_rules_to_pingap_config(
+            &one_site_cache(site),
+            Path::new("/tmp/varman-test-cache"),
+        )
+        .expect("config should build");
+        let conf = config
+            .upstreams
+            .get("site2_upstream")
+            .expect("single upstream key");
+        assert_eq!(conf.health_check, None);
     }
 
     #[test]
@@ -1650,7 +2037,7 @@ mod tests {
             .expect("default pool fallback location");
         assert_eq!(fallback.upstream.as_deref(), Some("pool-a"));
         assert_eq!(fallback.path.as_deref(), Some("/"));
-        assert_eq!(fallback.weight, None);
+        assert_eq!(fallback.weight, Some(0));
 
         let api = config
             .locations
@@ -1692,6 +2079,21 @@ mod tests {
         tls_pool.algo = "hash:cookie:session".to_string();
         site.upstreams = vec![tls_pool];
 
+        // A cache restored from the persisted snapshot carries `null`: the
+        // default must be lenient, not pingora's strict.
+        let mut snapshot_pool =
+            pool("pool-c", vec![peer("https://10.0.0.3:8443")]);
+        snapshot_pool.sni = "origin.example.com".to_string();
+        snapshot_pool.verify_cert = None;
+        site.upstreams.push(snapshot_pool);
+
+        // Strict stays strict: an operator who opted in keeps it.
+        let mut strict_pool =
+            pool("pool-d", vec![peer("https://10.0.0.4:8443")]);
+        strict_pool.sni = "origin.example.com".to_string();
+        strict_pool.verify_cert = Some(true);
+        site.upstreams.push(strict_pool);
+
         let mut legacy_pool = pool("pool-b", vec![peer("10.0.0.2:8080")]);
         legacy_pool.algo = "lbconsistenthash".to_string();
         site.upstreams.push(legacy_pool);
@@ -1720,6 +2122,17 @@ mod tests {
             config.upstreams.get("pool-b").unwrap().algo,
             None,
             "legacy enum debug names collapse to the round_robin default"
+        );
+
+        assert_eq!(
+            config.upstreams.get("pool-c").unwrap().verify_cert,
+            Some(false),
+            "snapshot null becomes the lenient default"
+        );
+        assert_eq!(
+            config.upstreams.get("pool-d").unwrap().verify_cert,
+            Some(true),
+            "explicit opt-in keeps strict verification"
         );
     }
 
@@ -1990,7 +2403,10 @@ mod tests {
     }
 
     #[test]
-    fn sites_without_certificates_bind_only_http() {
+    fn sites_without_certificates_still_bind_tls() {
+        // 443 comes up even with an empty certificate provider: handshakes
+        // fail until the first certificate lands, but the port is listening
+        // and the certificate takes effect without a restart.
         let mut site = site_rules("site1", "a.example.com");
         let mut default_pool = pool("pool1", vec![peer("10.0.0.1:8080")]);
         default_pool.is_default = true;
@@ -2001,10 +2417,47 @@ mod tests {
         )
         .expect("config should build");
 
-        assert_eq!(config.servers.len(), 1);
+        assert_eq!(config.servers.len(), 2);
         let server = config.servers.get("varman").expect("server");
         assert_eq!(server.addr, "0.0.0.0:80");
-        assert_eq!(server.global_certificates, None);
+        assert_eq!(server.global_certificates, Some(false));
+        let tls = config.servers.get("varman_tls").expect("tls server");
+        assert_eq!(tls.addr, "0.0.0.0:443");
+        assert_eq!(tls.global_certificates, Some(true));
+    }
+
+    #[test]
+    fn low_priority_routes_still_beat_the_site_fallback() {
+        // Regression: the fallback location used to carry the auto weight
+        // (128), so a route with priority ≤ 127 sorted behind the catch-all
+        // `/` location and never matched. The fallback now pins weight 0.
+        let mut site = site_rules("site1", "a.example.com");
+        let mut default_pool = pool("pool1", vec![peer("10.0.0.1:8080")]);
+        default_pool.is_default = true;
+        site.upstreams = vec![default_pool];
+        let mut routed_pool = pool("pool2", vec![peer("10.0.0.2:8080")]);
+        routed_pool.is_default = false;
+        site.upstreams.push(routed_pool);
+        let mut r = route("r1", "prefix", "/api", "pool2");
+        r.priority = Some(1);
+        site.routes.push(r);
+
+        let config = cached_rules_to_pingap_config(
+            &one_site_cache(site),
+            Path::new("/tmp/varman-test-cache"),
+        )
+        .expect("config should build");
+
+        let fallback = config
+            .locations
+            .get("site1_loc")
+            .expect("fallback location");
+        assert_eq!(fallback.weight, Some(0));
+        let routed = config
+            .locations
+            .get("site1_route_r1")
+            .expect("route location");
+        assert_eq!(routed.weight, Some(1));
     }
 
     #[test]

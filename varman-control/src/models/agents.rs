@@ -50,6 +50,11 @@ pub mod agents {
         pub api_key_id: Option<Uuid>,
         pub config_hash: Option<String>,
         pub last_heartbeat: Option<DateTimeUtc>,
+        /// When the agent last applied a full site config from the control
+        /// plane (reported via heartbeat).
+        pub last_config_sync_at: Option<DateTimeUtc>,
+        /// When the agent last applied a per-site rule bundle.
+        pub last_policy_sync_at: Option<DateTimeUtc>,
         pub registered_at: DateTimeUtc,
     }
 

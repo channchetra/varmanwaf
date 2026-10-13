@@ -12,6 +12,7 @@ pub mod ai;
 pub mod api;
 pub mod auth;
 pub mod config;
+pub mod config_history;
 pub mod defaults;
 pub mod es;
 pub mod frontend;
@@ -20,6 +21,7 @@ pub mod mcp;
 pub mod migration;
 pub mod models;
 pub mod monitoring;
+pub mod notify;
 pub mod pki;
 pub mod subscription;
 pub mod tls;
@@ -39,7 +41,7 @@ use crate::api::state::AppState;
 use crate::es::{ensure_index_template, ElasticsearchClient};
 use crate::grpc::{AgentRegistry, ControlPlaneService};
 use crate::migration::Migrator;
-use crate::models::{role, user};
+use crate::models::{instance_setting, role, user};
 
 /// Starts the VarmanWAF control plane server.
 ///
@@ -50,14 +52,9 @@ use crate::models::{role, user};
 /// 4. Seeds the default administrator account when the database is empty
 /// 5. Boots the HTTP REST API and gRPC control plane in parallel
 /// 6. Blocks until `SIGINT` / `SIGTERM`
-pub async fn start_server(config: ServerConfig) -> anyhow::Result<()> {
+pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
     // ── 1. Validate ──────────────────────────────────────────────────────────
     config.validate()?;
-    if config.uses_default_jwt_secret() {
-        tracing::warn!(
-            "using the built-in JWT secret — set VARMAN_JWT_SECRET for production"
-        );
-    }
 
     tracing::info!(
         http_addr = %config.http_addr,
@@ -82,6 +79,9 @@ pub async fn start_server(config: ServerConfig) -> anyhow::Result<()> {
         .await
         .map_err(|err| anyhow::anyhow!("migration failed: {err}"))?;
     tracing::info!("schema migrations applied");
+
+    // ── 3b. Pin the JWT secret for the life of the instance ────────────────
+    resolve_jwt_secret(&db, &mut config).await?;
 
     // ── 4. Seed default admin ────────────────────────────────────────────────
     seed_admin(&db, &config).await?;
@@ -185,6 +185,16 @@ pub async fn start_server(config: ServerConfig) -> anyhow::Result<()> {
     let _defense_watch_handle =
         api::defense::start_watch_task(state.clone()).await;
 
+    // ── 6f. Notification system ─────────────────────────────────────────────
+    // Installed once so REST handlers and the gRPC ingest can raise alerts
+    // without threading a handle through every constructor. The reload loop
+    // picks up channel edits (including from another instance), and the
+    // self-monitor watches the control plane host's own resources.
+    let notify_manager = notify::init(db.clone());
+    notify_manager.reload().await;
+    let _notify_reload_handle = start_notify_reload_loop(state.clone());
+    let _self_monitor_handle = notify::self_monitor::start(state.clone());
+
     if control_tls.is_enabled() {
         match api::system_tls::load_active_certificate(&state).await {
             Ok(Some(certificate)) => tracing::info!(
@@ -236,7 +246,81 @@ pub async fn start_server(config: ServerConfig) -> anyhow::Result<()> {
     let grpc_listener = TcpListener::bind(grpc_addr).await.map_err(|err| {
         anyhow::anyhow!("failed to bind gRPC address {grpc_addr}: {err}")
     })?;
-    tracing::info!(%grpc_addr, "gRPC control plane listening");
+
+    let mut grpc_builder = tonic::transport::Server::builder();
+    if shared_config.grpc_tls_enabled() {
+        match (&shared_config.grpc_tls_cert, &shared_config.grpc_tls_key) {
+            (Some(cert_path), Some(key_path)) => {
+                let cert =
+                    std::fs::read_to_string(cert_path).map_err(|err| {
+                        anyhow::anyhow!(
+                        "failed to read gRPC TLS certificate {cert_path}: {err}"
+                    )
+                    })?;
+                let key = std::fs::read_to_string(key_path).map_err(|err| {
+                    anyhow::anyhow!(
+                        "failed to read gRPC TLS key {key_path}: {err}"
+                    )
+                })?;
+                grpc_builder = configure_grpc_tls(grpc_builder, &cert, &key)?;
+                tracing::info!(
+                    %grpc_addr,
+                    "gRPC control plane listening (TLS, configured certificate)"
+                );
+            },
+            (None, None) => {
+                // Default TLS mode without explicit certificate files: serve the
+                // certificate the console uses, generating a self-signed pair on
+                // first boot. Agents pin it through `server_ca_cert` (or the CA
+                // the all-in-one mode injects inline).
+                let row = match api::system_tls::load_active_certificate(&state)
+                    .await
+                {
+                    Ok(Some(row)) => Some(row),
+                    Ok(None) => None,
+                    Err(err) => {
+                        // A stored certificate that cannot be loaded must not
+                        // take the control plane down: a fresh self-signed
+                        // pair replaces it (the old row stays for inspection).
+                        tracing::error!(
+                            error = %err,
+                            "the stored control plane certificate could not \
+                             be loaded for gRPC, falling back to a self-signed one"
+                        );
+                        None
+                    },
+                };
+                let row = match row {
+                    Some(row) => row,
+                    None => {
+                        api::system_tls::bootstrap_self_signed(&state).await?
+                    },
+                };
+                let source = row.source.clone();
+                grpc_builder = configure_grpc_tls(
+                    grpc_builder,
+                    &row.cert_pem,
+                    &row.key_pem,
+                )?;
+                tracing::info!(
+                    %grpc_addr,
+                    certificate_source = %source,
+                    "gRPC control plane listening (TLS)"
+                );
+            },
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "grpc_tls_cert and grpc_tls_key must be configured together"
+                ));
+            },
+        }
+    } else {
+        tracing::warn!(
+            %grpc_addr,
+            "gRPC control plane is running without TLS (degraded); \
+             agent traffic is plaintext — set grpc_tls_mode = \"tls\" to encrypt it"
+        );
+    }
 
     let control_plane_service = ControlPlaneService::new(
         db.clone(),
@@ -258,11 +342,22 @@ pub async fn start_server(config: ServerConfig) -> anyhow::Result<()> {
     );
 
     // ── 9b. Start the IP group subscription scheduler ───────────────────────
+    // Seed the built-in snapshot groups first so a fresh install boots with
+    // current Google/Yandex ranges; failures are non-fatal (logged).
+    if let Err(err) = api::ip_groups::seed_builtin_groups(&db).await {
+        tracing::warn!(
+            error = %err,
+            "failed to seed built-in IP group subscriptions"
+        );
+    }
     let _sync_handle =
         api::ip_groups::start_subscription_sync_scheduler(state.clone());
 
     // ── 9c. Start the log retention sweeper ─────────────────────────────────
     let _retention_handle = api::logs::start_retention_scheduler(state.clone());
+
+    // ── 9d. Start the certificate expiry scanner ────────────────────────────
+    let _cert_expiry_handle = notify::cert_expiry::start(db.clone());
 
     // ── 10. Spawn and wait for shutdown ─────────────────────────────────────
     tokio::select! {
@@ -271,7 +366,7 @@ pub async fn start_server(config: ServerConfig) -> anyhow::Result<()> {
                 tracing::error!(error = %err, "HTTP server error");
             }
         }
-        result = tonic::transport::Server::builder()
+        result = grpc_builder
             .add_service(grpc_server)
             .serve_with_incoming_shutdown(
                 TcpListenerStream::new(grpc_listener),
@@ -293,6 +388,72 @@ pub async fn start_server(config: ServerConfig) -> anyhow::Result<()> {
     }
 
     tracing::info!("VarmanWAF control plane shut down");
+    Ok(())
+}
+
+/// Reloads the notification channels and settings every minute, so edits made
+/// outside this process (the CLI, another instance) are picked up.
+fn start_notify_reload_loop(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            if let Some(manager) = notify::global() {
+                manager.reload().await;
+            }
+            let _ = &state;
+        }
+    })
+}
+
+/// Pins the JWT signing secret for the lifetime of the instance.
+///
+/// The project is open source, so the built-in default secret is public and
+/// must never secure a real deployment. When the operator did not configure a
+/// secret, a random one is generated on first boot and persisted in
+/// `instance_settings`; every later boot reuses it. Explicit configuration
+/// always wins.
+async fn resolve_jwt_secret(
+    db: &sea_orm::DatabaseConnection,
+    config: &mut ServerConfig,
+) -> anyhow::Result<()> {
+    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+
+    const JWT_SECRET_KEY: &str = "jwt_secret";
+
+    if !config.uses_default_jwt_secret() {
+        return Ok(());
+    }
+
+    tracing::warn!(
+        "JWT secret is the public placeholder; a random secret is persisted \
+         and used instead"
+    );
+
+    let existing = instance_setting::Entity::find_by_id(JWT_SECRET_KEY)
+        .one(db)
+        .await?;
+    if let Some(row) = existing {
+        config.jwt_secret = row.value;
+        tracing::info!("reusing the JWT secret generated on first boot");
+        return Ok(());
+    }
+
+    // 256 bits of entropy from two UUIDv4 payloads, the same generator the
+    // API keys use.
+    let secret = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    instance_setting::ActiveModel {
+        key: Set(JWT_SECRET_KEY.to_string()),
+        value: Set(secret.clone()),
+        updated_at: Set(chrono::Utc::now()),
+    }
+    .insert(db)
+    .await?;
+    config.jwt_secret = secret;
+    tracing::info!("generated and persisted a random JWT secret (first boot)");
     Ok(())
 }
 
@@ -330,12 +491,25 @@ async fn seed_admin(
         password_hash: sea_orm::Set(password_hash),
         name: sea_orm::Set(Some("Administrator".to_string())),
         role: sea_orm::Set(role::ADMIN.to_string()),
+        disabled: sea_orm::Set(false),
+        // The default password ships in the repository: force a change on
+        // first login.
+        must_change_password: sea_orm::Set(true),
+        token_version: sea_orm::Set(0),
         created_at: sea_orm::Set(now),
         updated_at: sea_orm::Set(now),
     };
 
     use sea_orm::ActiveModelTrait;
     admin.insert(db).await?;
+
+    if config.default_admin_password == config::DEFAULT_ADMIN_PASSWORD {
+        tracing::warn!(
+            email = %config.default_admin_email,
+            "default administrator credentials are active; the dashboard \
+             forces a password change at first login"
+        );
+    }
 
     tracing::info!(
         email = %config.default_admin_email,
@@ -365,7 +539,88 @@ pub async fn bootstrap_and_seed_api_key(
     seed_bootstrap_api_key(&db).await
 }
 
-const BOOTSTRAP_KEY_NAME: &str = "_all-in-one-bootstrap";
+/// Resolves the CA PEM the embedded agent pins for the local gRPC listener.
+///
+/// All-in-one mode serves gRPC over TLS by default with the certificate the
+/// console uses, so the agent needs that certificate as its trust anchor.
+/// Explicit certificate files win; otherwise the stored control plane
+/// certificate is used, generating (and persisting) a self-signed pair on
+/// first boot — `start_server` later picks the same row up. Returns `None`
+/// when the gRPC listener runs without TLS.
+pub async fn embedded_agent_ca_pem(
+    config: &ServerConfig,
+) -> anyhow::Result<Option<String>> {
+    if !config.grpc_tls_enabled() {
+        return Ok(None);
+    }
+    if let Some(cert_path) = &config.grpc_tls_cert {
+        let pem = std::fs::read_to_string(cert_path).map_err(|err| {
+            anyhow::anyhow!(
+                "failed to read gRPC TLS certificate {cert_path}: {err}"
+            )
+        })?;
+        return Ok(Some(pem));
+    }
+
+    let mut opts = ConnectOptions::new(config.db_url.as_str());
+    opts.max_connections(2).sqlx_logging(false);
+    let db = Database::connect(opts).await.map_err(|err| {
+        anyhow::anyhow!("bootstrap: failed to connect to PostgreSQL: {err}")
+    })?;
+
+    use crate::models::{control_plane_certificate, tls_source};
+    use sea_orm::{
+        ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
+        Set,
+    };
+
+    match control_plane_certificate::Entity::find()
+        .filter(control_plane_certificate::Column::IsActive.eq(true))
+        .order_by_desc(control_plane_certificate::Column::CreatedAt)
+        .one(&db)
+        .await?
+    {
+        Some(row) => Ok(Some(row.cert_pem)),
+        None => {
+            let sans = config.effective_tls_sans();
+            let material = crate::pki::tls::generate_self_signed(
+                config::DEFAULT_TLS_COMMON_NAME,
+                &sans,
+                crate::api::system_tls::DEFAULT_SELF_SIGNED_DAYS,
+            )
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
+            let key_pem = material.key_pem.clone().ok_or_else(|| {
+                anyhow::anyhow!("the generated key is missing")
+            })?;
+            let meta = &material.meta;
+            control_plane_certificate::ActiveModel {
+                id: Set(uuid::Uuid::new_v4()),
+                source: Set(tls_source::SELF_SIGNED.to_string()),
+                cert_pem: Set(material.cert_pem.clone()),
+                key_pem: Set(key_pem),
+                subject_dn: Set(meta.subject_dn.clone()),
+                common_name: Set(meta.common_name.clone()),
+                sans: Set(serde_json::json!(sans)),
+                serial: Set(meta.serial.clone()),
+                fingerprint_sha256: Set(meta.fingerprint_sha256.clone()),
+                not_before: Set(crate::api::mtls::to_utc(meta.not_before)),
+                not_after: Set(crate::api::mtls::to_utc(meta.not_after)),
+                is_active: Set(true),
+                created_by: Set(None),
+                created_at: Set(chrono::Utc::now()),
+            }
+            .insert(&db)
+            .await?;
+            tracing::info!(
+                "generated the first self-signed control plane certificate \
+                 (all-in-one bootstrap)"
+            );
+            Ok(Some(material.cert_pem))
+        },
+    }
+}
+
+use crate::api::keys::BOOTSTRAP_KEY_NAME;
 const BOOTSTRAP_KEY_FILE: &str = "/var/lib/varman/bootstrap_api_key";
 
 /// Seeds a bootstrap API key for all-in-one mode.
@@ -478,6 +733,19 @@ fn persist_bootstrap_key(plaintext: &str) -> std::io::Result<()> {
         .open(path)?;
     file.write_all(plaintext.as_bytes())?;
     Ok(())
+}
+
+/// Wires a PEM certificate pair into the gRPC server builder.
+fn configure_grpc_tls(
+    builder: tonic::transport::Server,
+    cert_pem: &str,
+    key_pem: &str,
+) -> anyhow::Result<tonic::transport::Server> {
+    let tls = tonic::transport::server::ServerTlsConfig::new()
+        .identity(tonic::transport::Identity::from_pem(cert_pem, key_pem));
+    builder
+        .tls_config(tls)
+        .map_err(|err| anyhow::anyhow!("failed to configure gRPC TLS: {err}"))
 }
 
 /// Returns a future that resolves when the process receives SIGINT or SIGTERM.

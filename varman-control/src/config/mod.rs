@@ -5,7 +5,7 @@
 //! API and gRPC control plane), the JWT signing material and the credentials of
 //! the administrator account that is seeded on first boot.
 //!
-//! Values come from a config file, `VARMAN_*` environment variables or CLI
+//! Values come from a config file, `PINGWAF_*` environment variables or CLI
 //! flags in the caller; [`ServerConfig::from_env`] layers the environment on top
 //! of [`ServerConfig::default`] so a container can be started without a file.
 
@@ -46,6 +46,42 @@ const DEFAULT_PASSKEY_RP_NAME: &str = "VarmanWAF";
 /// Subject common name of the self-signed certificate the control plane
 /// generates when no certificate has been uploaded yet.
 pub const DEFAULT_TLS_COMMON_NAME: &str = "VarmanWAF Control Plane";
+
+/// Transport security of the gRPC control plane listener.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
+pub enum GrpcTlsMode {
+    /// TLS is on (the default): an explicitly configured certificate if one
+    /// is set, otherwise the control plane's stored certificate — generated
+    /// self-signed on first boot. Agents connect with `https://` URLs.
+    #[default]
+    #[serde(rename = "tls")]
+    Tls,
+    /// Plaintext, for isolated networks only. The deployment is marked
+    /// degraded at startup and in the API responses.
+    #[serde(rename = "off")]
+    Off,
+}
+
+impl GrpcTlsMode {
+    /// Parses a `PINGWAF_GRPC_TLS_MODE` value; unknown values fall back to
+    /// the TLS default.
+    pub fn from_env_value(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" | "false" | "disabled" | "plain" | "plaintext" => Self::Off,
+            _ => Self::Tls,
+        }
+    }
+}
+
+impl std::str::FromStr for GrpcTlsMode {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from_env_value(s))
+    }
+}
 
 fn default_db_url() -> String {
     DEFAULT_DB_URL.to_string()
@@ -130,6 +166,21 @@ pub struct ServerConfig {
     /// Socket address the gRPC control plane listens on.
     #[serde(default = "default_grpc_addr")]
     pub grpc_addr: String,
+    /// Optional PEM certificate enabling TLS on the gRPC listener. Both this
+    /// and `grpc_tls_key` must be set; agents then connect with `https://`
+    /// URLs. When absent, TLS (the default mode) reuses the control plane's
+    /// stored certificate.
+    #[serde(default)]
+    pub grpc_tls_cert: Option<String>,
+    /// Optional PEM private key for `grpc_tls_cert`.
+    #[serde(default)]
+    pub grpc_tls_key: Option<String>,
+    /// Transport security of the gRPC listener: `tls` (the default) serves
+    /// the explicitly configured certificate or, absent one, the control
+    /// plane's stored certificate (self-signed on first boot); `off` serves
+    /// plaintext and marks the deployment degraded.
+    #[serde(default)]
+    pub grpc_tls_mode: GrpcTlsMode,
     /// HMAC secret used to sign access, refresh and agent tokens.
     #[serde(default = "default_jwt_secret")]
     pub jwt_secret: String,
@@ -209,6 +260,14 @@ pub struct ServerConfig {
     /// browser to accept the connection without a warning.
     #[serde(default = "default_tls_sans")]
     pub tls_sans: Vec<String>,
+    /// Host (optionally with port) the dashboard is reached under from the
+    /// outside, e.g. `waf.example.com` or `waf.example.com:9080`.
+    ///
+    /// Pinned into the cleartext-to-HTTPS redirect target; when unset the
+    /// redirect reuses the request's `Host` header, which a reverse proxy in
+    /// front of the control plane should be trusted to forward accurately.
+    #[serde(default)]
+    pub public_host: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -217,6 +276,9 @@ impl Default for ServerConfig {
             db_url: DEFAULT_DB_URL.to_string(),
             http_addr: DEFAULT_HTTP_ADDR.to_string(),
             grpc_addr: DEFAULT_GRPC_ADDR.to_string(),
+            grpc_tls_cert: None,
+            grpc_tls_key: None,
+            grpc_tls_mode: GrpcTlsMode::default(),
             jwt_secret: DEFAULT_JWT_SECRET.to_string(),
             jwt_expiration_hours: DEFAULT_JWT_EXPIRATION_HOURS,
             refresh_token_expiration_hours: DEFAULT_REFRESH_EXPIRATION_HOURS,
@@ -238,100 +300,114 @@ impl Default for ServerConfig {
             passkey_trust_forwarded_proto: false,
             tls_enabled: true,
             tls_sans: default_tls_sans(),
+            public_host: None,
         }
     }
 }
 
 impl ServerConfig {
-    /// Default configuration with `VARMAN_*` environment variables applied.
+    /// Default configuration with `PINGWAF_*` environment variables applied.
     ///
     /// Unknown or unparsable variables are ignored so a typo in the environment
     /// cannot prevent the control plane from booting; the effective values are
     /// logged by the caller.
     pub fn from_env() -> Self {
         let mut config = Self::default();
-        if let Ok(value) = std::env::var("VARMAN_DB_URL") {
+        if let Ok(value) = std::env::var("PINGWAF_DB_URL") {
             config.db_url = value;
         }
         if let Ok(value) = std::env::var("DATABASE_URL") {
-            // Honour the conventional name too, env var precedence: VARMAN_*.
-            if std::env::var("VARMAN_DB_URL").is_err() {
+            // Honour the conventional name too, env var precedence: PINGWAF_*.
+            if std::env::var("PINGWAF_DB_URL").is_err() {
                 config.db_url = value;
             }
         }
-        if let Ok(value) = std::env::var("VARMAN_ADMIN_ADDR")
-            .or_else(|_| std::env::var("VARMAN_HTTP_ADDR"))
+        if let Ok(value) = std::env::var("PINGWAF_ADMIN_ADDR")
+            .or_else(|_| std::env::var("PINGWAF_HTTP_ADDR"))
         {
             config.http_addr = value;
         }
-        if let Ok(value) = std::env::var("VARMAN_GRPC_ADDR") {
+        if let Ok(value) = std::env::var("PINGWAF_GRPC_ADDR") {
             config.grpc_addr = value;
         }
-        if let Ok(value) = std::env::var("VARMAN_JWT_SECRET") {
+        if let Ok(value) = std::env::var("PINGWAF_GRPC_TLS_CERT") {
+            config.grpc_tls_cert = non_empty_env(&value);
+        }
+        if let Ok(value) = std::env::var("PINGWAF_GRPC_TLS_KEY") {
+            config.grpc_tls_key = non_empty_env(&value);
+        }
+        if let Ok(value) = std::env::var("PINGWAF_GRPC_TLS_MODE") {
+            config.grpc_tls_mode = GrpcTlsMode::from_env_value(&value);
+        }
+        if let Ok(value) = std::env::var("PINGWAF_PUBLIC_HOST") {
+            config.public_host = non_empty_env(&value);
+        }
+        if let Ok(value) = std::env::var("PINGWAF_JWT_SECRET") {
             config.jwt_secret = value;
         }
-        if let Ok(value) = std::env::var("VARMAN_JWT_EXPIRATION_HOURS") {
+        if let Ok(value) = std::env::var("PINGWAF_JWT_EXPIRATION_HOURS") {
             if let Ok(hours) = value.parse::<i64>() {
                 config.jwt_expiration_hours = hours;
             }
         }
-        if let Ok(value) = std::env::var("VARMAN_ADMIN_EMAIL") {
+        if let Ok(value) = std::env::var("PINGWAF_ADMIN_EMAIL") {
             config.default_admin_email = value;
         }
-        if let Ok(value) = std::env::var("VARMAN_ADMIN_PASSWORD") {
+        if let Ok(value) = std::env::var("PINGWAF_ADMIN_PASSWORD") {
             config.default_admin_password = value;
         }
-        if let Ok(value) = std::env::var("VARMAN_ALLOW_REGISTRATION") {
+        if let Ok(value) = std::env::var("PINGWAF_ALLOW_REGISTRATION") {
             config.allow_registration = parse_bool(&value);
         }
-        if let Ok(value) = std::env::var("VARMAN_HEARTBEAT_INTERVAL") {
+        if let Ok(value) = std::env::var("PINGWAF_HEARTBEAT_INTERVAL") {
             if let Ok(seconds) = value.parse::<i64>() {
                 config.heartbeat_interval_seconds = seconds;
             }
         }
-        if let Ok(value) = std::env::var("VARMAN_DB_MAX_CONNECTIONS") {
+        if let Ok(value) = std::env::var("PINGWAF_DB_MAX_CONNECTIONS") {
             if let Ok(max) = value.parse::<u32>() {
                 config.db_max_connections = max;
             }
         }
-        if let Ok(value) = std::env::var("VARMAN_METRIC_RETENTION_DAYS") {
+        if let Ok(value) = std::env::var("PINGWAF_METRIC_RETENTION_DAYS") {
             if let Ok(days) = value.parse::<i64>() {
                 config.metric_retention_days = days;
             }
         }
-        if let Ok(value) = std::env::var("VARMAN_CORS_ORIGINS") {
+        if let Ok(value) = std::env::var("PINGWAF_CORS_ORIGINS") {
             config.cors_origins = value
                 .split(',')
                 .map(|origin| origin.trim().to_string())
                 .filter(|origin| !origin.is_empty())
                 .collect();
         }
-        if let Ok(value) = std::env::var("VARMAN_SERVE_FRONTEND") {
+        if let Ok(value) = std::env::var("PINGWAF_SERVE_FRONTEND") {
             config.serve_frontend = parse_bool(&value);
         }
-        if let Ok(value) = std::env::var("VARMAN_PASSKEY_ENABLED") {
+        if let Ok(value) = std::env::var("PINGWAF_PASSKEY_ENABLED") {
             config.passkey_enabled = parse_bool(&value);
         }
-        if let Ok(value) = std::env::var("VARMAN_PASSKEY_RP_NAME") {
+        if let Ok(value) = std::env::var("PINGWAF_PASSKEY_RP_NAME") {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
                 config.passkey_rp_name = trimmed.to_string();
             }
         }
-        if let Ok(value) = std::env::var("VARMAN_PASSKEY_RP_ID") {
+        if let Ok(value) = std::env::var("PINGWAF_PASSKEY_RP_ID") {
             config.passkey_rp_id = non_empty_env(&value);
         }
-        if let Ok(value) = std::env::var("VARMAN_PASSKEY_ORIGIN") {
+        if let Ok(value) = std::env::var("PINGWAF_PASSKEY_ORIGIN") {
             config.passkey_origin = non_empty_env(&value);
         }
-        if let Ok(value) = std::env::var("VARMAN_PASSKEY_TRUST_FORWARDED_PROTO")
+        if let Ok(value) =
+            std::env::var("PINGWAF_PASSKEY_TRUST_FORWARDED_PROTO")
         {
             config.passkey_trust_forwarded_proto = parse_bool(&value);
         }
-        if let Ok(value) = std::env::var("VARMAN_TLS_ENABLED") {
+        if let Ok(value) = std::env::var("PINGWAF_TLS_ENABLED") {
             config.tls_enabled = parse_bool(&value);
         }
-        if let Ok(value) = std::env::var("VARMAN_TLS_SANS") {
+        if let Ok(value) = std::env::var("PINGWAF_TLS_SANS") {
             let sans: Vec<String> = value
                 .split(',')
                 .map(|san| san.trim().to_string())
@@ -401,9 +477,13 @@ impl ServerConfig {
         Ok(())
     }
 
-    /// True when the placeholder JWT secret is still in use.
+    /// True when a placeholder JWT secret is still in use.
+    ///
+    /// The placeholder prefix is public knowledge — it ships in the repository
+    /// and in the docker-compose fallback — so any value starting with it is
+    /// treated as "not configured" and replaced by a generated secret.
     pub fn uses_default_jwt_secret(&self) -> bool {
-        self.jwt_secret == DEFAULT_JWT_SECRET
+        self.jwt_secret.starts_with(DEFAULT_JWT_SECRET)
     }
 
     /// Subject names a generated self-signed certificate should carry.
@@ -411,6 +491,12 @@ impl ServerConfig {
     /// The configured list is widened with the machine's hostname and the
     /// configured passkey relying party, so a first boot produces a certificate
     /// the dashboard can be reached under in the common deployments.
+    /// Whether the gRPC listener terminates TLS. `true` unless the operator
+    /// explicitly opted out with `grpc_tls_mode = "off"`.
+    pub fn grpc_tls_enabled(&self) -> bool {
+        self.grpc_tls_mode == GrpcTlsMode::Tls
+    }
+
     pub fn effective_tls_sans(&self) -> Vec<String> {
         // Trim and drop blanks: a half-written entry would otherwise reach the
         // certificate as an empty subject alternative name.
@@ -464,17 +550,17 @@ fn push_unique(sans: &mut Vec<String>, candidate: &str) {
     sans.push(candidate.to_string());
 }
 
-/// Layers `VARMAN_ES_*` environment variables onto the Elasticsearch config.
+/// Layers `PINGWAF_ES_*` environment variables onto the Elasticsearch config.
 ///
 /// Only the handful of settings an operator typically overrides at deploy time
 /// are read here; the full shape is available through the config file and the
-/// settings API. Presence of any `VARMAN_ES_*` variable materialises the
+/// settings API. Presence of any `PINGWAF_ES_*` variable materialises the
 /// config so a container can enable shipping purely from the environment.
 fn apply_es_env(config: &mut ServerConfig) {
     let mut es = config.elasticsearch.clone().unwrap_or_default();
     let mut touched = false;
 
-    if let Ok(value) = std::env::var("VARMAN_ES_URLS") {
+    if let Ok(value) = std::env::var("PINGWAF_ES_URLS") {
         es.urls = value
             .split(',')
             .map(|url| url.trim().to_string())
@@ -482,33 +568,33 @@ fn apply_es_env(config: &mut ServerConfig) {
             .collect();
         touched = true;
     }
-    if let Ok(value) = std::env::var("VARMAN_ES_ENABLED") {
+    if let Ok(value) = std::env::var("PINGWAF_ES_ENABLED") {
         es.enabled = parse_bool(&value);
         touched = true;
     }
-    if let Ok(value) = std::env::var("VARMAN_ES_INDEX_PREFIX") {
+    if let Ok(value) = std::env::var("PINGWAF_ES_INDEX_PREFIX") {
         es.index_prefix = value;
         touched = true;
     }
-    if let Ok(value) = std::env::var("VARMAN_ES_USERNAME") {
+    if let Ok(value) = std::env::var("PINGWAF_ES_USERNAME") {
         es.username = Some(value);
         touched = true;
     }
-    if let Ok(value) = std::env::var("VARMAN_ES_PASSWORD") {
+    if let Ok(value) = std::env::var("PINGWAF_ES_PASSWORD") {
         es.password = Some(value);
         touched = true;
     }
-    if let Ok(value) = std::env::var("VARMAN_ES_API_KEY") {
+    if let Ok(value) = std::env::var("PINGWAF_ES_API_KEY") {
         es.api_key = Some(value);
         touched = true;
     }
-    if let Ok(value) = std::env::var("VARMAN_ES_MAX_BODY_SIZE") {
+    if let Ok(value) = std::env::var("PINGWAF_ES_MAX_BODY_SIZE") {
         if let Ok(size) = value.parse::<usize>() {
             es.max_body_size = size;
         }
         touched = true;
     }
-    if let Ok(value) = std::env::var("VARMAN_ES_BUFFER_DIR") {
+    if let Ok(value) = std::env::var("PINGWAF_ES_BUFFER_DIR") {
         es.buffer_dir = Some(value);
         touched = true;
     }
@@ -585,6 +671,22 @@ mod tests {
         // TLS is on by default so a fresh deployment can use passkeys.
         assert!(config.tls_enabled);
         assert!(config.tls_sans.contains(&"localhost".to_string()));
+    }
+
+    #[test]
+    fn placeholder_secrets_are_treated_as_unconfigured() {
+        assert!(ServerConfig::default().uses_default_jwt_secret());
+        // The docker-compose fallback extends the built-in placeholder.
+        let composed = ServerConfig {
+            jwt_secret: format!("{DEFAULT_JWT_SECRET}-use-32-chars"),
+            ..Default::default()
+        };
+        assert!(composed.uses_default_jwt_secret());
+        let explicit = ServerConfig {
+            jwt_secret: "a-very-long-secret-value".to_string(),
+            ..Default::default()
+        };
+        assert!(!explicit.uses_default_jwt_secret());
     }
 
     #[test]

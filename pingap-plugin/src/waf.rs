@@ -2059,6 +2059,15 @@ fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
         rules,
         enable_managed_rules: true,
         fast_path_block_on_critical: true,
+        // Per-rule monitor downgrades from the control plane: managed rule
+        // ids arrive on the site's WAF config; custom-rule monitors come
+        // from the rule's own mode (mapped above).
+        monitor_managed_rules: cfg
+            .monitor_managed_rules
+            .iter()
+            .cloned()
+            .collect(),
+        monitor_custom_rules: Default::default(),
     };
     WafEngine::new(&engine_config)
 }
@@ -2402,6 +2411,8 @@ impl TryFrom<&PluginConf> for WafPlugin {
             rules: Vec::new(),
             enable_managed_rules: true,
             fast_path_block_on_critical: true,
+            monitor_managed_rules: Default::default(),
+            monitor_custom_rules: Default::default(),
         };
 
         Ok(Self {
