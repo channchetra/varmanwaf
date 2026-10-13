@@ -2039,7 +2039,9 @@ fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
     let rules: Vec<CompiledRule> = cfg
         .custom_rules
         .iter()
-        .filter(|r| r.enabled)
+        // A rule in `off` mode is switched off entirely; `monitor` rules are
+        // compiled normally and downgraded through `monitor_custom_rules`.
+        .filter(|r| r.enabled && r.mode != CacheWafMode::Off)
         .filter_map(|r| {
             let action = match r.action {
                 CacheWafAction::Block => RuleAction::Block,
@@ -2092,14 +2094,19 @@ fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
         enable_managed_rules: true,
         fast_path_block_on_critical: true,
         // Per-rule monitor downgrades from the control plane: managed rule
-        // ids arrive on the site's WAF config; custom-rule monitors come
-        // from the rule's own mode (mapped above).
+        // ids arrive on the site's WAF config; a custom rule's own `mode`
+        // decides (`monitor` records the hit without enforcing).
         monitor_managed_rules: cfg
             .monitor_managed_rules
             .iter()
             .cloned()
             .collect(),
-        monitor_custom_rules: Default::default(),
+        monitor_custom_rules: cfg
+            .custom_rules
+            .iter()
+            .filter(|r| r.enabled && r.mode == CacheWafMode::Monitor)
+            .map(|r| r.id.clone())
+            .collect(),
         // Per-rule tuning from the control plane's policies: disabled rules
         // are skipped entirely, score overrides replace the severity-derived
         // contribution.
@@ -3854,6 +3861,44 @@ ml_threshold = 0.75
         let v = overridden.inspect(&r);
         assert_eq!(v.action, WafAction::Block);
         assert_eq!(v.breakdown.total, base_total - 3);
+    }
+
+    #[test]
+    fn custom_rule_modes_are_wired_into_the_engine() {
+        use varman_agent::cache::WafRule as CacheWafRule;
+
+        let rule = |mode: CacheWafMode| CacheWafRule {
+            id: "custom-1".to_string(),
+            name: "custom".to_string(),
+            description: String::new(),
+            expression: "http.request.uri.path eq \"/blocked\"".to_string(),
+            action: CacheWafAction::Block,
+            severity: 4,
+            tags: Vec::new(),
+            enabled: true,
+            mode,
+            priority: 0,
+        };
+        let mut r = probe("");
+        r.path = "/blocked".into();
+
+        // Block mode enforces.
+        let mut cfg = cache_waf_config(false, Vec::new(), Vec::new());
+        cfg.custom_rules = vec![rule(CacheWafMode::Block)];
+        assert_eq!(
+            build_site_engine(&cfg).inspect(&r).action,
+            WafAction::Block
+        );
+
+        // Monitor mode records the hit but never enforces it.
+        cfg.custom_rules = vec![rule(CacheWafMode::Monitor)];
+        let v = build_site_engine(&cfg).inspect(&r);
+        assert_eq!(v.action, WafAction::Monitor, "details: {}", v.details);
+        assert!(v.matched_rules.contains(&"custom-1".to_string()));
+
+        // Off mode skips the rule entirely.
+        cfg.custom_rules = vec![rule(CacheWafMode::Off)];
+        assert_eq!(build_site_engine(&cfg).inspect(&r).action, WafAction::Pass);
     }
 
     #[test]

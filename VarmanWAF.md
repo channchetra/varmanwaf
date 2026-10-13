@@ -1196,10 +1196,14 @@ edits, so assigned agents resync on change.
 
 Layer payloads are validated against a closed schema at write time (unknown
 kinds and unknown keys are rejected), and every policy/layer edit bumps the
-policy revision (the optimistic-concurrency token). Later rounds extend the
-model in place: per-rule overrides with actions (P2), target exclusions and
-compile preview (P3), policy versions/diff/rollback (P4), templates (P5) and
-the remaining layers (P6) — see `tiyi-analysis/varmanwaf-policy-design.md`.
+policy revision (the optimistic-concurrency token). Managed rules are tuned
+**in data** through the `rule_overrides` layer: `disable` skips a rule
+entirely, `monitor` records it without enforcing, and `score_override`
+replaces its anomaly contribution while the rule's own action still applies;
+overlay entries win per rule id and `default` clears a policy entry. Later
+rounds extend the model in place: target exclusions and compile preview
+(P3), policy versions/diff/rollback (P4), templates (P5) and the remaining
+layers (P6) — see `tiyi-analysis/varmanwaf-policy-design.md`.
 
 ---
 
