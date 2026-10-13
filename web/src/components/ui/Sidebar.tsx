@@ -19,6 +19,7 @@ import {
   Network,
   FlowArrow,
   Sparkle,
+  Stack,
   type Icon,
 } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
@@ -72,6 +73,7 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
   const nav: NavEntry[] = [
     { kind: 'leaf', to: '/dashboard', labelKey: 'nav.dashboard', icon: House },
     { kind: 'leaf', to: '/sites', labelKey: 'nav.sites', icon: Globe },
+    { kind: 'leaf', to: '/policies', labelKey: 'nav.policies', icon: Stack },
     {
       kind: 'group',
       labelKey: 'nav.security',
@@ -81,6 +83,12 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
           to: site('security/protection'),
           labelKey: 'nav.securityProtection',
           icon: Shield,
+          requiresSite: true,
+        },
+        {
+          to: site('security/policy'),
+          labelKey: 'nav.securityPolicy',
+          icon: Stack,
           requiresSite: true,
         },
         {

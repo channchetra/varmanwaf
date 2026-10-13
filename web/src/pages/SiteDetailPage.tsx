@@ -17,6 +17,7 @@ import {
   IdentificationCard,
   Network,
   Warning,
+  Stack,
 } from '@phosphor-icons/react'
 import { Link } from 'react-router-dom'
 import { cn } from '@/lib/utils'
@@ -81,6 +82,11 @@ export function SiteDetailPage() {
       icon: Gauge,
     },
     { to: `${base}/security/bot`, label: t('nav.securityBot'), icon: Robot },
+    {
+      to: `${base}/security/policy`,
+      label: t('nav.securityPolicy'),
+      icon: Stack,
+    },
     {
       to: `${base}/security/access`,
       label: t('nav.securityAccess'),

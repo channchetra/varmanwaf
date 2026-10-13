@@ -38,6 +38,7 @@ use crate::models::{
     site_ssl, site_status, site_upstream_pools, site_upstreams, waf_settings,
 };
 use crate::pki::mtls::normalise_fingerprint;
+use crate::policy;
 
 /// `varman.WafMode` values from control_plane.proto.
 ///
@@ -809,6 +810,69 @@ fn waf_config_to_proto(
     }
 }
 
+/// Builds the site's WAF configuration with the resolved policy layers
+/// applied over the site's own posture row.
+///
+/// The layer wins over the row; everything the layer does not name keeps
+/// falling back to that row (or the historical defaults), which is what
+/// makes "unassigned = unchanged" true by construction. The switch algebra
+/// is the base builder's: an explicit engine selection opts the site in,
+/// rule groups still gate it.
+fn waf_config_with_policy(
+    rules: &[WafRule],
+    groups: &[rule_groups::Model],
+    settings: Option<&waf_settings::Model>,
+    resolved: Option<&policy::Resolved>,
+) -> WafConfig {
+    let mut config = waf_config_to_proto(rules, groups, settings);
+    let Some(resolved) = resolved else {
+        return config;
+    };
+    if resolved.engine.is_empty() && resolved.crs.is_empty() {
+        return config;
+    }
+
+    let effective = resolved.effective_engine(settings);
+    let any_group_enabled =
+        groups.is_empty() || groups.iter().any(|group| group.enabled);
+    if let Some(mode) = &effective.mode {
+        config.mode = mode::to_proto(mode);
+    }
+    config.paranoia_level = effective.paranoia_level.clamp(1, 4) as u32;
+    config.advanced_mode = effective.advanced_mode;
+    config.monitor_categories = effective.monitor_categories;
+    config.monitor_stacks = effective.monitor_stacks;
+    config.monitor_managed_rules = effective.monitor_managed_rules;
+    config.engine_mode = effective.engine_mode;
+    config.enabled = (effective.waf_enabled || config.engine_mode != "inherit")
+        && any_group_enabled;
+    config
+}
+
+/// Converts a policy's custom-rule layer into bundle rules. Ids are stable
+/// per (policy, position), so the edge can log and dedupe them.
+fn policy_rules_to_proto(
+    policy_id: Uuid,
+    rules: &[policy::PolicyRule],
+) -> Vec<WafRule> {
+    rules
+        .iter()
+        .enumerate()
+        .map(|(index, rule)| WafRule {
+            id: format!("policy:{policy_id}:{index}"),
+            name: rule.name.clone(),
+            description: rule.description.clone(),
+            expression: rule.expression.clone(),
+            action: action::to_proto(&rule.action),
+            severity: rule.severity as u32,
+            tags: rule.tags.clone(),
+            enabled: rule.enabled,
+            mode: mode::to_proto(&rule.mode),
+            priority: rule.priority.max(0) as u32,
+        })
+        .collect()
+}
+
 /// Converts a stored IP access rule into its protocol representation.
 ///
 /// Group-backed rules expand to the referenced group's live ranges while
@@ -1106,6 +1170,10 @@ pub async fn build_rule_bundle(
     let geo = load_geo_rules(db, site_row.id).await?;
     let challenge = load_challenge_settings(db, site_row.id).await?;
     let waf_settings = load_waf_settings(db, site_row.id).await?;
+    // The site's effective policy layers (empty when it follows none); the
+    // per-site overlay is folded in here so the bundle builder stays a
+    // straight translation.
+    let policy_layers = policy::resolve(db, site_row.id).await?;
     let basic_auth = load_basic_auth(db, site_row.id).await?;
     let rewrites = load_rewrite_rules(db, site_row.id).await?;
     let err_pages = load_error_pages(db).await?;
@@ -1141,18 +1209,27 @@ pub async fn build_rule_bundle(
         });
     let site_cache_settings = site_cache_settings_to_proto(site_row);
 
-    let custom_rules: Vec<WafRule> =
+    let mut custom_rules: Vec<WafRule> =
         rules_rows.iter().map(rule_to_proto).collect();
+    // Policy rules join the site's own rules; ids are namespaced per policy
+    // so logging and analytics can tell them apart.
+    if let Some(policy_id) = policy_layers.policy_id {
+        custom_rules.extend(policy_rules_to_proto(
+            policy_id,
+            &policy_layers.rules,
+        ));
+    }
 
     let mut bundle = RuleBundle {
         site_id: site_row.id.to_string(),
         // Filled in below, once every other field is final.
         config_hash: String::new(),
         updated_at: to_timestamp(site_row.updated_at),
-        waf: Some(waf_config_to_proto(
+        waf: Some(waf_config_with_policy(
             &custom_rules,
             &groups,
             waf_settings.as_ref(),
+            Some(&policy_layers),
         )),
         rate_limit_rules: rate_limits.iter().map(rate_limit_to_proto).collect(),
         ip_access_rules: ip_rules
@@ -1320,6 +1397,7 @@ pub async fn build_site_config(
 mod tests {
     use super::*;
     use crate::models::route_match_type;
+    use serde_json::json;
 
     #[test]
     fn timestamps_roundtrip() {
@@ -1514,6 +1592,106 @@ mod tests {
         off.waf_enabled = false;
         let config = waf_config_to_proto(&monitoring, &[], Some(&off));
         assert!(!config.enabled);
+    }
+
+    #[test]
+    fn policy_engine_layer_overrides_the_site_row() {
+        // The site row says off at paranoia 2; the policy says monitor at 3.
+        let settings =
+            waf_settings_row(Uuid::nil(), false, Vec::new(), Vec::new());
+        let mut resolved = policy::Resolved {
+            policy_id: Some(Uuid::new_v4()),
+            ..policy::Resolved::default()
+        };
+        resolved.engine.insert("mode".into(), json!("monitor"));
+        resolved.engine.insert("paranoia_level".into(), json!(3));
+        resolved.engine.insert("advanced_mode".into(), json!(true));
+
+        let config =
+            waf_config_with_policy(&[], &[], Some(&settings), Some(&resolved));
+        assert!(config.enabled);
+        assert_eq!(config.mode, WAF_MODE_MONITOR);
+        assert_eq!(config.paranoia_level, 3);
+        assert!(config.advanced_mode);
+    }
+
+    #[test]
+    fn policy_can_disable_the_engine_for_a_site() {
+        let settings =
+            waf_settings_row(Uuid::nil(), false, Vec::new(), Vec::new());
+        let mut resolved = policy::Resolved {
+            policy_id: Some(Uuid::new_v4()),
+            ..policy::Resolved::default()
+        };
+        resolved.engine.insert("waf_enabled".into(), json!(false));
+
+        let config =
+            waf_config_with_policy(&[], &[], Some(&settings), Some(&resolved));
+        assert!(!config.enabled);
+    }
+
+    #[test]
+    fn policy_crs_layer_sets_managed_rule_monitors() {
+        let mut resolved = policy::Resolved {
+            policy_id: Some(Uuid::new_v4()),
+            ..policy::Resolved::default()
+        };
+        resolved
+            .crs
+            .insert("monitor_managed_rules".into(), json!(["VARMAN-1010"]));
+
+        let config = waf_config_with_policy(&[], &[], None, Some(&resolved));
+        assert_eq!(config.monitor_managed_rules, vec!["VARMAN-1010"]);
+    }
+
+    #[test]
+    fn empty_policy_keeps_the_historical_bundle_unchanged() {
+        let base = rule::Model {
+            id: Uuid::new_v4(),
+            group_id: None,
+            site_id: Uuid::nil(),
+            name: "r".into(),
+            description: None,
+            expression: "true".into(),
+            action: action::BLOCK.into(),
+            severity: 3,
+            tags: vec!["sqli".into()],
+            enabled: true,
+            mode: mode::MONITOR.into(),
+            priority: 0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let rules = vec![rule_to_proto(&base)];
+        let historical = waf_config_to_proto(&rules, &[], None);
+        let resolved = policy::Resolved::default();
+        let with_policy =
+            waf_config_with_policy(&rules, &[], None, Some(&resolved));
+        assert_eq!(historical, with_policy);
+    }
+
+    #[test]
+    fn policy_rules_become_namespaced_bundle_rules() {
+        let policy_id = Uuid::new_v4();
+        let rules = vec![policy::PolicyRule {
+            name: "Block probe".into(),
+            description: "shared rule".into(),
+            expression: "http.request.uri.path eq \"/probe\"".into(),
+            action: action::BLOCK.into(),
+            severity: 4,
+            tags: vec!["custom".into()],
+            enabled: true,
+            mode: mode::BLOCK.into(),
+            priority: 10,
+        }];
+
+        let proto = policy_rules_to_proto(policy_id, &rules);
+        assert_eq!(proto.len(), 1);
+        assert_eq!(proto[0].id, format!("policy:{policy_id}:0"));
+        assert_eq!(proto[0].name, "Block probe");
+        assert_eq!(proto[0].action, action::to_proto("block"));
+        assert_eq!(proto[0].mode, mode::to_proto("block"));
+        assert_eq!(proto[0].priority, 10);
     }
 
     fn waf_settings_row(

@@ -1182,6 +1182,25 @@ pub struct Finding {
 
 Avoid passing only strings between subsystems.
 
+## Policy control plane (v0.24.0, round P1)
+
+Rules and posture are shared through **WAF policies**: named, revisioned
+documents composed of typed layers (`engine`, `crs`, `custom_rules`). A site
+follows at most one policy through `site_waf_policies` and may carry a sparse
+per-site delta in `site_waf_policy_overrides`. Resolution precedence is
+**overlay > policy layer > the site's own settings**, so a site without an
+assignment behaves exactly as it did before policies existed; policy custom
+rules are merged into the site's rule bundle with namespaced ids
+(`policy:<policy-id>:<index>`) and the config fingerprint covers policy
+edits, so assigned agents resync on change.
+
+Layer payloads are validated against a closed schema at write time (unknown
+kinds and unknown keys are rejected), and every policy/layer edit bumps the
+policy revision (the optimistic-concurrency token). Later rounds extend the
+model in place: per-rule overrides with actions (P2), target exclusions and
+compile preview (P3), policy versions/diff/rollback (P4), templates (P5) and
+the remaining layers (P6) — see `tiyi-analysis/varmanwaf-policy-design.md`.
+
 ---
 
 # 18. ATTACK CATEGORIES

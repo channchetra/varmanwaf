@@ -34,6 +34,8 @@ import { IpGroupsPage } from '@/pages/IpGroupsPage'
 import { RewritePage } from '@/pages/sites/RewritePage'
 import { OriginPage } from '@/pages/sites/OriginPage'
 import { LifecyclePage } from '@/pages/LifecyclePage'
+import { PoliciesPage } from '@/pages/PoliciesPage'
+import { PolicyPage } from '@/pages/sites/PolicyPage'
 import { SiteSettingsPage } from '@/pages/placeholders'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Button } from '@/components/ui/Button'
@@ -88,6 +90,7 @@ export const router = createBrowserRouter([
           { path: 'security/rate-limiting', element: <RateLimitingPage /> },
           { path: 'security/bot', element: <BotProtectionPage /> },
           { path: 'security/access', element: <AccessControlPage /> },
+          { path: 'security/policy', element: <PolicyPage /> },
           // WAF and CC were separate tabs before they were merged; keep old
           // links (including the `?rule=` deep link) working.
           {
@@ -119,6 +122,7 @@ export const router = createBrowserRouter([
       { path: 'assistant', element: <AssistantPage /> },
       { path: 'agents', element: <AgentsPage /> },
       { path: 'ip-groups', element: <IpGroupsPage /> },
+      { path: 'policies', element: <PoliciesPage /> },
       { path: 'lifecycle', element: <LifecyclePage /> },
       // Global surfaces. The per-site counterparts live under `/sites/:siteId`.
       { path: 'ssl', element: <GlobalSslPage /> },

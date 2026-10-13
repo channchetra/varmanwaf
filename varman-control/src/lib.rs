@@ -23,6 +23,7 @@ pub mod models;
 pub mod monitoring;
 pub mod notify;
 pub mod pki;
+pub mod policy;
 pub mod subscription;
 pub mod tls;
 

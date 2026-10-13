@@ -40,8 +40,12 @@ pub mod rewrite_rules;
 pub mod rules;
 pub mod security_events;
 pub mod site_basic_auth;
+pub mod site_waf_policies;
+pub mod site_waf_policy_overrides;
 pub mod sites;
 pub mod users;
+pub mod waf_policies;
+pub mod waf_policy_layers;
 pub mod waf_settings;
 
 pub use agent_blocked_ips::agent_blocked_ips as agent_blocked_ip;
@@ -87,7 +91,11 @@ pub use sites::{
     site_upstream_pools, site_upstreams, sites as site, tls_version,
     trusted_header,
 };
+pub use site_waf_policies as site_waf_policy;
+pub use site_waf_policy_overrides as site_waf_policy_override;
 pub use users::{api_keys as api_key, permission, role, users as user};
+pub use waf_policies as waf_policy;
+pub use waf_policy_layers as waf_policy_layer;
 
 /// Convenience alias used across the API and gRPC layers.
 pub type DbErr = sea_orm::DbErr;

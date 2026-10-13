@@ -1,0 +1,834 @@
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Plus, Stack, Trash } from '@phosphor-icons/react'
+import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
+import { Card, CardBody, CardFooter, CardHeader } from '@/components/ui/Card'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { Dialog } from '@/components/ui/Dialog'
+import { Input } from '@/components/ui/Input'
+import { PillMultiSelect, TagInput } from '@/components/ui/MultiSelect'
+import { Select } from '@/components/ui/Select'
+import { SkeletonCard } from '@/components/ui/Skeleton'
+import { Switch } from '@/components/ui/Switch'
+import { useToast } from '@/components/ui/Toast'
+import { ErrorState } from '@/components/ErrorState'
+import { useCanWrite } from '@/hooks'
+import { cn } from '@/lib/utils'
+import {
+  MANAGED_RULE_IDS,
+  policiesApi,
+  policyKeys,
+  type CrsLayerConfig,
+  type CustomRulesLayerConfig,
+  type EngineLayerConfig,
+  type PolicyDetail,
+  type PolicyLayerKind,
+  type PolicyRule,
+  type PolicySummary,
+} from '@/api/policies'
+import { WAF_CATEGORIES, WAF_ENGINE_MODES, WAF_STACKS } from '@/api/types'
+
+/** Layer tabs of the editor, in display order. */
+const LAYER_TABS: PolicyLayerKind[] = ['engine', 'crs', 'custom_rules']
+
+/**
+ * Global WAF policies: shared, revisioned configuration documents sites can
+ * follow. Unassigned sites keep their own settings, so creating a policy has
+ * no effect until it is assigned on a site's Policy tab.
+ */
+export function PoliciesPage() {
+  const { t } = useTranslation()
+  const canWrite = useCanWrite()
+  const toast = useToast()
+  const queryClient = useQueryClient()
+  const [createOpen, setCreateOpen] = useState(false)
+  const [editorId, setEditorId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<PolicySummary | null>(null)
+
+  const list = useQuery({
+    queryKey: policyKeys.list(),
+    queryFn: () => policiesApi.list(),
+  })
+
+  const remove = useMutation({
+    mutationFn: (id: string) => policiesApi.remove(id),
+    onSuccess: () => {
+      toast.success(t('pages.policies.deleted'))
+      setDeleteTarget(null)
+      void queryClient.invalidateQueries({ queryKey: policyKeys.all })
+    },
+  })
+
+  if (list.isError && !list.data) {
+    return (
+      <div className="animate-slide-up">
+        <ErrorState
+          error={list.error}
+          onRetry={() => list.refetch()}
+          retrying={list.isFetching}
+        />
+      </div>
+    )
+  }
+
+  const policies = list.data ?? []
+
+  return (
+    <div className="animate-slide-up space-y-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-fg-strong">
+            {t('pages.policies.title')}
+          </h1>
+          <p className="mt-1 text-[13px] text-fg-subtle">
+            {t('pages.policies.description')}
+          </p>
+        </div>
+        {canWrite && (
+          <Button
+            variant="primary"
+            icon={<Plus weight="bold" className="h-4 w-4" />}
+            onClick={() => setCreateOpen(true)}
+          >
+            {t('pages.policies.new')}
+          </Button>
+        )}
+      </div>
+
+      {list.isLoading ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+      ) : policies.length === 0 ? (
+        <Card>
+          <CardBody className="flex flex-col items-center gap-3 py-10 text-center">
+            <Stack weight="duotone" className="h-8 w-8 text-fg-subtle" />
+            <div>
+              <p className="text-sm font-medium text-fg-strong">
+                {t('pages.policies.emptyTitle')}
+              </p>
+              <p className="mt-1 text-[13px] text-fg-subtle">
+                {t('pages.policies.emptyBody')}
+              </p>
+            </div>
+          </CardBody>
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {policies.map((policy) => (
+            <Card key={policy.id} className="flex flex-col">
+              <CardHeader
+                title={policy.name}
+                description={
+                  policy.description || t('pages.policies.noDescription')
+                }
+                action={
+                  <Badge tone={policy.enabled ? 'success' : 'neutral'} dot>
+                    {policy.enabled
+                      ? t('pages.policies.stateEnabled')
+                      : t('pages.policies.stateDisabled')}
+                  </Badge>
+                }
+              />
+              <CardBody className="flex-1 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="neutral">
+                    {t('pages.policies.revision', { n: policy.revision })}
+                  </Badge>
+                  <Badge tone="neutral">
+                    {t('pages.policies.siteCount', { n: policy.site_count })}
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {policy.layer_kinds.length === 0 ? (
+                    <span className="text-xs text-fg-subtle">
+                      {t('pages.policies.noLayers')}
+                    </span>
+                  ) : (
+                    policy.layer_kinds.map((kind) => (
+                      <Badge key={kind} tone="info">
+                        {t(`pages.policies.layers.${kind}`)}
+                      </Badge>
+                    ))
+                  )}
+                </div>
+              </CardBody>
+              <CardFooter className="justify-between">
+                <Button
+                  size="sm"
+                  onClick={() => setEditorId(policy.id)}
+                >
+                  {canWrite
+                    ? t('pages.policies.edit')
+                    : t('pages.policies.view')}
+                </Button>
+                {canWrite && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<Trash className="h-4 w-4" />}
+                    onClick={() => setDeleteTarget(policy)}
+                  >
+                    {t('common.delete')}
+                  </Button>
+                )}
+              </CardFooter>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <CreatePolicyDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(id) => {
+          setCreateOpen(false)
+          setEditorId(id)
+          void queryClient.invalidateQueries({ queryKey: policyKeys.all })
+        }}
+      />
+
+      {editorId && (
+        <PolicyEditorDialog
+          key={editorId}
+          policyId={editorId}
+          canWrite={canWrite}
+          onClose={() => setEditorId(null)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && remove.mutate(deleteTarget.id)}
+        loading={remove.isPending}
+        title={t('pages.policies.deleteTitle')}
+        description={t('pages.policies.deleteBody', {
+          name: deleteTarget?.name ?? '',
+          n: deleteTarget?.site_count ?? 0,
+        })}
+        confirmLabel={t('common.delete')}
+      />
+    </div>
+  )
+}
+
+/* ── Create ───────────────────────────────────────────────────────────── */
+
+function CreatePolicyDialog({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean
+  onClose: () => void
+  onCreated: (id: string) => void
+}) {
+  const { t } = useTranslation()
+  const toast = useToast()
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+
+  const create = useMutation({
+    mutationFn: () => policiesApi.create({ name, description }),
+    onSuccess: (policy) => {
+      toast.success(t('pages.policies.created'), policy.name)
+      setName('')
+      setDescription('')
+      onCreated(policy.id)
+    },
+    onError: (error) => {
+      toast.error(t('pages.policies.createFailed'), String(error))
+    },
+  })
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={t('pages.policies.new')}
+      description={t('pages.policies.newHint')}
+    >
+      <div className="space-y-4 px-5 py-4">
+        <Input
+          label={t('pages.policies.name')}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          maxLength={120}
+        />
+        <Input
+          label={t('pages.policies.descriptionLabel')}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            variant="primary"
+            loading={create.isPending}
+            disabled={name.trim().length === 0}
+            onClick={() => create.mutate()}
+          >
+            {t('common.create')}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
+/* ── Editor ───────────────────────────────────────────────────────────── */
+
+function PolicyEditorDialog({
+  policyId,
+  canWrite,
+  onClose,
+}: {
+  policyId: string
+  canWrite: boolean
+  onClose: () => void
+}) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const [tab, setTab] = useState<PolicyLayerKind>('engine')
+
+  const detail = useQuery({
+    queryKey: policyKeys.detail(policyId),
+    queryFn: () => policiesApi.get(policyId),
+  })
+
+  const policy = detail.data
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="xl"
+      title={policy?.name ?? t('pages.policies.loading')}
+      description={
+        policy
+          ? t('pages.policies.editorDescription', {
+              revision: policy.revision,
+              sites: policy.site_count,
+            })
+          : undefined
+      }
+    >
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 gap-1 border-b border-line px-5 pt-3">
+          {LAYER_TABS.map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              onClick={() => setTab(kind)}
+              className={cn(
+                'rounded-t-md border-b-2 px-3 py-2 text-[13px] font-medium transition-colors',
+                tab === kind
+                  ? 'border-link text-fg-strong'
+                  : 'border-transparent text-fg-subtle hover:text-fg',
+              )}
+            >
+              {t(`pages.policies.layers.${kind}`)}
+            </button>
+          ))}
+        </div>
+
+        {detail.isLoading || !policy ? (
+          <div className="p-5">
+            <SkeletonCard />
+          </div>
+        ) : (
+          <LayerEditor
+            policy={policy}
+            tab={tab}
+            canWrite={canWrite}
+            onStored={() => {
+              void queryClient.invalidateQueries({
+                queryKey: policyKeys.detail(policyId),
+              })
+              void queryClient.invalidateQueries({
+                queryKey: policyKeys.list(),
+              })
+            }}
+          />
+        )}
+      </div>
+    </Dialog>
+  )
+}
+
+/** Shared save/remove wiring for the three layer forms. */
+function useLayerMutation(
+  policyId: string,
+  kind: PolicyLayerKind,
+  onStored: () => void,
+) {
+  const { t } = useTranslation()
+  const toast = useToast()
+  return useMutation({
+    mutationFn: (config: unknown) =>
+      policiesApi.putLayer(policyId, kind, config),
+    onSuccess: () => {
+      toast.success(t('pages.policies.layerSaved'))
+      onStored()
+    },
+    onError: (error) => {
+      toast.error(t('pages.policies.layerSaveFailed'), String(error))
+    },
+  })
+}
+
+function LayerEditor({
+  policy,
+  tab,
+  canWrite,
+  onStored,
+}: {
+  policy: PolicyDetail
+  tab: PolicyLayerKind
+  canWrite: boolean
+  onStored: () => void
+}) {
+  const stored = policy.layers.find((layer) => layer.kind === tab)
+  if (tab === 'engine') {
+    return (
+      <EngineLayerForm
+        policyId={policy.id}
+        stored={stored?.config as EngineLayerConfig | undefined}
+        hasStored={Boolean(stored)}
+        canWrite={canWrite}
+        onStored={onStored}
+      />
+    )
+  }
+  if (tab === 'crs') {
+    return (
+      <CrsLayerForm
+        policyId={policy.id}
+        stored={stored?.config as CrsLayerConfig | undefined}
+        hasStored={Boolean(stored)}
+        canWrite={canWrite}
+        onStored={onStored}
+      />
+    )
+  }
+  return (
+    <CustomRulesForm
+      policyId={policy.id}
+      stored={stored?.config as CustomRulesLayerConfig | undefined}
+      hasStored={Boolean(stored)}
+      canWrite={canWrite}
+      onStored={onStored}
+    />
+  )
+}
+
+function LayerFooter({
+  canWrite,
+  hasStored,
+  saving,
+  onSave,
+  onRemove,
+}: {
+  canWrite: boolean
+  hasStored: boolean
+  saving: boolean
+  onSave: () => void
+  onRemove: () => void
+}) {
+  const { t } = useTranslation()
+  if (!canWrite) return null
+  return (
+    <div className="flex justify-between border-t border-line px-5 py-3">
+      <Button
+        variant="ghost"
+        disabled={!hasStored}
+        onClick={onRemove}
+      >
+        {t('pages.policies.removeLayer')}
+      </Button>
+      <Button variant="primary" loading={saving} onClick={onSave}>
+        {t('common.save')}
+      </Button>
+    </div>
+  )
+}
+
+/** Tri-state select: `''` = keep inheriting, otherwise the picked value. */
+function TriSelect({
+  label,
+  hint,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  hint?: string
+  value: string
+  onChange: (next: string) => void
+  options: { value: string; label: string }[]
+}) {
+  const { t } = useTranslation()
+  return (
+    <Select
+      label={label}
+      hint={hint}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      options={[
+        { value: '', label: t('pages.policies.keepInheriting') },
+        ...options,
+      ]}
+    />
+  )
+}
+
+function EngineLayerForm({
+  policyId,
+  stored,
+  hasStored,
+  canWrite,
+  onStored,
+}: {
+  policyId: string
+  stored?: EngineLayerConfig
+  hasStored: boolean
+  canWrite: boolean
+  onStored: () => void
+}) {
+  const { t } = useTranslation()
+  const save = useLayerMutation(policyId, 'engine', onStored)
+  const remove = useMutation({
+    mutationFn: () => policiesApi.deleteLayer(policyId, 'engine'),
+    onSuccess: onStored,
+  })
+
+  const [wafEnabled, setWafEnabled] = useState(
+    stored?.waf_enabled === undefined ? '' : String(stored.waf_enabled),
+  )
+  const [mode, setMode] = useState(stored?.mode ?? '')
+  const [paranoia, setParanoia] = useState(
+    stored?.paranoia_level === undefined ? '' : String(stored.paranoia_level),
+  )
+  const [advanced, setAdvanced] = useState(
+    stored?.advanced_mode === undefined ? '' : String(stored.advanced_mode),
+  )
+  const [engineMode, setEngineMode] = useState(stored?.engine_mode ?? '')
+  const [categories, setCategories] = useState<string[]>(
+    stored?.monitor_categories ?? [],
+  )
+  const [stacks, setStacks] = useState<string[]>(
+    stored?.monitor_stacks ?? [],
+  )
+
+  const config: EngineLayerConfig = {}
+  if (wafEnabled !== '') config.waf_enabled = wafEnabled === 'true'
+  if (mode) config.mode = mode
+  if (paranoia) config.paranoia_level = Number(paranoia)
+  if (advanced !== '') config.advanced_mode = advanced === 'true'
+  if (engineMode) config.engine_mode = engineMode
+  if (categories.length > 0) config.monitor_categories = categories
+  if (stacks.length > 0) config.monitor_stacks = stacks
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="grid flex-1 gap-4 overflow-y-auto px-5 py-4 md:grid-cols-2">
+        <TriSelect
+          label={t('pages.policies.fields.wafEnabled')}
+          value={wafEnabled}
+          onChange={setWafEnabled}
+          options={[
+            { value: 'true', label: t('common.enabled') },
+            { value: 'false', label: t('common.disabled') },
+          ]}
+        />
+        <TriSelect
+          label={t('pages.policies.fields.mode')}
+          hint={t('pages.policies.fields.modeHint')}
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: 'off', label: 'off' },
+            { value: 'monitor', label: 'monitor' },
+            { value: 'block', label: 'block' },
+          ]}
+        />
+        <TriSelect
+          label={t('pages.policies.fields.paranoia')}
+          value={paranoia}
+          onChange={setParanoia}
+          options={['1', '2', '3', '4'].map((level) => ({
+            value: level,
+            label: t('pages.policies.fields.paranoiaLevel', { n: level }),
+          }))}
+        />
+        <TriSelect
+          label={t('pages.policies.fields.advanced')}
+          hint={t('pages.policies.fields.advancedHint')}
+          value={advanced}
+          onChange={setAdvanced}
+          options={[
+            { value: 'true', label: t('common.enabled') },
+            { value: 'false', label: t('common.disabled') },
+          ]}
+        />
+        <TriSelect
+          label={t('pages.policies.fields.engineMode')}
+          hint={t('pages.policies.fields.engineModeHint')}
+          value={engineMode}
+          onChange={setEngineMode}
+          options={WAF_ENGINE_MODES.map((engine) => ({
+            value: engine,
+            label: engine,
+          }))}
+        />
+        <div className="md:col-span-2">
+          <PillMultiSelect
+            label={t('pages.policies.fields.monitorCategories')}
+            hint={t('pages.policies.fields.monitorHint')}
+            options={WAF_CATEGORIES.map((category) => ({
+              value: category,
+              label: category,
+            }))}
+            value={categories}
+            onChange={setCategories}
+          />
+        </div>
+        <div className="md:col-span-2">
+          <PillMultiSelect
+            label={t('pages.policies.fields.monitorStacks')}
+            options={WAF_STACKS.map((stack) => ({
+              value: stack,
+              label: stack,
+            }))}
+            value={stacks}
+            onChange={setStacks}
+          />
+        </div>
+      </div>
+      <LayerFooter
+        canWrite={canWrite}
+        hasStored={hasStored}
+        saving={save.isPending || remove.isPending}
+        onSave={() => save.mutate(config)}
+        onRemove={() => remove.mutate()}
+      />
+    </div>
+  )
+}
+
+function CrsLayerForm({
+  policyId,
+  stored,
+  hasStored,
+  canWrite,
+  onStored,
+}: {
+  policyId: string
+  stored?: CrsLayerConfig
+  hasStored: boolean
+  canWrite: boolean
+  onStored: () => void
+}) {
+  const { t } = useTranslation()
+  const save = useLayerMutation(policyId, 'crs', onStored)
+  const remove = useMutation({
+    mutationFn: () => policiesApi.deleteLayer(policyId, 'crs'),
+    onSuccess: onStored,
+  })
+  const [rules, setRules] = useState<string[]>(
+    stored?.monitor_managed_rules ?? [],
+  )
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        <PillMultiSelect
+          label={t('pages.policies.fields.monitorManagedRules')}
+          hint={t('pages.policies.fields.monitorManagedRulesHint')}
+          options={MANAGED_RULE_IDS.map((id) => ({ value: id, label: id }))}
+          value={rules}
+          onChange={setRules}
+        />
+      </div>
+      <LayerFooter
+        canWrite={canWrite}
+        hasStored={hasStored}
+        saving={save.isPending || remove.isPending}
+        onSave={() => save.mutate({ monitor_managed_rules: rules })}
+        onRemove={() => remove.mutate()}
+      />
+    </div>
+  )
+}
+
+const RULE_ACTIONS = ['block', 'log', 'challenge', 'js_challenge', 'allow']
+const RULE_MODES = ['block', 'monitor', 'off']
+
+function emptyRule(): PolicyRule {
+  return {
+    name: '',
+    description: '',
+    expression: '',
+    action: 'block',
+    severity: 3,
+    tags: [],
+    enabled: true,
+    mode: 'block',
+    priority: 0,
+  }
+}
+
+function CustomRulesForm({
+  policyId,
+  stored,
+  hasStored,
+  canWrite,
+  onStored,
+}: {
+  policyId: string
+  stored?: CustomRulesLayerConfig
+  hasStored: boolean
+  canWrite: boolean
+  onStored: () => void
+}) {
+  const { t } = useTranslation()
+  const save = useLayerMutation(policyId, 'custom_rules', onStored)
+  const remove = useMutation({
+    mutationFn: () => policiesApi.deleteLayer(policyId, 'custom_rules'),
+    onSuccess: onStored,
+  })
+  const [rules, setRules] = useState<PolicyRule[]>(stored?.rules ?? [])
+
+  const patch = (index: number, next: Partial<PolicyRule>) => {
+    setRules((current) =>
+      current.map((rule, i) => (i === index ? { ...rule, ...next } : rule)),
+    )
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        {rules.length === 0 && (
+          <p className="text-[13px] text-fg-subtle">
+            {t('pages.policies.fields.noRules')}
+          </p>
+        )}
+        {rules.map((rule, index) => (
+          <div
+            key={index}
+            className="space-y-3 rounded-lg border border-line p-3"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13px] font-medium text-fg-strong">
+                {rule.name.trim() || t('pages.policies.fields.untitledRule')}
+              </span>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={rule.enabled !== false}
+                  onCheckedChange={(checked) =>
+                    patch(index, { enabled: checked })
+                  }
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!canWrite}
+                  icon={<Trash className="h-4 w-4" />}
+                  onClick={() =>
+                    setRules((current) =>
+                      current.filter((_, i) => i !== index),
+                    )
+                  }
+                />
+              </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input
+                label={t('pages.policies.fields.ruleName')}
+                value={rule.name}
+                maxLength={120}
+                onChange={(e) => patch(index, { name: e.target.value })}
+              />
+              <Input
+                label={t('pages.policies.fields.rulePriority')}
+                type="number"
+                value={String(rule.priority ?? 0)}
+                onChange={(e) =>
+                  patch(index, { priority: Number(e.target.value) || 0 })
+                }
+              />
+            </div>
+            <Input
+              label={t('pages.policies.fields.ruleExpression')}
+              hint={t('pages.policies.fields.ruleExpressionHint')}
+              value={rule.expression}
+              onChange={(e) => patch(index, { expression: e.target.value })}
+            />
+            <div className="grid gap-3 md:grid-cols-3">
+              <Select
+                label={t('pages.policies.fields.ruleAction')}
+                value={rule.action}
+                onChange={(e) => patch(index, { action: e.target.value })}
+                options={RULE_ACTIONS.map((action) => ({
+                  value: action,
+                  label: action,
+                }))}
+              />
+              <Select
+                label={t('pages.policies.fields.ruleMode')}
+                value={rule.mode ?? 'block'}
+                onChange={(e) => patch(index, { mode: e.target.value })}
+                options={RULE_MODES.map((mode) => ({
+                  value: mode,
+                  label: mode,
+                }))}
+              />
+              <Select
+                label={t('pages.policies.fields.ruleSeverity')}
+                value={String(rule.severity ?? 3)}
+                onChange={(e) =>
+                  patch(index, { severity: Number(e.target.value) })
+                }
+                options={['1', '2', '3', '4', '5'].map((severity) => ({
+                  value: severity,
+                  label: severity,
+                }))}
+              />
+            </div>
+            <TagInput
+              label={t('pages.policies.fields.ruleTags')}
+              value={rule.tags ?? []}
+              onChange={(tags) => patch(index, { tags })}
+              disabled={!canWrite}
+            />
+          </div>
+        ))}
+        {canWrite && (
+          <Button
+            size="sm"
+            icon={<Plus weight="bold" className="h-4 w-4" />}
+            onClick={() => setRules((current) => [...current, emptyRule()])}
+          >
+            {t('pages.policies.fields.addRule')}
+          </Button>
+        )}
+      </div>
+      <LayerFooter
+        canWrite={canWrite}
+        hasStored={hasStored}
+        saving={save.isPending || remove.isPending}
+        onSave={() => save.mutate({ rules })}
+        onRemove={() => remove.mutate()}
+      />
+    </div>
+  )
+}
+
+export default PoliciesPage
