@@ -31,6 +31,8 @@ import {
   type PolicyPreview,
   type PolicyRule,
   type PolicySummary,
+  type PolicyVersion,
+  type PolicyVersionDiff,
   type RuleOverrideEntry,
   type RuleOverridesLayerConfig,
   type RulePlanEntry,
@@ -309,6 +311,7 @@ function PolicyEditorDialog({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [tab, setTab] = useState<PolicyLayerKind>('engine')
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   const detail = useQuery({
     queryKey: policyKeys.detail(policyId),
@@ -333,22 +336,31 @@ function PolicyEditorDialog({
       }
     >
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex shrink-0 gap-1 border-b border-line px-5 pt-3">
-          {LAYER_TABS.map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              onClick={() => setTab(kind)}
-              className={cn(
-                'rounded-t-md border-b-2 px-3 py-2 text-[13px] font-medium transition-colors',
-                tab === kind
-                  ? 'border-link text-fg-strong'
-                  : 'border-transparent text-fg-subtle hover:text-fg',
-              )}
-            >
-              {t(`pages.policies.layers.${kind}`)}
-            </button>
-          ))}
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-5 pt-3">
+          <div className="flex gap-1">
+            {LAYER_TABS.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => setTab(kind)}
+                className={cn(
+                  'rounded-t-md border-b-2 px-3 py-2 text-[13px] font-medium transition-colors',
+                  tab === kind
+                    ? 'border-link text-fg-strong'
+                    : 'border-transparent text-fg-subtle hover:text-fg',
+                )}
+              >
+                {t(`pages.policies.layers.${kind}`)}
+              </button>
+            ))}
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setHistoryOpen(true)}
+          >
+            {t('pages.policies.history')}
+          </Button>
         </div>
 
         {detail.isLoading || !policy ? (
@@ -369,6 +381,181 @@ function PolicyEditorDialog({
               })
             }}
           />
+        )}
+        {historyOpen && (
+          <PolicyHistoryDialog
+            policyId={policyId}
+            canWrite={canWrite}
+            onClose={() => setHistoryOpen(false)}
+          />
+        )}
+      </div>
+    </Dialog>
+  )
+}
+
+/** Version history: list, diff against the previous version, rollback. */
+function PolicyHistoryDialog({
+  policyId,
+  canWrite,
+  onClose,
+}: {
+  policyId: string
+  canWrite: boolean
+  onClose: () => void
+}) {
+  const { t } = useTranslation()
+  const toast = useToast()
+  const queryClient = useQueryClient()
+  const [selected, setSelected] = useState<number | null>(null)
+
+  const versions = useQuery({
+    queryKey: policyKeys.versions(policyId),
+    queryFn: () => policiesApi.versions(policyId),
+  })
+  const list: PolicyVersion[] = versions.data ?? []
+  const currentId = selected ?? list[0]?.id ?? null
+  const currentIndex = list.findIndex((version) => version.id === currentId)
+  const previous = currentIndex >= 0 ? list[currentIndex + 1] : undefined
+
+  const diff = useQuery({
+    queryKey: policyKeys.versionDiff(
+      policyId,
+      previous?.id ?? 0,
+      currentId ?? 0,
+    ),
+    queryFn: () =>
+      policiesApi.versionDiff(policyId, previous!.id, currentId!),
+    enabled: Boolean(previous && currentId),
+  })
+
+  const rollback = useMutation({
+    mutationFn: (versionId: number) =>
+      policiesApi.rollback(policyId, versionId),
+    onSuccess: () => {
+      toast.success(t('pages.policies.rollbackDone'))
+      void queryClient.invalidateQueries({
+        queryKey: policyKeys.versions(policyId),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: policyKeys.detail(policyId),
+      })
+      void queryClient.invalidateQueries({ queryKey: policyKeys.list() })
+    },
+    onError: (error) =>
+      toast.error(t('pages.policies.rollbackFailed'), String(error)),
+  })
+
+  const currentVersion = list.find((version) => version.id === currentId)
+  const diffData: PolicyVersionDiff | undefined = diff.data
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="lg"
+      title={t('pages.policies.history')}
+      description={t('pages.policies.historyHint')}
+    >
+      <div className="max-h-[65vh] space-y-3 overflow-y-auto px-5 py-4">
+        {versions.isLoading ? (
+          <SkeletonCard />
+        ) : list.length === 0 ? (
+          <p className="text-[13px] text-fg-subtle">
+            {t('pages.policies.noVersions')}
+          </p>
+        ) : (
+          <ul className="divide-y divide-line rounded-lg border border-line">
+            {list.map((version) => (
+              <li
+                key={version.id}
+                className={cn(
+                  'flex flex-wrap items-center gap-2 px-3 py-2 text-[13px]',
+                  version.id === currentId && 'bg-recessed',
+                )}
+              >
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left"
+                  onClick={() => setSelected(version.id)}
+                >
+                  <span className="font-medium text-fg-strong">
+                    {t('pages.policies.revision', { n: version.revision })}
+                  </span>
+                  <span className="ml-2 text-[11px] text-fg-subtle">
+                    {version.source}
+                    {version.actor ? ` · ${version.actor}` : ''} ·{' '}
+                    {new Date(version.created_at).toLocaleString()}
+                  </span>
+                </button>
+                {canWrite && version.id !== list[0]?.id && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    loading={rollback.isPending}
+                    onClick={() => rollback.mutate(version.id)}
+                  >
+                    {t('pages.policies.rollback')}
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {previous && currentVersion && (
+          <div className="rounded-lg border border-line p-3 text-[13px]">
+            <p className="mb-2 font-medium text-fg-strong">
+              {t('pages.policies.diffTitle', {
+                from: previous.revision,
+                to: currentVersion.revision,
+              })}
+            </p>
+            {diffData ? (
+              <div className="space-y-2">
+                {diffData.fields.length > 0 && (
+                  <p>
+                    <span className="text-fg-subtle">
+                      {t('pages.policies.diffFields')}:{' '}
+                    </span>
+                    {diffData.fields.join(', ')}
+                  </p>
+                )}
+                {diffData.layers.map((layer) => (
+                  <div key={layer.kind}>
+                    <p className="text-[11px] tracking-wide text-fg-subtle uppercase">
+                      {t(`pages.policies.layers.${layer.kind}`)}
+                    </p>
+                    <p className="text-[12px] break-all">
+                      {layer.added.length > 0 && (
+                        <span className="mr-2 text-fg-success">
+                          +{layer.added.join(', ')}
+                        </span>
+                      )}
+                      {layer.removed.length > 0 && (
+                        <span className="mr-2 text-fg-danger">
+                          −{layer.removed.join(', ')}
+                        </span>
+                      )}
+                      {layer.changed.length > 0 && (
+                        <span className="text-fg-subtle">
+                          ~{layer.changed.join(', ')}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                ))}
+                {diffData.layers.length === 0 &&
+                  diffData.fields.length === 0 && (
+                    <p className="text-fg-subtle">
+                      {t('pages.policies.diffNone')}
+                    </p>
+                  )}
+              </div>
+            ) : (
+              <p className="text-fg-subtle">…</p>
+            )}
+          </div>
         )}
       </div>
     </Dialog>

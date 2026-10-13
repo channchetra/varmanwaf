@@ -50,6 +50,11 @@ export function PolicyPage() {
     queryFn: () => policiesApi.getSiteOverride(siteId),
     enabled: Boolean(siteId),
   })
+  const apply = useQuery({
+    queryKey: policyKeys.applyStatus(siteId),
+    queryFn: () => policiesApi.applyStatus(siteId),
+    enabled: Boolean(siteId),
+  })
 
   const assign = useMutation({
     mutationFn: (policyId: string | null) =>
@@ -406,8 +411,57 @@ export function PolicyPage() {
           </CardBody>
         </Card>
       )}
+
+      {/* Apply status: published vs applied, per node. */}
+      <Card>
+        <CardHeader
+          title={t('pages.sitePolicy.applyTitle')}
+          description={t('pages.sitePolicy.applyHint')}
+        />
+        <CardBody className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-[13px]">
+            <Badge tone="neutral">
+              {t('pages.sitePolicy.publishedRevision', {
+                n: apply.data?.published.policy_revision ?? 0,
+              })}
+            </Badge>
+            <code className="text-xs text-fg-subtle">
+              {apply.data?.published.config_hash.slice(0, 12) || '—'}
+            </code>
+            {apply.data?.published.version_id != null && (
+              <Badge tone="info">v{apply.data.published.version_id}</Badge>
+            )}
+          </div>
+          <ul className="divide-y divide-line rounded-lg border border-line">
+            {(apply.data?.agents ?? []).map((row) => (
+              <li
+                key={row.id}
+                className="flex flex-wrap items-center gap-2 px-3 py-2 text-[13px]"
+              >
+                <span className="min-w-0 flex-1 truncate font-medium text-fg-strong">
+                  {row.hostname}
+                </span>
+                <span className="text-[11px] text-fg-subtle">
+                  {t('pages.sitePolicy.appliedRevision', {
+                    n: row.applied_policy_revision ?? 0,
+                  })}
+                </span>
+                <Badge tone={APPLY_TONE[row.state] ?? 'neutral'}>
+                  {t(`pages.sitePolicy.apply.${row.state}`)}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </CardBody>
+      </Card>
     </div>
   )
+}
+
+const APPLY_TONE: Record<string, 'success' | 'warning' | 'neutral'> = {
+  applied: 'success',
+  pending: 'warning',
+  unknown: 'neutral',
 }
 
 const PLAN_TONE: Record<string, 'success' | 'warning' | 'neutral'> = {

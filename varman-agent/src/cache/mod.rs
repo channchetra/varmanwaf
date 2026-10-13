@@ -52,6 +52,9 @@ pub struct CachedRules {
     /// Hash of the configuration (for delta sync). An `Arc` so the hot path
     /// reads it without a heap copy.
     pub config_hash: Arc<str>,
+    /// Revision of the policy bundle last applied (0 = none / never).
+    #[serde(default)]
+    pub policy_revision: i32,
 }
 
 impl Default for CachedRules {
@@ -64,6 +67,7 @@ impl Default for CachedRules {
             global_cache: None,
             updated_at: Utc::now(),
             config_hash: Arc::from(""),
+            policy_revision: 0,
         }
     }
 }
@@ -1203,6 +1207,7 @@ impl RuleCache {
                     Some(Self::convert_global_cache(global_cache));
             }
             updated.config_hash = bundle.config_hash.as_str().into();
+            updated.policy_revision = bundle.policy_revision;
             updated.updated_at = Utc::now();
             Arc::new(updated)
         });
@@ -1258,6 +1263,13 @@ impl RuleCache {
         self.inner.rcu(|current| {
             let mut updated = (**current).clone();
             updated.config_hash = config.config_hash.as_str().into();
+            updated.policy_revision = config
+                .sites
+                .iter()
+                .filter_map(|site| site.rules.as_ref())
+                .map(|rules| rules.policy_revision)
+                .max()
+                .unwrap_or(0);
             updated.updated_at = Utc::now();
 
             // The bundles embed the same registry in every site; one pass
@@ -1431,6 +1443,12 @@ impl RuleCache {
     /// the string.
     pub fn config_hash(&self) -> Arc<str> {
         self.inner.load().config_hash.clone()
+    }
+
+    /// Revision of the policy bundle last applied (0 = none / never), for
+    /// the heartbeat's applied-state report.
+    pub fn policy_revision(&self) -> i32 {
+        self.inner.load().policy_revision
     }
 
     /// When a full site config was last applied successfully, for the
@@ -2418,6 +2436,7 @@ mod tests {
             global_cache: None,
             updated_at: Utc::now(),
             config_hash: "abc".into(),
+            policy_revision: 0,
         };
         let json = serde_json::to_string(&cached).expect("serialize");
         let back: CachedRules =
@@ -2561,6 +2580,7 @@ mod tests {
                 }),
                 updated_at: Utc::now(),
                 config_hash: Arc::from(""),
+                policy_revision: 0,
             }));
         };
 

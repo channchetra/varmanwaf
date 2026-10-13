@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post, put};
 use axum::Json;
@@ -29,7 +29,8 @@ use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::grpc::notify_config_changed;
 use crate::models::{
-    site, site_waf_policy, site_waf_policy_override, waf_policy, waf_policy_layer,
+    agent, api_key, config_version, site, site_waf_policy,
+    site_waf_policy_override, waf_policy, waf_policy_layer, waf_policy_version,
     waf_settings,
 };
 use crate::policy::{self, LAYER_KINDS};
@@ -47,6 +48,13 @@ pub fn routes() -> Router<AppState> {
             "/policies/{id}/layers/{kind}",
             put(put_layer).delete(delete_layer),
         )
+        .route("/policies/{id}/versions", get(list_versions))
+        .route("/policies/{id}/versions/diff", get(diff_versions))
+        .route(
+            "/policies/{id}/versions/{version_id}",
+            get(get_version),
+        )
+        .route("/policies/{id}/rollback", post(rollback_policy))
         .route(
             "/sites/{site_id}/policy",
             get(get_site_policy).put(set_site_policy),
@@ -60,6 +68,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/sites/{site_id}/effective-config",
             get(get_effective_config),
+        )
+        .route(
+            "/sites/{site_id}/apply-status",
+            get(get_apply_status),
         )
 }
 
@@ -128,6 +140,48 @@ pub struct SiteOverrideView {
     pub config: Value,
 }
 
+/// One version in the history list.
+#[derive(Debug, Serialize)]
+pub struct VersionView {
+    pub id: i64,
+    pub revision: i32,
+    pub config_hash: String,
+    pub source: String,
+    pub actor: Option<String>,
+    pub summary: Option<Value>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Full version, including the snapshot.
+#[derive(Debug, Serialize)]
+pub struct VersionDetail {
+    #[serde(flatten)]
+    pub version: VersionView,
+    pub snapshot: Value,
+}
+
+/// Human-readable diff between two versions.
+#[derive(Debug, Serialize)]
+pub struct VersionDiffView {
+    pub from: i64,
+    pub to: i64,
+    pub fields: Vec<String>,
+    pub layers: Vec<policy::LayerDiff>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiffQuery {
+    pub from: i64,
+    pub to: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RollbackRequest {
+    pub version_id: i64,
+    #[serde(default)]
+    pub expected_revision: Option<i32>,
+}
+
 /// The fully resolved posture of one site.
 #[derive(Debug, Serialize)]
 pub struct EffectiveConfigView {
@@ -183,6 +237,10 @@ pub struct UpdatePolicyRequest {
 #[derive(Debug, Deserialize)]
 pub struct LayerRequest {
     pub config: Value,
+    /// Optimistic concurrency: when present and stale, the write is
+    /// rejected with 409 instead of silently overwriting someone else.
+    #[serde(default)]
+    pub expected_revision: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -404,6 +462,13 @@ async fn create_policy(
         let config = payload.layers.get(kind).expect("key from keys()");
         insert_layer(&state, id, kind, config).await?;
     }
+    policy::record_version(
+        &state.db,
+        id,
+        Some(&current.email),
+        waf_policy_version::source::API,
+    )
+    .await?;
 
     tracing::info!(policy_id = %id, name = %policy.name, "waf policy created");
     respond_with_detail(&state, &policy).await
@@ -466,6 +531,13 @@ async fn update_policy(
     active.revision = Set(policy.revision + 1);
     active.updated_at = Set(Utc::now());
     let updated = active.update(&state.db).await?;
+    policy::record_version(
+        &state.db,
+        id,
+        Some(&current.email),
+        waf_policy_version::source::API,
+    )
+    .await?;
 
     tracing::info!(policy_id = %id, "waf policy updated");
     resync_assigned_sites(&state, id, &current.email).await?;
@@ -512,9 +584,24 @@ async fn put_layer(
     let id = parse_uuid(&id, "policy id")?;
     let policy = load_policy(&state, id).await?;
     validate_layer_payload(&kind, &payload.config)?;
+    if let Some(expected) = payload.expected_revision {
+        if expected != policy.revision {
+            return Err(ApiError::Conflict(format!(
+                "policy revision changed (expected {expected}, current {})",
+                policy.revision
+            )));
+        }
+    }
 
     let row = insert_layer(&state, id, &kind, &payload.config).await?;
     bump_revision(&state, &policy).await?;
+    policy::record_version(
+        &state.db,
+        id,
+        Some(&current.email),
+        waf_policy_version::source::API,
+    )
+    .await?;
     tracing::info!(policy_id = %id, kind = %kind, "policy layer stored");
     resync_assigned_sites(&state, id, &current.email).await?;
 
@@ -549,6 +636,13 @@ async fn delete_layer(
         .rows_affected;
     if deleted > 0 {
         bump_revision(&state, &policy).await?;
+        policy::record_version(
+            &state.db,
+            id,
+            Some(&current.email),
+            waf_policy_version::source::API,
+        )
+        .await?;
         tracing::info!(policy_id = %id, kind = %kind, "policy layer removed");
         resync_assigned_sites(&state, id, &current.email).await?;
     }
@@ -585,6 +679,128 @@ async fn insert_layer(
         .insert(&state.db)
         .await?),
     }
+}
+
+/* ── Version history ───────────────────────────────────────────────────── */
+
+fn version_view(row: waf_policy_version::Model) -> VersionView {
+    VersionView {
+        id: row.id,
+        revision: row.revision,
+        config_hash: row.config_hash,
+        source: row.source,
+        actor: row.actor,
+        summary: row.summary,
+        created_at: row.created_at,
+    }
+}
+
+/// `GET /api/v1/policies/{id}/versions` - the policy's version history.
+async fn list_versions(
+    State(state): State<AppState>,
+    _current: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<VersionView>>, ApiError> {
+    let id = parse_uuid(&id, "policy id")?;
+    load_policy(&state, id).await?;
+    let rows = waf_policy_version::Entity::find()
+        .filter(waf_policy_version::Column::PolicyId.eq(id))
+        .order_by_desc(waf_policy_version::Column::Id)
+        .all(&state.db)
+        .await?;
+    Ok(Json(rows.into_iter().map(version_view).collect()))
+}
+
+/// `GET /api/v1/policies/{id}/versions/{version_id}` - one version with its
+/// snapshot.
+async fn get_version(
+    State(state): State<AppState>,
+    _current: AuthUser,
+    Path((id, version_id)): Path<(String, i64)>,
+) -> Result<Json<VersionDetail>, ApiError> {
+    let id = parse_uuid(&id, "policy id")?;
+    load_policy(&state, id).await?;
+    let row = waf_policy_version::Entity::find_by_id(version_id)
+        .filter(waf_policy_version::Column::PolicyId.eq(id))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::not_found("policy version not found"))?;
+    Ok(Json(VersionDetail {
+        version: version_view(row.clone()),
+        snapshot: row.snapshot,
+    }))
+}
+
+/// `GET /api/v1/policies/{id}/versions/diff?from=&to=`
+async fn diff_versions(
+    State(state): State<AppState>,
+    _current: AuthUser,
+    Path(id): Path<String>,
+    Query(query): Query<DiffQuery>,
+) -> Result<Json<VersionDiffView>, ApiError> {
+    let id = parse_uuid(&id, "policy id")?;
+    load_policy(&state, id).await?;
+    let from = waf_policy_version::Entity::find_by_id(query.from)
+        .filter(waf_policy_version::Column::PolicyId.eq(id))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::not_found("policy version not found"))?;
+    let to = waf_policy_version::Entity::find_by_id(query.to)
+        .filter(waf_policy_version::Column::PolicyId.eq(id))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::not_found("policy version not found"))?;
+    let diff = policy::version_diff(&from.snapshot, &to.snapshot);
+    Ok(Json(VersionDiffView {
+        from: from.id,
+        to: to.id,
+        fields: diff.fields,
+        layers: diff.layers,
+    }))
+}
+
+/// `POST /api/v1/policies/{id}/rollback` - restores a version's content as
+/// a new revision and pushes the change to assigned sites.
+async fn rollback_policy(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(id): Path<String>,
+    Json(payload): Json<RollbackRequest>,
+) -> Result<Json<PolicyDetail>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
+    let id = parse_uuid(&id, "policy id")?;
+    let policy = load_policy(&state, id).await?;
+    if let Some(expected) = payload.expected_revision {
+        if expected != policy.revision {
+            return Err(ApiError::Conflict(format!(
+                "policy revision changed (expected {expected}, current {})",
+                policy.revision
+            )));
+        }
+    }
+    let version = waf_policy_version::Entity::find_by_id(payload.version_id)
+        .filter(waf_policy_version::Column::PolicyId.eq(id))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::not_found("policy version not found"))?;
+
+    let updated =
+        policy::restore_version(&state.db, &policy, &version.snapshot).await?;
+    policy::record_version(
+        &state.db,
+        id,
+        Some(&current.email),
+        waf_policy_version::source::ROLLBACK,
+    )
+    .await?;
+    tracing::info!(
+        policy_id = %id,
+        version = version.id,
+        revision = updated.revision,
+        "policy rolled back"
+    );
+    resync_assigned_sites(&state, id, &current.email).await?;
+    respond_with_detail(&state, &updated).await
 }
 
 /* ── Assignment + overlay ──────────────────────────────────────────────── */
@@ -815,6 +1031,143 @@ async fn get_effective_config(
         overrides: resolved.overrides.clone(),
         effective,
         plan,
+    }))
+}
+
+/* ── Apply status ──────────────────────────────────────────────────────── */
+
+/// Published vs applied state for one site.
+#[derive(Debug, Serialize)]
+pub struct ApplyStatusView {
+    pub site_id: Uuid,
+    pub published: PublishedState,
+    pub policy: Option<PolicyRef>,
+    pub agents: Vec<AgentApplyState>,
+}
+
+/// The configuration the control plane would serve right now.
+#[derive(Debug, Serialize)]
+pub struct PublishedState {
+    pub config_hash: String,
+    pub policy_revision: i32,
+    /// Latest recorded configuration version for the site, when any.
+    pub version_id: Option<i64>,
+    pub recorded_at: Option<DateTime<Utc>>,
+}
+
+/// One agent's applied state for the site.
+#[derive(Debug, Serialize)]
+pub struct AgentApplyState {
+    pub id: Uuid,
+    pub hostname: String,
+    pub status: String,
+    pub applied_config_hash: Option<String>,
+    pub applied_policy_revision: Option<i32>,
+    pub last_heartbeat: Option<DateTime<Utc>>,
+    pub last_config_sync_at: Option<DateTime<Utc>>,
+    /// `applied` (hash + revision match), `pending` (agent is fresh but has
+    /// not caught up) or `unknown` (no fresh evidence).
+    pub state: &'static str,
+}
+
+/// `GET /api/v1/sites/{site_id}/apply-status` - published != applied stays
+/// visible: a node that never reported is `unknown`, never assumed applied.
+async fn get_apply_status(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+) -> Result<Json<ApplyStatusView>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let site_row = load_site_read(&state.db, id, &current).await?;
+
+    let bundle =
+        crate::grpc::config::build_rule_bundle(&state.db, &site_row).await?;
+    let resolved = policy::resolve(&state.db, id).await?;
+    let version = config_version::Entity::find()
+        .filter(config_version::Column::SiteId.eq(id))
+        .order_by_desc(config_version::Column::Id)
+        .one(&state.db)
+        .await?;
+
+    let policy_ref = match (resolved.policy_id, &resolved.policy_name) {
+        (Some(policy_id), Some(name)) => Some(PolicyRef {
+            id: policy_id,
+            name: name.clone(),
+            revision: resolved.revision,
+            enabled: true,
+        }),
+        _ => None,
+    };
+
+    // Agents serving this site: the ones bound to it, plus unbound agents of
+    // the site owner's keys (an unbound agent serves every site of its
+    // owner).
+    let mut rows = agent::Entity::find()
+        .filter(agent::Column::SiteId.eq(id))
+        .all(&state.db)
+        .await?;
+    if current.is_admin() || current.id == site_row.user_id {
+        let keys: Vec<Uuid> = api_key::Entity::find()
+            .filter(api_key::Column::UserId.eq(site_row.user_id))
+            .all(&state.db)
+            .await?
+            .into_iter()
+            .map(|key| key.id)
+            .collect();
+        if !keys.is_empty() {
+            rows.extend(
+                agent::Entity::find()
+                    .filter(agent::Column::SiteId.is_null())
+                    .filter(agent::Column::ApiKeyId.is_in(keys))
+                    .all(&state.db)
+                    .await?,
+            );
+        }
+    }
+
+    let now = Utc::now();
+    let agents = rows
+        .into_iter()
+        .map(|row| {
+            let hash_matches = row
+                .config_hash
+                .as_deref()
+                .is_some_and(|hash| hash == bundle.config_hash);
+            let revision_matches =
+                row.policy_revision.unwrap_or(0) == bundle.policy_revision;
+            let fresh = row
+                .last_heartbeat
+                .is_some_and(|ts| (now - ts).num_seconds() < 90);
+            let state = if hash_matches && revision_matches {
+                "applied"
+            } else if fresh {
+                "pending"
+            } else {
+                "unknown"
+            };
+            AgentApplyState {
+                id: row.id,
+                hostname: row.hostname,
+                status: row.status,
+                applied_config_hash: row.config_hash,
+                applied_policy_revision: row.policy_revision,
+                last_heartbeat: row.last_heartbeat,
+                last_config_sync_at: row.last_config_sync_at,
+                state,
+            }
+        })
+        .collect();
+
+    Ok(Json(ApplyStatusView {
+        site_id: id,
+        published: PublishedState {
+            config_hash: bundle.config_hash,
+            policy_revision: bundle.policy_revision,
+            version_id: version.as_ref().map(|row| row.id),
+            recorded_at: version.map(|row| row.created_at),
+        },
+        policy: policy_ref,
+        agents,
     }))
 }
 

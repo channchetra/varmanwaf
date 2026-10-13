@@ -244,6 +244,15 @@
         "monitor": "Monitor",
         "disabled": "Disabled"
       },
+      "history": "History",
+      "historyHint": "Every policy change is recorded; select a version to see what changed, or restore one as a new revision.",
+      "noVersions": "No versions recorded yet.",
+      "rollback": "Restore",
+      "rollbackDone": "Version restored",
+      "rollbackFailed": "Could not restore the version",
+      "diffTitle": "Changes from rev {{from}} to rev {{to}}",
+      "diffFields": "Fields",
+      "diffNone": "No content changes between these versions.",
       "removeLayer": "Remove layer",
       "keepInheriting": "Keep inheriting",
       "layers": {
@@ -321,6 +330,15 @@
       "ruleScores": "Score overrides",
       "planTitle": "Compiled rule plan",
       "planHint": "What the data plane will do with each managed rule for this site.",
+      "applyTitle": "Apply status",
+      "applyHint": "Published vs applied: a node that has not reported is unknown, never assumed applied.",
+      "publishedRevision": "published rev {{n}}",
+      "appliedRevision": "applied rev {{n}}",
+      "apply": {
+        "applied": "Applied",
+        "pending": "Pending",
+        "unknown": "Unknown"
+      },
       "rulesTitle": "Custom rules ({{n}})",
       "noRules": "No policy rules reach this site.",
       "effectiveUnavailable": "Effective configuration is unavailable right now."

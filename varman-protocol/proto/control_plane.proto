@@ -85,6 +85,9 @@ message AgentHeartbeat {
   // bundle from the control plane. Absent = never synced.
   google.protobuf.Timestamp last_config_sync_at = 16;
   google.protobuf.Timestamp last_policy_sync_at = 17;
+
+  // Revision of the policy bundle the agent last applied (0 = none).
+  int32 policy_revision = 18;
 }
 
 // One dynamically blocked IP as enforced at the edge.
@@ -223,6 +226,12 @@ message RuleBundle {
   string site_id = 1;
   string config_hash = 2;
   google.protobuf.Timestamp updated_at = 3;
+
+  // Identity of the policy the bundle was compiled from: `policy_id` is
+  // empty and `policy_revision` 0 when the site follows none. Agents report
+  // the applied revision back so published != applied stays visible.
+  string policy_id = 4;
+  int32 policy_revision = 5;
 
   // WAF Rules
   WafConfig waf = 10;

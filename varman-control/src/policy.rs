@@ -19,8 +19,10 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
+use chrono::Utc;
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait,
+    QueryFilter, QueryOrder, Set,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -29,7 +31,7 @@ use uuid::Uuid;
 use crate::api::waf_settings::{CATEGORIES, ENGINE_MODES, MANAGED_RULES, STACKS};
 use crate::models::{
     action, mode, site_waf_policy, site_waf_policy_override, waf_policy,
-    waf_policy_layer, waf_settings,
+    waf_policy_layer, waf_policy_version, waf_settings,
 };
 
 /// Engine layer kind: posture knobs, same meaning as `waf_settings`.
@@ -1031,6 +1033,256 @@ pub fn rule_plan(effective: &EffectiveEngine) -> Vec<RulePlan> {
         .collect()
 }
 
+/* ── Version history ───────────────────────────────────────────────────── */
+
+/// Snapshot content of a policy: fields plus every layer payload.
+fn snapshot_of(
+    policy: &waf_policy::Model,
+    layers: &[waf_policy_layer::Model],
+) -> Value {
+    let mut layer_map = Map::new();
+    for row in layers {
+        layer_map.insert(row.kind.clone(), row.config.clone());
+    }
+    serde_json::json!({
+        "name": policy.name,
+        "description": policy.description,
+        "enabled": policy.enabled,
+        "layers": Value::Object(layer_map),
+    })
+}
+
+/// SHA-256 over the canonical snapshot JSON.
+fn snapshot_hash(snapshot: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    let canonical = serde_json::to_string(snapshot).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Per-layer entry counts for cheap summaries.
+fn summarise(snapshot: &Value) -> Value {
+    let mut summary = Map::new();
+    if let Some(layers) = snapshot.get("layers").and_then(Value::as_object) {
+        for (kind, config) in layers {
+            let count = match kind.as_str() {
+                LAYER_CUSTOM_RULES => config
+                    .get("rules")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len),
+                LAYER_RULE_OVERRIDES => config
+                    .get("overrides")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len),
+                _ => config.as_object().map_or(0, Map::len),
+            };
+            summary.insert(kind.clone(), serde_json::json!(count));
+        }
+    }
+    Value::Object(summary)
+}
+
+/// Records an immutable version of the policy, deduplicated by content hash
+/// against the latest version. Returns `None` when nothing changed.
+pub async fn record_version(
+    db: &DatabaseConnection,
+    policy_id: Uuid,
+    actor: Option<&str>,
+    source: &str,
+) -> Result<Option<waf_policy_version::Model>, DbErr> {
+    let Some(policy) =
+        waf_policy::Entity::find_by_id(policy_id).one(db).await?
+    else {
+        return Ok(None);
+    };
+    let layers = waf_policy_layer::Entity::find()
+        .filter(waf_policy_layer::Column::PolicyId.eq(policy_id))
+        .all(db)
+        .await?;
+    let snapshot = snapshot_of(&policy, &layers);
+    let config_hash = snapshot_hash(&snapshot);
+    if let Some(latest) = waf_policy_version::Entity::find()
+        .filter(waf_policy_version::Column::PolicyId.eq(policy_id))
+        .order_by_desc(waf_policy_version::Column::Id)
+        .one(db)
+        .await?
+    {
+        if latest.config_hash == config_hash {
+            return Ok(None);
+        }
+    }
+    let summary = summarise(&snapshot);
+    let row = waf_policy_version::ActiveModel {
+        id: Default::default(),
+        policy_id: Set(policy_id),
+        revision: Set(policy.revision),
+        config_hash: Set(config_hash),
+        source: Set(source.to_string()),
+        actor: Set(actor.map(str::to_string)),
+        summary: Set(Some(summary)),
+        snapshot: Set(snapshot),
+        created_at: Set(Utc::now()),
+    }
+    .insert(db)
+    .await?;
+    tracing::info!(
+        policy_id = %policy_id,
+        version = row.id,
+        revision = row.revision,
+        source = %row.source,
+        "policy version recorded"
+    );
+    Ok(Some(row))
+}
+
+/// Restores a recorded version's content as a **new** revision: fields and
+/// layers are replaced and the revision bumps; the caller records the
+/// rollback version. History is never rewritten.
+pub async fn restore_version(
+    db: &DatabaseConnection,
+    policy: &waf_policy::Model,
+    snapshot: &Value,
+) -> Result<waf_policy::Model, DbErr> {
+    let mut active: waf_policy::ActiveModel = policy.clone().into();
+    if let Some(name) = snapshot.get("name").and_then(Value::as_str) {
+        active.name = Set(name.to_string());
+    }
+    if let Some(description) =
+        snapshot.get("description").and_then(Value::as_str)
+    {
+        active.description = Set(description.to_string());
+    }
+    if let Some(enabled) = snapshot.get("enabled").and_then(Value::as_bool) {
+        active.enabled = Set(enabled);
+    }
+    active.revision = Set(policy.revision + 1);
+    active.updated_at = Set(Utc::now());
+    let updated = active.update(db).await?;
+
+    waf_policy_layer::Entity::delete_many()
+        .filter(waf_policy_layer::Column::PolicyId.eq(policy.id))
+        .exec(db)
+        .await?;
+    if let Some(layers) = snapshot.get("layers").and_then(Value::as_object) {
+        for (kind, config) in layers {
+            if !is_layer_kind(kind) {
+                continue;
+            }
+            waf_policy_layer::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                policy_id: Set(policy.id),
+                kind: Set(kind.clone()),
+                config: Set(config.clone()),
+                updated_at: Set(Utc::now()),
+            }
+            .insert(db)
+            .await?;
+        }
+    }
+    Ok(updated)
+}
+
+/// One changed layer in a version diff.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LayerDiff {
+    pub kind: String,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub changed: Vec<String>,
+}
+
+/// Diff between two snapshots: changed policy fields plus per-layer entry
+/// deltas (rules by name, overrides by entry key, other layers by key).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct VersionDiff {
+    pub fields: Vec<String>,
+    pub layers: Vec<LayerDiff>,
+}
+
+pub fn version_diff(from: &Value, to: &Value) -> VersionDiff {
+    let mut fields = Vec::new();
+    for field in ["name", "description", "enabled"] {
+        if from.get(field) != to.get(field) {
+            fields.push(field.to_string());
+        }
+    }
+    let from_layers = from.get("layers").and_then(Value::as_object);
+    let to_layers = to.get("layers").and_then(Value::as_object);
+    let mut layers = Vec::new();
+    for kind in LAYER_KINDS {
+        let before =
+            layer_entries(kind, from_layers.and_then(|map| map.get(kind)));
+        let after =
+            layer_entries(kind, to_layers.and_then(|map| map.get(kind)));
+        let mut added = Vec::new();
+        let mut removed = Vec::new();
+        let mut changed = Vec::new();
+        for (key, value) in &after {
+            match before.get(key) {
+                None => added.push(key.clone()),
+                Some(old) if old != value => changed.push(key.clone()),
+                _ => {}
+            }
+        }
+        for key in before.keys() {
+            if !after.contains_key(key) {
+                removed.push(key.clone());
+            }
+        }
+        if !(added.is_empty() && removed.is_empty() && changed.is_empty()) {
+            layers.push(LayerDiff {
+                kind: kind.to_string(),
+                added,
+                removed,
+                changed,
+            });
+        }
+    }
+    VersionDiff { fields, layers }
+}
+
+/// Flattens one layer into comparable entries keyed by identity.
+fn layer_entries(
+    kind: &str,
+    config: Option<&Value>,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Some(config) = config else {
+        return out;
+    };
+    match kind {
+        LAYER_CUSTOM_RULES => {
+            for rule in parse_rules(config) {
+                out.insert(
+                    rule.name.clone(),
+                    serde_json::to_string(&rule).unwrap_or_default(),
+                );
+            }
+        }
+        LAYER_RULE_OVERRIDES => {
+            for entry in parse_overrides(config) {
+                out.insert(
+                    entry_key(&entry),
+                    serde_json::to_string(&entry).unwrap_or_default(),
+                );
+            }
+        }
+        _ => {
+            if let Some(map) = config.as_object() {
+                for (key, value) in map {
+                    out.insert(key.clone(), value.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -1362,8 +1614,7 @@ mod tests {
     }
 
     #[test]
-    fn rule_plan_reports_effective_state() {
-        let resolved = Resolved {
+    fn rule_plan_reports_effective_state() {        let resolved = Resolved {
             overrides: vec![
                 RuleOverrideEntry {
                     rule_id: "VARMAN-1020".into(),
@@ -1462,5 +1713,60 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[test]
+    fn snapshot_hash_is_content_addressed() {
+        let a = json!({"name": "p", "description": "", "enabled": true, "layers": {}});
+        let b = json!({"name": "p", "description": "", "enabled": true, "layers": {}});
+        let c = json!({"name": "p", "description": "", "enabled": false, "layers": {}});
+        assert_eq!(snapshot_hash(&a), snapshot_hash(&b));
+        assert_ne!(snapshot_hash(&a), snapshot_hash(&c));
+        assert_eq!(snapshot_hash(&a).len(), 64);
+    }
+
+    #[test]
+    fn version_diff_reports_layer_deltas() {
+        let from = json!({
+            "name": "A", "description": "", "enabled": true,
+            "layers": {
+                "engine": {"mode": "block"},
+                "rule_overrides": {"overrides": [
+                    {"rule_id": "VARMAN-1010", "action": "monitor"}
+                ]}
+            }
+        });
+        let to = json!({
+            "name": "B", "description": "", "enabled": true,
+            "layers": {
+                "engine": {"mode": "monitor"},
+                "rule_overrides": {"overrides": [
+                    {"rule_id": "VARMAN-1010", "action": "monitor"},
+                    {"rule_id": "VARMAN-1020", "action": "disable"}
+                ]},
+                "crs": {"monitor_managed_rules": ["VARMAN-1002"]}
+            }
+        });
+        let diff = version_diff(&from, &to);
+        assert_eq!(diff.fields, vec!["name".to_string()]);
+
+        let engine =
+            diff.layers.iter().find(|l| l.kind == "engine").expect("engine");
+        assert_eq!(engine.changed, vec!["mode".to_string()]);
+        assert!(engine.added.is_empty());
+
+        let overrides = diff
+            .layers
+            .iter()
+            .find(|l| l.kind == "rule_overrides")
+            .expect("overrides");
+        assert_eq!(overrides.added, vec!["id:VARMAN-1020".to_string()]);
+        assert!(overrides.changed.is_empty());
+
+        let crs = diff.layers.iter().find(|l| l.kind == "crs").expect("crs");
+        assert_eq!(crs.added, vec!["monitor_managed_rules".to_string()]);
+
+        // Layers that did not change are absent from the diff.
+        assert!(!diff.layers.iter().any(|l| l.kind == "custom_rules"));
     }
 }

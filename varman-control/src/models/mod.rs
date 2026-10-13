@@ -46,6 +46,7 @@ pub mod sites;
 pub mod users;
 pub mod waf_policies;
 pub mod waf_policy_layers;
+pub mod waf_policy_versions;
 pub mod waf_settings;
 
 pub use agent_blocked_ips::agent_blocked_ips as agent_blocked_ip;
@@ -96,6 +97,7 @@ pub use site_waf_policy_overrides as site_waf_policy_override;
 pub use users::{api_keys as api_key, permission, role, users as user};
 pub use waf_policies as waf_policy;
 pub use waf_policy_layers as waf_policy_layer;
+pub use waf_policy_versions as waf_policy_version;
 
 /// Convenience alias used across the API and gRPC layers.
 pub type DbErr = sea_orm::DbErr;

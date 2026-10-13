@@ -67,6 +67,8 @@ pub struct AgentResponse {
     pub last_config_sync_at: Option<DateTime<Utc>>,
     /// When the agent last applied a per-site rule bundle; null = never.
     pub last_policy_sync_at: Option<DateTime<Utc>>,
+    /// Revision of the last policy bundle the agent reported applying.
+    pub policy_revision: Option<i32>,
     pub registered_at: DateTime<Utc>,
     /// True while the agent holds an open heartbeat stream.
     pub connected: bool,
@@ -672,6 +674,7 @@ async fn enrich(
             last_heartbeat: row.last_heartbeat,
             last_config_sync_at: row.last_config_sync_at,
             last_policy_sync_at: row.last_policy_sync_at,
+            policy_revision: row.policy_revision,
             registered_at: row.registered_at,
             connected,
             pending_commands: state.agents.pending_count(&row.id).await,

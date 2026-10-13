@@ -294,6 +294,7 @@ impl ControlPlaneTrait for ControlPlaneService {
                     registered_at: Set(now),
                     last_config_sync_at: Set(None),
                     last_policy_sync_at: Set(None),
+                    policy_revision: Set(None),
                     public_ip: Set(optional(&payload.public_ip)),
                     private_ip: Set(optional(&payload.private_ip)),
                 }
@@ -843,6 +844,10 @@ async fn persist_heartbeat(
     if message.memory_usage_bytes > 0 {
         active.memory_bytes = Set(Some(message.memory_usage_bytes as i64));
     }
+    // Applied policy revision: reported every heartbeat, so a removed
+    // policy clears it back to `None`.
+    active.policy_revision = Set((message.policy_revision > 0)
+        .then_some(message.policy_revision));
     // Sync timestamps come from the agent's own clock, but they only feed
     // the dashboard's "last synced" display, so a skewed clock cannot make
     // a healthy agent look offline.

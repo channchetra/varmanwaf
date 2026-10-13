@@ -188,6 +188,57 @@ export interface PolicyPreview {
   plan: RulePlanEntry[]
 }
 
+/** One version in a policy's history. */
+export interface PolicyVersion {
+  id: number
+  revision: number
+  config_hash: string
+  source: string
+  actor: string | null
+  summary: Record<string, number> | null
+  created_at: string
+}
+
+export interface PolicyVersionDetail extends PolicyVersion {
+  snapshot: Record<string, unknown>
+}
+
+export interface LayerDiff {
+  kind: string
+  added: string[]
+  removed: string[]
+  changed: string[]
+}
+
+export interface PolicyVersionDiff {
+  from: number
+  to: number
+  fields: string[]
+  layers: LayerDiff[]
+}
+
+/** Per-node application state for one site. */
+export interface ApplyStatus {
+  site_id: string
+  published: {
+    config_hash: string
+    policy_revision: number
+    version_id: number | null
+    recorded_at: string | null
+  }
+  policy: PolicyRef | null
+  agents: Array<{
+    id: string
+    hostname: string
+    status: string
+    applied_config_hash: string | null
+    applied_policy_revision: number | null
+    last_heartbeat: string | null
+    last_config_sync_at: string | null
+    state: 'applied' | 'pending' | 'unknown'
+  }>
+}
+
 export interface SitePolicyView {
   site_id: string
   policy: PolicyRef | null
@@ -257,17 +308,43 @@ export const policiesApi = {
 
   preview: (payload: PreviewPolicyRequest) =>
     apiClient.post<PolicyPreview>('/policies/preview', payload),
+
+  versions: (id: string) =>
+    apiClient.get<PolicyVersion[]>(`/policies/${id}/versions`),
+
+  version: (id: string, versionId: number) =>
+    apiClient.get<PolicyVersionDetail>(
+      `/policies/${id}/versions/${versionId}`,
+    ),
+
+  versionDiff: (id: string, from: number, to: number) =>
+    apiClient.get<PolicyVersionDiff>(`/policies/${id}/versions/diff`, {
+      query: { from, to },
+    }),
+
+  rollback: (id: string, versionId: number) =>
+    apiClient.post<PolicyDetail>(`/policies/${id}/rollback`, {
+      version_id: versionId,
+    }),
+
+  applyStatus: (siteId: string) =>
+    apiClient.get<ApplyStatus>(`/sites/${siteId}/apply-status`),
 }
 
 export const policyKeys = {
   all: ['policies'] as const,
   list: () => [...policyKeys.all, 'list'] as const,
   detail: (id: string) => [...policyKeys.all, 'detail', id] as const,
+  versions: (id: string) => [...policyKeys.all, 'versions', id] as const,
+  versionDiff: (id: string, from: number, to: number) =>
+    [...policyKeys.all, 'versions', id, 'diff', from, to] as const,
   sitePolicy: (siteId: string) => ['sites', siteId, 'policy'] as const,
   siteOverride: (siteId: string) =>
     ['sites', siteId, 'policy-override'] as const,
   siteEffective: (siteId: string) =>
     ['sites', siteId, 'effective-config'] as const,
+  applyStatus: (siteId: string) =>
+    ['sites', siteId, 'apply-status'] as const,
 }
 
 /** Built-in managed-rule catalogue (`GET /managed-rules`). */

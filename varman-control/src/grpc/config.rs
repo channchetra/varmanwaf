@@ -1235,6 +1235,11 @@ pub async fn build_rule_bundle(
         // Filled in below, once every other field is final.
         config_hash: String::new(),
         updated_at: to_timestamp(site_row.updated_at),
+        policy_id: policy_layers
+            .policy_id
+            .map(|id| id.to_string())
+            .unwrap_or_default(),
+        policy_revision: policy_layers.revision,
         waf: Some(waf_config_with_policy(
             &custom_rules,
             &groups,

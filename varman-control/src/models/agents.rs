@@ -55,6 +55,9 @@ pub mod agents {
         pub last_config_sync_at: Option<DateTimeUtc>,
         /// When the agent last applied a per-site rule bundle.
         pub last_policy_sync_at: Option<DateTimeUtc>,
+        /// Revision of the last policy bundle the agent reported applying.
+        /// `None` = never reported (or no policy assigned).
+        pub policy_revision: Option<i32>,
         pub registered_at: DateTimeUtc,
     }
 
