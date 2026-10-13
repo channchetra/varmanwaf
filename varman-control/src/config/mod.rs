@@ -5,7 +5,7 @@
 //! API and gRPC control plane), the JWT signing material and the credentials of
 //! the administrator account that is seeded on first boot.
 //!
-//! Values come from a config file, `PINGWAF_*` environment variables or CLI
+//! Values come from a config file, `VARMAN_*` environment variables or CLI
 //! flags in the caller; [`ServerConfig::from_env`] layers the environment on top
 //! of [`ServerConfig::default`] so a container can be started without a file.
 
@@ -65,7 +65,7 @@ pub enum GrpcTlsMode {
 }
 
 impl GrpcTlsMode {
-    /// Parses a `PINGWAF_GRPC_TLS_MODE` value; unknown values fall back to
+    /// Parses a `VARMAN_GRPC_TLS_MODE` value; unknown values fall back to
     /// the TLS default.
     pub fn from_env_value(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
@@ -306,108 +306,107 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
-    /// Default configuration with `PINGWAF_*` environment variables applied.
+    /// Default configuration with `VARMAN_*` environment variables applied.
     ///
     /// Unknown or unparsable variables are ignored so a typo in the environment
     /// cannot prevent the control plane from booting; the effective values are
     /// logged by the caller.
     pub fn from_env() -> Self {
         let mut config = Self::default();
-        if let Ok(value) = std::env::var("PINGWAF_DB_URL") {
+        if let Ok(value) = std::env::var("VARMAN_DB_URL") {
             config.db_url = value;
         }
         if let Ok(value) = std::env::var("DATABASE_URL") {
-            // Honour the conventional name too, env var precedence: PINGWAF_*.
-            if std::env::var("PINGWAF_DB_URL").is_err() {
+            // Honour the conventional name too, env var precedence: VARMAN_*.
+            if std::env::var("VARMAN_DB_URL").is_err() {
                 config.db_url = value;
             }
         }
-        if let Ok(value) = std::env::var("PINGWAF_ADMIN_ADDR")
-            .or_else(|_| std::env::var("PINGWAF_HTTP_ADDR"))
+        if let Ok(value) = std::env::var("VARMAN_ADMIN_ADDR")
+            .or_else(|_| std::env::var("VARMAN_HTTP_ADDR"))
         {
             config.http_addr = value;
         }
-        if let Ok(value) = std::env::var("PINGWAF_GRPC_ADDR") {
+        if let Ok(value) = std::env::var("VARMAN_GRPC_ADDR") {
             config.grpc_addr = value;
         }
-        if let Ok(value) = std::env::var("PINGWAF_GRPC_TLS_CERT") {
+        if let Ok(value) = std::env::var("VARMAN_GRPC_TLS_CERT") {
             config.grpc_tls_cert = non_empty_env(&value);
         }
-        if let Ok(value) = std::env::var("PINGWAF_GRPC_TLS_KEY") {
+        if let Ok(value) = std::env::var("VARMAN_GRPC_TLS_KEY") {
             config.grpc_tls_key = non_empty_env(&value);
         }
-        if let Ok(value) = std::env::var("PINGWAF_GRPC_TLS_MODE") {
+        if let Ok(value) = std::env::var("VARMAN_GRPC_TLS_MODE") {
             config.grpc_tls_mode = GrpcTlsMode::from_env_value(&value);
         }
-        if let Ok(value) = std::env::var("PINGWAF_PUBLIC_HOST") {
+        if let Ok(value) = std::env::var("VARMAN_PUBLIC_HOST") {
             config.public_host = non_empty_env(&value);
         }
-        if let Ok(value) = std::env::var("PINGWAF_JWT_SECRET") {
+        if let Ok(value) = std::env::var("VARMAN_JWT_SECRET") {
             config.jwt_secret = value;
         }
-        if let Ok(value) = std::env::var("PINGWAF_JWT_EXPIRATION_HOURS") {
+        if let Ok(value) = std::env::var("VARMAN_JWT_EXPIRATION_HOURS") {
             if let Ok(hours) = value.parse::<i64>() {
                 config.jwt_expiration_hours = hours;
             }
         }
-        if let Ok(value) = std::env::var("PINGWAF_ADMIN_EMAIL") {
+        if let Ok(value) = std::env::var("VARMAN_ADMIN_EMAIL") {
             config.default_admin_email = value;
         }
-        if let Ok(value) = std::env::var("PINGWAF_ADMIN_PASSWORD") {
+        if let Ok(value) = std::env::var("VARMAN_ADMIN_PASSWORD") {
             config.default_admin_password = value;
         }
-        if let Ok(value) = std::env::var("PINGWAF_ALLOW_REGISTRATION") {
+        if let Ok(value) = std::env::var("VARMAN_ALLOW_REGISTRATION") {
             config.allow_registration = parse_bool(&value);
         }
-        if let Ok(value) = std::env::var("PINGWAF_HEARTBEAT_INTERVAL") {
+        if let Ok(value) = std::env::var("VARMAN_HEARTBEAT_INTERVAL") {
             if let Ok(seconds) = value.parse::<i64>() {
                 config.heartbeat_interval_seconds = seconds;
             }
         }
-        if let Ok(value) = std::env::var("PINGWAF_DB_MAX_CONNECTIONS") {
+        if let Ok(value) = std::env::var("VARMAN_DB_MAX_CONNECTIONS") {
             if let Ok(max) = value.parse::<u32>() {
                 config.db_max_connections = max;
             }
         }
-        if let Ok(value) = std::env::var("PINGWAF_METRIC_RETENTION_DAYS") {
+        if let Ok(value) = std::env::var("VARMAN_METRIC_RETENTION_DAYS") {
             if let Ok(days) = value.parse::<i64>() {
                 config.metric_retention_days = days;
             }
         }
-        if let Ok(value) = std::env::var("PINGWAF_CORS_ORIGINS") {
+        if let Ok(value) = std::env::var("VARMAN_CORS_ORIGINS") {
             config.cors_origins = value
                 .split(',')
                 .map(|origin| origin.trim().to_string())
                 .filter(|origin| !origin.is_empty())
                 .collect();
         }
-        if let Ok(value) = std::env::var("PINGWAF_SERVE_FRONTEND") {
+        if let Ok(value) = std::env::var("VARMAN_SERVE_FRONTEND") {
             config.serve_frontend = parse_bool(&value);
         }
-        if let Ok(value) = std::env::var("PINGWAF_PASSKEY_ENABLED") {
+        if let Ok(value) = std::env::var("VARMAN_PASSKEY_ENABLED") {
             config.passkey_enabled = parse_bool(&value);
         }
-        if let Ok(value) = std::env::var("PINGWAF_PASSKEY_RP_NAME") {
+        if let Ok(value) = std::env::var("VARMAN_PASSKEY_RP_NAME") {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
                 config.passkey_rp_name = trimmed.to_string();
             }
         }
-        if let Ok(value) = std::env::var("PINGWAF_PASSKEY_RP_ID") {
+        if let Ok(value) = std::env::var("VARMAN_PASSKEY_RP_ID") {
             config.passkey_rp_id = non_empty_env(&value);
         }
-        if let Ok(value) = std::env::var("PINGWAF_PASSKEY_ORIGIN") {
+        if let Ok(value) = std::env::var("VARMAN_PASSKEY_ORIGIN") {
             config.passkey_origin = non_empty_env(&value);
         }
-        if let Ok(value) =
-            std::env::var("PINGWAF_PASSKEY_TRUST_FORWARDED_PROTO")
+        if let Ok(value) = std::env::var("VARMAN_PASSKEY_TRUST_FORWARDED_PROTO")
         {
             config.passkey_trust_forwarded_proto = parse_bool(&value);
         }
-        if let Ok(value) = std::env::var("PINGWAF_TLS_ENABLED") {
+        if let Ok(value) = std::env::var("VARMAN_TLS_ENABLED") {
             config.tls_enabled = parse_bool(&value);
         }
-        if let Ok(value) = std::env::var("PINGWAF_TLS_SANS") {
+        if let Ok(value) = std::env::var("VARMAN_TLS_SANS") {
             let sans: Vec<String> = value
                 .split(',')
                 .map(|san| san.trim().to_string())
@@ -550,17 +549,17 @@ fn push_unique(sans: &mut Vec<String>, candidate: &str) {
     sans.push(candidate.to_string());
 }
 
-/// Layers `PINGWAF_ES_*` environment variables onto the Elasticsearch config.
+/// Layers `VARMAN_ES_*` environment variables onto the Elasticsearch config.
 ///
 /// Only the handful of settings an operator typically overrides at deploy time
 /// are read here; the full shape is available through the config file and the
-/// settings API. Presence of any `PINGWAF_ES_*` variable materialises the
+/// settings API. Presence of any `VARMAN_ES_*` variable materialises the
 /// config so a container can enable shipping purely from the environment.
 fn apply_es_env(config: &mut ServerConfig) {
     let mut es = config.elasticsearch.clone().unwrap_or_default();
     let mut touched = false;
 
-    if let Ok(value) = std::env::var("PINGWAF_ES_URLS") {
+    if let Ok(value) = std::env::var("VARMAN_ES_URLS") {
         es.urls = value
             .split(',')
             .map(|url| url.trim().to_string())
@@ -568,33 +567,33 @@ fn apply_es_env(config: &mut ServerConfig) {
             .collect();
         touched = true;
     }
-    if let Ok(value) = std::env::var("PINGWAF_ES_ENABLED") {
+    if let Ok(value) = std::env::var("VARMAN_ES_ENABLED") {
         es.enabled = parse_bool(&value);
         touched = true;
     }
-    if let Ok(value) = std::env::var("PINGWAF_ES_INDEX_PREFIX") {
+    if let Ok(value) = std::env::var("VARMAN_ES_INDEX_PREFIX") {
         es.index_prefix = value;
         touched = true;
     }
-    if let Ok(value) = std::env::var("PINGWAF_ES_USERNAME") {
+    if let Ok(value) = std::env::var("VARMAN_ES_USERNAME") {
         es.username = Some(value);
         touched = true;
     }
-    if let Ok(value) = std::env::var("PINGWAF_ES_PASSWORD") {
+    if let Ok(value) = std::env::var("VARMAN_ES_PASSWORD") {
         es.password = Some(value);
         touched = true;
     }
-    if let Ok(value) = std::env::var("PINGWAF_ES_API_KEY") {
+    if let Ok(value) = std::env::var("VARMAN_ES_API_KEY") {
         es.api_key = Some(value);
         touched = true;
     }
-    if let Ok(value) = std::env::var("PINGWAF_ES_MAX_BODY_SIZE") {
+    if let Ok(value) = std::env::var("VARMAN_ES_MAX_BODY_SIZE") {
         if let Ok(size) = value.parse::<usize>() {
             es.max_body_size = size;
         }
         touched = true;
     }
-    if let Ok(value) = std::env::var("PINGWAF_ES_BUFFER_DIR") {
+    if let Ok(value) = std::env::var("VARMAN_ES_BUFFER_DIR") {
         es.buffer_dir = Some(value);
         touched = true;
     }

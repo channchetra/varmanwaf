@@ -462,12 +462,8 @@ mod tests {
             assert_eq!(by_id(id).category.as_deref(), Some(category), "{id}");
         }
 
-        let family_ids = [
-            "VARMAN-1002",
-            "VARMAN-1003",
-            "VARMAN-1050",
-            "VARMAN-1061",
-        ];
+        let family_ids =
+            ["VARMAN-1002", "VARMAN-1003", "VARMAN-1050", "VARMAN-1061"];
         for entry in &strict {
             assert_eq!(
                 entry.category.is_some(),

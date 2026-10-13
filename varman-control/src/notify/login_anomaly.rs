@@ -181,7 +181,7 @@ fn http_client() -> &'static reqwest::Client {
 
 /// The mmdb file the upload endpoint maintains.
 pub fn geoip_mmdb_path() -> std::path::PathBuf {
-    std::env::var("PINGWAF_GEOIP_MMDB")
+    std::env::var("VARMAN_GEOIP_MMDB")
         .unwrap_or_else(|_| "/var/lib/varman/geoip.mmdb".to_string())
         .into()
 }

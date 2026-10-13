@@ -1144,7 +1144,7 @@ fn main() {
     // TLS listener or client initialises. No-op if already installed.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    // Check if VarmanWAF mode is requested (via subcommand or PINGWAF_MODE env)
+    // Check if VarmanWAF mode is requested (via subcommand or VARMAN_MODE env)
     if cli::is_varman_mode() {
         varman::main();
         return;

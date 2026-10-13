@@ -83,7 +83,7 @@ async fn connect(db_url: &str) -> anyhow::Result<DatabaseConnection> {
         .min_connections(1)
         .sqlx_logging(false);
     Database::connect(options).await.context(
-        "cannot connect to PostgreSQL (check --db-url or PINGWAF_DB_URL)",
+        "cannot connect to PostgreSQL (check --db-url or VARMAN_DB_URL)",
     )
 }
 

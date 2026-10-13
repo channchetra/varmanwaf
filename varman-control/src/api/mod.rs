@@ -218,7 +218,7 @@ fn build_cors(origins: &[String]) -> CorsLayer {
 #[derive(Clone, Debug)]
 pub struct RedirectState {
     pub tls_enabled: bool,
-    /// Pinned redirect target (`PINGWAF_PUBLIC_HOST`); `None` reuses the
+    /// Pinned redirect target (`VARMAN_PUBLIC_HOST`); `None` reuses the
     /// request's `Host` header.
     pub public_host: Option<String>,
 }
@@ -265,7 +265,7 @@ async fn redirect_cleartext_to_https(
 
 /// The `https://` URL of the request, when the Host header allows building one.
 ///
-/// A configured `PINGWAF_PUBLIC_HOST` pins the target instead: behind a
+/// A configured `VARMAN_PUBLIC_HOST` pins the target instead: behind a
 /// reverse proxy the client's `Host` header is whatever the caller sent, and
 /// an attacker controlling it would otherwise steer the redirect — and every
 /// client that follows it — anywhere they like.

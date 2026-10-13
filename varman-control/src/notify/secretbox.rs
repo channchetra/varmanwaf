@@ -7,7 +7,7 @@
 //! seals those fields with AES-256-GCM before the row is written and opens
 //! them again when the manager loads channels for delivery.
 //!
-//! The key comes from the `PINGWAF_SECRET_KEY` environment variable (any
+//! The key comes from the `VARMAN_SECRET_KEY` environment variable (any
 //! non-empty string; stretched to 256 bits with SHA-256). Without it the
 //! seal step is a no-op and secrets stay in clear text as before — the
 //! deployment keeps working, one warning is logged per process, and DB
@@ -30,7 +30,7 @@ pub(crate) const SECRET_KEYS: [&str; 3] =
 const PREFIX: &str = "enc:v1:";
 
 /// Environment variable holding the instance encryption secret.
-const KEY_ENV: &str = "PINGWAF_SECRET_KEY";
+const KEY_ENV: &str = "VARMAN_SECRET_KEY";
 
 /// Warned once per process when no key is configured.
 static MISSING_KEY_WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
@@ -102,7 +102,7 @@ pub fn seal_string(plain: &str) -> String {
     let Some(key) = instance_key() else {
         if MISSING_KEY_WARNED.set(()).is_ok() {
             tracing::warn!(
-                "PINGWAF_SECRET_KEY is not set: secrets are stored in \
+                "VARMAN_SECRET_KEY is not set: secrets are stored in \
                  clear text; set it to encrypt them at rest"
             );
         }
@@ -126,7 +126,7 @@ pub fn open_string(sealed: &str) -> Option<String> {
     let opened = open_with(&LessSafeKey::new(key), sealed);
     if opened.is_none() {
         tracing::warn!(
-            "a sealed secret could not be opened; is PINGWAF_SECRET_KEY \
+            "a sealed secret could not be opened; is VARMAN_SECRET_KEY \
              unchanged since it was stored?"
         );
     }
@@ -143,7 +143,7 @@ pub fn seal_config(config: &mut Value) {
     let Some(key) = instance_key() else {
         if MISSING_KEY_WARNED.set(()).is_ok() {
             tracing::warn!(
-                "PINGWAF_SECRET_KEY is not set: notification channel \
+                "VARMAN_SECRET_KEY is not set: notification channel \
                  secrets are stored in clear text; set it to encrypt \
                  them at rest"
             );
@@ -184,7 +184,7 @@ pub fn open_config(config: &mut Value) {
                         tracing::warn!(
                             key = name,
                             "a sealed channel secret could not be opened; \
-                             is PINGWAF_SECRET_KEY unchanged since it was \
+                             is VARMAN_SECRET_KEY unchanged since it was \
                              stored?"
                         );
                         String::new()
