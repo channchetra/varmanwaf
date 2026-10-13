@@ -2,6 +2,10 @@
 
 > Honest status tracking for the implementation phases defined in the mandate
 > (§34, §35). Update this file in the same change that advances a phase.
+>
+> **Upstream sync:** VarmanWAF tracks PingWAF upstream in batches; see
+> [`docs/upstream-update-plan.md`](./upstream-update-plan.md). Round 1
+> (v0.22.0) synced the foundation crates from upstream v0.25.10.
 
 ## Status board
 
