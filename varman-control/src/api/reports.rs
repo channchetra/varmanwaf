@@ -20,7 +20,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
-use sea_orm::{EntityTrait, Value};
+use sea_orm::{ActiveModelTrait, EntityTrait, Value};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -39,6 +39,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/reports/summary", get(summary))
         .route("/reports/interception", get(interception_report))
+        .route("/reports/settings", get(show_settings).put(save_settings))
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,25 +50,193 @@ pub struct ReportQuery {
     pub to: Option<String>,
     /// One site; omitted aggregates every site the administrator can see.
     pub site_id: Option<String>,
+    /// `all` (default), `blocked` or `monitor` - filters by the action the
+    /// edge took.
+    pub action: Option<String>,
+    /// Substring filter over the client IP and the request path.
+    pub q: Option<String>,
+}
+
+/// The action filter a report was generated with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActionFilter {
+    All,
+    Blocked,
+    Monitor,
+}
+
+impl ActionFilter {
+    fn parse(raw: Option<&str>) -> Result<Self, ApiError> {
+        match raw.map(str::trim).filter(|raw| !raw.is_empty()) {
+            None | Some("all") => Ok(Self::All),
+            Some("blocked") => Ok(Self::Blocked),
+            Some("monitor") => Ok(Self::Monitor),
+            Some(other) => Err(ApiError::BadRequest(format!(
+                "unknown action filter '{other}' (use all, blocked or monitor)"
+            ))),
+        }
+    }
 }
 
 struct Window {
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     site: Option<Uuid>,
+    action: ActionFilter,
+    /// Substring filter over client IP and path; `None` = no filter.
+    q: Option<String>,
 }
 
 impl Window {
-    /// `WHERE` fragment and bound values over `security_events`.
+    /// `WHERE` fragment and bound values over `security_events`. Placeholders
+    /// are numbered in insertion order, so every aggregation shares the exact
+    /// same filter.
     fn filter(&self) -> (String, Vec<Value>) {
         let mut sql = String::from("timestamp >= $1 AND timestamp < $2");
         let mut values = vec![self.from.into(), self.to.into()];
         if let Some(site) = self.site {
-            sql.push_str(" AND site_id = $3");
             values.push(site.into());
+            let _ = std::fmt::Write::write_fmt(
+                &mut sql,
+                format_args!(" AND site_id = ${}", values.len()),
+            );
+        }
+        match self.action {
+            ActionFilter::All => {},
+            ActionFilter::Blocked => sql.push_str(" AND action = 'block'"),
+            ActionFilter::Monitor => sql.push_str(" AND action <> 'block'"),
+        }
+        if let Some(q) = &self.q {
+            values.push(q.clone().into());
+            let _ = std::fmt::Write::write_fmt(
+                &mut sql,
+                format_args!(
+                    " AND (position(lower(${n}) in lower(client_ip)) > 0 \
+                     OR position(lower(${n}) in lower(coalesce(path, ''))) > 0)",
+                    n = values.len(),
+                ),
+            );
         }
         (sql, values)
     }
+}
+
+/// Loads the operator's report settings (heading and footer note); defaults
+/// when absent, like the other instance-setting blocks.
+async fn load_settings(db: &sea_orm::DatabaseConnection) -> ReportSettings {
+    use crate::models::instance_setting;
+
+    let stored = instance_setting::Entity::find_by_id(SETTINGS_KEY)
+        .one(db)
+        .await
+        .ok()
+        .flatten();
+    match stored {
+        Some(row) => serde_json::from_str(&row.value).unwrap_or_default(),
+        None => ReportSettings::default(),
+    }
+}
+
+/// Key of the report settings row in `instance_settings`.
+const SETTINGS_KEY: &str = "report_settings";
+
+/// What an operator may customize about the generated report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportSettings {
+    /// The heading printed on the cover and at the top of the file.
+    #[serde(default = "default_title")]
+    pub title: String,
+    /// Optional operator note; printed above the data-source note.
+    #[serde(default)]
+    pub footer_note: Option<String>,
+}
+
+fn default_title() -> String {
+    "Interception report".to_string()
+}
+
+impl Default for ReportSettings {
+    fn default() -> Self {
+        Self {
+            title: default_title(),
+            footer_note: None,
+        }
+    }
+}
+
+impl ReportSettings {
+    fn validate(&self) -> Result<(), ApiError> {
+        let title = self.title.trim();
+        if title.is_empty() {
+            return Err(ApiError::BadRequest(
+                "title must not be empty".to_string(),
+            ));
+        }
+        if title.chars().count() > 120 {
+            return Err(ApiError::BadRequest(
+                "title must be at most 120 characters".to_string(),
+            ));
+        }
+        if let Some(note) = &self.footer_note {
+            if note.chars().count() > 500 {
+                return Err(ApiError::BadRequest(
+                    "footer_note must be at most 500 characters".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `GET /api/v1/reports/settings` — administrators only.
+async fn show_settings(
+    State(state): State<AppState>,
+    current: AuthUser,
+) -> Result<Json<ReportSettings>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
+    Ok(Json(load_settings(&state.db).await))
+}
+
+/// `PUT /api/v1/reports/settings` — administrators only.
+async fn save_settings(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Json(payload): Json<ReportSettings>,
+) -> Result<Json<ReportSettings>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
+    let mut settings = payload;
+    settings.title = settings.title.trim().to_string();
+    settings.footer_note = settings
+        .footer_note
+        .map(|note| note.trim().to_string())
+        .filter(|note| !note.is_empty());
+    settings.validate()?;
+
+    use crate::models::instance_setting;
+    let value = serde_json::to_string(&settings)
+        .map_err(|err| ApiError::Internal(err.to_string()))?;
+    let existing = instance_setting::Entity::find_by_id(SETTINGS_KEY)
+        .one(&state.db)
+        .await?;
+    match existing {
+        Some(row) => {
+            let mut active: instance_setting::ActiveModel = row.into();
+            active.value = sea_orm::Set(value);
+            active.updated_at = sea_orm::Set(Utc::now());
+            active.update(&state.db).await?;
+        },
+        None => {
+            instance_setting::ActiveModel {
+                key: sea_orm::Set(SETTINGS_KEY.to_string()),
+                value: sea_orm::Set(value),
+                updated_at: sea_orm::Set(Utc::now()),
+            }
+            .insert(&state.db)
+            .await?;
+        },
+    }
+    tracing::info!(title = %settings.title, "report settings saved");
+    Ok(Json(settings))
 }
 
 async fn resolve_window(
@@ -90,7 +259,20 @@ async fn resolve_window(
         },
         None => None,
     };
-    Ok(Window { from, to, site })
+    let action = ActionFilter::parse(query.action.as_deref())?;
+    let q = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(str::to_string);
+    Ok(Window {
+        from,
+        to,
+        site,
+        action,
+        q,
+    })
 }
 
 /// Resolves the requested bounds: date-only inputs, RFC 3339 instants, the
@@ -292,6 +474,35 @@ async fn top_ips(
         .collect())
 }
 
+/// The attack-IP ranking: the same rows ordered by blocked count first, so
+/// the "attack" list leads with addresses actually refused.
+async fn top_ips_by_blocked(
+    state: &AppState,
+    window: &Window,
+) -> Result<Vec<IpRow>, ApiError> {
+    let (filter, values) = window.filter();
+    let sql = format!(
+        "SELECT client_ip, COUNT(*) AS requests, \
+                COUNT(*) FILTER (WHERE action = 'block') AS blocked, \
+                COALESCE(MAX(country_code), '') AS country, \
+                MAX(timestamp) AS last_seen \
+         FROM security_events WHERE {filter} \
+         GROUP BY client_ip ORDER BY blocked DESC, requests DESC \
+         LIMIT {TOP_ROWS}"
+    );
+    Ok(query_all(&state.db, &sql, values)
+        .await?
+        .into_iter()
+        .map(|row| IpRow {
+            ip: row.try_get("", "client_ip").unwrap_or_default(),
+            country: row.try_get("", "country").unwrap_or_default(),
+            requests: row.try_get("", "requests").unwrap_or_default(),
+            blocked: row.try_get("", "blocked").unwrap_or_default(),
+            last_seen: row.try_get("", "last_seen").ok(),
+        })
+        .collect())
+}
+
 struct PathRow {
     path: String,
     requests: i64,
@@ -446,8 +657,10 @@ async fn interception_report(
     let totals = totals(&state, &window).await?;
     let types = type_rows(&state, &window).await?;
     let ips = top_ips(&state, &window).await?;
+    let ips_by_blocked = top_ips_by_blocked(&state, &window).await?;
     let paths = top_paths(&state, &window).await?;
     let daily = daily(&state, &window).await?;
+    let settings = load_settings(&state.db).await;
 
     let scope = match window.site {
         Some(id) => crate::models::site::Entity::find_by_id(id)
@@ -469,9 +682,12 @@ async fn interception_report(
         to: window.to,
         scope,
         actor: current.email.clone(),
+        title: settings.title.clone(),
+        footer_note: settings.footer_note.clone(),
         totals,
         types,
         ips,
+        ips_by_blocked,
         paths,
         daily,
     });
@@ -503,9 +719,15 @@ struct ReportData {
     to: DateTime<Utc>,
     scope: String,
     actor: String,
+    /// Operator-customizable heading (report settings).
+    title: String,
+    /// Optional operator note printed above the data-source note.
+    footer_note: Option<String>,
     totals: Totals,
     types: Vec<LabelCount>,
     ips: Vec<IpRow>,
+    /// Attack-IP ranking (ordered by blocked count).
+    ips_by_blocked: Vec<IpRow>,
     paths: Vec<PathRow>,
     daily: Vec<DailyPoint>,
 }
@@ -565,6 +787,10 @@ td.num, th.num { text-align: right; white-space: nowrap; }
         border-top: 1px solid #d7dee6; padding-top: 8px; }
 .legend-swatch { display: inline-block; width: 9px; height: 9px; \
                  border-radius: 2px; margin: 0 4px 0 10px; }
+.cover { padding: 96px 0 24px; page-break-after: always; }
+.cover-title { font-size: 32px; margin: 10px 0 6px; }
+.cover-range { font-size: 16px; color: #33465c; margin: 24px 0 0; }
+@media print { .cover { padding-top: 160px; } }
 ";
 
 fn render_report(data: ReportData) -> String {
@@ -573,23 +799,28 @@ fn render_report(data: ReportData) -> String {
     let to_label = (data.to - Duration::seconds(1)).date_naive();
     let generated = Utc::now().format("%Y-%m-%d %H:%M UTC");
 
+    let title = escape_html(&data.title);
     html.push_str(
         "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">",
     );
     let _ = write!(
         html,
-        "<title>VarmanWAF interception report {from_label} to {to_label}</title>\
+        "<title>VarmanWAF {title} {from_label} to {to_label}</title>\
          <style>{STYLE}</style></head><body>"
     );
+    // Cover page: prints as its own page, mirroring the report shape
+    // operators know (title, range, then the numbered sections).
+    html.push_str("<section class=\"cover\">");
     html.push_str("<div class=\"brand\">VarmanWAF</div>");
-    let _ = write!(html, "<h1>Interception report</h1>");
+    let _ = write!(html, "<h1 class=\"cover-title\">{title}</h1>");
     let _ = write!(
         html,
-        "<p class=\"meta\">Range {from_label} to {to_label} &middot; Scope: \
-         {} &middot; Generated {generated} by {}</p>",
+        "<p class=\"cover-range\">{from_label} to {to_label}</p>\
+         <p class=\"meta\">Scope: {} &middot; Generated {generated} by {}</p>",
         escape_html(&data.scope),
         escape_html(&data.actor),
     );
+    html.push_str("</section>");
 
     // Summary cards.
     html.push_str("<div class=\"cards\">");
@@ -609,7 +840,7 @@ fn render_report(data: ReportData) -> String {
     html.push_str("</div>");
 
     // Interception types.
-    html.push_str("<h2>Interception types</h2>");
+    html.push_str("<h2>1 Interception type</h2>");
     if data.types.is_empty() {
         html.push_str("<p class=\"meta\">No interceptions in this range.</p>");
     } else {
@@ -638,7 +869,7 @@ fn render_report(data: ReportData) -> String {
     }
 
     // Daily timeline.
-    html.push_str("<h2>Daily timeline</h2>");
+    html.push_str("<h2>5 Daily timeline</h2>");
     if data.daily.is_empty() {
         html.push_str("<p class=\"meta\">No interceptions in this range.</p>");
     } else {
@@ -687,20 +918,20 @@ fn render_report(data: ReportData) -> String {
         );
     }
 
-    // Attack IP ranking.
-    html.push_str("<h2>Attack IP ranking (top 20)</h2>");
-    if data.ips.is_empty() {
+    // Attack IP ranking (ordered by blocked count).
+    html.push_str("<h2>2 Attack IP ranking TOP20</h2>");
+    if data.ips_by_blocked.is_empty() {
         html.push_str(
             "<p class=\"meta\">No source addresses in this range.</p>",
         );
     } else {
         html.push_str(
             "<table><thead><tr><th class=\"num\">#</th><th>Client IP</th>\
-             <th>Country</th><th class=\"num\">Interceptions</th>\
-             <th class=\"num\">Blocked</th><th>Last seen</th></tr></thead>\
-             <tbody>",
+             <th>Country</th><th class=\"num\">Blocked</th>\
+             <th class=\"num\">Interceptions</th><th>Last seen</th></tr>\
+             </thead><tbody>",
         );
-        for (index, row) in data.ips.iter().enumerate() {
+        for (index, row) in data.ips_by_blocked.iter().enumerate() {
             let last = row
                 .last_seen
                 .map(|at| at.format("%Y-%m-%d %H:%M").to_string())
@@ -713,38 +944,83 @@ fn render_report(data: ReportData) -> String {
                 index + 1,
                 escape_html(&row.ip),
                 escape_html(&row.country),
-                row.requests,
                 row.blocked,
+                row.requests,
                 escape_html(&last),
             );
         }
         html.push_str("</tbody></table>");
     }
 
-    // URL ranking.
-    html.push_str("<h2>URL ranking (top 20)</h2>");
+    // IP report: every tracked source address with its full split.
+    html.push_str("<h2>3 IP report TOP20</h2>");
+    if data.ips.is_empty() {
+        html.push_str(
+            "<p class=\"meta\">No source addresses in this range.</p>",
+        );
+    } else {
+        html.push_str(
+            "<table><thead><tr><th class=\"num\">#</th><th>Client IP</th>\
+             <th>Country</th><th class=\"num\">Interceptions</th>\
+             <th class=\"num\">Blocked</th>\
+             <th class=\"num\">Monitor-only</th><th>Last seen</th></tr>\
+             </thead><tbody>",
+        );
+        for (index, row) in data.ips.iter().enumerate() {
+            let last = row
+                .last_seen
+                .map(|at| at.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| "-".to_string());
+            let monitored = (row.requests - row.blocked).max(0);
+            let _ = write!(
+                html,
+                "<tr><td class=\"num\">{}</td><td class=\"mono\">{}</td>\
+                 <td>{}</td><td class=\"num\">{}</td>\
+                 <td class=\"num\">{}</td><td class=\"num\">{}</td>\
+                 <td>{}</td></tr>",
+                index + 1,
+                escape_html(&row.ip),
+                escape_html(&row.country),
+                row.requests,
+                row.blocked,
+                monitored,
+                escape_html(&last),
+            );
+        }
+        html.push_str("</tbody></table>");
+    }
+
+    // URL report.
+    html.push_str("<h2>4 URL report TOP20</h2>");
     if data.paths.is_empty() {
         html.push_str("<p class=\"meta\">No paths in this range.</p>");
     } else {
         html.push_str(
             "<table><thead><tr><th class=\"num\">#</th><th>Path</th>\
              <th class=\"num\">Interceptions</th>\
-             <th class=\"num\">Blocked</th></tr></thead><tbody>",
+             <th class=\"num\">Blocked</th>\
+             <th class=\"num\">Monitor-only</th></tr></thead><tbody>",
         );
         for (index, row) in data.paths.iter().enumerate() {
+            let monitored = (row.requests - row.blocked).max(0);
             let _ = write!(
                 html,
                 "<tr><td class=\"num\">{}</td><td class=\"mono\">{}</td>\
-                 <td class=\"num\">{}</td><td class=\"num\">{}</td></tr>",
+                 <td class=\"num\">{}</td><td class=\"num\">{}</td>\
+                 <td class=\"num\">{}</td></tr>",
                 index + 1,
                 escape_html(&row.path),
                 row.requests,
                 row.blocked,
+                monitored,
             );
         }
         html.push_str("</tbody></table>");
     }
 
+    if let Some(note) = &data.footer_note {
+        let _ = write!(html, "<p class=\"note\">{}</p>", escape_html(note));
+    }
     html.push_str(
         "<p class=\"note\">Counts come from the security events the edge \
          recorded in this range; monitor-only decisions are included and \
@@ -842,12 +1118,62 @@ mod tests {
     }
 
     #[test]
+    fn the_action_filter_accepts_the_three_values_only() {
+        assert_eq!(ActionFilter::parse(None).unwrap(), ActionFilter::All);
+        assert_eq!(
+            ActionFilter::parse(Some("all")).unwrap(),
+            ActionFilter::All
+        );
+        assert_eq!(
+            ActionFilter::parse(Some("blocked")).unwrap(),
+            ActionFilter::Blocked
+        );
+        assert_eq!(
+            ActionFilter::parse(Some("monitor")).unwrap(),
+            ActionFilter::Monitor
+        );
+        assert!(ActionFilter::parse(Some("blockd")).is_err());
+    }
+
+    #[test]
+    fn the_filter_keeps_placeholders_and_values_in_step() {
+        let window = Window {
+            from: at("2026-09-14T00:00:00Z"),
+            to: at("2026-10-15T00:00:00Z"),
+            site: Some(Uuid::new_v4()),
+            action: ActionFilter::Blocked,
+            q: Some("1.2.3".to_string()),
+        };
+        let (sql, values) = window.filter();
+        // from, to, site, q.
+        assert_eq!(values.len(), 4);
+        assert!(sql.contains("timestamp >= $1 AND timestamp < $2"));
+        assert!(sql.contains("site_id = $3"));
+        assert!(sql.contains("lower($4) in lower(client_ip)"));
+        assert!(sql.contains("action = 'block'"));
+
+        let bare = Window {
+            from: at("2026-09-14T00:00:00Z"),
+            to: at("2026-10-15T00:00:00Z"),
+            site: None,
+            action: ActionFilter::Monitor,
+            q: None,
+        };
+        let (sql, values) = bare.filter();
+        assert_eq!(values.len(), 2);
+        assert!(sql.contains("action <> 'block'"));
+        assert!(!sql.contains("site_id"));
+    }
+
+    #[test]
     fn a_rendered_report_is_self_contained_and_escapes_data() {
         let html = render_report(ReportData {
             from: at("2026-09-14T00:00:00Z"),
             to: at("2026-10-15T00:00:00Z"),
             scope: "E2E Site".to_string(),
             actor: "admin@varman.local".to_string(),
+            title: "Interception report".to_string(),
+            footer_note: Some("Prepared for the weekly review.".to_string()),
             totals: Totals {
                 events: 3,
                 blocked: 2,
@@ -859,6 +1185,13 @@ mod tests {
                 count: 3,
             }],
             ips: vec![IpRow {
+                ip: "1.2.3.4".to_string(),
+                country: "VN".to_string(),
+                requests: 3,
+                blocked: 2,
+                last_seen: Some(at("2026-10-14T10:00:00Z")),
+            }],
+            ips_by_blocked: vec![IpRow {
                 ip: "1.2.3.4".to_string(),
                 country: "VN".to_string(),
                 requests: 3,
@@ -879,6 +1212,13 @@ mod tests {
         assert!(html.starts_with("<!DOCTYPE html>"));
         assert!(html.contains("Interception report"));
         assert!(html.contains("E2E Site"));
+        // The sample-shaped numbered sections are present.
+        assert!(html.contains("1 Interception type"));
+        assert!(html.contains("2 Attack IP ranking TOP20"));
+        assert!(html.contains("3 IP report TOP20"));
+        assert!(html.contains("4 URL report TOP20"));
+        assert!(html.contains("5 Daily timeline"));
+        assert!(html.contains("Prepared for the weekly review."));
         // No scripts and no external references: fully self-contained.
         assert!(!html.contains("<script"));
         assert!(!html.contains("http://"));
@@ -886,5 +1226,31 @@ mod tests {
         // Attacker-reachable path text is escaped.
         assert!(html.contains("/&lt;script&gt;alert(1)&lt;/script&gt;"));
         assert!(!html.contains("<script>alert(1)</script>"));
+    }
+
+    #[test]
+    fn a_custom_title_and_note_are_escaped_too() {
+        let html = render_report(ReportData {
+            from: at("2026-10-14T00:00:00Z"),
+            to: at("2026-10-15T00:00:00Z"),
+            scope: "All sites".to_string(),
+            actor: "admin@varman.local".to_string(),
+            title: "<b>Quarterly</b> review".to_string(),
+            footer_note: Some("<i>note</i>".to_string()),
+            totals: Totals {
+                events: 0,
+                blocked: 0,
+                ips: 0,
+                paths: 0,
+            },
+            types: Vec::new(),
+            ips: Vec::new(),
+            ips_by_blocked: Vec::new(),
+            paths: Vec::new(),
+            daily: Vec::new(),
+        });
+        assert!(html.contains("&lt;b&gt;Quarterly&lt;/b&gt; review"));
+        assert!(html.contains("&lt;i&gt;note&lt;/i&gt;"));
+        assert!(!html.contains("<b>Quarterly</b>"));
     }
 }
