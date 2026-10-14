@@ -65,9 +65,10 @@ Rules:
 |---|---|---|
 | 1 | Foundation crates: `pingap-acme`, `pingap-config`, `pingap-core`, `pingap-proxy`, `pingap-upstream` | **Landed** (v0.22.0) |
 | 2a | Protocol + agent model: proto fields, `varman-agent` cache/client/config, run-mode boxing | **Landed** (v0.22.1) |
-| 2b | Control plane (110 files) + `src` start-up | Next |
-
-| 3 | WAF engine + plugin: `pingap-plugin/src/waf.rs` upstream evolution (body staging, posture), `varman-waf` engine posture/grading, `varman-challenge`, verified-bots wiring | Planned |
+| 2b | Control plane (110 files) + `src` start-up | **Landed** (v0.22.2 / v0.23.0) |
+| 3a | Verified bots: `bot_dns.rs` (DNS reverse+forward confirmation), verified-bot IP ranges honoured by the plugin, Bot Protection UI | **Landed** (v0.35.0) |
+| 3b | WAF plugin body staging: staged request bodies with limits, upstream hook model around our pipeline | Next |
+| 3c | Challenge + error pages: `challenge.rs`, `varman-challenge` cookie/JS deltas, `error_page.rs` | Planned |
 | 4 | Dashboard: `web` (82 files) — merge upstream pages/features into the rebranded dashboard, keep the Varman pages | Planned |
 | 5 | Feature branches (`config-versioning-and-notifications`, `per-site-failover`) once main is synced | Planned |
 
@@ -108,8 +109,27 @@ signature.
    then publish.
 5. Record the batch in this document and in the release notes.
 
-## Batch 2b-2 WIP state (branch `upstream-batch2b2-wip`)
+## Batch 3a detail (landed, v0.35.0)
 
+- `pingap-plugin/src/bot_dns.rs` (new, upstream): reverse + forward DNS
+  confirmation of known crawler user agents, verdict cache keyed by
+  (IP, family) with tiered TTLs, resolver-outage degradation.
+- `pingap-plugin/src/waf.rs` `BotPolicy`: verified-bot IP ranges
+  (`ipnet`) and the DNS check, evaluated before the user-agent whitelist;
+  the request path passes the parsed client IP. `contains_ignore_case` is
+  now `pub(crate)` for the module.
+- Control plane and proto needed **no** changes: `verified_bot_ranges`,
+  `ip_verification_enabled` and `dns_verification_enabled` already flow
+  from the site row (or a policy bot layer) through the bundle (batch 2).
+- Dashboard: the Bot Protection page exposes all three switches + the
+  verified-bot list picker.
+
+Deferred within batch 3 (recorded, not stubbed): 3b body staging, 3c
+challenge/error pages. The upstream engine posture/grading and managed-rule
+catalogue deltas were already present in this fork (integrated in P2/P3),
+so nothing was ported for them.
+
+## Batch 2b-2 WIP state (branch `upstream-batch2b2-wip`)
 The applied 86 files are committed on the WIP branch. The remaining work is
 the interconnected core, in dependency order:
 

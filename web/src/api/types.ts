@@ -1666,13 +1666,24 @@ export interface BotConfig {
   action: BotAction | string
   /** Case-insensitive User-Agent substrings of verified good bots. */
   known_bots_whitelist: string[]
+  /** Client IPs in this group count as verified bots without inspection. */
+  verified_ip_group_id: string | null
+  ip_verification_enabled: boolean
+  /** Confirm known crawler UAs via reverse + forward DNS of the client IP. */
+  dns_verification_enabled: boolean
   updated_at: string
 }
 
 export type UpdateBotRequest = Partial<
   Pick<
     BotConfig,
-    'enabled' | 'ua_analysis' | 'action' | 'known_bots_whitelist'
+    | 'enabled'
+    | 'ua_analysis'
+    | 'action'
+    | 'known_bots_whitelist'
+    | 'ip_verification_enabled'
+    | 'dns_verification_enabled'
+    | 'verified_ip_group_id'
   >
 >
 

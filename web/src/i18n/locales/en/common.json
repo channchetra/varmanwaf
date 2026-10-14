@@ -1058,7 +1058,18 @@
       "noKnownBots": "No known bots whitelisted",
       "uaPatternHint": "Substring matched against the User-Agent header.",
       "quickAdd": "Quick add:",
-      "comingSoon": "Coming soon"
+      "comingSoon": "Coming soon",
+      "verifiedTitle": "Verified bots",
+      "verifiedHint": "A user agent claiming to be Googlebot & co. is cheap to forge. These checks trust the client only after it proves itself.",
+      "verifiedBadge": "spoof-resistant",
+      "verifiedIp": "Verify by IP range",
+      "verifiedIpHint": "A client IP inside the referenced list passes regardless of its user agent.",
+      "verifiedGroup": "Verified bot networks",
+      "verifiedGroupHint": "Import the crawler lists from the IP list catalog (e.g. All crawlers or a single service) to keep this group fresh daily.",
+      "verifiedNoGroup": "No list selected",
+      "verifiedDns": "Verify claiming bots by DNS",
+      "verifiedDnsHint": "Known crawler user agents must reverse-resolve into the operator's own zones and that hostname must resolve back to the client IP; a spoofed claim receives the configured action.",
+      "verifiedNote": "DNS verification never blocks on outages: when the resolver fails, the check degrades to the user-agent verdict instead of guessing. Verdicts are cached per IP and crawler family."
     },
     "cc": {
       "title": "CC Protection",

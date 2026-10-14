@@ -45,6 +45,7 @@ use pingap_core::{
     constant_time_eq, ensure_client_ip, get_host, new_internal_error,
 };
 use pingap_util::{IpRules, base64_decode};
+use ipnet::IpNet;
 use pingora::http::{ResponseHeader, Version};
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -676,6 +677,13 @@ struct BotPolicy {
     tls_fingerprint: bool,
     /// Per-IP request bursts receive the configured action.
     behavioral_analysis: bool,
+    /// Client IPs inside any of these ranges count as verified bots without
+    /// further inspection: the control plane expands the configured IP group
+    /// and only fills this when IP verification is enabled.
+    verified_ranges: Vec<IpNet>,
+    /// Known crawler user agents are only trusted after a DNS reverse +
+    /// forward confirmation of the client IP.
+    dns_verification: bool,
 }
 
 /// Outcome of classifying one request's user agent.
@@ -760,12 +768,43 @@ impl BotPolicy {
             js_detection: cfg.js_detection,
             tls_fingerprint: cfg.tls_fingerprint,
             behavioral_analysis: cfg.behavioral_analysis,
+            verified_ranges: cfg
+                .verified_bot_ranges
+                .iter()
+                .filter_map(|range| {
+                    let raw = range.trim();
+                    raw.parse::<IpNet>()
+                        .or_else(|_| raw.parse::<IpAddr>().map(IpNet::from))
+                        .ok()
+                })
+                .collect(),
+            dns_verification: cfg.dns_verification_enabled,
         }
     }
 
     /// `true` when this policy needs the edge-local burst tracker.
     fn uses_behavioral(&self) -> bool {
         self.behavioral_analysis
+    }
+
+    /// Builds the denial for this policy's action (challenge vs block page).
+    fn denial(&self, detail: String) -> Denial {
+        Denial {
+            rule_id: "bot_protection".to_string(),
+            rule_name: "Bot protection".to_string(),
+            detail,
+            challenge: self.action == BotAction::Challenge,
+            basic_auth: false,
+        }
+    }
+
+    /// Applies the configured action to a denial: `log` records, everything
+    /// else denies.
+    fn decide(&self, denial: Denial) -> BotDecision {
+        match self.action {
+            BotAction::Log => BotDecision::LogOnly(denial),
+            _ => BotDecision::Deny(denial),
+        }
     }
 
     /// Classifies one request, assuming real browser request headers were
@@ -776,13 +815,6 @@ impl BotPolicy {
         self.evaluate_with_hints(user_agent, true)
     }
 
-    /// Classifies one request. Whitelisted verified bots pass first, then real
-    /// browsers; everything else receives the configured action. When JS
-    /// detection is enabled, a browser-like UA must also present browser
-    /// request headers (`Accept` + `Accept-Language`), otherwise it is treated
-    /// as a scripted client pretending to be a browser. Matching is ASCII
-    /// case-insensitive without lowercasing, so the common pass-through path
-    /// allocates nothing.
     /// Classifies one request assuming a TLS session and, when
     /// `browser_hints` is false, no browser request headers; used by tests.
     #[cfg(test)]
@@ -791,7 +823,7 @@ impl BotPolicy {
         user_agent: &str,
         browser_hints: bool,
     ) -> BotDecision {
-        self.evaluate_with_signals(
+        self.classify_with_signals(
             user_agent,
             ClientSignals {
                 browser_hints,
@@ -801,8 +833,51 @@ impl BotPolicy {
         )
     }
 
-    /// [`Self::evaluate_with_hints`] with the full connection context.
-    fn evaluate_with_signals(
+    /// Classifies one request with the verified-bot checks first: a client IP
+    /// inside a configured verified-bot range passes outright, and a user
+    /// agent claiming a well-known crawler family is only trusted after the
+    /// client IP proves it over DNS (see [`crate::bot_dns`]). A resolver
+    /// outage degrades to the user-agent-only verdict instead of blocking on
+    /// it.
+    async fn evaluate_with_signals(
+        &self,
+        client_ip: Option<IpAddr>,
+        user_agent: &str,
+        signals: ClientSignals,
+    ) -> BotDecision {
+        if let Some(ip) = client_ip
+            && self.verified_ranges.iter().any(|range| range.contains(&ip))
+        {
+            return BotDecision::Pass;
+        }
+        if self.dns_verification
+            && let Some(ip) = client_ip
+            && let Some((token, _)) = crate::bot_dns::known_bot_family(user_agent)
+        {
+            match crate::bot_dns::bot_dns_verifier().verify(ip, token).await {
+                crate::bot_dns::DnsVerdict::Confirmed => {
+                    return BotDecision::Pass;
+                },
+                crate::bot_dns::DnsVerdict::Refuted => {
+                    return self.decide(self.denial(format!(
+                        "user agent claims to be a '{token}' crawler but {ip} does not resolve to its network"
+                    )));
+                },
+                crate::bot_dns::DnsVerdict::Unknown => {},
+            }
+        }
+        self.classify_with_signals(user_agent, signals)
+    }
+
+    /// The user-agent side of the classification (DNS already resolved).
+    ///
+    /// Whitelisted verified bots pass first, then real browsers; everything
+    /// else receives the configured action. When JS detection is enabled, a
+    /// browser-like UA must also present browser request headers (`Accept` +
+    /// `Accept-Language`), otherwise it is treated as a scripted client
+    /// pretending to be a browser. Matching is ASCII case-insensitive without
+    /// lowercasing, so the common pass-through path allocates nothing.
+    fn classify_with_signals(
         &self,
         user_agent: &str,
         signals: ClientSignals,
@@ -917,7 +992,7 @@ fn is_browser_ua(ua: &str) -> bool {
 /// ASCII case-insensitive `contains`: user agents are ASCII in practice, and
 /// this spares the classification path a `to_lowercase` allocation per
 /// request.
-fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
+pub(crate) fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
     let haystack = haystack.as_bytes();
     let needle = needle.as_bytes();
     !needle.is_empty()
@@ -2966,16 +3041,20 @@ impl Plugin for WafPlugin {
             let burst = bot.uses_behavioral()
                 && !request_data.client_ip.is_empty()
                 && request_burst(&request_data.client_ip);
-            match bot.evaluate_with_signals(
-                &user_agent,
-                ClientSignals {
-                    browser_hints: browser_header_hints(&request_data.headers),
-                    tls_verified: session
-                        .digest()
-                        .is_some_and(|d| d.ssl_digest.is_some()),
-                    burst,
-                },
-            ) {
+            match bot
+                .evaluate_with_signals(
+                    request_data.client_ip.parse::<IpAddr>().ok(),
+                    &user_agent,
+                    ClientSignals {
+                        browser_hints: browser_header_hints(&request_data.headers),
+                        tls_verified: session
+                            .digest()
+                            .is_some_and(|d| d.ssl_digest.is_some()),
+                        burst,
+                    },
+                )
+                .await
+            {
                 BotDecision::Pass => {},
                 BotDecision::Deny(denial) => {
                     if observe {
@@ -5560,7 +5639,7 @@ advanced_mode = true
         // Browser over TLS: passes even without browser header hints when JS
         // detection is off.
         assert!(matches!(
-            policy.evaluate_with_signals(
+            policy.classify_with_signals(
                 browser,
                 ClientSignals {
                     browser_hints: false,
@@ -5572,7 +5651,7 @@ advanced_mode = true
         ));
         // Browser on a plaintext connection: scripted client.
         assert!(matches!(
-            policy.evaluate_with_signals(
+            policy.classify_with_signals(
                 browser,
                 ClientSignals {
                     browser_hints: true,
@@ -5584,7 +5663,7 @@ advanced_mode = true
         ));
         // Non-browser clients are unaffected by the TLS requirement.
         assert!(matches!(
-            policy.evaluate_with_signals(
+            policy.classify_with_signals(
                 "curl/8.4.0",
                 ClientSignals {
                     browser_hints: false,
@@ -5610,7 +5689,7 @@ advanced_mode = true
         });
         let browser = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
         assert!(matches!(
-            policy.evaluate_with_signals(
+            policy.classify_with_signals(
                 browser,
                 ClientSignals {
                     browser_hints: true,
@@ -5621,7 +5700,7 @@ advanced_mode = true
             BotDecision::Pass
         ));
         assert!(matches!(
-            policy.evaluate_with_signals(
+            policy.classify_with_signals(
                 browser,
                 ClientSignals {
                     browser_hints: true,
@@ -5675,6 +5754,65 @@ advanced_mode = true
             window,
             2
         ));
+    }
+
+    /// A client IP inside a configured verified-bot range passes without any
+    /// user-agent consideration, and the DNS path stays quiet when the
+    /// feature is off.
+    #[tokio::test]
+    async fn bot_verified_range_bypasses_ua_classification() {
+        let policy = BotPolicy::build(&CacheBotProtection {
+            enabled: true,
+            action: CacheWafAction::Block,
+            known_bots_whitelist: vec![],
+            js_detection: false,
+            tls_fingerprint: false,
+            behavioral_analysis: false,
+            verified_bot_ranges: vec!["203.0.113.0/24".to_string()],
+            dns_verification_enabled: false,
+        });
+        // Inside the range: passes even though the UA is a scripted client.
+        assert!(matches!(
+            policy
+                .evaluate_with_signals(
+                    Some("203.0.113.44".parse().unwrap()),
+                    "curl/8.4.0",
+                    ClientSignals {
+                        browser_hints: false,
+                        tls_verified: false,
+                        burst: false,
+                    },
+                )
+                .await,
+            BotDecision::Pass
+        ));
+        // Outside the range the UA classification decides again.
+        assert!(matches!(
+            policy
+                .evaluate_with_signals(
+                    Some("198.51.100.7".parse().unwrap()),
+                    "curl/8.4.0",
+                    ClientSignals {
+                        browser_hints: false,
+                        tls_verified: false,
+                        burst: false,
+                    },
+                )
+                .await,
+            BotDecision::Deny(_)
+        ));
+        // A malformed range entry is skipped, not fatal.
+        let policy = BotPolicy::build(&CacheBotProtection {
+            enabled: true,
+            action: CacheWafAction::Block,
+            known_bots_whitelist: vec![],
+            js_detection: false,
+            tls_fingerprint: false,
+            behavioral_analysis: false,
+            verified_bot_ranges: vec!["not-a-range".to_string()],
+            dns_verification_enabled: false,
+        });
+        assert!(policy.verified_ranges.is_empty());
     }
 
     #[test]

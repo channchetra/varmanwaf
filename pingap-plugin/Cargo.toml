@@ -35,7 +35,9 @@ dashmap = { workspace = true }
 fancy-regex = { workspace = true }
 glob = { workspace = true }
 hex = { workspace = true }
+hickory-resolver = { workspace = true }
 http = { workspace = true }
+ipnet = { workspace = true }
 jsonwebtoken = { workspace = true }
 hmac-sha256 = { workspace = true }
 hmac-sha512 = { workspace = true, default-features = false }
@@ -61,6 +63,7 @@ smallvec = { workspace = true }
 snafu = { workspace = true }
 substring = { workspace = true }
 tera = { workspace = true }
+TinyUFO = { workspace = true }
 tokio = { workspace = true, features = ["net", "io-util"] }
 toml = { workspace = true }
 tracing = { workspace = true }

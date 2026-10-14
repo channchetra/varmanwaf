@@ -27,6 +27,9 @@ export function defaultBotConfig(siteId: string): BotConfig {
     behavioral_analysis: false,
     action: 'challenge',
     known_bots_whitelist: [],
+    verified_ip_group_id: null,
+    ip_verification_enabled: false,
+    dns_verification_enabled: false,
     updated_at: '',
   }
 }

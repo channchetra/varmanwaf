@@ -247,6 +247,7 @@ macro_rules! register_plugin {
 
 mod accept_encoding;
 mod basic_auth;
+mod bot_dns;
 mod cache;
 mod challenge;
 mod combined_auth;
