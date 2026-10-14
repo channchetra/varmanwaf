@@ -61,6 +61,7 @@ pub mod m20240101_000053_waf_policies;
 pub mod m20240101_000054_policy_versions;
 pub mod m20240101_000055_crs_import;
 pub mod m20240101_000056_alerts;
+pub mod m20240101_000057_ip_group_source_selector;
 
 use sea_orm_migration::prelude::*;
 
@@ -133,6 +134,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000054_policy_versions::Migration),
             Box::new(m20240101_000055_crs_import::Migration),
             Box::new(m20240101_000056_alerts::Migration),
+            Box::new(m20240101_000057_ip_group_source_selector::Migration),
         ]
     }
 }
@@ -144,7 +146,7 @@ mod tests {
     #[test]
     fn migrations_are_ordered_and_unique() {
         let migrations = Migrator::migrations();
-        assert_eq!(migrations.len(), 56);
+        assert_eq!(migrations.len(), 57);
         let names: Vec<String> =
             migrations.iter().map(|m| m.name().to_owned()).collect();
         let mut sorted = names.clone();

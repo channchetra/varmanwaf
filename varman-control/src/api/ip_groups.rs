@@ -83,6 +83,9 @@ pub struct CreateRequest {
     pub is_global: bool,
     #[serde(default)]
     pub source_url: Option<String>,
+    /// Dotted JSON paths collected from a JSON source (comma separated).
+    #[serde(default)]
+    pub source_selector: Option<String>,
     #[serde(default)]
     pub sync_interval_minutes: Option<i32>,
     #[serde(default = "default_true")]
@@ -105,6 +108,8 @@ pub struct UpdateRequest {
     pub is_global: Option<bool>,
     #[serde(default)]
     pub source_url: Option<String>,
+    #[serde(default)]
+    pub source_selector: Option<String>,
     #[serde(default)]
     pub sync_interval_minutes: Option<i32>,
     #[serde(default)]
@@ -166,6 +171,31 @@ fn validate_name(name: &str) -> Result<(), ApiError> {
         ));
     }
     Ok(())
+}
+
+/// Normalises a JSON selector: trims, drops an empty value, caps the length
+/// and rejects control characters (the value is echoed in logs).
+fn validate_selector(
+    selector: &Option<String>,
+) -> Result<Option<String>, ApiError> {
+    let Some(value) = selector else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.len() > 500 {
+        return Err(ApiError::BadRequest(
+            "source selector must be at most 500 characters".to_string(),
+        ));
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err(ApiError::BadRequest(
+            "source selector must not contain control characters".to_string(),
+        ));
+    }
+    Ok(Some(trimmed.to_string()))
 }
 
 /// Response type that includes the count of associated sites.
@@ -277,6 +307,7 @@ async fn create(
         crate::subscription::validate_source_url(url)
             .map_err(ApiError::BadRequest)?;
     }
+    let source_selector = validate_selector(&payload.source_selector)?;
 
     let timestamp = chrono::Utc::now();
     // Groups created through the API are manual or URL subscriptions; the
@@ -296,6 +327,7 @@ async fn create(
         subscription_kind: Set(subscription_kind),
         subscription_enabled: Set(payload.subscription_enabled),
         source_url: Set(source_url),
+        source_selector: Set(source_selector),
         sync_interval_minutes: Set(normalise_interval(
             payload.sync_interval_minutes,
         )),
@@ -382,6 +414,9 @@ async fn update(
         };
         active.subscription_kind = Set(kind);
         active.source_url = Set(stored);
+    }
+    if payload.source_selector.is_some() {
+        active.source_selector = Set(validate_selector(&payload.source_selector)?);
     }
     if let Some(interval) = payload.sync_interval_minutes {
         active.sync_interval_minutes = Set(normalise_interval(Some(interval)));
@@ -661,7 +696,7 @@ async fn sync_now(
 /// everything else fetches its `source_url` over HTTP. A failed sync never
 /// touches `ip_ranges`: the group keeps serving its previous ranges and only
 /// `last_sync_error` records the failure.
-async fn sync_subscription(
+pub(crate) async fn sync_subscription(
     state: &AppState,
     group: ip_groups::Model,
     actor: Option<&str>,
@@ -693,8 +728,12 @@ async fn sync_subscription(
                 },
             };
             let client = crate::subscription::subscription_client();
-            crate::subscription::fetch_subscription_ranges(&client, &source_url)
-                .await
+            crate::subscription::fetch_subscription_ranges_with_selector(
+                &client,
+                &source_url,
+                group.source_selector.as_deref().unwrap_or(""),
+            )
+            .await
         },
     };
 
@@ -887,6 +926,7 @@ pub async fn seed_builtin_groups(
             )),
             subscription_enabled: Set(true),
             source_url: Set(None),
+            source_selector: Set(None),
             sync_interval_minutes: Set(Some(1440)),
             last_synced_at: Set(Some(now)),
             last_sync_error: Set(None),

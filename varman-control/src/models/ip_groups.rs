@@ -24,6 +24,11 @@ pub struct Model {
     pub subscription_enabled: bool,
     #[sea_orm(column_type = "Text")]
     pub source_url: Option<String>,
+    /// Dotted JSON paths collected from a JSON source, comma separated
+    /// (`prefixes.ipv4,prefixes.ipv6`, `services.Googlebot.ipv4`); empty
+    /// keeps the parser's auto-detection.
+    #[sea_orm(column_type = "Text")]
+    pub source_selector: Option<String>,
     pub sync_interval_minutes: Option<i32>,
     pub last_synced_at: Option<DateTimeUtc>,
     /// Why the most recent subscription sync failed; `None` when the last sync

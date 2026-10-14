@@ -67,6 +67,16 @@ pub async fn fetch_subscription_ranges(
     client: &reqwest::Client,
     url: &str,
 ) -> Result<Vec<String>, String> {
+    fetch_subscription_ranges_with_selector(client, url, "").await
+}
+
+/// [`fetch_subscription_ranges`] with an optional JSON selector
+/// (comma-separated dotted paths, e.g. `prefixes.ipv4,prefixes.ipv6`).
+pub async fn fetch_subscription_ranges_with_selector(
+    client: &reqwest::Client,
+    url: &str,
+    selector: &str,
+) -> Result<Vec<String>, String> {
     // Re-checked here so every caller is covered, not just the API paths.
     validate_source_url(url)?;
     let response = client
@@ -81,21 +91,52 @@ pub async fn fetch_subscription_ranges(
         .text()
         .await
         .map_err(|err| format!("failed to read the response body: {err}"))?;
-    parse_subscription(&body)
+    parse_subscription_with_selector(&body, selector)
 }
 
 /// Parses a subscription body, auto-detecting JSON and plain-text layouts.
 pub fn parse_subscription(body: &str) -> Result<Vec<String>, String> {
+    parse_subscription_with_selector(body, "")
+}
+
+/// [`parse_subscription`] with an optional JSON selector.
+///
+/// When a selector is given it is authoritative for JSON documents: every
+/// dotted path is resolved (arrays flatten, objects descend) and the strings
+/// found are validated as ranges. A selector that resolves to nothing is an
+/// error, so a renamed upstream key surfaces as a sync failure instead of an
+/// empty group.
+pub fn parse_subscription_with_selector(
+    body: &str,
+    selector: &str,
+) -> Result<Vec<String>, String> {
     let trimmed = body.trim_start();
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
         match serde_json::from_str::<Value>(trimmed) {
-            Ok(json) => return json_ranges(&json),
+            Ok(json) => {
+                if selector.trim().is_empty() {
+                    return json_ranges(&json);
+                }
+                let selected = select_ranges(&json, selector);
+                if selected.is_empty() {
+                    return Err(format!(
+                        "the selector '{selector}' matched no IP ranges in the \
+                         JSON source"
+                    ));
+                }
+                return Ok(selected);
+            },
             Err(_) => {
                 return Err(
                     "source looks like JSON but does not parse".to_string()
                 )
             },
         }
+    }
+    if !selector.trim().is_empty() {
+        return Err(
+            "a JSON selector was given but the source is not JSON".to_string(),
+        );
     }
     let ranges = text_ranges(body);
     if ranges.is_empty() {
@@ -104,7 +145,71 @@ pub fn parse_subscription(body: &str) -> Result<Vec<String>, String> {
     Ok(ranges)
 }
 
-/// Extracts ranges from a JSON document.
+/// Resolves comma-separated dotted paths against a JSON document and returns
+/// the validated ranges found, deduplicated in document order.
+pub fn select_ranges(json: &Value, selector: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for path in selector.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        let mut nodes: Vec<&Value> = vec![json];
+        for segment in path.split('.').map(str::trim).filter(|s| !s.is_empty()) {
+            let mut next: Vec<&Value> = Vec::new();
+            for node in nodes {
+                match node {
+                    Value::Object(map) => {
+                        if let Some(child) = map.get(segment) {
+                            next.push(child);
+                        }
+                    },
+                    Value::Array(items) => {
+                        // Arrays of objects: apply the segment to each item so
+                        // `services.Googlebot` style paths work from a list.
+                        for item in items {
+                            if let Value::Object(map) = item {
+                                if let Some(child) = map.get(segment) {
+                                    next.push(child);
+                                }
+                            }
+                        }
+                    },
+                    _ => {},
+                }
+            }
+            nodes = next;
+        }
+        for node in nodes {
+            collect_strings(node, &mut out);
+        }
+    }
+    out.retain(|entry| valid_range(entry).is_some());
+    out.dedup();
+    out
+}
+
+fn collect_strings(node: &Value, out: &mut Vec<String>) {
+    match node {
+        Value::String(text) => out.push(text.clone()),
+        Value::Array(items) => {
+            for item in items {
+                collect_strings(item, out);
+            }
+        },
+        Value::Object(map) => {
+            for child in map.values() {
+                collect_strings(child, out);
+            }
+        },
+        _ => {},
+    }
+}
+
+/// Extracts ranges from a JSON document (auto-detection, used when no
+/// selector is configured).
+///
+/// Understood shapes: plain arrays of strings; Cloudflare's
+/// `/client/v4/ips` (`result.ipv4_cidrs`/`ipv6_cidrs`) and its newer
+/// `result.items[].ip_prefix`; ipverse `country-ip-blocks`
+/// (`prefixes.ipv4`/`prefixes.ipv6`); ipverse `bot-ip-blocks`
+/// (`services.<name>.ipv4`/`.ipv6`, every service).
 fn json_ranges(json: &Value) -> Result<Vec<String>, String> {
     let mut raw: Vec<String> = Vec::new();
 
@@ -131,10 +236,40 @@ fn json_ranges(json: &Value) -> Result<Vec<String>, String> {
         }));
     }
 
-    let ranges: Vec<String> = raw
-        .into_iter()
-        .filter_map(|entry| valid_range(&entry))
-        .collect();
+    // ipverse country-ip-blocks: `prefixes.ipv4` / `prefixes.ipv6`.
+    if let Some(prefixes) = json.get("prefixes") {
+        for key in ["ipv4", "ipv6"] {
+            if let Some(list) = prefixes.get(key).and_then(Value::as_array) {
+                raw.extend(
+                    list.iter().filter_map(Value::as_str).map(str::to_string),
+                );
+            }
+        }
+    }
+
+    // ipverse bot-ip-blocks: `services.<name>.ipv4` / `.ipv6`, all services.
+    if let Some(services) = json.get("services").and_then(Value::as_object) {
+        for service in services.values() {
+            for key in ["ipv4", "ipv6"] {
+                if let Some(list) = service.get(key).and_then(Value::as_array) {
+                    raw.extend(
+                        list.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string),
+                    );
+                }
+            }
+        }
+    }
+
+    let mut ranges: Vec<String> = Vec::new();
+    for entry in raw {
+        if let Some(range) = valid_range(&entry) {
+            if !ranges.contains(&range) {
+                ranges.push(range);
+            }
+        }
+    }
     if ranges.is_empty() {
         return Err("no IP ranges found in the JSON source".to_string());
     }
@@ -465,6 +600,65 @@ mod tests {
     fn parses_json_array_of_strings() {
         let ranges = parse_subscription(r#"["10.0.0.0/8", "junk"]"#).unwrap();
         assert_eq!(ranges, vec!["10.0.0.0/8"]);
+    }
+
+    #[test]
+    fn parses_ipverse_country_document() {
+        let body = r#"{
+            "country": "Andorra",
+            "countryCode": "AD",
+            "prefixes": {
+                "ipv4": ["46.172.224.0/19"],
+                "ipv6": ["2a01:fb00::/29"]
+            }
+        }"#;
+        let ranges = parse_subscription(body).unwrap();
+        assert_eq!(ranges, vec!["46.172.224.0/19", "2a01:fb00::/29"]);
+    }
+
+    #[test]
+    fn parses_ipverse_bot_services() {
+        let body = r#"{
+            "services": {
+                "Googlebot": {
+                    "ipv4": ["66.249.64.0/20"],
+                    "ipv6": ["2001:4860:4801::/64"]
+                },
+                "Pingdom": { "ipv4": ["1.2.3.0/24"], "ipv6": [] }
+            }
+        }"#;
+        let ranges = parse_subscription(body).unwrap();
+        assert!(ranges.contains(&"66.249.64.0/20".to_string()));
+        assert!(ranges.contains(&"1.2.3.0/24".to_string()));
+        assert_eq!(ranges.len(), 3);
+    }
+
+    #[test]
+    fn selector_picks_one_service_and_reports_misses() {
+        let body = r#"{
+            "services": {
+                "Googlebot": {
+                    "ipv4": ["66.249.64.0/20"],
+                    "ipv6": ["2001:4860:4801::/64"]
+                },
+                "Pingdom": { "ipv4": ["1.2.3.0/24"] }
+            }
+        }"#;
+        let ranges = parse_subscription_with_selector(
+            body,
+            "services.Googlebot.ipv4,services.Googlebot.ipv6",
+        )
+        .unwrap();
+        assert_eq!(ranges, vec!["66.249.64.0/20", "2001:4860:4801::/64"]);
+
+        // A renamed key must surface as an error, not an empty group.
+        assert!(parse_subscription_with_selector(body, "services.Nope.ipv4")
+            .is_err());
+        // A selector on a text source is a configuration error too.
+        assert!(
+            parse_subscription_with_selector("10.0.0.0/8\n", "prefixes.ipv4")
+                .is_err()
+        );
     }
 
     #[test]

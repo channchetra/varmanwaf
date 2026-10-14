@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  ArrowClockwise,
+  DownloadSimple,
+  Pencil,
   Plus,
   Trash,
-  Pencil,
-  ArrowClockwise,
 } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, CardBody } from '@/components/ui/Card'
@@ -20,6 +21,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonRows } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
+import { IpListCatalogDialog } from '@/components/IpListCatalogDialog'
 import { ipGroupKeys, ipGroupsApi } from '@/api/ipGroups'
 import { validateIpCidr } from '@/api/ipRules'
 import { useCanWrite, useSitesList } from '@/hooks'
@@ -57,6 +59,7 @@ export function IpGroupsPage() {
   const [scopeFilter, setScopeFilter] = useState('')
   const [editing, setEditing] = useState<IpGroupResponse | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const [catalogOpen, setCatalogOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<IpGroupResponse | null>(null)
 
   const { data: sites } = useSitesList()
@@ -221,10 +224,16 @@ export function IpGroupsPage() {
         description={t('pages.ipGroups.description')}
         actions={
           canWrite ? (
-            <Button variant="primary" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-4 w-4" />
-              {t('pages.ipGroups.create')}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => setCatalogOpen(true)}>
+                <DownloadSimple className="h-4 w-4" />
+                {t('pages.ipLists.browse')}
+              </Button>
+              <Button variant="primary" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-4 w-4" />
+                {t('pages.ipGroups.create')}
+              </Button>
+            </div>
           ) : undefined
         }
       />
@@ -279,6 +288,10 @@ export function IpGroupsPage() {
           )}
         </CardBody>
       </Card>
+
+      {catalogOpen && (
+        <IpListCatalogDialog onClose={() => setCatalogOpen(false)} />
+      )}
 
       {createOpen && (
         <GroupDialog

@@ -3,11 +3,12 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IdentificationCard,
-  Plus,
-  PencilSimple,
-  Trash,
   ArrowClockwise,
+  DownloadSimple,
+  IdentificationCard,
+  PencilSimple,
+  Plus,
+  Trash,
   UploadSimple,
   Users,
 } from '@phosphor-icons/react'
@@ -32,6 +33,7 @@ import {
   parseIpList,
 } from '@/api/ipRules'
 import { ipGroupsApi, ipGroupKeys } from '@/api/ipGroups'
+import { IpListCatalogDialog } from '@/components/IpListCatalogDialog'
 import { AutoBlockedIpsCard } from '@/pages/sites/AutoBlockedIpsCard'
 import { useCanWrite } from '@/hooks'
 import { formatDateTime } from '@/lib/format'
@@ -97,6 +99,7 @@ export function IpRulesPanel() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [catalogOpen, setCatalogOpen] = useState(false)
   const [tab, setTab] = useState<DialogTab>('single')
   const [editing, setEditing] = useState<IpRule | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
@@ -451,7 +454,20 @@ export function IpRulesPanel() {
         <>
           <AutoBlockedIpsCard siteId={siteId} />
           <Card className="mt-4">
-            <CardHeader title={t('pages.ipRules.rulesTitle')} />
+            <CardHeader
+              title={t('pages.ipRules.rulesTitle')}
+              action={
+                canWrite ? (
+                  <Button
+                    size="sm"
+                    icon={<DownloadSimple weight="duotone" className="h-4 w-4" />}
+                    onClick={() => setCatalogOpen(true)}
+                  >
+                    {t('pages.ipLists.browse')}
+                  </Button>
+                ) : undefined
+              }
+            />
           <CardBody className="p-0">
             {rulesQuery.isPending ? (
               <SkeletonRows rows={5} columns={7} />
@@ -692,6 +708,10 @@ export function IpRulesPanel() {
           </div>
         )}
       </ConfirmDialog>
+
+      {catalogOpen && (
+        <IpListCatalogDialog onClose={() => setCatalogOpen(false)} />
+      )}
     </div>
   )
 }

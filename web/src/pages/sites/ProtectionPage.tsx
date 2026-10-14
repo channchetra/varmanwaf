@@ -16,15 +16,22 @@ import { ProtectionSettingsPanel } from './ProtectionSettingsPanel'
 import { WafRulesPanel } from './WafRulesPanel'
 import { CcPanel } from './CcPanel'
 import { PolicyPage } from './PolicyPage'
+import { ProtectionOverview } from './ProtectionOverview'
 
-type ProtectionTab = 'settings' | 'rules' | 'cc' | 'policy'
+type ProtectionTab = 'overview' | 'settings' | 'rules' | 'cc' | 'policy'
 
-const PROTECTION_TABS: ProtectionTab[] = ['settings', 'rules', 'cc', 'policy']
+const PROTECTION_TABS: ProtectionTab[] = [
+  'overview',
+  'settings',
+  'rules',
+  'cc',
+  'policy',
+]
 
 function parseTab(value: string | null): ProtectionTab {
   return PROTECTION_TABS.includes(value as ProtectionTab)
     ? (value as ProtectionTab)
-    : 'settings'
+    : 'overview'
 }
 
 /**
@@ -158,6 +165,11 @@ export function ProtectionPage() {
         onChange={setTab}
         items={[
           {
+            value: 'overview',
+            label: t('pages.protection.tabOverview'),
+            icon: <ShieldCheck weight="duotone" className="h-4 w-4" />,
+          },
+          {
             value: 'settings',
             label: t('pages.protection.tabSettings'),
             icon: <Gauge weight="duotone" className="h-4 w-4" />,
@@ -180,7 +192,7 @@ export function ProtectionPage() {
         ]}
       />
 
-      {sitePolicy.data?.policy && tab !== 'policy' && (
+      {sitePolicy.data?.policy && tab !== 'policy' && tab !== 'overview' && (
         <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand/10 px-4 py-3 text-[13px]">
           <Stack weight="duotone" className="h-4 w-4 text-brand" />
           <span className="text-fg-strong">
@@ -198,6 +210,9 @@ export function ProtectionPage() {
         </div>
       )}
 
+      {tab === 'overview' && (
+        <ProtectionOverview onSelectTab={(next) => setTab(next)} />
+      )}
       {tab === 'settings' && <ProtectionSettingsPanel />}
       {tab === 'rules' && <WafRulesPanel />}
       {tab === 'cc' && <CcPanel />}

@@ -25,6 +25,7 @@ pub mod error;
 pub mod error_pages;
 pub mod geo;
 pub mod ip_groups;
+pub mod ip_lists;
 pub mod ip_rules;
 pub mod keys;
 pub mod log_retention;
@@ -115,6 +116,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(config_versions::routes())
         .merge(crs::routes())
         .merge(alerts::routes())
+        .merge(ip_lists::routes())
         .merge(notifications::routes())
         .merge(login_security::routes())
         .merge(policies::routes())

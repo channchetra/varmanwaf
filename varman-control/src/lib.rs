@@ -19,6 +19,7 @@ pub mod defaults;
 pub mod es;
 pub mod frontend;
 pub mod grpc;
+pub mod ip_lists;
 pub mod mcp;
 pub mod migration;
 pub mod models;

@@ -1,7 +1,13 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Play, Plus, Stack, Trash } from '@phosphor-icons/react'
+import {
+  ClockCounterClockwise,
+  Play,
+  Plus,
+  Stack,
+  Trash,
+} from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardFooter, CardHeader } from '@/components/ui/Card'
@@ -385,40 +391,58 @@ function PolicyEditorDialog({
       }
     >
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-5 pt-3">
-          <div className="flex flex-wrap gap-1">
-            {LAYER_TABS.map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                onClick={() => setTab(kind)}
-                className={cn(
-                  'rounded-t-md border-b-2 px-3 py-2 text-[13px] font-medium transition-colors',
-                  tab === kind
-                    ? 'border-link text-fg-strong'
-                    : 'border-transparent text-fg-subtle hover:text-fg',
-                )}
-              >
-                {t(`pages.policies.layers.${kind}`)}
-              </button>
-            ))}
+        {/* Meta + actions row: room to breathe, actions away from the tabs. */}
+        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line bg-recessed/40 px-5 py-3">
+          <Badge tone="brand">
+            {t('pages.policies.revision', { n: policy?.revision ?? 0 })}
+          </Badge>
+          <span className="text-[13px] text-fg-subtle">
+            {t('pages.policies.editorContext', {
+              n: policy?.site_count ?? 0,
+            })}
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<ClockCounterClockwise className="h-4 w-4" />}
+              onClick={() => setHistoryOpen(true)}
+            >
+              {t('pages.policies.history')}
+            </Button>
+            <Button
+              size="sm"
+              icon={<Play weight="fill" className="h-3.5 w-3.5" />}
+              onClick={() => setTestOpen(true)}
+            >
+              {t('pages.policies.test')}
+            </Button>
           </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setHistoryOpen(true)}
-          >
-            {t('pages.policies.history')}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={<Play weight="fill" className="h-3.5 w-3.5" />}
-            onClick={() => setTestOpen(true)}
-          >
-            {t('pages.policies.test')}
-          </Button>
         </div>
+
+        {/* Layer tabs: bigger hit areas for comfortable switching. */}
+        <div className="flex shrink-0 flex-wrap gap-1 border-b border-line px-5 pt-2">
+          {LAYER_TABS.map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              onClick={() => setTab(kind)}
+              className={cn(
+                'rounded-t-md border-b-2 px-4 py-2.5 text-[13px] font-medium transition-colors',
+                tab === kind
+                  ? 'border-link text-fg-strong'
+                  : 'border-transparent text-fg-subtle hover:text-fg',
+              )}
+            >
+              {t(`pages.policies.layers.${kind}`)}
+            </button>
+          ))}
+        </div>
+
+        {/* What a change here means - stated before any field. */}
+        <p className="mx-5 mt-4 shrink-0 rounded-lg border border-focus/30 bg-focus/5 px-4 py-2.5 text-[12px] text-fg-subtle">
+          {t('pages.policies.editorBanner')}
+        </p>
 
         {detail.isLoading || !policy ? (
           <div className="p-5">
@@ -783,7 +807,7 @@ function LayerFooter({
   const { t } = useTranslation()
   if (!canWrite) return null
   return (
-    <div className="flex justify-between border-t border-line px-5 py-3">
+    <div className="flex items-center justify-between border-t border-line bg-elevated/95 px-5 py-4 backdrop-blur">
       <Button
         variant="ghost"
         disabled={!hasStored}
@@ -791,9 +815,14 @@ function LayerFooter({
       >
         {t('pages.policies.removeLayer')}
       </Button>
-      <Button variant="primary" loading={saving} onClick={onSave}>
-        {t('common.save')}
-      </Button>
+      <div className="flex items-center gap-3">
+        <span className="hidden text-[12px] text-fg-subtle sm:block">
+          {t('pages.policies.saveHint')}
+        </span>
+        <Button variant="primary" size="lg" loading={saving} onClick={onSave}>
+          {t('common.save')}
+        </Button>
+      </div>
     </div>
   )
 }

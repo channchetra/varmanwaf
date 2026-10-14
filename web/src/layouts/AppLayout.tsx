@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { Sidebar } from '@/components/ui/Sidebar'
 import { Breadcrumb, type BreadcrumbItem } from '@/components/ui/Breadcrumb'
 import { Button } from '@/components/ui/Button'
+import { GlobalSearch } from '@/components/GlobalSearch'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { supportedLanguages } from '@/i18n'
@@ -58,6 +59,7 @@ export function AppLayout() {
 
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [langMenuOpen, setLangMenuOpen] = useState(false)
   const userMenuRef = useRef<HTMLDivElement>(null)
@@ -85,12 +87,12 @@ export function AppLayout() {
     return () => document.removeEventListener('mousedown', onClick)
   }, [])
 
-  // Cmd/Ctrl+K focus placeholder (search is a stub for now).
+  // Cmd/Ctrl+K opens the global search palette.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        document.getElementById('global-search')?.focus()
+        setSearchOpen(true)
       }
     }
     document.addEventListener('keydown', onKey)
@@ -167,23 +169,23 @@ export function AppLayout() {
           <Breadcrumb items={crumbs} className="hidden min-w-0 sm:block" />
 
           <div className="ml-auto flex items-center gap-2">
-            {/* Search (Cmd+K placeholder) */}
-            <div className="relative hidden lg:block">
+            {/* Search opens the palette (⌘/Ctrl+K) */}
+            <button
+              type="button"
+              onClick={() => setSearchOpen(true)}
+              className="relative hidden h-9 w-64 items-center rounded-md border border-line bg-recessed pl-9 pr-12 text-left text-sm text-fg-subtle transition-colors hover:border-focus lg:flex"
+            >
               <MagnifyingGlass
                 weight="duotone"
                 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-subtle"
               />
-              <input
-                id="global-search"
-                type="text"
-                readOnly
-                placeholder={t('search.placeholder')}
-                className="h-9 w-64 cursor-pointer rounded-md border border-line bg-recessed pl-9 pr-12 text-sm text-fg placeholder:text-fg-subtle/70 focus:border-focus focus:outline-none"
-              />
+              <span className="truncate">{t('search.placeholder')}</span>
               <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-line bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-fg-subtle">
                 ⌘K
               </kbd>
-            </div>
+            </button>
+
+            {searchOpen && <GlobalSearch onClose={() => setSearchOpen(false)} />}
 
             {/* Language */}
             <div className="relative" ref={langMenuRef}>
