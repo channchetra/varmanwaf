@@ -23,6 +23,7 @@ import {
   BellRinging,
   Bell,
   Prohibit,
+  ClockCounterClockwise,
   type Icon,
 } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
@@ -118,6 +119,7 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
     { kind: 'leaf', to: '/assistant', labelKey: 'nav.assistant', icon: Sparkle },
     { kind: 'leaf', to: '/agents', labelKey: 'nav.agents', icon: Desktop },
     { kind: 'leaf', to: '/lifecycle', labelKey: 'nav.lifecycle', icon: FlowArrow },
+    { kind: 'leaf', to: '/config-history', labelKey: 'nav.configHistory', icon: ClockCounterClockwise },
     { kind: 'leaf', to: '/settings', labelKey: 'nav.settings', icon: Gear },
   ]
 

@@ -14,7 +14,8 @@ export interface ConfigVersionSummary {
 }
 
 /** A full version, including the restorable snapshot document. */
-export interface ConfigVersionDetail extends ConfigVersionSummary {
+export interface ConfigVersionDetail
+  extends Omit<ConfigVersionSummary, 'site_domain'> {
   snapshot: {
     schema: number
     site: Record<string, unknown> | null
