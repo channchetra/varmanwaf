@@ -109,6 +109,38 @@ signature.
    then publish.
 5. Record the batch in this document and in the release notes.
 
+## Batch 3b plan (next): request-body staging
+
+Upstream model extracted from `aa597371` (all in
+`pingap-plugin/src/waf.rs`); our fork lacks it (our `waf_stream.rs` covers
+*upgraded* protocol frames, not HTTP body staging):
+
+1. **`stage_chunk(cap, inspect, &mut passthrough, &mut buffer, chunk) ->
+   StageAction { Withhold | Flush(Bytes) | PassThrough }`** - the pure
+   state machine. Withhold = the chunk is buffered and the caller replaces
+   the outgoing chunk with an **empty chunk** (never `None`: that would end
+   the upstream body). Past the cap: `Flush` inspects the prefix once, then
+   passthrough.
+2. **`DeferredBody` entries** keyed by request id (DashMap): withheld
+   `BytesMut`, `passthrough`, `inspect` (false for log-capture-only),
+   `log_prefix`, the deferred-verdict snapshot, `created_at`.
+3. **Completion-time verdict**: the request-body filter withholds until the
+   client finishes; the engine then runs once on the complete body (or the
+   staged prefix past the cap) before any byte reaches the upstream - block
+   answers with the block page, otherwise the staged bytes are handed over.
+4. **Log capture**: `LogBodyPrefix` with `MAX_LOG_BODY_LIMIT = 64 KiB`
+   (request `max_body_size` default 64 KiB), independent of inspection.
+5. **Stale sweep**: entries whose exchange never completes are dropped on
+   the periodic task's TTL (client vanished mid-body / upstream answered
+   early).
+6. **Tests to port/extend**: upstream's
+   `request_body_staging_withholds_until_the_cap` and
+   `request_body_staging_is_skipped_for_log_only_entries`, plus ours: a
+   fragmented attack split across chunks still reaches a block verdict; an
+   over-cap body is prefix-inspected and streams on.
+7. **E2E**: chunked request-body attack blocked; large benign body passes;
+   access log keeps the body prefix.
+
 ## Batch 3a detail (landed, v0.35.1)
 
 - `pingap-plugin/src/bot_dns.rs` (new, upstream): reverse + forward DNS
