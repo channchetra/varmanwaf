@@ -805,6 +805,33 @@
       "title": "Web Application Firewall",
       "description": "Description",
       "action": "Action",
+      "actionCards": {
+        "block": {
+          "title": "Block request",
+          "chip": "403",
+          "description": "Deny the request immediately with the block response. Later rules are skipped."
+        },
+        "challenge": {
+          "title": "Challenge the browser",
+          "chip": "Challenge",
+          "description": "Serve a browser challenge instead of the application; unresolved traffic is refused."
+        },
+        "js_challenge": {
+          "title": "JavaScript challenge",
+          "chip": "JS challenge",
+          "description": "Serve a proof-of-work JavaScript challenge first; passers continue to the application."
+        },
+        "log": {
+          "title": "Record match, keep protecting",
+          "chip": "Record only",
+          "description": "Record the match as a security event and keep evaluating; nothing is blocked."
+        },
+        "allow": {
+          "title": "Exempt this request",
+          "chip": "Exempt",
+          "description": "Stop evaluation for the request: later rules and managed blocks are skipped."
+        }
+      },
       "activeRules": "Active rules",
       "addCondition": "Add condition",
       "addGroup": "Add group",
@@ -861,6 +888,41 @@
       "ruleCreated": "Rule created",
       "ruleDeleted": "Rule deleted",
       "ruleDialogDescription": "Define a WAF rule with conditions, action and metadata.",
+      "whenTitle": "When the request matches",
+      "thenTitle": "Then",
+      "pathTitle": "Actual request path",
+      "pathCondition": "Condition",
+      "pathConditionValue": "Your conditions match",
+      "pathAction": "This rule: {{action}}",
+      "pathResult": "Result",
+      "outcomes": {
+        "offChip": "Off",
+        "offText": "The rule is off - nothing is evaluated.",
+        "monitorPrefix": "Monitor mode: recorded as a monitor event;",
+        "blockChip": "Blocked (403)",
+        "blockText": "the request is denied with the block response and later rules are skipped.",
+        "challengeChip": "Challenge served",
+        "challengeText": "the request must solve the challenge before it reaches the application.",
+        "logChip": "Recorded",
+        "logText": "the match is recorded as a security event; the request continues.",
+        "allowChip": "Exempt",
+        "allowText": "evaluation stops for this request; later rules do not run."
+      },
+      "testRule": "Test rule",
+      "testTitle": "Test this rule (draft)",
+      "testHint": "Evaluates the draft against this site's resolved configuration (policy rules, saved rules, patches) with the engine the edge runs. Rate limits, IP/geo and bot checks are edge decisions and are reported as skipped.",
+      "testRun": "Run test",
+      "testQuery": "Query",
+      "testClientIp": "Client IP",
+      "testBody": "Body",
+      "testScore": "Score",
+      "testDraftBadge": "draft",
+      "testTuned": "tuned",
+      "testNoMatch": "No rule matched this request.",
+      "testSimulated": "Simulated",
+      "testSkipped": "Skipped",
+      "testFailed": "Test failed",
+      "untitledDraft": "Untitled draft",
       "ruleModeHint": "Override the site-wide mode for this rule only.",
       "ruleNamePlaceholder": "e.g. Block SQL injection in query",
       "ruleUpdated": "Rule updated",

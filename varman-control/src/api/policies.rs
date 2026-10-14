@@ -1424,6 +1424,12 @@ pub struct TestPolicyRequest {
     /// Draft layers, applied like in the preview.
     #[serde(default)]
     pub layers: HashMap<String, Value>,
+    /// Draft custom rules evaluated *on top of* the resolved configuration
+    /// (policy rules + the site's saved rules), reported with source
+    /// `draft`. A draft that does not compile is named in the result notes
+    /// instead of silently not matching.
+    #[serde(default)]
+    pub draft_rules: Vec<policy::PolicyRule>,
     pub request: policy_test::TestRequestInput,
 }
 
@@ -1545,6 +1551,41 @@ async fn test_policy(
         compiled.push(compiled_rule);
     }
 
+    // Draft rules (a rule being edited before it is saved) evaluate on top of
+    // everything else, so the tester answers "what changes if I save this?".
+    let mut draft_notes: Vec<String> = Vec::new();
+    for (index, rule) in payload.draft_rules.iter().enumerate() {
+        if !rule.enabled {
+            draft_notes.push(format!(
+                "draft rule '{}' is disabled and was not evaluated",
+                rule.name
+            ));
+            continue;
+        }
+        let id = format!("draft:{index}");
+        match policy_test::compile_rule_result(
+            &id,
+            &rule.name,
+            &rule.expression,
+            &rule.action,
+            &rule.mode,
+            rule.severity,
+            &rule.tags,
+        ) {
+            Ok(compiled_rule) => {
+                if rule.mode == "monitor" {
+                    monitored.push(id.clone());
+                }
+                sources.insert(id, (rule.name.clone(), "draft"));
+                compiled.push(compiled_rule);
+            },
+            Err(error) => draft_notes.push(format!(
+                "draft rule '{}' was not evaluated: {error}",
+                rule.name
+            )),
+        }
+    }
+
     let mut config = policy_test::engine_config(&effective, compiled);
     config.monitor_custom_rules = monitored.into_iter().collect();
 
@@ -1618,6 +1659,12 @@ async fn test_policy(
             .simulated
             .push("imported CRS rules (crs_import layer)".to_string());
     }
+    if !payload.draft_rules.is_empty() {
+        result
+            .simulated
+            .push("draft rule(s) (not saved yet)".to_string());
+    }
+    result.notes.extend(draft_notes);
     Ok(Json(PolicyTestView {
         result,
         effective,

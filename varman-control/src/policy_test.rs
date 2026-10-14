@@ -159,13 +159,27 @@ pub fn compile_rule(
     severity: u8,
     tags: &[String],
 ) -> Option<CompiledRule> {
+    compile_rule_result(id, name, expression, action, mode, severity, tags).ok()
+}
+
+/// [`compile_rule`] keeping the compile error, so draft rules can report
+/// *why* they were not evaluated instead of silently not matching.
+pub fn compile_rule_result(
+    id: &str,
+    name: &str,
+    expression: &str,
+    action: &str,
+    mode: &str,
+    severity: u8,
+    tags: &[String],
+) -> Result<CompiledRule, String> {
     let action = match action {
         "block" => RuleAction::Block,
         "log" => RuleAction::Log,
         "challenge" => RuleAction::Challenge,
         "js_challenge" => RuleAction::JsChallenge,
         "allow" => RuleAction::Allow,
-        _ => return None,
+        other => return Err(format!("unknown action '{other}'")),
     };
     // A rule in `monitor` mode is downgraded through the monitor set; the
     // id membership is applied by the caller.
@@ -178,7 +192,7 @@ pub fn compile_rule(
         severity,
         tags.to_vec(),
     )
-    .ok()
+    .map_err(|err| err.to_string())
 }
 
 /// Evaluates one request against the compiled configuration.
@@ -396,6 +410,48 @@ mod tests {
             client_ip: "203.0.113.10".into(),
             host: "example.com".into(),
         }
+    }
+
+    #[test]
+    fn draft_compile_errors_are_reported() {
+        // A draft rule with a broken expression keeps its error so the
+        // tester can say why it was not evaluated.
+        let error = compile_rule_result(
+            "draft:0",
+            "Broken",
+            "http.request.uri.path ???",
+            "block",
+            "block",
+            3,
+            &[],
+        )
+        .expect_err("expression must not compile");
+        assert!(!error.is_empty());
+
+        // An unknown action is also an error, not a silent skip.
+        assert!(compile_rule_result(
+            "draft:1",
+            "Bad action",
+            "http.request.uri.path eq \"/x\"",
+            "explode",
+            "block",
+            3,
+            &[],
+        )
+        .is_err());
+
+        // A valid draft compiles and carries its id.
+        let compiled = compile_rule_result(
+            "draft:2",
+            "Fine",
+            "http.request.uri.path eq \"/x\"",
+            "challenge",
+            "block",
+            3,
+            &[],
+        )
+        .expect("valid draft compiles");
+        assert_eq!(compiled.id, "draft:2");
     }
 
     #[test]

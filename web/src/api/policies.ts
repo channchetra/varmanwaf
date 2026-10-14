@@ -489,6 +489,8 @@ export const policiesApi = {
     policy_id?: string
     site_id?: string
     layers?: Partial<Record<PolicyLayerKind, unknown>>
+    /** Draft custom rules evaluated on top of the resolved configuration. */
+    draft_rules?: PolicyRule[]
     request: TestRequestInput
   }) => apiClient.post<PolicyTestView>('/policies/test', payload),
 }
