@@ -269,7 +269,12 @@
         "engine": "Engine",
         "crs": "CRS tuning",
         "custom_rules": "Custom rules",
-        "rule_overrides": "Rule tuning"
+        "rule_overrides": "Rule tuning",
+        "virtual_patches": "Virtual patches",
+        "api_schema": "API schema",
+        "rate_limit": "Rate limits",
+        "ip_access": "IP access",
+        "bot": "Bot protection"
       },
       "fields": {
         "wafEnabled": "WAF switch",
@@ -308,7 +313,32 @@
           "monitor": "Monitor",
           "disable": "Disable",
           "score_override": "Score override"
-        }
+        },
+        "virtualPatchSource": "SecLang source",
+        "virtualPatchHint": "Virtual patches evaluated by the native engine before the managed rules.",
+        "apiSchemaSpec": "OpenAPI document (JSON)",
+        "apiSchemaHint": "Requests are validated against this document (shape checks are monitor-only).",
+        "apiSchemaShape": "The document must be a JSON object",
+        "botEnabled": "Bot protection",
+        "botAction": "Bot action",
+        "botWhitelist": "Known bots whitelist",
+        "botWhitelistHint": "User-agent tokens that are never treated as bots.",
+        "botJs": "JS detection",
+        "botTls": "TLS fingerprint",
+        "botBehavioral": "Behavioural analysis",
+        "botIpVerify": "IP verification",
+        "botDnsVerify": "DNS verification",
+        "rlEmpty": "No shared rate limits in this policy yet.",
+        "rlName": "Name",
+        "rlCharacteristics": "Characteristics",
+        "rlCharacteristicsHint": "e.g. ip, header:x-api-key, path, country",
+        "rlThreshold": "Threshold (requests)",
+        "rlPeriod": "Window (seconds)",
+        "ipEmpty": "No shared IP access rules in this policy yet.",
+        "ipName": "Name",
+        "ipRanges": "IP ranges",
+        "ipRangesHint": "Addresses or CIDRs; the rule action applies to all of them.",
+        "ipAction": "Action"
       }
     },
     "sitePolicy": {
@@ -351,6 +381,8 @@
       },
       "rulesTitle": "Custom rules ({{n}})",
       "noRules": "No policy rules reach this site.",
+      "layersTitle": "Shared layers",
+      "overrideAdd": "Quick add:",
       "effectiveUnavailable": "Effective configuration is unavailable right now."
     },
     "dashboard": {

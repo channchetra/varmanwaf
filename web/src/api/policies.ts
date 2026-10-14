@@ -16,6 +16,11 @@ export type PolicyLayerKind =
   | 'crs'
   | 'custom_rules'
   | 'rule_overrides'
+  | 'virtual_patches'
+  | 'api_schema'
+  | 'rate_limit'
+  | 'ip_access'
+  | 'bot'
 
 export interface PolicyRef {
   id: string
@@ -118,6 +123,60 @@ export interface RuleOverridesLayerConfig {
   overrides?: RuleOverrideEntry[]
 }
 
+/** `virtual_patches` layer payload (SecLang source). */
+export interface VirtualPatchesLayerConfig {
+  source?: string
+}
+
+/** `api_schema` layer payload (OpenAPI document as a JSON string). */
+export interface ApiSchemaLayerConfig {
+  openapi_spec?: string
+}
+
+/** One rate-limit rule inside a `rate_limit` layer. */
+export interface RateLimitLayerRule {
+  name: string
+  expression?: string
+  characteristics?: string[]
+  period_seconds?: number
+  threshold?: number
+  action?: string
+  mitigation_timeout_seconds?: number
+  enabled?: boolean
+  priority?: number
+}
+
+/** `rate_limit` layer payload (shared rate limits). */
+export interface RateLimitLayerConfig {
+  rules?: RateLimitLayerRule[]
+}
+
+/** One IP-access rule inside an `ip_access` layer. */
+export interface IpAccessLayerRule {
+  name: string
+  ip_ranges: string[]
+  action?: string
+  note?: string
+  enabled?: boolean
+}
+
+/** `ip_access` layer payload (shared allow/block rules). */
+export interface IpAccessLayerConfig {
+  rules?: IpAccessLayerRule[]
+}
+
+/** `bot` layer payload (bot posture overrides). */
+export interface BotLayerConfig {
+  enabled?: boolean
+  action?: string
+  known_bots_whitelist?: string[]
+  js_detection?: boolean
+  tls_fingerprint?: boolean
+  behavioral_analysis?: boolean
+  ip_verification_enabled?: boolean
+  dns_verification_enabled?: boolean
+}
+
 /** `GET /managed-rules` - the built-in managed-rule catalogue. */
 export interface ManagedRuleInfo {
   id: string
@@ -167,6 +226,8 @@ export interface EffectiveConfig {
   crs: CrsLayerConfig
   rules: PolicyRule[]
   overrides: RuleOverrideEntry[]
+  /** Effective payloads of the extra layers (P6 kinds). */
+  layers: Record<string, unknown>
   effective: EffectiveEngine
   /** Compiled managed-rule plan for the effective engine. */
   plan: RulePlanEntry[]
@@ -184,6 +245,7 @@ export interface PolicyPreview {
   crs: CrsLayerConfig
   rules: PolicyRule[]
   overrides: RuleOverrideEntry[]
+  layers: Record<string, unknown>
   effective: EffectiveEngine
   plan: RulePlanEntry[]
 }

@@ -19,13 +19,28 @@ import {
   type SitePolicyView,
 } from '@/api/policies'
 
+/** Starter overlays for the quick-add buttons in the overlay editor. */
+const OVERRIDE_SNIPPETS: Array<{
+  kind: string
+  snippet: Record<string, unknown>
+}> = [
+  { kind: 'engine', snippet: { mode: 'monitor' } },
+  { kind: 'crs', snippet: { monitor_managed_rules: [] } },
+  { kind: 'custom_rules', snippet: { rules: [] } },
+  { kind: 'rule_overrides', snippet: { overrides: [] } },
+  { kind: 'virtual_patches', snippet: { source: '' } },
+  { kind: 'api_schema', snippet: { openapi_spec: '' } },
+  { kind: 'rate_limit', snippet: { rules: [] } },
+  { kind: 'ip_access', snippet: { rules: [] } },
+  { kind: 'bot', snippet: { action: 'challenge' } },
+]
+
 /**
  * The site's policy tab: which shared policy the site follows, the sparse
  * per-site overlay on top of it, and the effective configuration the next
  * bundle will carry (resolved exactly like the control plane resolves it).
  */
-export function PolicyPage() {
-  const { t } = useTranslation()
+export function PolicyPage() {  const { t } = useTranslation()
   const { siteId = '' } = useParams<{ siteId: string }>()
   const canWrite = useCanWrite()
   const toast = useToast()
@@ -113,6 +128,22 @@ export function PolicyPage() {
       return t('pages.sitePolicy.overrideJson')
     }
   }, [draft, t])
+
+  // Quick-add buttons: merge a starter snippet for one layer kind into the
+  // draft so operators do not have to memorise the shape.
+  const insertSnippet = (kind: string, snippet: Record<string, unknown>) => {
+    let base: Record<string, unknown> = {}
+    try {
+      const parsed = JSON.parse(shownJson)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        base = parsed as Record<string, unknown>
+      }
+    } catch {
+      base = {}
+    }
+    base[kind] = snippet
+    setDraft(JSON.stringify(base, null, 2))
+  }
 
   if (assignment.isError && !assignment.data) {
     return (
@@ -205,6 +236,23 @@ export function PolicyPage() {
             }
           />
           <CardBody className="space-y-3">
+            {canWrite && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-fg-subtle">
+                  {t('pages.sitePolicy.overrideAdd')}
+                </span>
+                {OVERRIDE_SNIPPETS.map(({ kind, snippet }) => (
+                  <Button
+                    key={kind}
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => insertSnippet(kind, snippet)}
+                  >
+                    {t(`pages.policies.layers.${kind}`)}
+                  </Button>
+                ))}
+              </div>
+            )}
             <Textarea
               label={t('pages.sitePolicy.overrideLabel')}
               hint={t('pages.sitePolicy.overrideFormat')}
@@ -365,6 +413,31 @@ export function PolicyPage() {
                   </ul>
                 )}
               </div>
+
+              {Object.entries(effectiveData.layers ?? {}).length > 0 && (
+                <div>
+                  <p className="mb-2 text-[13px] font-medium text-fg-strong">
+                    {t('pages.sitePolicy.layersTitle')}
+                  </p>
+                  <ul className="space-y-1.5">
+                    {Object.entries(effectiveData.layers).map(
+                      ([kind, config]) => (
+                        <li
+                          key={kind}
+                          className="flex flex-wrap items-center gap-2 rounded-md border border-line px-3 py-2 text-[13px]"
+                        >
+                          <Badge tone="info">
+                            {t(`pages.policies.layers.${kind}`)}
+                          </Badge>
+                          <code className="ml-auto max-w-full truncate text-xs text-fg-subtle">
+                            {JSON.stringify(config).slice(0, 120)}
+                          </code>
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                </div>
+              )}
             </>
           ) : (
             <p className="text-[13px] text-fg-subtle">

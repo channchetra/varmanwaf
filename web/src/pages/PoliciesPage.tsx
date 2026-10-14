@@ -12,6 +12,7 @@ import { PillMultiSelect, TagInput } from '@/components/ui/MultiSelect'
 import { Select } from '@/components/ui/Select'
 import { SkeletonCard } from '@/components/ui/Skeleton'
 import { Switch } from '@/components/ui/Switch'
+import { Textarea } from '@/components/ui/Textarea'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
 import { useCanWrite } from '@/hooks'
@@ -23,9 +24,13 @@ import {
   managedRulesApi,
   policiesApi,
   policyKeys,
+  type ApiSchemaLayerConfig,
+  type BotLayerConfig,
   type CrsLayerConfig,
   type CustomRulesLayerConfig,
   type EngineLayerConfig,
+  type IpAccessLayerConfig,
+  type IpAccessLayerRule,
   type PolicyDetail,
   type PolicyLayerKind,
   type PolicyPreview,
@@ -33,9 +38,12 @@ import {
   type PolicySummary,
   type PolicyVersion,
   type PolicyVersionDiff,
+  type RateLimitLayerConfig,
+  type RateLimitLayerRule,
   type RuleOverrideEntry,
   type RuleOverridesLayerConfig,
   type RulePlanEntry,
+  type VirtualPatchesLayerConfig,
 } from '@/api/policies'
 import { WAF_CATEGORIES, WAF_ENGINE_MODES, WAF_STACKS } from '@/api/types'
 
@@ -45,6 +53,11 @@ const LAYER_TABS: PolicyLayerKind[] = [
   'crs',
   'custom_rules',
   'rule_overrides',
+  'virtual_patches',
+  'api_schema',
+  'rate_limit',
+  'ip_access',
+  'bot',
 ]
 
 /**
@@ -368,7 +381,7 @@ function PolicyEditorDialog({
     >
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-5 pt-3">
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {LAYER_TABS.map((kind) => (
               <button
                 key={kind}
@@ -659,10 +672,64 @@ function LayerEditor({
       />
     )
   }
+  if (tab === 'custom_rules') {
+    return (
+      <CustomRulesForm
+        policyId={policy.id}
+        stored={stored?.config as CustomRulesLayerConfig | undefined}
+        hasStored={Boolean(stored)}
+        canWrite={canWrite}
+        onStored={onStored}
+      />
+    )
+  }
+  if (tab === 'virtual_patches') {
+    return (
+      <VirtualPatchesForm
+        policyId={policy.id}
+        stored={stored?.config as VirtualPatchesLayerConfig | undefined}
+        hasStored={Boolean(stored)}
+        canWrite={canWrite}
+        onStored={onStored}
+      />
+    )
+  }  if (tab === 'api_schema') {
+    return (
+      <ApiSchemaForm
+        policyId={policy.id}
+        stored={stored?.config as ApiSchemaLayerConfig | undefined}
+        hasStored={Boolean(stored)}
+        canWrite={canWrite}
+        onStored={onStored}
+      />
+    )
+  }
+  if (tab === 'rate_limit') {
+    return (
+      <RateLimitForm
+        policyId={policy.id}
+        stored={stored?.config as RateLimitLayerConfig | undefined}
+        hasStored={Boolean(stored)}
+        canWrite={canWrite}
+        onStored={onStored}
+      />
+    )
+  }
+  if (tab === 'ip_access') {
+    return (
+      <IpAccessForm
+        policyId={policy.id}
+        stored={stored?.config as IpAccessLayerConfig | undefined}
+        hasStored={Boolean(stored)}
+        canWrite={canWrite}
+        onStored={onStored}
+      />
+    )
+  }
   return (
-    <CustomRulesForm
+    <BotLayerForm
       policyId={policy.id}
-      stored={stored?.config as CustomRulesLayerConfig | undefined}
+      stored={stored?.config as BotLayerConfig | undefined}
       hasStored={Boolean(stored)}
       canWrite={canWrite}
       onStored={onStored}
@@ -1207,6 +1274,555 @@ function RulePlanDialog({
         </ul>
       </div>
     </Dialog>
+  )
+}
+
+/* ── P6 layers: patches, schema, rate limits, IP access, bot ───────────── */
+
+function VirtualPatchesForm({
+  policyId,
+  stored,
+  hasStored,
+  canWrite,
+  onStored,
+}: {
+  policyId: string
+  stored?: VirtualPatchesLayerConfig
+  hasStored: boolean
+  canWrite: boolean
+  onStored: () => void
+}) {
+  const { t } = useTranslation()
+  const save = useLayerMutation(policyId, 'virtual_patches', onStored)
+  const remove = useMutation({
+    mutationFn: () => policiesApi.deleteLayer(policyId, 'virtual_patches'),
+    onSuccess: onStored,
+  })
+  const [source, setSource] = useState(stored?.source ?? '')
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        <Textarea
+          label={t('pages.policies.fields.virtualPatchSource')}
+          hint={t('pages.policies.fields.virtualPatchHint')}
+          mono
+          rows={12}
+          value={source}
+          disabled={!canWrite}
+          onChange={(e) => setSource(e.target.value)}
+        />
+      </div>
+      <LayerFooter
+        canWrite={canWrite}
+        hasStored={hasStored}
+        saving={save.isPending || remove.isPending}
+        onSave={() => save.mutate({ source })}
+        onRemove={() => remove.mutate()}
+      />
+    </div>
+  )
+}
+
+function ApiSchemaForm({
+  policyId,
+  stored,
+  hasStored,
+  canWrite,
+  onStored,
+}: {
+  policyId: string
+  stored?: ApiSchemaLayerConfig
+  hasStored: boolean
+  canWrite: boolean
+  onStored: () => void
+}) {
+  const { t } = useTranslation()
+  const save = useLayerMutation(policyId, 'api_schema', onStored)
+  const remove = useMutation({
+    mutationFn: () => policiesApi.deleteLayer(policyId, 'api_schema'),
+    onSuccess: onStored,
+  })
+  const [spec, setSpec] = useState(stored?.openapi_spec ?? '')
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        <Textarea
+          label={t('pages.policies.fields.apiSchemaSpec')}
+          hint={t('pages.policies.fields.apiSchemaHint')}
+          mono
+          rows={12}
+          value={spec}
+          error={
+            spec.trim() !== '' && !spec.trimStart().startsWith('{')
+              ? t('pages.policies.fields.apiSchemaShape')
+              : undefined
+          }
+          disabled={!canWrite}
+          onChange={(e) => setSpec(e.target.value)}
+        />
+      </div>
+      <LayerFooter
+        canWrite={canWrite}
+        hasStored={hasStored}
+        saving={save.isPending || remove.isPending}
+        onSave={() => save.mutate({ openapi_spec: spec })}
+        onRemove={() => remove.mutate()}
+      />
+    </div>
+  )
+}
+
+const BOT_ACTIONS = ['block', 'challenge', 'js_challenge', 'log', 'allow']
+
+function BotLayerForm({
+  policyId,
+  stored,
+  hasStored,
+  canWrite,
+  onStored,
+}: {
+  policyId: string
+  stored?: BotLayerConfig
+  hasStored: boolean
+  canWrite: boolean
+  onStored: () => void
+}) {
+  const { t } = useTranslation()
+  const save = useLayerMutation(policyId, 'bot', onStored)
+  const remove = useMutation({
+    mutationFn: () => policiesApi.deleteLayer(policyId, 'bot'),
+    onSuccess: onStored,
+  })
+  const tri = (value: boolean | undefined) =>
+    value === undefined ? '' : String(value)
+  const [enabled, setEnabled] = useState(tri(stored?.enabled))
+  const [action, setAction] = useState(stored?.action ?? '')
+  const [whitelist, setWhitelist] = useState<string[]>(
+    stored?.known_bots_whitelist ?? [],
+  )
+  const [js, setJs] = useState(tri(stored?.js_detection))
+  const [tls, setTls] = useState(tri(stored?.tls_fingerprint))
+  const [behavioral, setBehavioral] = useState(
+    tri(stored?.behavioral_analysis),
+  )
+  const [ipVerify, setIpVerify] = useState(
+    tri(stored?.ip_verification_enabled),
+  )
+  const [dnsVerify, setDnsVerify] = useState(
+    tri(stored?.dns_verification_enabled),
+  )
+
+  const config = (): BotLayerConfig => {
+    const out: BotLayerConfig = {}
+    if (enabled !== '') out.enabled = enabled === 'true'
+    if (action) out.action = action
+    if (whitelist.length > 0) out.known_bots_whitelist = whitelist
+    if (js !== '') out.js_detection = js === 'true'
+    if (tls !== '') out.tls_fingerprint = tls === 'true'
+    if (behavioral !== '') out.behavioral_analysis = behavioral === 'true'
+    if (ipVerify !== '') out.ip_verification_enabled = ipVerify === 'true'
+    if (dnsVerify !== '') out.dns_verification_enabled = dnsVerify === 'true'
+    return out
+  }
+
+  const booleanOptions = [
+    { value: 'true', label: t('common.enabled') },
+    { value: 'false', label: t('common.disabled') },
+  ]
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="grid flex-1 gap-4 overflow-y-auto px-5 py-4 md:grid-cols-2">
+        <TriSelect
+          label={t('pages.policies.fields.botEnabled')}
+          value={enabled}
+          onChange={setEnabled}
+          options={booleanOptions}
+        />
+        <TriSelect
+          label={t('pages.policies.fields.botAction')}
+          value={action}
+          onChange={setAction}
+          options={BOT_ACTIONS.map((value) => ({ value, label: value }))}
+        />
+        <div className="md:col-span-2">
+          <TagInput
+            label={t('pages.policies.fields.botWhitelist')}
+            hint={t('pages.policies.fields.botWhitelistHint')}
+            value={whitelist}
+            onChange={setWhitelist}
+            disabled={!canWrite}
+          />
+        </div>
+        <TriSelect
+          label={t('pages.policies.fields.botJs')}
+          value={js}
+          onChange={setJs}
+          options={booleanOptions}
+        />
+        <TriSelect
+          label={t('pages.policies.fields.botTls')}
+          value={tls}
+          onChange={setTls}
+          options={booleanOptions}
+        />
+        <TriSelect
+          label={t('pages.policies.fields.botBehavioral')}
+          value={behavioral}
+          onChange={setBehavioral}
+          options={booleanOptions}
+        />
+        <TriSelect
+          label={t('pages.policies.fields.botIpVerify')}
+          value={ipVerify}
+          onChange={setIpVerify}
+          options={booleanOptions}
+        />
+        <TriSelect
+          label={t('pages.policies.fields.botDnsVerify')}
+          value={dnsVerify}
+          onChange={setDnsVerify}
+          options={booleanOptions}
+        />
+      </div>
+      <LayerFooter
+        canWrite={canWrite}
+        hasStored={hasStored}
+        saving={save.isPending || remove.isPending}
+        onSave={() => save.mutate(config())}
+        onRemove={() => remove.mutate()}
+      />
+    </div>
+  )
+}
+
+type RateRow = {
+  name: string
+  expression: string
+  characteristics: string[]
+  period: string
+  threshold: string
+  action: string
+  enabled: boolean
+}
+
+const RATE_LIMIT_ACTIONS = ['block', 'challenge', 'js_challenge', 'log']
+
+function RateLimitForm({
+  policyId,
+  stored,
+  hasStored,
+  canWrite,
+  onStored,
+}: {
+  policyId: string
+  stored?: RateLimitLayerConfig
+  hasStored: boolean
+  canWrite: boolean
+  onStored: () => void
+}) {
+  const { t } = useTranslation()
+  const save = useLayerMutation(policyId, 'rate_limit', onStored)
+  const remove = useMutation({
+    mutationFn: () => policiesApi.deleteLayer(policyId, 'rate_limit'),
+    onSuccess: onStored,
+  })
+  const [rules, setRules] = useState<RateRow[]>(() =>
+    (stored?.rules ?? []).map((rule: RateLimitLayerRule) => ({
+      name: rule.name,
+      expression: rule.expression ?? '',
+      characteristics: rule.characteristics ?? ['ip'],
+      period: String(rule.period_seconds ?? 60),
+      threshold: String(rule.threshold ?? 100),
+      action: rule.action ?? 'block',
+      enabled: rule.enabled !== false,
+    })),
+  )
+
+  const patch = (index: number, next: Partial<RateRow>) => {
+    setRules((current) =>
+      current.map((row, i) => (i === index ? { ...row, ...next } : row)),
+    )
+  }
+
+  const payload = () =>
+    rules.map((row) => ({
+      name: row.name,
+      expression: row.expression,
+      characteristics: row.characteristics,
+      period_seconds: Math.max(1, Number(row.period) || 60),
+      threshold: Math.max(1, Number(row.threshold) || 100),
+      action: row.action,
+      enabled: row.enabled,
+    }))
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        {rules.length === 0 && (
+          <p className="text-[13px] text-fg-subtle">
+            {t('pages.policies.fields.rlEmpty')}
+          </p>
+        )}
+        {rules.map((row, index) => (
+          <div
+            key={index}
+            className="space-y-3 rounded-lg border border-line p-3"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13px] font-medium text-fg-strong">
+                {row.name.trim() || t('pages.policies.fields.untitledRule')}
+              </span>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={row.enabled}
+                  onCheckedChange={(checked) =>
+                    patch(index, { enabled: checked })
+                  }
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!canWrite}
+                  icon={<Trash className="h-4 w-4" />}
+                  onClick={() =>
+                    setRules((current) =>
+                      current.filter((_, i) => i !== index),
+                    )
+                  }
+                />
+              </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input
+                label={t('pages.policies.fields.rlName')}
+                value={row.name}
+                maxLength={200}
+                onChange={(e) => patch(index, { name: e.target.value })}
+              />
+              <Input
+                label={t('pages.policies.fields.ruleExpression')}
+                hint={t('pages.policies.fields.ruleExpressionHint')}
+                value={row.expression}
+                onChange={(e) => patch(index, { expression: e.target.value })}
+              />
+            </div>
+            <TagInput
+              label={t('pages.policies.fields.rlCharacteristics')}
+              hint={t('pages.policies.fields.rlCharacteristicsHint')}
+              value={row.characteristics}
+              onChange={(characteristics) =>
+                patch(index, { characteristics })
+              }
+              disabled={!canWrite}
+            />
+            <div className="grid gap-3 md:grid-cols-3">
+              <Input
+                label={t('pages.policies.fields.rlThreshold')}
+                type="number"
+                min={1}
+                value={row.threshold}
+                onChange={(e) => patch(index, { threshold: e.target.value })}
+              />
+              <Input
+                label={t('pages.policies.fields.rlPeriod')}
+                type="number"
+                min={1}
+                value={row.period}
+                onChange={(e) => patch(index, { period: e.target.value })}
+              />
+              <Select
+                label={t('pages.policies.fields.ruleAction')}
+                value={row.action}
+                onChange={(e) => patch(index, { action: e.target.value })}
+                options={RATE_LIMIT_ACTIONS.map((value) => ({
+                  value,
+                  label: value,
+                }))}
+              />
+            </div>
+          </div>
+        ))}
+        {canWrite && (
+          <Button
+            size="sm"
+            icon={<Plus weight="bold" className="h-4 w-4" />}
+            onClick={() =>
+              setRules((current) => [
+                ...current,
+                {
+                  name: '',
+                  expression: '',
+                  characteristics: ['ip'],
+                  period: '60',
+                  threshold: '100',
+                  action: 'block',
+                  enabled: true,
+                },
+              ])
+            }
+          >
+            {t('pages.policies.fields.addRule')}
+          </Button>
+        )}
+      </div>
+      <LayerFooter
+        canWrite={canWrite}
+        hasStored={hasStored}
+        saving={save.isPending || remove.isPending}
+        onSave={() => save.mutate({ rules: payload() })}
+        onRemove={() => remove.mutate()}
+      />
+    </div>
+  )
+}
+
+type IpRow = {
+  name: string
+  ranges: string[]
+  action: string
+  enabled: boolean
+}
+
+const IP_ACCESS_ACTIONS = [
+  'block',
+  'challenge',
+  'js_challenge',
+  'allow',
+  'basic_auth',
+]
+
+function IpAccessForm({
+  policyId,
+  stored,
+  hasStored,
+  canWrite,
+  onStored,
+}: {
+  policyId: string
+  stored?: IpAccessLayerConfig
+  hasStored: boolean
+  canWrite: boolean
+  onStored: () => void
+}) {
+  const { t } = useTranslation()
+  const save = useLayerMutation(policyId, 'ip_access', onStored)
+  const remove = useMutation({
+    mutationFn: () => policiesApi.deleteLayer(policyId, 'ip_access'),
+    onSuccess: onStored,
+  })
+  const [rules, setRules] = useState<IpRow[]>(() =>
+    (stored?.rules ?? []).map((rule: IpAccessLayerRule) => ({
+      name: rule.name,
+      ranges: rule.ip_ranges ?? [],
+      action: rule.action ?? 'block',
+      enabled: rule.enabled !== false,
+    })),
+  )
+
+  const patch = (index: number, next: Partial<IpRow>) => {
+    setRules((current) =>
+      current.map((row, i) => (i === index ? { ...row, ...next } : row)),
+    )
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        {rules.length === 0 && (
+          <p className="text-[13px] text-fg-subtle">
+            {t('pages.policies.fields.ipEmpty')}
+          </p>
+        )}
+        {rules.map((row, index) => (
+          <div
+            key={index}
+            className="space-y-3 rounded-lg border border-line p-3"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13px] font-medium text-fg-strong">
+                {row.name.trim() || t('pages.policies.fields.untitledRule')}
+              </span>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={row.enabled}
+                  onCheckedChange={(checked) =>
+                    patch(index, { enabled: checked })
+                  }
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!canWrite}
+                  icon={<Trash className="h-4 w-4" />}
+                  onClick={() =>
+                    setRules((current) =>
+                      current.filter((_, i) => i !== index),
+                    )
+                  }
+                />
+              </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input
+                label={t('pages.policies.fields.ipName')}
+                value={row.name}
+                maxLength={200}
+                onChange={(e) => patch(index, { name: e.target.value })}
+              />
+              <Select
+                label={t('pages.policies.fields.ipAction')}
+                value={row.action}
+                onChange={(e) => patch(index, { action: e.target.value })}
+                options={IP_ACCESS_ACTIONS.map((value) => ({
+                  value,
+                  label: value,
+                }))}
+              />
+            </div>
+            <TagInput
+              label={t('pages.policies.fields.ipRanges')}
+              hint={t('pages.policies.fields.ipRangesHint')}
+              value={row.ranges}
+              onChange={(ranges) => patch(index, { ranges })}
+              disabled={!canWrite}
+            />
+          </div>
+        ))}
+        {canWrite && (
+          <Button
+            size="sm"
+            icon={<Plus weight="bold" className="h-4 w-4" />}
+            onClick={() =>
+              setRules((current) => [
+                ...current,
+                { name: '', ranges: [], action: 'block', enabled: true },
+              ])
+            }
+          >
+            {t('pages.policies.fields.addRule')}
+          </Button>
+        )}
+      </div>
+      <LayerFooter
+        canWrite={canWrite}
+        hasStored={hasStored}
+        saving={save.isPending || remove.isPending}
+        onSave={() =>
+          save.mutate({
+            rules: rules.map((row) => ({
+              name: row.name,
+              ip_ranges: row.ranges,
+              action: row.action,
+              enabled: row.enabled,
+            })),
+          })
+        }
+        onRemove={() => remove.mutate()}
+      />
+    </div>
   )
 }
 

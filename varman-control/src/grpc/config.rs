@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use chrono::{DateTime, TimeZone, Utc};
+use serde_json::Value;
 use prost::Message;
 use prost_types::Timestamp;
 use sea_orm::{
@@ -831,31 +832,202 @@ fn waf_config_with_policy(
     let Some(resolved) = resolved else {
         return config;
     };
-    if resolved.engine.is_empty() && resolved.crs.is_empty() {
-        return config;
+    let has_engine = !resolved.engine.is_empty() || !resolved.crs.is_empty();
+    if has_engine {
+        let effective = resolved.effective_engine(settings);
+        let any_group_enabled =
+            groups.is_empty() || groups.iter().any(|group| group.enabled);
+        if let Some(mode) = &effective.mode {
+            config.mode = mode::to_proto(mode);
+        }
+        config.paranoia_level = effective.paranoia_level.clamp(1, 4) as u32;
+        config.advanced_mode = effective.advanced_mode;
+        config.monitor_categories = effective.monitor_categories;
+        config.monitor_stacks = effective.monitor_stacks;
+        config.monitor_managed_rules = effective.monitor_managed_rules;
+        config.disabled_rules = effective.disabled_rules;
+        config.rule_scores = effective.rule_scores.into_iter().collect();
+        config.rule_target_exclusions = effective
+            .rule_target_exclusions
+            .into_iter()
+            .map(|(rule_id, targets)| RuleTargetExclusions { rule_id, targets })
+            .collect();
+        config.engine_mode = effective.engine_mode;
+        config.enabled = (effective.waf_enabled
+            || config.engine_mode != "inherit")
+            && any_group_enabled;
     }
 
-    let effective = resolved.effective_engine(settings);
-    let any_group_enabled =
-        groups.is_empty() || groups.iter().any(|group| group.enabled);
-    if let Some(mode) = &effective.mode {
-        config.mode = mode::to_proto(mode);
+    // Extra knobs: a policy's virtual patches and OpenAPI document win over
+    // the site's own row when the layer carries them.
+    if let Some(source) = resolved
+        .layers
+        .get(policy::LAYER_VIRTUAL_PATCHES)
+        .and_then(|value| value.get("source"))
+        .and_then(Value::as_str)
+    {
+        if !source.is_empty() {
+            config.virtual_patches = source.to_string();
+        }
     }
-    config.paranoia_level = effective.paranoia_level.clamp(1, 4) as u32;
-    config.advanced_mode = effective.advanced_mode;
-    config.monitor_categories = effective.monitor_categories;
-    config.monitor_stacks = effective.monitor_stacks;
-    config.monitor_managed_rules = effective.monitor_managed_rules;
-    config.disabled_rules = effective.disabled_rules;
-    config.rule_scores = effective.rule_scores.into_iter().collect();
-    config.rule_target_exclusions = effective
-        .rule_target_exclusions
-        .into_iter()
-        .map(|(rule_id, targets)| RuleTargetExclusions { rule_id, targets })
-        .collect();
-    config.engine_mode = effective.engine_mode;
-    config.enabled = (effective.waf_enabled || config.engine_mode != "inherit")
-        && any_group_enabled;
+    if let Some(spec) = resolved
+        .layers
+        .get(policy::LAYER_API_SCHEMA)
+        .and_then(|value| value.get("openapi_spec"))
+        .and_then(Value::as_str)
+    {
+        if !spec.is_empty() {
+            config.openapi_spec = spec.to_string();
+        }
+    }
+    config
+}
+
+/// The rules array of one of the rule-list policy layers.
+fn layer_rules<'a>(
+    resolved: &'a policy::Resolved,
+    kind: &str,
+) -> Option<&'a Vec<Value>> {
+    resolved
+        .layers
+        .get(kind)
+        .and_then(|value| value.get("rules"))
+        .and_then(Value::as_array)
+}
+
+/// Converts a policy rate-limit rule into its protocol representation. Ids
+/// are stable per (policy, position), like policy custom rules.
+fn policy_rate_limit_to_proto(
+    policy_id: Uuid,
+    index: usize,
+    value: &Value,
+) -> Option<RateLimitRule> {
+    let name = value.get("name")?.as_str()?;
+    let to_u32 = |key: &str, default: i64| {
+        value
+            .get(key)
+            .and_then(Value::as_i64)
+            .unwrap_or(default)
+            .clamp(0, u32::MAX as i64) as u32
+    };
+    Some(RateLimitRule {
+        id: format!("policy:{policy_id}:rl:{index}"),
+        name: name.to_string(),
+        expression: value
+            .get("expression")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        characteristics: value
+            .get("characteristics")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(characteristic::to_proto)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        characteristic_params: value
+            .get("characteristics")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(characteristic::to_param)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        period_seconds: to_u32("period_seconds", 60),
+        threshold: to_u32("threshold", 100),
+        action: action::to_proto(
+            value.get("action").and_then(Value::as_str).unwrap_or("block"),
+        ),
+        mitigation_timeout_seconds: to_u32("mitigation_timeout_seconds", 60),
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        priority: to_u32("priority", 0),
+    })
+}
+
+/// Converts a policy IP-access rule into its protocol representation.
+fn policy_ip_access_to_proto(
+    policy_id: Uuid,
+    index: usize,
+    value: &Value,
+) -> Option<IpAccessRule> {
+    let name = value.get("name")?.as_str()?;
+    let ranges: Vec<String> = value
+        .get("ip_ranges")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if ranges.is_empty() {
+        return None;
+    }
+    Some(IpAccessRule {
+        id: format!("policy:{policy_id}:ip:{index}"),
+        name: name.to_string(),
+        ip_ranges: ranges,
+        action: ip_action::to_proto(
+            value.get("action").and_then(Value::as_str).unwrap_or("block"),
+        ),
+        note: value
+            .get("note")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    })
+}
+
+/// Applies the policy's `bot` layer keys on top of the site's posture.
+fn policy_bot_overrides(
+    mut config: BotProtectionConfig,
+    resolved: &policy::Resolved,
+) -> BotProtectionConfig {
+    let Some(bot) = resolved.layers.get(policy::LAYER_BOT) else {
+        return config;
+    };
+    if let Some(enabled) = bot.get("enabled").and_then(Value::as_bool) {
+        config.enabled = enabled;
+    }
+    if let Some(action) = bot.get("action").and_then(Value::as_str) {
+        config.action = action::to_proto(action);
+    }
+    if let Some(whitelist) =
+        bot.get("known_bots_whitelist").and_then(Value::as_array)
+    {
+        config.known_bots_whitelist = whitelist
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+    }
+    for (key, field) in [
+        ("js_detection", &mut config.js_detection),
+        ("tls_fingerprint", &mut config.tls_fingerprint),
+        ("behavioral_analysis", &mut config.behavioral_analysis),
+        ("ip_verification_enabled", &mut config.ip_verification_enabled),
+        ("dns_verification_enabled", &mut config.dns_verification_enabled),
+    ] {
+        if let Some(value) = bot.get(key).and_then(Value::as_bool) {
+            *field = value;
+        }
+    }
     config
 }
 
@@ -1230,6 +1402,31 @@ pub async fn build_rule_bundle(
         ));
     }
 
+    // Policy rule lists: shared rate limits and IP access rules append to
+    // the site's own; bot overrides apply on top of the site's posture.
+    let mut policy_rate_limits: Vec<RateLimitRule> = Vec::new();
+    let mut policy_ip_rules: Vec<IpAccessRule> = Vec::new();
+    if let Some(policy_id) = policy_layers.policy_id {
+        if let Some(rules) =
+            layer_rules(&policy_layers, policy::LAYER_RATE_LIMIT)
+        {
+            policy_rate_limits.extend(
+                rules.iter().enumerate().filter_map(|(index, rule)| {
+                    policy_rate_limit_to_proto(policy_id, index, rule)
+                }),
+            );
+        }
+        if let Some(rules) =
+            layer_rules(&policy_layers, policy::LAYER_IP_ACCESS)
+        {
+            policy_ip_rules.extend(
+                rules.iter().enumerate().filter_map(|(index, rule)| {
+                    policy_ip_access_to_proto(policy_id, index, rule)
+                }),
+            );
+        }
+    }
+
     let mut bundle = RuleBundle {
         site_id: site_row.id.to_string(),
         // Filled in below, once every other field is final.
@@ -1246,11 +1443,16 @@ pub async fn build_rule_bundle(
             waf_settings.as_ref(),
             Some(&policy_layers),
         )),
-        rate_limit_rules: rate_limits.iter().map(rate_limit_to_proto).collect(),
+        rate_limit_rules: rate_limits
+            .iter()
+            .map(rate_limit_to_proto)
+            .chain(policy_rate_limits)
+            .collect(),
         ip_access_rules: ip_rules
             .iter()
             .filter_map(|row| ip_access_rule_to_proto(row, &referenced_groups))
             .chain(ip_groups.iter().map(ip_group_to_proto))
+            .chain(policy_ip_rules)
             .collect(),
         geo: Some(geo_to_proto(geo.as_ref())),
         cache_rules: caches
@@ -1265,9 +1467,9 @@ pub async fn build_rule_bundle(
             .map(|row| ssl_to_proto(row, &certificates, &mtls)),
         upstreams: pools_to_proto(&pools, &upstreams),
         routes: routes_to_proto(&routes, &pools, &upstreams, &route_groups),
-        bot_protection: Some(bot_protection_to_proto(
-            bot.as_ref(),
-            verified_bot_ranges,
+        bot_protection: Some(policy_bot_overrides(
+            bot_protection_to_proto(bot.as_ref(), verified_bot_ranges),
+            &policy_layers,
         )),
         basic_auth: basic_auth_to_proto(basic_auth.as_ref()),
         observation_mode,
@@ -1707,6 +1909,81 @@ mod tests {
         assert_eq!(proto[0].action, action::to_proto("block"));
         assert_eq!(proto[0].mode, mode::to_proto("block"));
         assert_eq!(proto[0].priority, 10);
+    }
+
+    #[test]
+    fn policy_extra_layers_reach_the_bundle() {
+        let policy_id = Uuid::new_v4();
+
+        let rate = policy_rate_limit_to_proto(
+            policy_id,
+            0,
+            &json!({
+                "name": "Burst",
+                "characteristics": ["ip"],
+                "threshold": 5,
+                "period_seconds": 10,
+                "action": "block"
+            }),
+        )
+        .expect("rate rule");
+        assert_eq!(rate.id, format!("policy:{policy_id}:rl:0"));
+        assert_eq!(rate.threshold, 5);
+        assert_eq!(rate.period_seconds, 10);
+
+        let ip = policy_ip_access_to_proto(
+            policy_id,
+            1,
+            &json!({
+                "name": "Block range",
+                "ip_ranges": ["10.99.0.0/16"],
+                "action": "block"
+            }),
+        )
+        .expect("ip rule");
+        assert_eq!(ip.id, format!("policy:{policy_id}:ip:1"));
+        assert_eq!(ip.ip_ranges, vec!["10.99.0.0/16".to_string()]);
+
+        // Bot overrides apply on top of the site's posture.
+        let base = bot_protection_to_proto(None, Vec::new());
+        let mut resolved = policy::Resolved::default();
+        resolved.layers.insert(
+            policy::LAYER_BOT.to_string(),
+            json!({
+                "enabled": true,
+                "action": "challenge",
+                "known_bots_whitelist": ["Googlebot"]
+            }),
+        );
+        let config = policy_bot_overrides(base, &resolved);
+        assert!(config.enabled);
+        assert_eq!(config.action, action::to_proto("challenge"));
+        assert_eq!(
+            config.known_bots_whitelist,
+            vec!["Googlebot".to_string()]
+        );
+
+        // Virtual patches and the OpenAPI document win over the site's row.
+        let mut settings =
+            waf_settings_row(Uuid::nil(), false, Vec::new(), Vec::new());
+        settings.virtual_patches = "site-patch".to_string();
+        let mut resolved = policy::Resolved::default();
+        resolved.layers.insert(
+            policy::LAYER_VIRTUAL_PATCHES.to_string(),
+            json!({"source": "policy-patch"}),
+        );
+        let config =
+            waf_config_with_policy(&[], &[], Some(&settings), Some(&resolved));
+        assert_eq!(config.virtual_patches, "policy-patch");
+
+        // Without the layer the site's own source stays untouched.
+        let config = waf_config_with_policy(
+            &[],
+            &[],
+            Some(&settings),
+            Some(&policy::Resolved::default()),
+        );
+        assert_eq!(config.virtual_patches, "site-patch");
     }
 
     fn waf_settings_row(

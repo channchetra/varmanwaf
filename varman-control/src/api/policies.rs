@@ -204,6 +204,9 @@ pub struct EffectiveConfigView {
     pub rules: Vec<policy::PolicyRule>,
     /// Effective managed-rule overrides (policy first, overlay on top).
     pub overrides: Vec<policy::RuleOverrideEntry>,
+    /// Effective payloads of the extra layers (`virtual_patches`,
+    /// `api_schema`, `rate_limit`, `ip_access`, `bot`).
+    pub layers: BTreeMap<String, Value>,
     /// What the next bundle will carry, layer applied over the site row.
     pub effective: policy::EffectiveEngine,
     /// The compiled managed-rule plan (enforce/monitor/disabled, score,
@@ -1181,6 +1184,7 @@ async fn get_effective_config(
         crs: Value::Object(resolved.crs.clone()),
         rules: resolved.rules.clone(),
         overrides: resolved.overrides.clone(),
+        layers: resolved.layers.clone(),
         effective,
         plan,
     }))
@@ -1346,6 +1350,7 @@ pub struct PreviewView {
     pub crs: Value,
     pub rules: Vec<policy::PolicyRule>,
     pub overrides: Vec<policy::RuleOverrideEntry>,
+    pub layers: BTreeMap<String, Value>,
     pub effective: policy::EffectiveEngine,
     pub plan: Vec<policy::RulePlan>,
 }
@@ -1400,6 +1405,7 @@ async fn preview_policy(
         crs: Value::Object(resolved.crs.clone()),
         rules: resolved.rules.clone(),
         overrides: resolved.overrides.clone(),
+        layers: resolved.layers.clone(),
         effective,
         plan,
     }))

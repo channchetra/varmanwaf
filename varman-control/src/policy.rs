@@ -43,13 +43,28 @@ pub const LAYER_CUSTOM_RULES: &str = "custom_rules";
 /// Rule-overrides layer kind: `{ "overrides": [ ... ] }`, per-managed-rule
 /// tuning (disable / monitor / score override) in data.
 pub const LAYER_RULE_OVERRIDES: &str = "rule_overrides";
+/// Virtual-patches layer kind: `{ "source": "<seclang>" }`.
+pub const LAYER_VIRTUAL_PATCHES: &str = "virtual_patches";
+/// API-schema layer kind: `{ "openapi_spec": "<json>" }`.
+pub const LAYER_API_SCHEMA: &str = "api_schema";
+/// Rate-limit layer kind: `{ "rules": [ ... ] }`, shared rate limits.
+pub const LAYER_RATE_LIMIT: &str = "rate_limit";
+/// IP-access layer kind: `{ "rules": [ ... ] }`, shared allow/block rules.
+pub const LAYER_IP_ACCESS: &str = "ip_access";
+/// Bot-protection layer kind: bot posture overrides.
+pub const LAYER_BOT: &str = "bot";
 
 /// Every layer kind a policy (or a site override) may carry.
-pub const LAYER_KINDS: [&str; 4] = [
+pub const LAYER_KINDS: [&str; 9] = [
     LAYER_ENGINE,
     LAYER_CRS,
     LAYER_CUSTOM_RULES,
     LAYER_RULE_OVERRIDES,
+    LAYER_VIRTUAL_PATCHES,
+    LAYER_API_SCHEMA,
+    LAYER_RATE_LIMIT,
+    LAYER_IP_ACCESS,
+    LAYER_BOT,
 ];
 
 /// Longest accepted custom rule expression.
@@ -62,6 +77,10 @@ const MAX_TAG_LEN: usize = 64;
 const MAX_RULES_PER_LAYER: usize = 200;
 const MAX_TAGS_PER_RULE: usize = 16;
 const MAX_OVERRIDES_PER_LAYER: usize = 200;
+/// Bound on stored SecLang virtual-patch source (64 KiB).
+pub const MAX_VIRTUAL_PATCH_BYTES: usize = 64 * 1024;
+/// Bound on the stored OpenAPI document (1 MiB).
+pub const MAX_OPENAPI_BYTES: usize = 1024 * 1024;
 
 /// Actions a managed-rule override can take.
 pub mod override_action {
@@ -310,6 +329,11 @@ pub fn validate_layer(kind: &str, config: &Value) -> Result<(), String> {
         LAYER_CRS => validate_crs(config),
         LAYER_CUSTOM_RULES => validate_custom_rules(config),
         LAYER_RULE_OVERRIDES => validate_rule_overrides(config),
+        LAYER_VIRTUAL_PATCHES => validate_virtual_patches(config),
+        LAYER_API_SCHEMA => validate_api_schema(config),
+        LAYER_RATE_LIMIT => validate_rate_limit(config),
+        LAYER_IP_ACCESS => validate_ip_access(config),
+        LAYER_BOT => validate_bot(config),
         other => Err(format!(
             "unknown layer kind '{other}' (expected one of: {})",
             LAYER_KINDS.join(", ")
@@ -485,6 +509,321 @@ fn parse_rules(config: &Value) -> Vec<PolicyRule> {
 /// the recipe merge path).
 pub fn rules_from_layer(config: &Value) -> Vec<PolicyRule> {
     parse_rules(config)
+}
+
+fn validate_virtual_patches(config: &Value) -> Result<(), String> {
+    let map = as_object(LAYER_VIRTUAL_PATCHES, config)?;
+    for (key, value) in map {
+        match key.as_str() {
+            "source" => {
+                let source = expect_str(key, value)?;
+                if source.len() > MAX_VIRTUAL_PATCH_BYTES {
+                    return Err(format!(
+                        "'source' must be at most {MAX_VIRTUAL_PATCH_BYTES} bytes"
+                    ));
+                }
+            }
+            other => {
+                return Err(format!("unknown virtual_patches key '{other}'"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_api_schema(config: &Value) -> Result<(), String> {
+    let map = as_object(LAYER_API_SCHEMA, config)?;
+    for (key, value) in map {
+        match key.as_str() {
+            "openapi_spec" => {
+                let spec = expect_str(key, value)?;
+                if spec.len() > MAX_OPENAPI_BYTES {
+                    return Err(format!(
+                        "'openapi_spec' must be at most {MAX_OPENAPI_BYTES} bytes"
+                    ));
+                }
+                if !spec.trim().is_empty() {
+                    let parsed: Value = serde_json::from_str(spec)
+                        .map_err(|err| {
+                            format!("'openapi_spec' must be a JSON document: {err}")
+                        })?;
+                    if !parsed.is_object() {
+                        return Err(
+                            "'openapi_spec' must be a JSON object".to_string()
+                        );
+                    }
+                }
+            }
+            other => {
+                return Err(format!("unknown api_schema key '{other}'"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_bot(config: &Value) -> Result<(), String> {
+    let map = as_object(LAYER_BOT, config)?;
+    for (key, value) in map {
+        match key.as_str() {
+            "enabled"
+            | "js_detection"
+            | "tls_fingerprint"
+            | "behavioral_analysis"
+            | "ip_verification_enabled"
+            | "dns_verification_enabled" => {
+                expect_bool(key, value)?;
+            }
+            "action" => {
+                let action = expect_str(key, value)?;
+                if !matches!(
+                    action,
+                    "block" | "challenge" | "js_challenge" | "log" | "allow"
+                ) {
+                    return Err(format!(
+                        "unknown bot action '{action}' (expected one of: block, challenge, js_challenge, log, allow)"
+                    ));
+                }
+            }
+            "known_bots_whitelist" => {
+                let items = value.as_array().ok_or_else(|| {
+                    "'known_bots_whitelist' must be an array of strings"
+                        .to_string()
+                })?;
+                if items.len() > 100 {
+                    return Err(
+                        "'known_bots_whitelist' must hold at most 100 entries"
+                            .to_string(),
+                    );
+                }
+                for item in items {
+                    let entry = item.as_str().ok_or_else(|| {
+                        "'known_bots_whitelist' must be an array of strings"
+                            .to_string()
+                    })?;
+                    if entry.trim().is_empty() || entry.chars().count() > 128 {
+                        return Err(
+                            "each whitelist entry must be 1-128 characters"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            other => {
+                return Err(format!("unknown bot key '{other}'"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_rate_limit(config: &Value) -> Result<(), String> {
+    let map = as_object(LAYER_RATE_LIMIT, config)?;
+    for (key, value) in map {
+        match key.as_str() {
+            "rules" => {
+                let items = value.as_array().ok_or_else(|| {
+                    "'rules' must be an array of rule objects".to_string()
+                })?;
+                if items.len() > 100 {
+                    return Err(
+                        "'rules' must hold at most 100 entries".to_string()
+                    );
+                }
+                for (index, item) in items.iter().enumerate() {
+                    validate_rate_limit_rule(item)
+                        .map_err(|err| format!("rules[{index}]: {err}"))?;
+                }
+            }
+            other => {
+                return Err(format!("unknown rate_limit key '{other}'"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_rate_limit_rule(value: &Value) -> Result<(), String> {
+    let map = value
+        .as_object()
+        .ok_or_else(|| "each rule must be an object".to_string())?;
+    for (key, value) in map {
+        match key.as_str() {
+            "name" => {
+                let name = expect_str(key, value)?;
+                if name.trim().is_empty() || name.chars().count() > 200 {
+                    return Err(
+                        "'name' must be 1-200 characters".to_string()
+                    );
+                }
+            }
+            "expression" => {
+                let expression = expect_str(key, value)?;
+                if expression.len() > 4096 {
+                    return Err(
+                        "'expression' must be at most 4096 bytes".to_string()
+                    );
+                }
+            }
+            "characteristics" => {
+                let items = value.as_array().ok_or_else(|| {
+                    "'characteristics' must be an array of strings".to_string()
+                })?;
+                if items.is_empty() || items.len() > 10 {
+                    return Err(
+                        "'characteristics' must hold 1-10 entries".to_string()
+                    );
+                }
+                for item in items {
+                    let entry = item.as_str().ok_or_else(|| {
+                        "'characteristics' must be an array of strings"
+                            .to_string()
+                    })?;
+                    if !crate::models::characteristic::is_valid(entry) {
+                        return Err(format!(
+                            "unknown rate limit characteristic '{entry}'"
+                        ));
+                    }
+                }
+            }
+            "period_seconds" => {
+                let period = expect_i64(key, value)?;
+                if !(1..=86_400).contains(&period) {
+                    return Err(
+                        "'period_seconds' must be between 1 and 86400"
+                            .to_string(),
+                    );
+                }
+            }
+            "threshold" => {
+                let threshold = expect_i64(key, value)?;
+                if !(1..=10_000_000).contains(&threshold) {
+                    return Err(
+                        "'threshold' must be between 1 and 10000000"
+                            .to_string(),
+                    );
+                }
+            }
+            "action" => {
+                let action = expect_str(key, value)?;
+                if !action::is_valid(action) {
+                    return Err(format!(
+                        "unknown action '{action}' (expected one of: {})",
+                        action::ALL.join(", ")
+                    ));
+                }
+            }
+            "mitigation_timeout_seconds" => {
+                let mitigation = expect_i64(key, value)?;
+                if !(0..=86_400).contains(&mitigation) {
+                    return Err(
+                        "'mitigation_timeout_seconds' must be between 0 and 86400"
+                            .to_string(),
+                    );
+                }
+            }
+            "enabled" => {
+                expect_bool(key, value)?;
+            }
+            "priority" => {
+                let priority = expect_i64(key, value)?;
+                if priority < 0 {
+                    return Err("'priority' must not be negative".to_string());
+                }
+            }
+            other => {
+                return Err(format!("unknown rate limit rule key '{other}'"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_ip_access(config: &Value) -> Result<(), String> {
+    let map = as_object(LAYER_IP_ACCESS, config)?;
+    for (key, value) in map {
+        match key.as_str() {
+            "rules" => {
+                let items = value.as_array().ok_or_else(|| {
+                    "'rules' must be an array of rule objects".to_string()
+                })?;
+                if items.len() > 200 {
+                    return Err(
+                        "'rules' must hold at most 200 entries".to_string()
+                    );
+                }
+                for (index, item) in items.iter().enumerate() {
+                    validate_ip_access_rule(item)
+                        .map_err(|err| format!("rules[{index}]: {err}"))?;
+                }
+            }
+            other => {
+                return Err(format!("unknown ip_access key '{other}'"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_ip_access_rule(value: &Value) -> Result<(), String> {
+    let map = value
+        .as_object()
+        .ok_or_else(|| "each rule must be an object".to_string())?;
+    for (key, value) in map {
+        match key.as_str() {
+            "name" => {
+                let name = expect_str(key, value)?;
+                if name.trim().is_empty() || name.chars().count() > 200 {
+                    return Err(
+                        "'name' must be 1-200 characters".to_string()
+                    );
+                }
+            }
+            "ip_ranges" => {
+                let items = value.as_array().ok_or_else(|| {
+                    "'ip_ranges' must be an array of strings".to_string()
+                })?;
+                if items.is_empty() {
+                    return Err(
+                        "'ip_ranges' must hold at least one range".to_string()
+                    );
+                }
+                for item in items {
+                    let entry = item.as_str().ok_or_else(|| {
+                        "'ip_ranges' must be an array of strings".to_string()
+                    })?;
+                    let trimmed = entry.trim();
+                    let base = trimmed.split('/').next().unwrap_or(trimmed);
+                    if base.parse::<std::net::IpAddr>().is_err() {
+                        return Err(format!(
+                            "invalid IP address or CIDR: '{trimmed}'"
+                        ));
+                    }
+                }
+            }
+            "action" => {
+                let ip_action = expect_str(key, value)?;
+                if !crate::api::ip_rules::ip_action::is_valid(ip_action) {
+                    return Err(format!("unknown ip action '{ip_action}'"));
+                }
+            }
+            "note" => {
+                let note = expect_str(key, value)?;
+                if note.chars().count() > 500 {
+                    return Err(
+                        "'note' must be at most 500 characters".to_string()
+                    );
+                }
+            }
+            "enabled" => {
+                expect_bool(key, value)?;
+            }
+            other => {
+                return Err(format!("unknown ip_access rule key '{other}'"));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_rule_overrides(config: &Value) -> Result<(), String> {
@@ -709,6 +1048,10 @@ pub struct Resolved {
     /// Effective managed-rule overrides (policy first, overlay applied on
     /// top), ordered by rule id.
     pub overrides: Vec<RuleOverrideEntry>,
+    /// Effective payloads of the extra layers (`virtual_patches`,
+    /// `api_schema`, `rate_limit`, `ip_access`, `bot`), merged policy-first
+    /// with the overlay on top.
+    pub layers: BTreeMap<String, Value>,
     /// Layer kinds the site overlay contributed to, in [`LAYER_KINDS`] order.
     pub override_kinds: Vec<String>,
 }
@@ -720,6 +1063,7 @@ impl Resolved {
             && self.crs.is_empty()
             && self.rules.is_empty()
             && self.overrides.is_empty()
+            && self.layers.is_empty()
             && self.override_kinds.is_empty()
     }
 
@@ -930,6 +1274,50 @@ fn apply_layer(resolved: &mut Resolved, kind: &str, config: &Value) {
         }
         LAYER_RULE_OVERRIDES => {
             merge_overrides(&mut resolved.overrides, &parse_overrides(config));
+        }
+        LAYER_VIRTUAL_PATCHES | LAYER_API_SCHEMA | LAYER_BOT => {
+            // Key-level merge: overlay keys win over the policy's.
+            let entry = resolved
+                .layers
+                .entry(kind.to_string())
+                .or_insert_with(|| Value::Object(Map::new()));
+            if let (Some(target), Some(source)) =
+                (entry.as_object_mut(), config.as_object())
+            {
+                for (key, value) in source {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        LAYER_RATE_LIMIT | LAYER_IP_ACCESS => {
+            // Rule lists merge by name: an overlay entry replaces the
+            // policy's rule of the same name.
+            let mut merged = resolved
+                .layers
+                .get(kind)
+                .and_then(|value| value.get("rules"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(patch) = config.get("rules").and_then(Value::as_array)
+            {
+                for entry in patch {
+                    let name = entry
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    merged.retain(|existing| {
+                        existing.get("name").and_then(Value::as_str)
+                            != Some(name.as_str())
+                    });
+                    merged.push(entry.clone());
+                }
+            }
+            resolved.layers.insert(
+                kind.to_string(),
+                serde_json::json!({ "rules": merged }),
+            );
         }
         _ => {}
     }
@@ -1719,6 +2107,199 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[test]
+    fn extra_layers_validate_their_payloads() {
+        // Virtual patches (SecLang source).
+        assert!(validate_layer(
+            LAYER_VIRTUAL_PATCHES,
+            &json!({"source": "SecRule REQUEST_URI \"@streq /x\" \"id:1,phase:1,deny\""})
+        )
+        .is_ok());
+        assert!(validate_layer(LAYER_VIRTUAL_PATCHES, &json!({"src": "x"}))
+            .unwrap_err()
+            .contains("unknown virtual_patches key"));
+
+        // OpenAPI document must be a JSON object.
+        assert!(validate_layer(
+            LAYER_API_SCHEMA,
+            &json!({"openapi_spec": "{\"openapi\":\"3.0.0\"}"})
+        )
+        .is_ok());
+        assert!(validate_layer(
+            LAYER_API_SCHEMA,
+            &json!({"openapi_spec": "not json"})
+        )
+        .unwrap_err()
+        .contains("must be a JSON document"));
+        assert!(validate_layer(LAYER_API_SCHEMA, &json!({"openapi_spec": "[1]"}))
+            .unwrap_err()
+            .contains("must be a JSON object"));
+
+        // Bot posture.
+        assert!(validate_layer(
+            LAYER_BOT,
+            &json!({"enabled": true, "action": "challenge",
+                    "known_bots_whitelist": ["Googlebot"],
+                    "tls_fingerprint": true})
+        )
+        .is_ok());
+        assert!(validate_layer(LAYER_BOT, &json!({"action": "drop"}))
+            .unwrap_err()
+            .contains("unknown bot action"));
+        assert!(validate_layer(
+            LAYER_BOT,
+            &json!({"known_bots_whitelist": [1]})
+        )
+        .unwrap_err()
+        .contains("array of strings"));
+
+        // Rate limits.
+        assert!(validate_layer(
+            LAYER_RATE_LIMIT,
+            &json!({"rules": [{
+                "name": "Login burst",
+                "expression": "path starts_with \"/login\"",
+                "characteristics": ["ip", "header:x-key"],
+                "period_seconds": 60,
+                "threshold": 10,
+                "action": "challenge"
+            }]})
+        )
+        .is_ok());
+        assert!(validate_layer(
+            LAYER_RATE_LIMIT,
+            &json!({"rules": [{"name": "x", "characteristics": ["nope"]}]})
+        )
+        .unwrap_err()
+        .contains("unknown rate limit characteristic"));
+        assert!(validate_layer(
+            LAYER_RATE_LIMIT,
+            &json!({"rules": [{"name": "x", "characteristics": ["ip"],
+                              "period_seconds": 0}]})
+        )
+        .unwrap_err()
+        .contains("period_seconds"));
+        assert!(validate_layer(
+            LAYER_RATE_LIMIT,
+            &json!({"rules": [{"name": "x", "characteristics": ["ip"],
+                              "action": "explode"}]})
+        )
+        .unwrap_err()
+        .contains("unknown action"));
+
+        // IP access.
+        assert!(validate_layer(
+            LAYER_IP_ACCESS,
+            &json!({"rules": [{"name": "Office",
+                              "ip_ranges": ["10.0.0.0/8", "192.168.1.5"],
+                              "action": "allow"}]})
+        )
+        .is_ok());
+        assert!(validate_layer(
+            LAYER_IP_ACCESS,
+            &json!({"rules": [{"name": "x", "ip_ranges": ["nope"],
+                              "action": "allow"}]})
+        )
+        .unwrap_err()
+        .contains("invalid IP address"));
+        assert!(validate_layer(
+            LAYER_IP_ACCESS,
+            &json!({"rules": [{"name": "x", "ip_ranges": ["10.0.0.0/8"],
+                              "action": "drop"}]})
+        )
+        .unwrap_err()
+        .contains("unknown ip action"));
+        assert!(validate_layer(
+            LAYER_IP_ACCESS,
+            &json!({"rules": [{"name": "x", "ip_ranges": [],
+                              "action": "allow"}]})
+        )
+        .unwrap_err()
+        .contains("at least one range"));
+    }
+
+    #[test]
+    fn extra_layers_merge_policy_first_overlay_on_top() {
+        let policy_layers: BTreeMap<String, Value> = [
+            (
+                LAYER_BOT.to_string(),
+                json!({"enabled": true, "action": "challenge"}),
+            ),
+            (
+                LAYER_RATE_LIMIT.to_string(),
+                json!({"rules": [
+                    {"name": "Login", "characteristics": ["ip"], "threshold": 5},
+                    {"name": "Api", "characteristics": ["ip"], "threshold": 50}
+                ]}),
+            ),
+        ]
+        .into_iter()
+        .collect();
+
+        let base = resolve_maps(None, None, 0, &policy_layers, None);
+        assert_eq!(
+            base.layers
+                .get(LAYER_BOT)
+                .and_then(|value| value.get("action"))
+                .and_then(Value::as_str),
+            Some("challenge")
+        );
+        assert_eq!(
+            base.layers
+                .get(LAYER_RATE_LIMIT)
+                .and_then(|value| value.get("rules"))
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+
+        // Overlay: bot action replaced, one rate-limit rule replaced by name.
+        let overlay = json!({
+            "bot": {"action": "block"},
+            "rate_limit": {"rules": [
+                {"name": "Login", "characteristics": ["ip"], "threshold": 2}
+            ]}
+        });
+        let merged =
+            resolve_maps(None, None, 0, &policy_layers, Some(&overlay));
+        assert_eq!(
+            merged
+                .layers
+                .get(LAYER_BOT)
+                .and_then(|value| value.get("action"))
+                .and_then(Value::as_str),
+            Some("block")
+        );
+        // Untouched bot keys keep the policy's value.
+        assert_eq!(
+            merged
+                .layers
+                .get(LAYER_BOT)
+                .and_then(|value| value.get("enabled"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        let rules = merged
+            .layers
+            .get(LAYER_RATE_LIMIT)
+            .and_then(|value| value.get("rules"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(rules.len(), 2);
+        let login = rules
+            .iter()
+            .find(|rule| {
+                rule.get("name").and_then(Value::as_str) == Some("Login")
+            })
+            .expect("login rule");
+        assert_eq!(
+            login.get("threshold").and_then(Value::as_i64),
+            Some(2)
+        );
+        assert!(merged.override_kinds.contains(&LAYER_BOT.to_string()));
     }
 
     #[test]
