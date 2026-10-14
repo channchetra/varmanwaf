@@ -10,7 +10,8 @@ import {
   ArrowClockwise,
   Lightning,
 } from '@phosphor-icons/react'
-import { PageHeader } from '@/components/PageHeader'
+import { PageHeader } from '@/components/PageHeader'
+import { Callout } from '@/components/ui/Callout'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -394,6 +395,15 @@ export function RateLimitingPage() {
           </div>
         }
       />
+
+      <Callout
+        className="mb-4"
+        tone="brand"
+        icon={<Gauge weight="duotone" className="h-5 w-5" />}
+        title={t('pages.rateLimiting.overviewTitle')}
+      >
+        {t('pages.rateLimiting.overview')}
+      </Callout>
 
       {rules.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-4 rounded-lg border border-line bg-elevated px-4 py-3">

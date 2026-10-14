@@ -10,8 +10,10 @@ import {
   Fingerprint,
   Brain,
   UserFocus,
+  Robot,
 } from '@phosphor-icons/react'
-import { PageHeader } from '@/components/PageHeader'
+import { PageHeader } from '@/components/PageHeader'
+import { Callout } from '@/components/ui/Callout'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -158,6 +160,15 @@ export function BotPage() {
           </div>
         }
       />
+
+      <Callout
+        className="mb-4"
+        tone="brand"
+        icon={<Robot weight="duotone" className="h-5 w-5" />}
+        title={t('pages.bot.overviewTitle')}
+      >
+        {t('pages.bot.overview')}
+      </Callout>
 
       {configQuery.isError && !config ? (
         <ErrorState

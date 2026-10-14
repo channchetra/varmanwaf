@@ -14,6 +14,7 @@ import {
 } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, CardBody } from '@/components/ui/Card'
+import { Callout } from '@/components/ui/Callout'
 import { Badge, type BadgeTone } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -374,6 +375,15 @@ export function SitesListPage() {
           ) : undefined
         }
       />
+
+      <Callout
+        className="mb-4"
+        tone="brand"
+        icon={<Globe weight="duotone" className="h-5 w-5" />}
+        title={t('pages.sites.overviewTitle')}
+      >
+        {t('pages.sites.overview')}
+      </Callout>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="w-full max-w-sm">

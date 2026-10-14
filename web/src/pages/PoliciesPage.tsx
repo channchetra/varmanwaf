@@ -11,6 +11,7 @@ import {
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardFooter, CardHeader } from '@/components/ui/Card'
+import { Callout } from '@/components/ui/Callout'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Dialog } from '@/components/ui/Dialog'
 import { Input } from '@/components/ui/Input'
@@ -133,6 +134,14 @@ export function PoliciesPage() {
           </Button>
         )}
       </div>
+
+      <Callout
+        tone="brand"
+        icon={<Stack weight="duotone" className="h-5 w-5" />}
+        title={t('pages.policies.overviewTitle')}
+      >
+        {t('pages.policies.overview')}
+      </Callout>
 
       {list.isLoading ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

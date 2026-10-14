@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { DownloadSimple, Trash } from '@phosphor-icons/react'
+import { DownloadSimple, SealCheck, Trash } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
+import { Callout } from '@/components/ui/Callout'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Dialog } from '@/components/ui/Dialog'
@@ -86,6 +87,14 @@ export function CrsPage() {
           </Button>
         )}
       </div>
+
+      <Callout
+        tone="brand"
+        icon={<SealCheck weight="duotone" className="h-5 w-5" />}
+        title={t('pages.crs.overviewTitle')}
+      >
+        {t('pages.crs.overview')}
+      </Callout>
 
       {list.isLoading ? (
         <SkeletonCard />

@@ -12,6 +12,7 @@ import {
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { Callout } from '@/components/ui/Callout'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Dialog } from '@/components/ui/Dialog'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -384,6 +385,14 @@ export function AlertsPage() {
           {t('pages.alerts.description')}
         </p>
       </div>
+
+      <Callout
+        tone="brand"
+        icon={<BellRinging weight="duotone" className="h-5 w-5" />}
+        title={t('pages.alerts.overviewTitle')}
+      >
+        {t('pages.alerts.overview')}
+      </Callout>
 
       {/* Rules */}
       <Card>

@@ -1,7 +1,8 @@
 import { Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { FunnelSimple, GlobeHemisphereWest, Key } from '@phosphor-icons/react'
-import { PageHeader } from '@/components/PageHeader'
+import { FunnelSimple, GlobeHemisphereWest, Key, Shield } from '@phosphor-icons/react'
+import { PageHeader } from '@/components/PageHeader'
+import { Callout } from '@/components/ui/Callout'
 import { Tabs } from '@/components/ui/Tabs'
 import { IpRulesPanel } from './IpRulesPanel'
 import { GeoPanel } from './GeoPanel'
@@ -39,6 +40,15 @@ export function AccessControlPage() {
         title={t('pages.accessControl.title')}
         description={t('pages.accessControl.description')}
       />
+
+      <Callout
+        className="mb-4"
+        tone="brand"
+        icon={<Shield weight="duotone" className="h-5 w-5" />}
+        title={t('pages.accessControl.overviewTitle')}
+      >
+        {t('pages.accessControl.overview')}
+      </Callout>
 
       <Tabs
         variant="pill"

@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowClockwise } from '@phosphor-icons/react'
-import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { ArrowClockwise, Cloud } from '@phosphor-icons/react'
+import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { Callout } from '@/components/ui/Callout'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -82,6 +83,15 @@ export function CcPanel() {
 
   return (
     <div>
+      <Callout
+        className="mb-4"
+        tone="brand"
+        icon={<Cloud weight="duotone" className="h-5 w-5" />}
+        title={t('pages.cc.overviewTitle')}
+      >
+        {t('pages.cc.overview')}
+      </Callout>
+
       {configQuery.isError && !config ? (
         <ErrorState
           error={configQuery.error}

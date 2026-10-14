@@ -12,7 +12,8 @@ import {
   MagnifyingGlass,
   ArrowClockwise,
 } from '@phosphor-icons/react'
-import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { Callout } from '@/components/ui/Callout'
 import { Select } from '@/components/ui/Select'
 import { Switch } from '@/components/ui/Switch'
 import { Badge } from '@/components/ui/Badge'
@@ -401,6 +402,15 @@ export function WafRulesPanel() {
 
   return (
     <div>
+      <Callout
+        className="mb-4"
+        tone="brand"
+        icon={<ShieldCheck weight="duotone" className="h-5 w-5" />}
+        title={t('pages.waf.overviewTitle')}
+      >
+        {t('pages.waf.overview')}
+      </Callout>
+
       {failed ? (
         <ErrorState
           error={rulesQuery.error ?? groupsQuery.error}

@@ -12,8 +12,10 @@ import {
   Funnel,
   Terminal,
   LockKey,
+  FileMagnifyingGlass,
 } from '@phosphor-icons/react'
-import { PageHeader } from '@/components/PageHeader'
+import { PageHeader } from '@/components/PageHeader'
+import { Callout } from '@/components/ui/Callout'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -667,6 +669,15 @@ export function LogsPage() {
           </div>
         }
       />
+
+      <Callout
+        className="mb-4"
+        tone="brand"
+        icon={<FileMagnifyingGlass weight="duotone" className="h-5 w-5" />}
+        title={t('pages.logs.overviewTitle')}
+      >
+        {t('pages.logs.overview')}
+      </Callout>
 
       {/* Tabs */}
       <div className="mb-4 flex gap-1 border-b border-line">

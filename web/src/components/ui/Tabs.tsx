@@ -69,7 +69,7 @@ export function Tabs({
                   : cn(
                       'rounded-md px-3 py-1.5',
                       isActive
-                        ? 'bg-elevated text-fg-strong shadow-sm'
+                        ? 'bg-elevated text-brand shadow-sm'
                         : 'text-fg-subtle hover:text-fg',
                     ),
               )}

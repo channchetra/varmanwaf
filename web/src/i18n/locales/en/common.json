@@ -225,6 +225,8 @@
   },
   "pages": {
     "policies": {
+    "overviewTitle": "Shared policy documents",
+    "overview": "A policy is a named, revisioned configuration every assigned site follows: engine posture, custom rules, rule tuning, rate limits, IP access and imported CRS rulesets. Sites keep their own settings until you assign a policy on their Policy tab; site-local deltas belong in the site overlay. Every change is recorded in the policy history.",
       "title": "WAF policies",
       "description": "Shared, revisioned rule and posture documents. Assign a policy to a site to apply it; sites without a policy keep their own settings.",
       "new": "New policy",
@@ -391,6 +393,8 @@
       }
     },
     "crs": {
+    "overviewTitle": "Imported CRS rulesets",
+    "overview": "Import an OWASP CRS archive (GitHub release, URL or upload) once and this engine parses it with its own SecLang parser. Rules it can compile are enforceable through a policy's CRS ruleset layer; rules it cannot compile stay visible with their parser error - nothing is dropped silently. Bind rulesets on the Policy tab.",
       "title": "CRS rulesets",
       "description": "Import OWASP CRS archives, inspect the parsed rule catalogue and bind rulesets to policies.",
       "import": "Import ruleset",
@@ -428,6 +432,8 @@
       "statusDirective": "directive"
     },
     "alerts": {
+    "overviewTitle": "Threshold alerts over security events",
+    "overview": "Rules evaluate stored security events on a timer: a raw count, or a blocked-request ratio gated by a minimum sample count so a single probe cannot page anyone. Preview shows what the next evaluation would see and dispatches nothing. Silences mute rules for maintenance; the history records every dispatched alert even when delivery fails.",
       "title": "Security alerts",
       "description": "Threshold rules over stored security events, maintenance silences, and the channels they deliver to.",
       "rulesTitle": "Alert rules",
@@ -580,6 +586,8 @@
       "effectiveUnavailable": "Effective configuration is unavailable right now."
     },
     "dashboard": {
+    "overviewTitle": "Fleet at a glance",
+    "overview": "Traffic, blocked requests and top talkers for the selected site and window. Drill into a site for its protection posture, or open Logs to answer why a request was blocked (each security event resolves its rule, policy and auto-block chain).",
       "title": "Dashboard",
       "description": "Overview of your protected sites, agents and live threat activity.",
       "totalSites": "Protected sites",
@@ -632,6 +640,8 @@
       "blockedToday": "Blocked today"
     },
     "sites": {
+    "overviewTitle": "Every site is an edge configuration",
+    "overview": "Create a site, point its origin, then protect it: assign a shared policy or tune its own settings. Site status pauses serving without deleting configuration; the Web Protection tab shows what is actually in force, including published-vs-applied per node.",
       "title": "Sites",
       "description": "All websites protected by VarmanWAF.",
       "addSite": "Add site",
@@ -802,6 +812,8 @@
       "pausedNote": "This site is paused — the edge answers every request with a 503 maintenance page."
     },
     "waf": {
+    "overviewTitle": "Rules that run on this site",
+    "overview": "Built-in managed rules and your custom rules, evaluated by the native engine. Severity, paranoia level and the site mode decide what reaches a verdict; rule tuning (disable, monitor, score, target exclusions) lives with the shared policy so one change applies everywhere it is assigned.",
       "title": "Web Application Firewall",
       "description": "Description",
       "action": "Action",
@@ -990,6 +1002,8 @@
       "restoreDoneHint": "They ship in monitor mode so you can see what they catch before blocking anything."
     },
     "rateLimiting": {
+    "overviewTitle": "Path limits before the engine",
+    "overview": "Rate limits run after bot checks and before the WAF engine: count requests per key (client IP, header, path) and answer bursts with block or challenge. Policy rules form the baseline; a site rule with the same path and method replaces it for this site only.",
       "title": "Rate Limiting",
       "description": "Protect against abuse and volumetric attacks by limiting request rates.",
       "addRule": "Add rule",
@@ -1036,6 +1050,8 @@
       "untilReset": "Until window reset"
     },
     "bot": {
+      "overviewTitle": "Admission control before the WAF",
+      "overview": "Bot protection classifies user agents first: verified crawlers pass, browsers are checked against the enabled signals (JS challenge, TLS, behaviour), everything else receives the configured action. Verify claiming crawlers by DNS or by trusted IP range so a spoofed user agent cannot walk in on a name.",
       "title": "Bot Protection",
       "description": "Identify and mitigate automated traffic and malicious bots.",
       "saved": "Bot protection saved",
@@ -1072,6 +1088,8 @@
       "verifiedNote": "DNS verification never blocks on outages: when the resolver fails, the check degrades to the user-agent verdict instead of guessing. Verdicts are cached per IP and crawler family."
     },
     "cc": {
+    "overviewTitle": "Burst protection",
+    "overview": "CC protection challenges clients that exceed the burst thresholds instead of blocking them outright. Under Attack Mode challenges every visitor - turn it on during an attack and off afterwards; clearance never bypasses the IP, rate-limit or WAF layers that follow.",
       "title": "CC Protection",
       "description": "Detect and challenge HTTP flood (CC) attacks in real time.",
       "empty": "No CC protection rules",
@@ -1094,6 +1112,8 @@
       "exemptPathsHint": "Paths that bypass CC protection (press Enter to add)."
     },
     "protection": {
+      "settingsOverviewTitle": "Engine posture and grading",
+      "settingsOverview": "The engine choice, enforcement mode and paranoia level decide how the rules run on this site; monitor-only downgrades keep detection active while recording instead of blocking. When a policy is assigned, its layers override these settings - local deltas belong in the site overlay on the Policy tab.",
       "title": "Web Protection",
       "description": "WAF posture, rule grading and CC protection for this site.",
       "tabSettings": "Grading",
@@ -1596,6 +1616,8 @@
       "description": "General configuration for this site."
     },
     "logs": {
+    "overviewTitle": "Two streams, one question",
+    "overview": "Security events are WAF decisions; access logs are full request/response records. Open any security event and use 'Why was this blocked?' to resolve the chain: auto-block state, rate limit or rule, the producing rule with file:line provenance for imported CRS, the bound policy and the tuning that applied.",
       "title": "Logs",
       "description": "Live request and security event logs across all sites.",
       "empty": "No log entries",
@@ -1682,6 +1704,8 @@
       "reason": "Reason"
     },
     "agents": {
+    "overviewTitle": "The edge fleet",
+    "overview": "Each agent runs the proxy and the WAF, pulls its site bundles from this control plane and reports heartbeats, metrics and config-sync state. Use a node's detail view to compare its applied revision with what was published - 'unknown' means no report, not success.",
       "title": "Agents",
       "description": "VarmanWAF agents deployed at the edge and their health.",
       "empty": "No agents connected",
@@ -1837,6 +1861,8 @@
       "ruleActionHint": "Configure credentials on the Access control → Basic auth tab first."
     },
     "settings": {
+    "overviewTitle": "Console and instance settings",
+    "overview": "Appearance, account security, notification channels, TLS material and retention live here; the left quick-nav jumps between sections. Changes save immediately and are recorded where they affect security-relevant behaviour.",
       "addPasskey": "Add passkey",
       "deletePasskeyDescription": "This authenticator will no longer be able to sign in to your account. Other passkeys are unaffected.",
       "deletePasskeyTitle": "Remove passkey",
@@ -2198,6 +2224,8 @@
       "footer": "Imports are IP groups: bind them to sites on the site's Access control page, and the daily scheduler keeps the ranges fresh."
     },
     "ipGroups": {
+    "overviewTitle": "Reusable IP lists",
+    "overview": "Named collections of CIDR ranges used by site IP rules and verified-bot checks. Groups can be manual or subscriptions (URL or the curated catalog) refreshed daily - a failed refresh keeps the previous ranges and records the error instead of silently emptying the list.",
       "title": "IP Groups",
       "description": "Manage named IP collections for blacklisting or whitelisting. Apply globally or to specific sites.",
       "create": "New IP Group",
@@ -2250,6 +2278,8 @@
       "confirmDeleteDesc": "This will permanently remove the IP group \"{{name}}\"."
     },
     "accessControl": {
+    "overviewTitle": "Who reaches the WAF",
+    "overview": "IP rules and geo decisions run first: allow, block or challenge before the bot, rate-limit and engine layers. Shared IP lists keep ranges in one place; the auto-blocked card lists addresses the WAF blocked automatically and lets you lift them.",
       "title": "Access control",
       "description": "Allow or deny traffic by IP address and geography, and gate requests behind HTTP basic credentials.",
       "tabIpRules": "IP rules",

@@ -32,8 +32,10 @@ import {
   UploadSimple,
   GithubLogo,
   ArrowSquareOut,
+  Gear,
 } from '@phosphor-icons/react'
-import { PageHeader } from '@/components/PageHeader'
+import { PageHeader } from '@/components/PageHeader'
+import { Callout } from '@/components/ui/Callout'
 import { Card, CardBody, CardFooter, CardHeader } from '@/components/ui/Card'
 import { QuickNav } from '@/components/ui/QuickNav'
 import { Switch } from '@/components/ui/Switch'
@@ -155,6 +157,15 @@ export function SettingsPage() {
   return (
     <div className="animate-slide-up">
       <PageHeader title={t('pages.settings.title')} description={t('pages.settings.description')} />
+
+      <Callout
+        className="mb-4"
+        tone="brand"
+        icon={<Gear weight="duotone" className="h-5 w-5" />}
+        title={t('pages.settings.overviewTitle')}
+      >
+        {t('pages.settings.overview')}
+      </Callout>
 
       <div className="flex max-w-6xl items-start gap-8">
         <QuickNav ariaLabel={t('pages.settings.quickNav')} items={navItems} />

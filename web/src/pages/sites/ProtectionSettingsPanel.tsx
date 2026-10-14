@@ -2,9 +2,10 @@ import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Gauge, Lightning, ShieldWarning, Wrench } from '@phosphor-icons/react'
+import { Gauge, Lightning, ShieldWarning, Sliders, Wrench } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/Button'
-import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { Callout } from '@/components/ui/Callout'
 import { Select } from '@/components/ui/Select'
 import { Switch } from '@/components/ui/Switch'
 import { Textarea } from '@/components/ui/Textarea'
@@ -144,6 +145,13 @@ export function ProtectionSettingsPanel() {
 
   return (
     <div className="flex flex-col gap-4">
+      <Callout
+        tone="brand"
+        icon={<Sliders weight="duotone" className="h-5 w-5" />}
+        title={t('pages.protection.settingsOverviewTitle')}
+      >
+        {t('pages.protection.settingsOverview')}
+      </Callout>
       {/* ── Advanced mode ─────────────────────────────────────────────── */}
       <Card
         className={cn(

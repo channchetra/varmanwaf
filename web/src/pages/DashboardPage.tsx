@@ -24,10 +24,12 @@ import {
   ArrowRight,
   Lightning,
   Clock,
+  Compass,
   UploadSimple,
 } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { Callout } from '@/components/ui/Callout'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Select'
@@ -462,6 +464,16 @@ export function DashboardPage() {
           </div>
         }
       />
+
+      {/* Overview box: what this page answers and where to act next. */}
+      <Callout
+        className="mb-5"
+        tone="brand"
+        icon={<Compass weight="duotone" className="h-5 w-5" />}
+        title={t('pages.dashboard.overviewTitle')}
+      >
+        {t('pages.dashboard.overview')}
+      </Callout>
 
       {/* Stat cards */}
       {summary.isError && !summary.data ? (

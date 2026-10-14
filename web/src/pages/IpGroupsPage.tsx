@@ -7,8 +7,10 @@ import {
   Pencil,
   Plus,
   Trash,
+  ListChecks,
 } from '@phosphor-icons/react'
-import { PageHeader } from '@/components/PageHeader'
+import { PageHeader } from '@/components/PageHeader'
+import { Callout } from '@/components/ui/Callout'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -237,6 +239,15 @@ export function IpGroupsPage() {
           ) : undefined
         }
       />
+
+      <Callout
+        className="mb-4"
+        tone="brand"
+        icon={<ListChecks weight="duotone" className="h-5 w-5" />}
+        title={t('pages.ipGroups.overviewTitle')}
+      >
+        {t('pages.ipGroups.overview')}
+      </Callout>
 
       <Card>
         <CardBody>

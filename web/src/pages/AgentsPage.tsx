@@ -13,8 +13,10 @@ import {
   Copy,
   Plus,
   Warning,
+  Pulse,
 } from '@phosphor-icons/react'
-import { PageHeader } from '@/components/PageHeader'
+import { PageHeader } from '@/components/PageHeader'
+import { Callout } from '@/components/ui/Callout'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -351,6 +353,15 @@ export function AgentsPage() {
           </div>
         }
       />
+
+      <Callout
+        className="mb-4"
+        tone="brand"
+        icon={<Pulse weight="duotone" className="h-5 w-5" />}
+        title={t('pages.agents.overviewTitle')}
+      >
+        {t('pages.agents.overview')}
+      </Callout>
 
       {/* Fleet summary */}
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
