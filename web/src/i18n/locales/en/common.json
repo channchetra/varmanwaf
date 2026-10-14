@@ -1886,7 +1886,13 @@
       "openSettings": "Open settings",
       "deleteTitle": "Delete conversation",
       "deleteDescription": "The conversation and every message in it will be removed.",
-      "deleted": "Conversation deleted"
+      "deleted": "Conversation deleted",
+      "open": "Open AI assistant",
+      "close": "Close assistant",
+      "history": "History",
+      "showHistory": "Show history",
+      "hideHistory": "Hide history",
+      "disabledForUsers": "The AI assistant is not enabled yet; contact an administrator to configure it."
     },
     "basicAuth": {
       "saved": "Basic auth settings saved",

@@ -224,6 +224,14 @@ body {
     transform: translateX(0) scale(1);
   }
 }
+@keyframes pw-slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
 @keyframes pw-shimmer {
   100% {
     transform: translateX(100%);
@@ -246,6 +254,9 @@ body {
 }
 .animate-toast-in {
   animation: pw-toast-in 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.animate-slide-in-right {
+  animation: pw-slide-in-right 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .animate-spin-slow {
   animation: pw-spin 0.8s linear infinite;

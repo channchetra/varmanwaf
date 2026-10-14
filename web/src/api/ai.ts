@@ -17,8 +17,9 @@ import type {
 } from './types'
 
 /**
- * The built-in AI assistant — `/api/v1/settings/ai` and
- * `/api/v1/ai/conversations` (administrators only).
+ * The built-in AI assistant — `/api/v1/settings/ai` (administrators only)
+ * and `/api/v1/ai/conversations` (every signed-in user; conversations are
+ * owned per user server-side).
  *
  * The chat turn is a Server-Sent Event stream; `streamChatMessage` consumes it
  * with `fetch` (not `EventSource`, which cannot send the `Authorization`
@@ -72,6 +73,8 @@ export async function streamChatMessage(
   conversationId: string,
   content: string,
   handlers: ChatStreamHandlers,
+  /** Optional "where the user is" hint, injected into this turn only. */
+  pagePath?: string,
 ): Promise<void> {
   const send = (token: string | null) =>
     fetch(`${BASE_URL}/ai/conversations/${conversationId}/messages`, {
@@ -81,7 +84,9 @@ export async function streamChatMessage(
         Accept: 'text/event-stream',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(
+        pagePath ? { content, page_path: pagePath } : { content },
+      ),
       signal: handlers.signal,
     })
 

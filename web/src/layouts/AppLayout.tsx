@@ -12,6 +12,7 @@ import {
   SignOut,
   Translate,
   ShieldCheck,
+  Sparkle,
 } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
 import { Sidebar } from '@/components/ui/Sidebar'
@@ -19,8 +20,10 @@ import { Breadcrumb, type BreadcrumbItem } from '@/components/ui/Breadcrumb'
 import { Button } from '@/components/ui/Button'
 import { GlobalSearch } from '@/components/GlobalSearch'
 import { ForceChangePasswordDialog } from '@/components/ForceChangePasswordDialog'
+import { AssistantWidget } from '@/components/assistant/AssistantWidget'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
+import { useAssistantWidgetStore } from '@/stores/assistantWidgetStore'
 import { supportedLanguages } from '@/i18n'
 
 const langLabels: Record<string, string> = {
@@ -59,6 +62,10 @@ export function AppLayout() {
   const { resolved, toggle } = useThemeStore()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
+  const toggleAssistant = useAssistantWidgetStore((s) => s.toggle)
+  // The assistant stays administrator-only (fork divergence): the provider
+  // key is shared fleet-wide and its write tools can reach every site.
+  const isAdmin = user?.role === 'admin'
 
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -237,6 +244,18 @@ export function AppLayout() {
               }
             />
 
+            {/* AI assistant panel (administrators only, like the page) */}
+            {isAdmin && (
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={t('pages.assistant.open')}
+                title={t('pages.assistant.open')}
+                onClick={toggleAssistant}
+                icon={<Sparkle weight="duotone" className="h-5 w-5" />}
+              />
+            )}
+
             {/* User menu */}
             <div className="relative" ref={userMenuRef}>
               <button
@@ -284,6 +303,10 @@ export function AppLayout() {
           </div>
         </main>
       </div>
+
+      {/* Floating AI assistant (ball + sliding panel, mounted for the whole
+          admin session; streaming state survives open/close cycles). */}
+      {isAdmin && <AssistantWidget />}
     </div>
   )
 }
