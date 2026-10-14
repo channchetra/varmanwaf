@@ -49,8 +49,16 @@ impl MigrationTrait for Migration {
                             .string_len(20)
                             .not_null(),
                     )
-                    .col(ColumnDef::new(WafPolicyVersions::Actor).string_len(255).null())
-                    .col(ColumnDef::new(WafPolicyVersions::Summary).json_binary().null())
+                    .col(
+                        ColumnDef::new(WafPolicyVersions::Actor)
+                            .string_len(255)
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(WafPolicyVersions::Summary)
+                            .json_binary()
+                            .null(),
+                    )
                     .col(
                         ColumnDef::new(WafPolicyVersions::Snapshot)
                             .json_binary()
@@ -64,7 +72,10 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_waf_policy_versions_policy")
-                            .from(WafPolicyVersions::Table, WafPolicyVersions::PolicyId)
+                            .from(
+                                WafPolicyVersions::Table,
+                                WafPolicyVersions::PolicyId,
+                            )
                             .to(WafPolicies::Table, WafPolicies::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )

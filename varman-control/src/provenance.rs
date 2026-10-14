@@ -200,12 +200,10 @@ async fn resolve_rule(
         ));
     }
 
-    if let Some((policy_id, layer_kind, index)) =
-        parse_policy_rule_id(rule_id)
+    if let Some((policy_id, layer_kind, index)) = parse_policy_rule_id(rule_id)
     {
-        let policy_row = waf_policy::Entity::find_by_id(policy_id)
-            .one(db)
-            .await?;
+        let policy_row =
+            waf_policy::Entity::find_by_id(policy_id).one(db).await?;
         let layer = waf_policy_layer::Entity::find()
             .filter(waf_policy_layer::Column::PolicyId.eq(policy_id))
             .filter(waf_policy_layer::Column::Kind.eq(layer_kind))
@@ -467,9 +465,7 @@ pub async fn explain(
              named",
             json!({}),
         ));
-        notes.push(
-            "the agent recorded no rule id for this event".to_string(),
-        );
+        notes.push("the agent recorded no rule id for this event".to_string());
     } else {
         steps.push(resolve_rule(db, &rule_id).await?);
     }
@@ -481,16 +477,17 @@ pub async fn explain(
         None => policy::Resolved::default(),
     };
     let binding = match site_id {
-        Some(site) => {
-            site_waf_policy::Entity::find_by_id(site).one(db).await?
-        },
+        Some(site) => site_waf_policy::Entity::find_by_id(site).one(db).await?,
         None => None,
     };
     steps.push(match (&resolved.policy_id, &resolved.policy_name) {
         (Some(id), Some(name)) => step(
             "policy",
             "hit",
-            format!("Site follows policy '{name}' (revision {})", resolved.revision),
+            format!(
+                "Site follows policy '{name}' (revision {})",
+                resolved.revision
+            ),
             "the site's policy layers were compiled into the bundle the \
              edge evaluated",
             json!({
@@ -554,7 +551,11 @@ pub async fn explain(
             json!({}),
         ),
     });
-    if resolved.overrides.iter().any(|entry| entry.rule_id.is_empty()) {
+    if resolved
+        .overrides
+        .iter()
+        .any(|entry| entry.rule_id.is_empty())
+    {
         notes.push(
             "the policy also carries selector-based overrides (tags/severity); \
              they are expanded when the bundle is built and are not reversed \

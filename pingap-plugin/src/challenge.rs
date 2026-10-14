@@ -710,8 +710,7 @@ impl ChallengePlugin {
         // The clearance cookie's `Secure` attribute depends on how the
         // verify request arrived: browsers refuse to store Secure cookies
         // on a plain HTTP page, so an HTTP site must get a storable cookie.
-        let secure =
-            session.digest().is_some_and(|d| d.ssl_digest.is_some());
+        let secure = session.digest().is_some_and(|d| d.ssl_digest.is_some());
         let result = self.engine.verify_solution(&submission, secure);
 
         match result {
@@ -1270,10 +1269,7 @@ cookie_secret = "test-secret"
         assert!(body.contains("VarmanWAF Security"));
         assert!(body.contains("--accent:#f6821f"), "brand accent missing");
         assert!(body.contains("req-1"));
-        assert_eq!(
-            header_value(&resp, "server").as_deref(),
-            Some("varmanwaf")
-        );
+        assert_eq!(header_value(&resp, "server").as_deref(), Some("varmanwaf"));
         assert_eq!(
             header_value(&resp, "x-varmanwaf-mitigated").as_deref(),
             Some("block")
@@ -1296,9 +1292,7 @@ cookie_secret = "test-secret"
             header_value(&paused, "server").as_deref(),
             Some("varmanwaf")
         );
-        assert!(
-            String::from_utf8_lossy(&paused.body).contains("Protected by")
-        );
+        assert!(String::from_utf8_lossy(&paused.body).contains("Protected by"));
 
         let limited = rate_limit_page("req-4", "20 req/min", 60);
         assert_eq!(StatusCode::TOO_MANY_REQUESTS, limited.status);

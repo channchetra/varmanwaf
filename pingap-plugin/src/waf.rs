@@ -38,6 +38,7 @@ use crate::waf_stream::{StreamFinding, StreamInspector, TailWindow};
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
+use ipnet::IpNet;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HTTP_HEADER_NAME_X_REQUEST_ID, HttpResponse, Plugin, PluginStep,
@@ -45,7 +46,6 @@ use pingap_core::{
     constant_time_eq, ensure_client_ip, get_host, new_internal_error,
 };
 use pingap_util::{IpRules, base64_decode};
-use ipnet::IpNet;
 use pingora::http::{ResponseHeader, Version};
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -852,7 +852,8 @@ impl BotPolicy {
         }
         if self.dns_verification
             && let Some(ip) = client_ip
-            && let Some((token, _)) = crate::bot_dns::known_bot_family(user_agent)
+            && let Some((token, _)) =
+                crate::bot_dns::known_bot_family(user_agent)
         {
             match crate::bot_dns::bot_dns_verifier().verify(ip, token).await {
                 crate::bot_dns::DnsVerdict::Confirmed => {
@@ -2245,7 +2246,11 @@ fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
         // are skipped entirely, score overrides replace the severity-derived
         // contribution.
         disabled_rules: cfg.disabled_rules.iter().cloned().collect(),
-        rule_scores: cfg.rule_scores.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+        rule_scores: cfg
+            .rule_scores
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect(),
         rule_target_exclusions: cfg
             .rule_target_exclusions
             .iter()
@@ -3123,7 +3128,9 @@ impl Plugin for WafPlugin {
                     request_data.client_ip.parse::<IpAddr>().ok(),
                     &user_agent,
                     ClientSignals {
-                        browser_hints: browser_header_hints(&request_data.headers),
+                        browser_hints: browser_header_hints(
+                            &request_data.headers,
+                        ),
                         tls_verified: session
                             .digest()
                             .is_some_and(|d| d.ssl_digest.is_some()),
@@ -3719,7 +3726,8 @@ impl Plugin for WafPlugin {
         // Staged remainder: withhold chunks up to the cap, scan them before
         // the upstream sees a byte, then let the rest through. Past the cap
         // the tail scan below takes over as before.
-        if let Some(mut entry) = DEFERRED_BODY.remove(&request_id).map(|e| e.1) {
+        if let Some(mut entry) = DEFERRED_BODY.remove(&request_id).map(|e| e.1)
+        {
             if !end_of_stream {
                 match stage_chunk(
                     self.max_body_size,
@@ -4121,7 +4129,10 @@ ml_threshold = 0.75
         r.path = "/.git/config".into();
 
         let mut cfg = cache_waf_config(false, Vec::new(), Vec::new());
-        assert_eq!(build_site_engine(&cfg).inspect(&r).action, WafAction::Block);
+        assert_eq!(
+            build_site_engine(&cfg).inspect(&r).action,
+            WafAction::Block
+        );
 
         // Excluding the path suppresses the path-based managed rule.
         cfg.rule_target_exclusions =
@@ -4652,7 +4663,9 @@ advanced_mode = true
             .rule_cache
             .update_from_site_config(&monitor_varman_site(1))
             .unwrap();
-        assert!(run_query_probe(&plugin).await == RequestPluginResult::Continue);
+        assert!(
+            run_query_probe(&plugin).await == RequestPluginResult::Continue
+        );
     }
 
     /// A paused site answers with a 503 maintenance page (and a Retry-After
@@ -4754,7 +4767,10 @@ advanced_mode = true
             .unwrap_or_default();
         // The branded block page names the product and the verdict.
         assert!(body.contains("Request Blocked"), "body: {body}");
-        assert!(body.contains("Protected by <b>VarmanWAF</b>"), "body: {body}");
+        assert!(
+            body.contains("Protected by <b>VarmanWAF</b>"),
+            "body: {body}"
+        );
         assert_eq!(entry.response_body_size, body.len() as u64);
         assert!(!entry.response_body_truncated);
     }

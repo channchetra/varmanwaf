@@ -61,7 +61,11 @@ pub struct ImportOutcome {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// Fetches (or decodes) the archive. Returns `(bytes, source label,
@@ -76,7 +80,10 @@ pub async fn fetch_archive(
                 return Err("a GitHub release tag is required".to_string());
             }
             if tag.chars().any(|c| c.is_whitespace()) {
-                return Err("the GitHub release tag must not contain whitespace".to_string());
+                return Err(
+                    "the GitHub release tag must not contain whitespace"
+                        .to_string(),
+                );
             }
             let url = format!(
                 "https://github.com/coreruleset/coreruleset/archive/refs/tags/{tag}.tar.gz"
@@ -84,7 +91,7 @@ pub async fn fetch_archive(
             let bytes = download(&url).await?;
             let version = tag.trim_start_matches('v').to_string();
             Ok((bytes, format!("github:{tag}"), version))
-        }
+        },
         ImportSource::Url(url) => {
             let url = url.trim();
             if !url.starts_with("https://") && !url.starts_with("http://") {
@@ -99,7 +106,7 @@ pub async fn fetch_archive(
                 .trim_start_matches('v')
                 .to_string();
             Ok((bytes, format!("url:{url}"), version))
-        }
+        },
         ImportSource::ArchiveBase64(encoded) => {
             use base64::engine::general_purpose::STANDARD as BASE64;
             use base64::Engine;
@@ -110,7 +117,7 @@ pub async fn fetch_archive(
                 return Err("the archive is empty".to_string());
             }
             Ok((bytes, "archive".to_string(), String::new()))
-        }
+        },
     }
 }
 
@@ -145,8 +152,8 @@ pub fn parse_archive(bytes: &[u8]) -> Result<Vec<(String, String)>, String> {
         .entries()
         .map_err(|err| format!("the archive is not readable: {err}"))?;
     for entry in entries {
-        let mut entry =
-            entry.map_err(|err| format!("the archive is not readable: {err}"))?;
+        let mut entry = entry
+            .map_err(|err| format!("the archive is not readable: {err}"))?;
         let path = entry
             .path()
             .map_err(|err| format!("invalid archive entry: {err}"))?
@@ -247,8 +254,9 @@ pub fn classify(file: &str, line: usize, statement: &str) -> ImportedStatement {
     };
     let severity = capture(r"severity:'([^']*)'", statement);
     let phase = capture(r"phase:(\d)", statement).parse::<i32>().ok();
-    let paranoia_level =
-        capture(r"paranoia-level/(\d)", statement).parse::<i32>().ok();
+    let paranoia_level = capture(r"paranoia-level/(\d)", statement)
+        .parse::<i32>()
+        .ok();
     let category = capture(r"tag:'attack-([a-z0-9-]+)'", statement);
     let (supported, error) = if kind == "rule" {
         match varman_waf::seclang::SecRuleSet::from_source(statement) {
@@ -311,8 +319,10 @@ pub async fn import(
     let id = Uuid::new_v4();
     let rule_count = statements.iter().filter(|row| row.kind == "rule").count();
     let supported_count = statements.iter().filter(|row| row.supported).count();
-    let directive_count =
-        statements.iter().filter(|row| row.kind == "directive").count();
+    let directive_count = statements
+        .iter()
+        .filter(|row| row.kind == "directive")
+        .count();
     let unsupported_count = rule_count - supported_count;
 
     let ruleset = crs_ruleset::ActiveModel {
@@ -395,8 +405,8 @@ pub async fn compile_source(
         );
     }
     if !categories.is_empty() {
-        query = query
-            .filter(crs_rule::Column::Category.is_in(categories.to_vec()));
+        query =
+            query.filter(crs_rule::Column::Category.is_in(categories.to_vec()));
     }
     let rows = query.all(db).await?;
     let count = rows.len();
@@ -495,13 +505,18 @@ SecRule ARGS \"@rx evil\" \"id:3,phase:2,block\"
         // Build a tiny tar.gz in memory with one rules file and one
         // non-rules file.
         let mut builder = tar::Builder::new(Vec::new());
-        let rule = b"SecRule REQUEST_URI \"@contains /x\" \"id:1,phase:1,block\"";
+        let rule =
+            b"SecRule REQUEST_URI \"@contains /x\" \"id:1,phase:1,block\"";
         let mut header = tar::Header::new_gnu();
         header.set_size(rule.len() as u64);
         header.set_mode(0o644);
         header.set_cksum();
         builder
-            .append_data(&mut header, "coreruleset-1/rules/REQUEST-900.conf", &rule[..])
+            .append_data(
+                &mut header,
+                "coreruleset-1/rules/REQUEST-900.conf",
+                &rule[..],
+            )
             .expect("append rule");
         let readme = b"hello";
         let mut header = tar::Header::new_gnu();
@@ -512,8 +527,10 @@ SecRule ARGS \"@rx evil\" \"id:3,phase:2,block\"
             .append_data(&mut header, "coreruleset-1/README.md", &readme[..])
             .expect("append readme");
         let tar_bytes = builder.into_inner().expect("finish tar");
-        let mut encoder =
-            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder = flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::default(),
+        );
         std::io::Write::write_all(&mut encoder, &tar_bytes).expect("gzip");
         let gz = encoder.finish().expect("finish gzip");
 

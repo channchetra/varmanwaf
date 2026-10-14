@@ -22,7 +22,12 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(CrsRulesets::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(CrsRulesets::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(CrsRulesets::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(CrsRulesets::Name).text().not_null())
                     .col(
                         ColumnDef::new(CrsRulesets::Version)
@@ -90,7 +95,12 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(CrsRules::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(CrsRules::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(CrsRules::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(CrsRules::RulesetId).uuid().not_null())
                     .col(
                         ColumnDef::new(CrsRules::RuleId)
@@ -124,7 +134,11 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(""),
                     )
-                    .col(ColumnDef::new(CrsRules::ParanoiaLevel).integer().null())
+                    .col(
+                        ColumnDef::new(CrsRules::ParanoiaLevel)
+                            .integer()
+                            .null(),
+                    )
                     .col(
                         ColumnDef::new(CrsRules::Category)
                             .text()
@@ -186,11 +200,16 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(Table::drop().table(CrsRules::Table).if_exists().to_owned())
+            .drop_table(
+                Table::drop().table(CrsRules::Table).if_exists().to_owned(),
+            )
             .await?;
         manager
             .drop_table(
-                Table::drop().table(CrsRulesets::Table).if_exists().to_owned(),
+                Table::drop()
+                    .table(CrsRulesets::Table)
+                    .if_exists()
+                    .to_owned(),
             )
             .await
     }

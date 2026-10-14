@@ -28,7 +28,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-use crate::api::waf_settings::{CATEGORIES, ENGINE_MODES, MANAGED_RULES, STACKS};
+use crate::api::waf_settings::{
+    CATEGORIES, ENGINE_MODES, MANAGED_RULES, STACKS,
+};
 use crate::models::{
     action, mode, site_waf_policy, site_waf_policy_override, waf_policy,
     waf_policy_layer, waf_policy_version, waf_settings,
@@ -146,9 +148,10 @@ pub const EXCLUSION_TARGETS: [&str; 8] = [
 
 /// The managed-rule catalogue, built once: selector expansion and tag
 /// validation read it on every resolution.
-static CATALOGUE: LazyLock<Vec<varman_waf::ManagedRuleInfo>> = LazyLock::new(
-    || varman_waf::managed_rule_catalogue(varman_waf::WafLevel::Strict),
-);
+static CATALOGUE: LazyLock<Vec<varman_waf::ManagedRuleInfo>> =
+    LazyLock::new(|| {
+        varman_waf::managed_rule_catalogue(varman_waf::WafLevel::Strict)
+    });
 
 /// Every tag the catalogue knows, for selector validation.
 fn catalogue_tags() -> std::collections::BTreeSet<&'static str> {
@@ -169,7 +172,9 @@ impl RuleOverrideEntry {
                     .to_string(),
             );
         }
-        if !self.rule_id.is_empty() && !MANAGED_RULES.contains(&self.rule_id.as_str()) {
+        if !self.rule_id.is_empty()
+            && !MANAGED_RULES.contains(&self.rule_id.as_str())
+        {
             return Err(format!(
                 "unknown managed rule '{}' (expected one of: {})",
                 self.rule_id,
@@ -206,19 +211,20 @@ impl RuleOverrideEntry {
                 if !(1..=255).contains(&score) {
                     return Err("'score' must be between 1 and 255".to_string());
                 }
-            }
+            },
             (override_action::SCORE_OVERRIDE, None) => {
                 return Err(
-                    "'score' is required for the score_override action".to_string()
+                    "'score' is required for the score_override action"
+                        .to_string(),
                 );
-            }
+            },
             (_, Some(_)) => {
                 return Err(
                     "'score' is only valid with the score_override action"
                         .to_string(),
                 );
-            }
-            _ => {}
+            },
+            _ => {},
         }
         for target in &self.exclude_targets {
             if !EXCLUSION_TARGETS.contains(&target.as_str()) {
@@ -277,7 +283,9 @@ impl PolicyRule {
             return Err("'name' must not be empty".to_string());
         }
         if self.name.chars().count() > MAX_NAME_LEN {
-            return Err(format!("'name' must be at most {MAX_NAME_LEN} characters"));
+            return Err(format!(
+                "'name' must be at most {MAX_NAME_LEN} characters"
+            ));
         }
         if self.expression.trim().is_empty() {
             return Err("'expression' must not be empty".to_string());
@@ -347,7 +355,10 @@ pub fn validate_layer(kind: &str, config: &Value) -> Result<(), String> {
     }
 }
 
-fn as_object<'a>(kind: &str, config: &'a Value) -> Result<&'a Map<String, Value>, String> {
+fn as_object<'a>(
+    kind: &str,
+    config: &'a Value,
+) -> Result<&'a Map<String, Value>, String> {
     config
         .as_object()
         .ok_or_else(|| format!("the {kind} layer must be a JSON object"))
@@ -405,7 +416,7 @@ fn validate_engine(config: &Value) -> Result<(), String> {
         match key.as_str() {
             "waf_enabled" | "advanced_mode" => {
                 expect_bool(key, value)?;
-            }
+            },
             "mode" => {
                 let mode = expect_str(key, value)?;
                 if !mode::is_valid(mode) {
@@ -413,13 +424,15 @@ fn validate_engine(config: &Value) -> Result<(), String> {
                         "unknown mode '{mode}' (expected one of: off, monitor, block)"
                     ));
                 }
-            }
+            },
             "paranoia_level" => {
                 let level = expect_i64(key, value)?;
                 if !(1..=4).contains(&level) {
-                    return Err("'paranoia_level' must be between 1 and 4".to_string());
+                    return Err(
+                        "'paranoia_level' must be between 1 and 4".to_string()
+                    );
                 }
-            }
+            },
             "engine_mode" => {
                 let engine = expect_str(key, value)?;
                 if !ENGINE_MODES.contains(&engine) {
@@ -428,16 +441,16 @@ fn validate_engine(config: &Value) -> Result<(), String> {
                         ENGINE_MODES.join(", ")
                     ));
                 }
-            }
+            },
             "monitor_categories" => {
                 expect_subset(key, value, &CATEGORIES)?;
-            }
+            },
             "monitor_stacks" => {
                 expect_subset(key, value, &STACKS)?;
-            }
+            },
             other => {
                 return Err(format!("unknown engine key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
@@ -449,10 +462,10 @@ fn validate_crs(config: &Value) -> Result<(), String> {
         match key.as_str() {
             "monitor_managed_rules" => {
                 expect_subset(key, value, &MANAGED_RULES)?;
-            }
+            },
             other => {
                 return Err(format!("unknown crs key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
@@ -475,10 +488,10 @@ fn validate_custom_rules(config: &Value) -> Result<(), String> {
                     parse_rule(item)
                         .map_err(|err| format!("rules[{index}]: {err}"))?;
                 }
-            }
+            },
             other => {
                 return Err(format!("unknown custom_rules key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
@@ -486,8 +499,8 @@ fn validate_custom_rules(config: &Value) -> Result<(), String> {
 
 /// Parses and validates one custom-rule object.
 fn parse_rule(value: &Value) -> Result<PolicyRule, String> {
-    let rule: PolicyRule = serde_json::from_value(value.clone())
-        .map_err(|err| err.to_string())?;
+    let rule: PolicyRule =
+        serde_json::from_value(value.clone()).map_err(|err| err.to_string())?;
     rule.validate()?;
     Ok(rule)
 }
@@ -528,10 +541,10 @@ fn validate_virtual_patches(config: &Value) -> Result<(), String> {
                         "'source' must be at most {MAX_VIRTUAL_PATCH_BYTES} bytes"
                     ));
                 }
-            }
+            },
             other => {
                 return Err(format!("unknown virtual_patches key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
@@ -549,29 +562,28 @@ fn validate_api_schema(config: &Value) -> Result<(), String> {
                     ));
                 }
                 if !spec.trim().is_empty() {
-                    let parsed: Value = serde_json::from_str(spec)
-                        .map_err(|err| {
-                            format!("'openapi_spec' must be a JSON document: {err}")
+                    let parsed: Value =
+                        serde_json::from_str(spec).map_err(|err| {
+                            format!(
+                                "'openapi_spec' must be a JSON document: {err}"
+                            )
                         })?;
                     let object = parsed.as_object().ok_or_else(|| {
                         "'openapi_spec' must be a JSON object".to_string()
                     })?;
                     // Engine parity: the data plane rejects a document
                     // without a `paths` object, so the write is refused too.
-                    if !object
-                        .get("paths")
-                        .is_some_and(Value::is_object)
-                    {
+                    if !object.get("paths").is_some_and(Value::is_object) {
                         return Err(
                             "'openapi_spec' must contain a 'paths' object"
                                 .to_string(),
                         );
                     }
                 }
-            }
+            },
             other => {
                 return Err(format!("unknown api_schema key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
@@ -586,16 +598,14 @@ fn validate_crs_import(config: &Value) -> Result<(), String> {
                 if Uuid::parse_str(raw.trim()).is_err() {
                     return Err("'ruleset_id' must be a UUID".to_string());
                 }
-            }
+            },
             "paranoia_level_max" => {
                 let level = expect_i64(key, value)?;
                 if !(1..=4).contains(&level) {
-                    return Err(
-                        "'paranoia_level_max' must be between 1 and 4"
-                            .to_string(),
-                    );
+                    return Err("'paranoia_level_max' must be between 1 and 4"
+                        .to_string());
                 }
-            }
+            },
             "categories" => {
                 let items = value.as_array().ok_or_else(|| {
                     "'categories' must be an array of strings".to_string()
@@ -611,21 +621,21 @@ fn validate_crs_import(config: &Value) -> Result<(), String> {
                     })?;
                     if entry.trim().is_empty() || entry.chars().count() > 64 {
                         return Err(
-                            "each category must be 1-64 characters"
-                                .to_string(),
+                            "each category must be 1-64 characters".to_string()
                         );
                     }
                 }
-            }
+            },
             other => {
                 return Err(format!("unknown crs_import key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
 }
 
-fn validate_bot(config: &Value) -> Result<(), String> {    let map = as_object(LAYER_BOT, config)?;
+fn validate_bot(config: &Value) -> Result<(), String> {
+    let map = as_object(LAYER_BOT, config)?;
     for (key, value) in map {
         match key.as_str() {
             "enabled"
@@ -635,7 +645,7 @@ fn validate_bot(config: &Value) -> Result<(), String> {    let map = as_object(L
             | "ip_verification_enabled"
             | "dns_verification_enabled" => {
                 expect_bool(key, value)?;
-            }
+            },
             "action" => {
                 let action = expect_str(key, value)?;
                 if !matches!(
@@ -646,7 +656,7 @@ fn validate_bot(config: &Value) -> Result<(), String> {    let map = as_object(L
                         "unknown bot action '{action}' (expected one of: block, challenge, js_challenge, log, allow)"
                     ));
                 }
-            }
+            },
             "known_bots_whitelist" => {
                 let items = value.as_array().ok_or_else(|| {
                     "'known_bots_whitelist' must be an array of strings"
@@ -670,10 +680,10 @@ fn validate_bot(config: &Value) -> Result<(), String> {    let map = as_object(L
                         );
                     }
                 }
-            }
+            },
             other => {
                 return Err(format!("unknown bot key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
@@ -696,10 +706,10 @@ fn validate_rate_limit(config: &Value) -> Result<(), String> {
                     validate_rate_limit_rule(item)
                         .map_err(|err| format!("rules[{index}]: {err}"))?;
                 }
-            }
+            },
             other => {
                 return Err(format!("unknown rate_limit key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
@@ -714,11 +724,9 @@ fn validate_rate_limit_rule(value: &Value) -> Result<(), String> {
             "name" => {
                 let name = expect_str(key, value)?;
                 if name.trim().is_empty() || name.chars().count() > 200 {
-                    return Err(
-                        "'name' must be 1-200 characters".to_string()
-                    );
+                    return Err("'name' must be 1-200 characters".to_string());
                 }
-            }
+            },
             "expression" => {
                 let expression = expect_str(key, value)?;
                 if expression.len() > 4096 {
@@ -726,7 +734,7 @@ fn validate_rate_limit_rule(value: &Value) -> Result<(), String> {
                         "'expression' must be at most 4096 bytes".to_string()
                     );
                 }
-            }
+            },
             "characteristics" => {
                 let items = value.as_array().ok_or_else(|| {
                     "'characteristics' must be an array of strings".to_string()
@@ -747,25 +755,21 @@ fn validate_rate_limit_rule(value: &Value) -> Result<(), String> {
                         ));
                     }
                 }
-            }
+            },
             "period_seconds" => {
                 let period = expect_i64(key, value)?;
                 if !(1..=86_400).contains(&period) {
-                    return Err(
-                        "'period_seconds' must be between 1 and 86400"
-                            .to_string(),
-                    );
+                    return Err("'period_seconds' must be between 1 and 86400"
+                        .to_string());
                 }
-            }
+            },
             "threshold" => {
                 let threshold = expect_i64(key, value)?;
                 if !(1..=10_000_000).contains(&threshold) {
-                    return Err(
-                        "'threshold' must be between 1 and 10000000"
-                            .to_string(),
-                    );
+                    return Err("'threshold' must be between 1 and 10000000"
+                        .to_string());
                 }
-            }
+            },
             "action" => {
                 let action = expect_str(key, value)?;
                 if !action::is_valid(action) {
@@ -774,7 +778,7 @@ fn validate_rate_limit_rule(value: &Value) -> Result<(), String> {
                         action::ALL.join(", ")
                     ));
                 }
-            }
+            },
             "mitigation_timeout_seconds" => {
                 let mitigation = expect_i64(key, value)?;
                 if !(0..=86_400).contains(&mitigation) {
@@ -783,19 +787,19 @@ fn validate_rate_limit_rule(value: &Value) -> Result<(), String> {
                             .to_string(),
                     );
                 }
-            }
+            },
             "enabled" => {
                 expect_bool(key, value)?;
-            }
+            },
             "priority" => {
                 let priority = expect_i64(key, value)?;
                 if priority < 0 {
                     return Err("'priority' must not be negative".to_string());
                 }
-            }
+            },
             other => {
                 return Err(format!("unknown rate limit rule key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
@@ -818,10 +822,10 @@ fn validate_ip_access(config: &Value) -> Result<(), String> {
                     validate_ip_access_rule(item)
                         .map_err(|err| format!("rules[{index}]: {err}"))?;
                 }
-            }
+            },
             other => {
                 return Err(format!("unknown ip_access key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
@@ -836,11 +840,9 @@ fn validate_ip_access_rule(value: &Value) -> Result<(), String> {
             "name" => {
                 let name = expect_str(key, value)?;
                 if name.trim().is_empty() || name.chars().count() > 200 {
-                    return Err(
-                        "'name' must be 1-200 characters".to_string()
-                    );
+                    return Err("'name' must be 1-200 characters".to_string());
                 }
-            }
+            },
             "ip_ranges" => {
                 let items = value.as_array().ok_or_else(|| {
                     "'ip_ranges' must be an array of strings".to_string()
@@ -862,13 +864,13 @@ fn validate_ip_access_rule(value: &Value) -> Result<(), String> {
                         ));
                     }
                 }
-            }
+            },
             "action" => {
                 let ip_action = expect_str(key, value)?;
                 if !crate::api::ip_rules::ip_action::is_valid(ip_action) {
                     return Err(format!("unknown ip action '{ip_action}'"));
                 }
-            }
+            },
             "note" => {
                 let note = expect_str(key, value)?;
                 if note.chars().count() > 500 {
@@ -876,13 +878,13 @@ fn validate_ip_access_rule(value: &Value) -> Result<(), String> {
                         "'note' must be at most 500 characters".to_string()
                     );
                 }
-            }
+            },
             "enabled" => {
                 expect_bool(key, value)?;
-            }
+            },
             other => {
                 return Err(format!("unknown ip_access rule key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
@@ -906,10 +908,10 @@ fn validate_rule_overrides(config: &Value) -> Result<(), String> {
                     parse_override(item)
                         .map_err(|err| format!("overrides[{index}]: {err}"))?;
                 }
-            }
+            },
             other => {
                 return Err(format!("unknown rule_overrides key '{other}'"));
-            }
+            },
         }
     }
     Ok(())
@@ -917,8 +919,8 @@ fn validate_rule_overrides(config: &Value) -> Result<(), String> {
 
 /// Parses and validates one override entry.
 fn parse_override(value: &Value) -> Result<RuleOverrideEntry, String> {
-    let entry: RuleOverrideEntry = serde_json::from_value(value.clone())
-        .map_err(|err| err.to_string())?;
+    let entry: RuleOverrideEntry =
+        serde_json::from_value(value.clone()).map_err(|err| err.to_string())?;
     entry.validate()?;
     Ok(entry)
 }
@@ -991,29 +993,29 @@ fn apply_override(
                 rule_scores.remove(id);
                 exclusions.remove(id);
                 continue;
-            }
+            },
             override_action::DISABLE => {
                 monitor.retain(|existing| existing != id);
                 rule_scores.remove(id);
                 if !disabled.contains(id) {
                     disabled.push(id.clone());
                 }
-            }
+            },
             override_action::MONITOR => {
                 disabled.retain(|existing| existing != id);
                 rule_scores.remove(id);
                 if !monitor.contains(id) {
                     monitor.push(id.clone());
                 }
-            }
+            },
             override_action::SCORE_OVERRIDE => {
                 monitor.retain(|existing| existing != id);
                 disabled.retain(|existing| existing != id);
                 if let Some(score) = entry.score {
                     rule_scores.insert(id.clone(), score);
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
         if !entry.exclude_targets.is_empty() {
             exclusions.insert(id.clone(), entry.exclude_targets.clone());
@@ -1165,10 +1167,7 @@ impl Resolved {
                 .iter()
                 .filter(|info| {
                     (!entry.tags.is_empty()
-                        && info
-                            .tags
-                            .iter()
-                            .any(|tag| entry.tags.contains(tag)))
+                        && info.tags.iter().any(|tag| entry.tags.contains(tag)))
                         || entry
                             .severity_min
                             .is_some_and(|min| info.severity >= min)
@@ -1274,8 +1273,9 @@ pub async fn resolve(
     let Some(assignment) = assignment else {
         return Ok(Resolved::default());
     };
-    let Some(policy) =
-        waf_policy::Entity::find_by_id(assignment.policy_id).one(db).await?
+    let Some(policy) = waf_policy::Entity::find_by_id(assignment.policy_id)
+        .one(db)
+        .await?
     else {
         return Ok(Resolved::default());
     };
@@ -1301,8 +1301,9 @@ pub async fn resolve(
 
     // The site overlay is applied last and only adds/overrides the keys it
     // names, so everything else keeps inheriting from the policy.
-    let overlay =
-        site_waf_policy_override::Entity::find_by_id(site_id).one(db).await?;
+    let overlay = site_waf_policy_override::Entity::find_by_id(site_id)
+        .one(db)
+        .await?;
     let Some(overlay_map) = overlay
         .as_ref()
         .and_then(|row| row.config.as_object().cloned())
@@ -1323,21 +1324,24 @@ fn apply_layer(resolved: &mut Resolved, kind: &str, config: &Value) {
                     resolved.engine.insert(key.clone(), value.clone());
                 }
             }
-        }
+        },
         LAYER_CRS => {
             if let Some(map) = config.as_object() {
                 for (key, value) in map {
                     resolved.crs.insert(key.clone(), value.clone());
                 }
             }
-        }
+        },
         LAYER_CUSTOM_RULES => {
             resolved.rules.extend(parse_rules(config));
-        }
+        },
         LAYER_RULE_OVERRIDES => {
             merge_overrides(&mut resolved.overrides, &parse_overrides(config));
-        }
-        LAYER_VIRTUAL_PATCHES | LAYER_API_SCHEMA | LAYER_BOT | LAYER_CRS_IMPORT => {
+        },
+        LAYER_VIRTUAL_PATCHES
+        | LAYER_API_SCHEMA
+        | LAYER_BOT
+        | LAYER_CRS_IMPORT => {
             // Key-level merge: overlay keys win over the policy's.
             let entry = resolved
                 .layers
@@ -1350,7 +1354,7 @@ fn apply_layer(resolved: &mut Resolved, kind: &str, config: &Value) {
                     target.insert(key.clone(), value.clone());
                 }
             }
-        }
+        },
         LAYER_RATE_LIMIT | LAYER_IP_ACCESS => {
             // Rule lists merge by name: an overlay entry replaces the
             // policy's rule of the same name.
@@ -1361,8 +1365,7 @@ fn apply_layer(resolved: &mut Resolved, kind: &str, config: &Value) {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
-            if let Some(patch) = config.get("rules").and_then(Value::as_array)
-            {
+            if let Some(patch) = config.get("rules").and_then(Value::as_array) {
                 for entry in patch {
                     let name = entry
                         .get("name")
@@ -1380,8 +1383,8 @@ fn apply_layer(resolved: &mut Resolved, kind: &str, config: &Value) {
                 kind.to_string(),
                 serde_json::json!({ "rules": merged }),
             );
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -1453,8 +1456,7 @@ pub fn rule_plan(effective: &EffectiveEngine) -> Vec<RulePlan> {
         .iter()
         .map(|info| {
             let disabled = effective.disabled_rules.contains(&info.id);
-            let monitored =
-                effective.monitor_managed_rules.contains(&info.id);
+            let monitored = effective.monitor_managed_rules.contains(&info.id);
             RulePlan {
                 id: info.id.clone(),
                 name: info.name.clone(),
@@ -1682,7 +1684,7 @@ pub fn version_diff(from: &Value, to: &Value) -> VersionDiff {
             match before.get(key) {
                 None => added.push(key.clone()),
                 Some(old) if old != value => changed.push(key.clone()),
-                _ => {}
+                _ => {},
             }
         }
         for key in before.keys() {
@@ -1719,7 +1721,7 @@ fn layer_entries(
                     serde_json::to_string(&rule).unwrap_or_default(),
                 );
             }
-        }
+        },
         LAYER_RULE_OVERRIDES => {
             for entry in parse_overrides(config) {
                 out.insert(
@@ -1727,14 +1729,14 @@ fn layer_entries(
                     serde_json::to_string(&entry).unwrap_or_default(),
                 );
             }
-        }
+        },
         _ => {
             if let Some(map) = config.as_object() {
                 for (key, value) in map {
                     out.insert(key.clone(), value.to_string());
                 }
             }
-        }
+        },
     }
     out
 }
@@ -1775,14 +1777,18 @@ mod tests {
         assert!(validate_layer(LAYER_ENGINE, &json!({"paranoia_level": 5}))
             .unwrap_err()
             .contains("between 1 and 4"));
-        assert!(validate_layer(LAYER_ENGINE, &json!({"engine_mode": "native"}))
-            .unwrap_err()
-            .contains("unknown engine_mode"));
-        assert!(
-            validate_layer(LAYER_ENGINE, &json!({"monitor_categories": ["nope"]}))
-                .unwrap_err()
-                .contains("unknown value")
-        );
+        assert!(validate_layer(
+            LAYER_ENGINE,
+            &json!({"engine_mode": "native"})
+        )
+        .unwrap_err()
+        .contains("unknown engine_mode"));
+        assert!(validate_layer(
+            LAYER_ENGINE,
+            &json!({"monitor_categories": ["nope"]})
+        )
+        .unwrap_err()
+        .contains("unknown value"));
         // A typo must fail at write time, not silently never apply.
         assert!(validate_layer(LAYER_ENGINE, &json!({"waf_enable": true}))
             .unwrap_err()
@@ -1939,7 +1945,9 @@ mod tests {
             .monitor_managed_rules
             .contains(&"VARMAN-1010".to_string()));
         assert_eq!(effective.rule_scores.get("VARMAN-1010"), Some(&2));
-        assert!(effective.disabled_rules.contains(&"VARMAN-1020".to_string()));
+        assert!(effective
+            .disabled_rules
+            .contains(&"VARMAN-1020".to_string()));
         assert!(effective
             .monitor_managed_rules
             .contains(&"VARMAN-1002".to_string()));
@@ -2070,7 +2078,8 @@ mod tests {
     }
 
     #[test]
-    fn rule_plan_reports_effective_state() {        let resolved = Resolved {
+    fn rule_plan_reports_effective_state() {
+        let resolved = Resolved {
             overrides: vec![
                 RuleOverrideEntry {
                     rule_id: "VARMAN-1020".into(),
@@ -2100,9 +2109,7 @@ mod tests {
         let effective = resolved.effective_engine(None);
         let plan = rule_plan(&effective);
         let row = |id: &str| {
-            plan.iter()
-                .find(|row| row.id == id)
-                .expect("catalogue row")
+            plan.iter().find(|row| row.id == id).expect("catalogue row")
         };
         assert_eq!(row("VARMAN-1020").effective, "enforce");
         assert_eq!(row("VARMAN-1020").score, 2);
@@ -2117,12 +2124,8 @@ mod tests {
     fn effective_engine_applies_layers_over_settings() {
         let settings = waf_settings_row(true, "block", 2, "inherit");
         let mut resolved = Resolved::default();
-        resolved
-            .engine
-            .insert("mode".into(), json!("monitor"));
-        resolved
-            .engine
-            .insert("paranoia_level".into(), json!(3));
+        resolved.engine.insert("mode".into(), json!("monitor"));
+        resolved.engine.insert("paranoia_level".into(), json!(3));
         resolved
             .crs
             .insert("monitor_managed_rules".into(), json!(["VARMAN-1010"]));
@@ -2138,8 +2141,7 @@ mod tests {
 
     #[test]
     fn effective_engine_without_sources_leaves_mode_unset() {
-        let effective =
-            Resolved::default().effective_engine(None);
+        let effective = Resolved::default().effective_engine(None);
         assert!(effective.waf_enabled);
         assert_eq!(effective.mode, None);
         assert_eq!(effective.paranoia_level, 2);
@@ -2196,9 +2198,12 @@ mod tests {
         )
         .unwrap_err()
         .contains("must be a JSON document"));
-        assert!(validate_layer(LAYER_API_SCHEMA, &json!({"openapi_spec": "[1]"}))
-            .unwrap_err()
-            .contains("must be a JSON object"));
+        assert!(validate_layer(
+            LAYER_API_SCHEMA,
+            &json!({"openapi_spec": "[1]"})
+        )
+        .unwrap_err()
+        .contains("must be a JSON object"));
         assert!(validate_layer(
             LAYER_API_SCHEMA,
             &json!({"openapi_spec": "{\"openapi\":\"3.0.0\"}"})
@@ -2298,9 +2303,12 @@ mod tests {
             })
         )
         .is_ok());
-        assert!(validate_layer(LAYER_CRS_IMPORT, &json!({"ruleset_id": "nope"}))
-            .unwrap_err()
-            .contains("must be a UUID"));
+        assert!(validate_layer(
+            LAYER_CRS_IMPORT,
+            &json!({"ruleset_id": "nope"})
+        )
+        .unwrap_err()
+        .contains("must be a UUID"));
         assert!(validate_layer(
             LAYER_CRS_IMPORT,
             &json!({"ruleset_id": "0b3f2b6e-4f11-4a5e-9d3e-3a0a5f6c9d21",
@@ -2392,10 +2400,7 @@ mod tests {
                 rule.get("name").and_then(Value::as_str) == Some("Login")
             })
             .expect("login rule");
-        assert_eq!(
-            login.get("threshold").and_then(Value::as_i64),
-            Some(2)
-        );
+        assert_eq!(login.get("threshold").and_then(Value::as_i64), Some(2));
         assert!(merged.override_kinds.contains(&LAYER_BOT.to_string()));
     }
 
@@ -2434,8 +2439,11 @@ mod tests {
         let diff = version_diff(&from, &to);
         assert_eq!(diff.fields, vec!["name".to_string()]);
 
-        let engine =
-            diff.layers.iter().find(|l| l.kind == "engine").expect("engine");
+        let engine = diff
+            .layers
+            .iter()
+            .find(|l| l.kind == "engine")
+            .expect("engine");
         assert_eq!(engine.changed, vec!["mode".to_string()]);
         assert!(engine.added.is_empty());
 

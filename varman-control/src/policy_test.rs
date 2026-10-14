@@ -212,7 +212,8 @@ pub fn evaluate(
             .iter()
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect(),
-        body: (!request.body.is_empty()).then(|| request.body.clone().into_bytes()),
+        body: (!request.body.is_empty())
+            .then(|| request.body.clone().into_bytes()),
         client_ip: request.client_ip.clone(),
         country_code: None,
         scheme: "https".into(),
@@ -231,8 +232,9 @@ pub fn evaluate(
                 let monitored =
                     config.monitor_managed_rules.contains(id.as_str());
                 let disabled = config.disabled_rules.contains(id.as_str());
-                let tuned =
-                    monitored || disabled || config.rule_scores.contains_key(id.as_str());
+                let tuned = monitored
+                    || disabled
+                    || config.rule_scores.contains_key(id.as_str());
                 (
                     if disabled {
                         "disabled".to_string()
@@ -243,9 +245,10 @@ pub fn evaluate(
                     },
                     tuned,
                 )
-            }
+            },
             _ => {
-                let monitored = config.monitor_custom_rules.contains(id.as_str());
+                let monitored =
+                    config.monitor_custom_rules.contains(id.as_str());
                 (
                     if monitored {
                         "monitor".to_string()
@@ -254,7 +257,7 @@ pub fn evaluate(
                     },
                     monitored,
                 )
-            }
+            },
         };
         matched.push(TestHit {
             id: id.clone(),
@@ -315,7 +318,7 @@ pub fn evaluate(
                 if blocking {
                     action = "block";
                 }
-            }
+            },
             Err(error) => matched.push(TestHit {
                 id: String::new(),
                 name: format!("virtual patch failed to compile: {error}"),
@@ -487,8 +490,10 @@ mod tests {
 
         let hit = evaluate(&config, None, &request("/probe"), &sources);
         assert_eq!(hit.action, "block");
-        assert!(hit.matched_rules.iter().any(|rule| rule.id == "policy:test:0"
-            && rule.source == "policy"));
+        assert!(hit
+            .matched_rules
+            .iter()
+            .any(|rule| rule.id == "policy:test:0" && rule.source == "policy"));
 
         let clean = evaluate(&config, None, &request("/safe"), &sources);
         assert_eq!(clean.action, "pass");
@@ -542,17 +547,22 @@ mod tests {
         let config = engine_config(&effective, Vec::new());
         let patch = "SecRule REQUEST_URI \"@contains /vp-block\" \
                      \"id:900001,phase:1,block,msg:'test patch'\"";
-        let result =
-            evaluate(&config, Some(patch), &request("/vp-block"), &BTreeMap::new());
+        let result = evaluate(
+            &config,
+            Some(patch),
+            &request("/vp-block"),
+            &BTreeMap::new(),
+        );
         assert_eq!(result.action, "block");
-        assert!(result
-            .matched_rules
-            .iter()
-            .any(|hit| hit.source == "patch"));
+        assert!(result.matched_rules.iter().any(|hit| hit.source == "patch"));
 
         // A broken patch is reported, not silently skipped.
-        let broken =
-            evaluate(&config, Some("SecRule BOGUS x y"), &request("/"), &BTreeMap::new());
+        let broken = evaluate(
+            &config,
+            Some("SecRule BOGUS x y"),
+            &request("/"),
+            &BTreeMap::new(),
+        );
         assert!(broken
             .matched_rules
             .iter()

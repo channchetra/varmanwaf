@@ -67,9 +67,7 @@ pub fn threshold_met(
         return false;
     }
     match metric {
-        METRIC_BLOCKED_RATIO => {
-            samples >= min_samples && value >= threshold
-        },
+        METRIC_BLOCKED_RATIO => samples >= min_samples && value >= threshold,
         _ => value >= threshold,
     }
 }
@@ -135,7 +133,8 @@ fn apply_filters(
     }
     if !rule.rule_id_contains.trim().is_empty() {
         query = query.filter(
-            security_event::Column::RuleId.contains(rule.rule_id_contains.trim()),
+            security_event::Column::RuleId
+                .contains(rule.rule_id_contains.trim()),
         );
     }
     query
@@ -151,8 +150,9 @@ pub async fn evaluate(
     match rule.metric.as_str() {
         METRIC_BLOCKED_RATIO => {
             let blocked = apply_filters(
-                security_event::Entity::find()
-                    .filter(security_event::Column::Action.is_in(BLOCKING_ACTIONS)),
+                security_event::Entity::find().filter(
+                    security_event::Column::Action.is_in(BLOCKING_ACTIONS),
+                ),
                 rule,
                 since,
             )
@@ -161,8 +161,7 @@ pub async fn evaluate(
             let mut requests = access_log::Entity::find()
                 .filter(access_log::Column::Timestamp.gte(since));
             if let Some(site) = rule.site_id {
-                requests =
-                    requests.filter(access_log::Column::SiteId.eq(site));
+                requests = requests.filter(access_log::Column::SiteId.eq(site));
             }
             let samples = requests.count(db).await? as i64;
             let value = if samples == 0 {
@@ -184,9 +183,10 @@ pub async fn evaluate(
             })
         },
         _ => {
-            let hits = apply_filters(security_event::Entity::find(), rule, since)
-                .count(db)
-                .await? as i64;
+            let hits =
+                apply_filters(security_event::Entity::find(), rule, since)
+                    .count(db)
+                    .await? as i64;
             let value = hits as f64;
             Ok(Evaluation {
                 value,
@@ -227,7 +227,8 @@ async fn top_rule(
     }
     if !rule.rule_id_contains.trim().is_empty() {
         query = query.filter(
-            security_event::Column::RuleId.contains(rule.rule_id_contains.trim()),
+            security_event::Column::RuleId
+                .contains(rule.rule_id_contains.trim()),
         );
     }
     let rows = query
@@ -297,7 +298,11 @@ async fn fire(
             details: Some(details),
             dedup_key: Some(rule.id.to_string()),
         },
-        if channels.is_empty() { None } else { Some(channels) },
+        if channels.is_empty() {
+            None
+        } else {
+            Some(channels)
+        },
     )
     .await;
     summary
@@ -440,9 +445,6 @@ mod tests {
         };
         let ids = channel_ids(&rule);
         assert_eq!(ids.len(), 1);
-        assert_eq!(
-            ids[0].to_string(),
-            "8e7f8d38-2b4e-4f0a-9f1e-5b0e2c3f4a5b"
-        );
+        assert_eq!(ids[0].to_string(), "8e7f8d38-2b4e-4f0a-9f1e-5b0e2c3f4a5b");
     }
 }

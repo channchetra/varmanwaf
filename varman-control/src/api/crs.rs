@@ -70,10 +70,12 @@ async fn list_releases(
             response.status()
         )));
     }
-    let releases: Vec<serde_json::Value> = response
-        .json()
-        .await
-        .map_err(|err| ApiError::BadGateway(format!("GitHub answered with unexpected JSON: {err}")))?;
+    let releases: Vec<serde_json::Value> =
+        response.json().await.map_err(|err| {
+            ApiError::BadGateway(format!(
+                "GitHub answered with unexpected JSON: {err}"
+            ))
+        })?;
     Ok(Json(
         releases
             .into_iter()
@@ -209,7 +211,11 @@ async fn import_ruleset(
     let used = crs::usage_count(&state.db, outcome.ruleset.id)
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(ruleset_view(outcome.ruleset, used, outcome.deduplicated)))
+    Ok(Json(ruleset_view(
+        outcome.ruleset,
+        used,
+        outcome.deduplicated,
+    )))
 }
 
 /// `GET /api/v1/crs/rulesets` - imported rulesets, newest first.
@@ -273,7 +279,9 @@ async fn get_ruleset(
         .one(&state.db)
         .await?
         .ok_or_else(|| ApiError::not_found("ruleset not found"))?;
-    let used = crs::usage_count(&state.db, id).await.map_err(ApiError::from)?;
+    let used = crs::usage_count(&state.db, id)
+        .await
+        .map_err(ApiError::from)?;
 
     let mut find = crs_rule::Entity::find()
         .filter(crs_rule::Column::RulesetId.eq(id))
@@ -350,13 +358,17 @@ async fn delete_ruleset(
         .one(&state.db)
         .await?
         .ok_or_else(|| ApiError::not_found("ruleset not found"))?;
-    let used = crs::usage_count(&state.db, id).await.map_err(ApiError::from)?;
+    let used = crs::usage_count(&state.db, id)
+        .await
+        .map_err(ApiError::from)?;
     if used > 0 {
         return Err(ApiError::Conflict(format!(
             "the ruleset is bound by {used} policy layer(s); unbind it first"
         )));
     }
-    crs_ruleset::Entity::delete_by_id(row.id).exec(&state.db).await?;
+    crs_ruleset::Entity::delete_by_id(row.id)
+        .exec(&state.db)
+        .await?;
     tracing::info!(ruleset_id = %id, "CRS ruleset deleted");
     Ok(StatusCode::NO_CONTENT)
 }

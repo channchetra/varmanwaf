@@ -130,11 +130,7 @@ impl AnomalyScorer {
     /// [`AnomalyScorer::add_severity_hit`] with an explicit point value -
     /// the per-rule score override. Family sub-scores stay untouched: the
     /// override replaces this rule's own aggregate contribution only.
-    pub fn add_points_hit(
-        &self,
-        breakdown: &mut ScoreBreakdown,
-        points: u32,
-    ) {
+    pub fn add_points_hit(&self, breakdown: &mut ScoreBreakdown, points: u32) {
         self.add_points_hit_ex(breakdown, points, false);
     }
 

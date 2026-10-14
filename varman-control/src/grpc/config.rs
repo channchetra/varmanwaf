@@ -10,21 +10,21 @@ use std::collections::{HashMap, HashSet};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use chrono::{DateTime, TimeZone, Utc};
-use serde_json::Value;
 use prost::Message;
 use prost_types::Timestamp;
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, QueryTrait,
 };
+use serde_json::Value;
 use uuid::Uuid;
 use varman_protocol::control_plane::{
     BasicAuthConfig, BasicAuthCredential, BotProtectionConfig, CacheRule,
     ChallengeConfig, CustomErrorPage, FailoverMode, GeoConfig,
     GlobalCacheSettings, HealthCheckConfig, IpAccessRule, RateLimitRule,
-    RewriteOperation, RewriteRule, RouteConfig, RuleBundle, RuleTargetExclusions,
-    Site, SiteCacheSettings, SiteConfig, SitePolicy, SslConfig, UpstreamConfig,
-    UpstreamPeer, WafConfig, WafRule,
+    RewriteOperation, RewriteRule, RouteConfig, RuleBundle,
+    RuleTargetExclusions, Site, SiteCacheSettings, SiteConfig, SitePolicy,
+    SslConfig, UpstreamConfig, UpstreamPeer, WafConfig, WafRule,
 };
 
 use crate::api::challenge::challenge_level;
@@ -943,7 +943,10 @@ fn policy_rate_limit_to_proto(
         period_seconds: to_u32("period_seconds", 60),
         threshold: to_u32("threshold", 100),
         action: action::to_proto(
-            value.get("action").and_then(Value::as_str).unwrap_or("block"),
+            value
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or("block"),
         ),
         mitigation_timeout_seconds: to_u32("mitigation_timeout_seconds", 60),
         enabled: value
@@ -980,7 +983,10 @@ fn policy_ip_access_to_proto(
         name: name.to_string(),
         ip_ranges: ranges,
         action: ip_action::to_proto(
-            value.get("action").and_then(Value::as_str).unwrap_or("block"),
+            value
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or("block"),
         ),
         note: value
             .get("note")
@@ -1021,8 +1027,14 @@ fn policy_bot_overrides(
         ("js_detection", &mut config.js_detection),
         ("tls_fingerprint", &mut config.tls_fingerprint),
         ("behavioral_analysis", &mut config.behavioral_analysis),
-        ("ip_verification_enabled", &mut config.ip_verification_enabled),
-        ("dns_verification_enabled", &mut config.dns_verification_enabled),
+        (
+            "ip_verification_enabled",
+            &mut config.ip_verification_enabled,
+        ),
+        (
+            "dns_verification_enabled",
+            &mut config.dns_verification_enabled,
+        ),
     ] {
         if let Some(value) = bot.get(key).and_then(Value::as_bool) {
             *field = value;
@@ -1396,10 +1408,8 @@ pub async fn build_rule_bundle(
     // Policy rules join the site's own rules; ids are namespaced per policy
     // so logging and analytics can tell them apart.
     if let Some(policy_id) = policy_layers.policy_id {
-        custom_rules.extend(policy_rules_to_proto(
-            policy_id,
-            &policy_layers.rules,
-        ));
+        custom_rules
+            .extend(policy_rules_to_proto(policy_id, &policy_layers.rules));
     }
 
     // Policy rule lists: shared rate limits and IP access rules append to
@@ -1410,20 +1420,20 @@ pub async fn build_rule_bundle(
         if let Some(rules) =
             layer_rules(&policy_layers, policy::LAYER_RATE_LIMIT)
         {
-            policy_rate_limits.extend(
-                rules.iter().enumerate().filter_map(|(index, rule)| {
+            policy_rate_limits.extend(rules.iter().enumerate().filter_map(
+                |(index, rule)| {
                     policy_rate_limit_to_proto(policy_id, index, rule)
-                }),
-            );
+                },
+            ));
         }
         if let Some(rules) =
             layer_rules(&policy_layers, policy::LAYER_IP_ACCESS)
         {
-            policy_ip_rules.extend(
-                rules.iter().enumerate().filter_map(|(index, rule)| {
+            policy_ip_rules.extend(rules.iter().enumerate().filter_map(
+                |(index, rule)| {
                     policy_ip_access_to_proto(policy_id, index, rule)
-                }),
-            );
+                },
+            ));
         }
     }
 
@@ -1437,8 +1447,7 @@ pub async fn build_rule_bundle(
     // An imported CRS ruleset compiles into the same SecLang source the
     // edge evaluates as virtual patches; the explicit layer source, when
     // present, runs first.
-    if let Some(layer) = policy_layers.layers.get(policy::LAYER_CRS_IMPORT)
-    {
+    if let Some(layer) = policy_layers.layers.get(policy::LAYER_CRS_IMPORT) {
         let ruleset_id = layer
             .get("ruleset_id")
             .and_then(Value::as_str)
@@ -1468,12 +1477,15 @@ pub async fn build_rule_bundle(
             .await
             {
                 if count > 0 {
-                    waf_config.virtual_patches =
-                        if waf_config.virtual_patches.trim().is_empty() {
-                            source
-                        } else {
-                            format!("{}\n{}", waf_config.virtual_patches, source)
-                        };
+                    waf_config.virtual_patches = if waf_config
+                        .virtual_patches
+                        .trim()
+                        .is_empty()
+                    {
+                        source
+                    } else {
+                        format!("{}\n{}", waf_config.virtual_patches, source)
+                    };
                 }
             }
         }
@@ -2005,10 +2017,7 @@ mod tests {
         let config = policy_bot_overrides(base, &resolved);
         assert!(config.enabled);
         assert_eq!(config.action, action::to_proto("challenge"));
-        assert_eq!(
-            config.known_bots_whitelist,
-            vec!["Googlebot".to_string()]
-        );
+        assert_eq!(config.known_bots_whitelist, vec!["Googlebot".to_string()]);
 
         // Virtual patches and the OpenAPI document win over the site's row.
         let mut settings =

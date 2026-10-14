@@ -418,7 +418,8 @@ async fn update(
     }
     if payload.source_selector.is_some() {
         active.source_selector =
-            Set(validate_selector(&payload.source_selector)?.unwrap_or_default());
+            Set(validate_selector(&payload.source_selector)?
+                .unwrap_or_default());
     }
     if let Some(interval) = payload.sync_interval_minutes {
         active.sync_interval_minutes = Set(normalise_interval(Some(interval)));
@@ -748,8 +749,7 @@ pub(crate) async fn sync_subscription(
                     %error,
                     "subscription fetch failed; retrying once"
                 );
-                tokio::time::sleep(std::time::Duration::from_millis(750))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_millis(750)).await;
                 result =
                     crate::subscription::fetch_subscription_ranges_with_selector(
                         &client,

@@ -127,8 +127,6 @@ Tests and lint (the CI gates):
 ```bash
 cargo test --workspace --features full
 cargo clippy --features full --all-targets -- -D warnings
-# The tree predates the current stable rustfmt; a `cargo fmt --all`
-# normalisation round is queued, so formatting is not part of the gate yet.
 cargo fmt --all -- --check
 ```
 

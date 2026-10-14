@@ -11,9 +11,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::policy::{
-    self, PolicyRule, LAYER_CUSTOM_RULES, LAYER_ENGINE,
-};
+use crate::policy::{self, PolicyRule, LAYER_CUSTOM_RULES, LAYER_ENGINE};
 
 /// One built-in policy template.
 pub struct PolicyTemplate {
@@ -202,7 +200,9 @@ pub fn render_recipe(
     }
     let (name, expression, action, severity, tags) = match recipe.id {
         "block-path" => {
-            let path = safe_path(params.get("path").map(String::as_str).unwrap_or_default())?;
+            let path = safe_path(
+                params.get("path").map(String::as_str).unwrap_or_default(),
+            )?;
             (
                 format!("Block path {path}"),
                 format!("http.request.uri.path starts_with \"{path}\""),
@@ -210,9 +210,11 @@ pub fn render_recipe(
                 4,
                 vec!["custom", "path"],
             )
-        }
+        },
         "challenge-path" => {
-            let path = safe_path(params.get("path").map(String::as_str).unwrap_or_default())?;
+            let path = safe_path(
+                params.get("path").map(String::as_str).unwrap_or_default(),
+            )?;
             (
                 format!("Challenge path {path}"),
                 format!("http.request.uri.path starts_with \"{path}\""),
@@ -220,7 +222,7 @@ pub fn render_recipe(
                 3,
                 vec!["custom", "path"],
             )
-        }
+        },
         "block-query-param" => {
             let name = safe_token(
                 "name",
@@ -233,7 +235,7 @@ pub fn render_recipe(
                 4,
                 vec!["custom", "query"],
             )
-        }
+        },
         "block-user-agent" => {
             let token = safe_token(
                 "token",
@@ -246,7 +248,7 @@ pub fn render_recipe(
                 4,
                 vec!["custom", "user-agent"],
             )
-        }
+        },
         other => return Err(format!("unknown recipe '{other}'")),
     };
     let rule = PolicyRule {

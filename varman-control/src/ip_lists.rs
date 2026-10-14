@@ -124,7 +124,9 @@ pub fn country_entries() -> Vec<CatalogEntry> {
                      (compact). A 'detailed' variant is available at import \
                      time for finer ranges.",
                 ),
-                source_url: format!("{IPVERSE_COUNTRY}/{lower}/aggregated.json"),
+                source_url: format!(
+                    "{IPVERSE_COUNTRY}/{lower}/aggregated.json"
+                ),
                 selector: "prefixes.ipv4,prefixes.ipv6".to_string(),
                 suggested_action: "block",
                 attribution: ATTR_COUNTRY.to_string(),
@@ -375,9 +377,8 @@ pub fn resolve_import(
     let id = catalog_id.trim();
     if let Some(cc) = id.strip_prefix("country:") {
         let cc = cc.trim().to_lowercase();
-        let known = COUNTRIES
-            .iter()
-            .find(|(code, _)| code.to_lowercase() == cc);
+        let known =
+            COUNTRIES.iter().find(|(code, _)| code.to_lowercase() == cc);
         let Some((code, name)) = known else {
             return Err(format!("unknown country code '{cc}'"));
         };

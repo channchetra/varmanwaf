@@ -88,13 +88,21 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(WafPolicyLayers::PolicyId).uuid().not_null())
+                    .col(
+                        ColumnDef::new(WafPolicyLayers::PolicyId)
+                            .uuid()
+                            .not_null(),
+                    )
                     .col(
                         ColumnDef::new(WafPolicyLayers::Kind)
                             .string_len(40)
                             .not_null(),
                     )
-                    .col(ColumnDef::new(WafPolicyLayers::Config).json_binary().not_null())
+                    .col(
+                        ColumnDef::new(WafPolicyLayers::Config)
+                            .json_binary()
+                            .not_null(),
+                    )
                     .col(
                         ColumnDef::new(WafPolicyLayers::UpdatedAt)
                             .timestamp_with_time_zone()
@@ -103,7 +111,10 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_waf_policy_layers_policy")
-                            .from(WafPolicyLayers::Table, WafPolicyLayers::PolicyId)
+                            .from(
+                                WafPolicyLayers::Table,
+                                WafPolicyLayers::PolicyId,
+                            )
                             .to(WafPolicies::Table, WafPolicies::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
@@ -148,14 +159,20 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_site_waf_policies_site")
-                            .from(SiteWafPolicies::Table, SiteWafPolicies::SiteId)
+                            .from(
+                                SiteWafPolicies::Table,
+                                SiteWafPolicies::SiteId,
+                            )
                             .to(Sites::Table, Sites::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_site_waf_policies_policy")
-                            .from(SiteWafPolicies::Table, SiteWafPolicies::PolicyId)
+                            .from(
+                                SiteWafPolicies::Table,
+                                SiteWafPolicies::PolicyId,
+                            )
                             .to(WafPolicies::Table, WafPolicies::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
@@ -220,7 +237,10 @@ impl MigrationTrait for Migration {
             .await?;
         manager
             .drop_table(
-                Table::drop().table(SiteWafPolicies::Table).if_exists().to_owned(),
+                Table::drop()
+                    .table(SiteWafPolicies::Table)
+                    .if_exists()
+                    .to_owned(),
             )
             .await?;
         manager
@@ -232,7 +252,12 @@ impl MigrationTrait for Migration {
             )
             .await?;
         manager
-            .drop_table(Table::drop().table(WafPolicies::Table).if_exists().to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(WafPolicies::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
             .await
     }
 }

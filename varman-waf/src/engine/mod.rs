@@ -1240,9 +1240,9 @@ impl WafEngine {
                     // switch instead, which routes through
                     // `add_severity_hit_ex(monitored=true)`.
                     match override_points {
-                        Some(points) => self
-                            .scorer
-                            .add_points_hit(&mut breakdown, points),
+                        Some(points) => {
+                            self.scorer.add_points_hit(&mut breakdown, points)
+                        },
                         None => self
                             .scorer
                             .add_severity_hit(&mut breakdown, rule.severity),

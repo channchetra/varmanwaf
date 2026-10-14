@@ -19,7 +19,12 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(AlertRules::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(AlertRules::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(AlertRules::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(AlertRules::Name).text().not_null())
                     .col(
                         ColumnDef::new(AlertRules::Enabled)
@@ -28,9 +33,21 @@ impl MigrationTrait for Migration {
                             .default(true),
                     )
                     // `event_count` or `blocked_ratio`.
-                    .col(ColumnDef::new(AlertRules::Metric).string_len(32).not_null())
-                    .col(ColumnDef::new(AlertRules::Threshold).double().not_null())
-                    .col(ColumnDef::new(AlertRules::WindowSeconds).integer().not_null())
+                    .col(
+                        ColumnDef::new(AlertRules::Metric)
+                            .string_len(32)
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(AlertRules::Threshold)
+                            .double()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(AlertRules::WindowSeconds)
+                            .integer()
+                            .not_null(),
+                    )
                     .col(
                         ColumnDef::new(AlertRules::MinSamples)
                             .integer()
@@ -68,9 +85,17 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(900),
                     )
-                    .col(ColumnDef::new(AlertRules::LastFiredAt).timestamp_with_time_zone().null())
+                    .col(
+                        ColumnDef::new(AlertRules::LastFiredAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
                     .col(ColumnDef::new(AlertRules::LastValue).double().null())
-                    .col(ColumnDef::new(AlertRules::LastSamples).integer().null())
+                    .col(
+                        ColumnDef::new(AlertRules::LastSamples)
+                            .integer()
+                            .null(),
+                    )
                     .col(
                         ColumnDef::new(AlertRules::LastEvaluatedAt)
                             .timestamp_with_time_zone()
@@ -105,7 +130,12 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(AlertSilences::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(AlertSilences::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(AlertSilences::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(AlertSilences::SiteId).uuid().null())
                     .col(
                         ColumnDef::new(AlertSilences::Reason)
@@ -151,10 +181,20 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(Table::drop().table(AlertSilences::Table).if_exists().to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(AlertSilences::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
             .await?;
         manager
-            .drop_table(Table::drop().table(AlertRules::Table).if_exists().to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(AlertRules::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
             .await
     }
 }

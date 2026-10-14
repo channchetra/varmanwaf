@@ -57,10 +57,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/policies/{id}/versions", get(list_versions))
         .route("/policies/{id}/versions/diff", get(diff_versions))
-        .route(
-            "/policies/{id}/versions/{version_id}",
-            get(get_version),
-        )
+        .route("/policies/{id}/versions/{version_id}", get(get_version))
         .route("/policies/{id}/rollback", post(rollback_policy))
         .route(
             "/sites/{site_id}/policy",
@@ -76,10 +73,7 @@ pub fn routes() -> Router<AppState> {
             "/sites/{site_id}/effective-config",
             get(get_effective_config),
         )
-        .route(
-            "/sites/{site_id}/apply-status",
-            get(get_apply_status),
-        )
+        .route("/sites/{site_id}/apply-status", get(get_apply_status))
 }
 
 /* ── Views ─────────────────────────────────────────────────────────────── */
@@ -591,8 +585,9 @@ async fn apply_recipe(
     current.require_admin().map_err(ApiError::from)?;
     let id = parse_uuid(&id, "policy id")?;
     let policy = load_policy(&state, id).await?;
-    let rule = policy_content::render_recipe(&payload.recipe_id, &payload.params)
-        .map_err(ApiError::bad_request)?;
+    let rule =
+        policy_content::render_recipe(&payload.recipe_id, &payload.params)
+            .map_err(ApiError::bad_request)?;
 
     let existing = waf_policy_layer::Entity::find()
         .filter(waf_policy_layer::Column::PolicyId.eq(id))
@@ -717,7 +712,9 @@ async fn delete_policy(
         .all(&state.db)
         .await?;
 
-    waf_policy::Entity::delete_by_id(policy.id).exec(&state.db).await?;
+    waf_policy::Entity::delete_by_id(policy.id)
+        .exec(&state.db)
+        .await?;
     tracing::info!(policy_id = %id, name = %policy.name, "waf policy deleted");
 
     for assignment in assignments {
@@ -825,7 +822,7 @@ async fn insert_layer(
             active.config = Set(config.clone());
             active.updated_at = Set(now);
             Ok(active.update(&state.db).await?)
-        }
+        },
         None => Ok(waf_policy_layer::ActiveModel {
             id: Set(Uuid::new_v4()),
             policy_id: Set(policy_id),
@@ -971,8 +968,9 @@ async fn get_site_policy(
     let id = parse_uuid(&site_id, "site id")?;
     load_site_read(&state.db, id, &current).await?;
 
-    let assignment =
-        site_waf_policy::Entity::find_by_id(id).one(&state.db).await?;
+    let assignment = site_waf_policy::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?;
     let mut policy = None;
     if let Some(assignment) = &assignment {
         if let Some(row) = waf_policy::Entity::find_by_id(assignment.policy_id)
@@ -1033,7 +1031,7 @@ async fn set_site_policy(
                     active.policy_id = Set(policy_id);
                     active.updated_at = Set(now);
                     active.update(&state.db).await?;
-                }
+                },
                 None => {
                     site_waf_policy::ActiveModel {
                         site_id: Set(id),
@@ -1042,14 +1040,16 @@ async fn set_site_policy(
                     }
                     .insert(&state.db)
                     .await?;
-                }
+                },
             }
             tracing::info!(site_id = %id, policy_id = %policy_id, "site policy assigned");
-        }
+        },
         None => {
-            site_waf_policy::Entity::delete_by_id(id).exec(&state.db).await?;
+            site_waf_policy::Entity::delete_by_id(id)
+                .exec(&state.db)
+                .await?;
             tracing::info!(site_id = %id, "site policy cleared");
-        }
+        },
     }
 
     touch_site(&state, id).await?;
@@ -1070,7 +1070,9 @@ async fn get_site_override(
         .await?;
     Ok(Json(SiteOverrideView {
         site_id: id,
-        config: row.map(|row| row.config).unwrap_or_else(|| serde_json::json!({})),
+        config: row
+            .map(|row| row.config)
+            .unwrap_or_else(|| serde_json::json!({})),
     }))
 }
 
@@ -1104,7 +1106,7 @@ async fn put_site_override(
             active.config = Set(config.clone());
             active.updated_at = Set(now);
             active.update(&state.db).await?;
-        }
+        },
         None => {
             site_waf_policy_override::ActiveModel {
                 site_id: Set(id),
@@ -1113,7 +1115,7 @@ async fn put_site_override(
             }
             .insert(&state.db)
             .await?;
-        }
+        },
     }
 
     tracing::info!(site_id = %id, "site policy override stored");
@@ -1178,7 +1180,11 @@ async fn get_effective_config(
 
     Ok(Json(EffectiveConfigView {
         site_id: id,
-        source: if policy_ref.is_some() { "policy" } else { "site" },
+        source: if policy_ref.is_some() {
+            "policy"
+        } else {
+            "site"
+        },
         overridden: resolved.overridden(),
         override_kinds: resolved.override_kinds.clone(),
         policy: policy_ref,
@@ -1502,8 +1508,7 @@ async fn test_policy(
     // Compile custom rules: policy rules first, then the site's own. A rule
     // in monitor mode is downgraded through the engine's monitor set.
     let mut compiled = Vec::new();
-    let mut sources: BTreeMap<String, (String, &'static str)> =
-        BTreeMap::new();
+    let mut sources: BTreeMap<String, (String, &'static str)> = BTreeMap::new();
     let mut monitored: Vec<String> = Vec::new();
     let policy_tag = resolved
         .policy_id
@@ -1639,7 +1644,7 @@ async fn test_policy(
                     patches = Some(match patches {
                         Some(existing) if !existing.trim().is_empty() => {
                             format!("{existing}\n{source}")
-                        }
+                        },
                         _ => source,
                     });
                     imported_applied = true;
@@ -1672,7 +1677,8 @@ async fn test_policy(
     }))
 }
 
-async fn respond_with_detail(    state: &AppState,
+async fn respond_with_detail(
+    state: &AppState,
     policy: &waf_policy::Model,
 ) -> Result<Json<PolicyDetail>, ApiError> {
     let layers = load_layers(state, policy.id).await?;

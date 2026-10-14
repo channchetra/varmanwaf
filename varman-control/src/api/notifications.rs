@@ -58,9 +58,7 @@ pub fn routes() -> Router<AppState> {
 /// `GET /api/v1/notifications/event-types` - the event types a channel may
 /// subscribe to, straight from the server's own list so the console never
 /// offers a value the API would reject.
-async fn list_event_types(
-    _current: AuthUser,
-) -> Json<Vec<&'static str>> {
+async fn list_event_types(_current: AuthUser) -> Json<Vec<&'static str>> {
     Json(event_type::ALL.to_vec())
 }
 

@@ -135,7 +135,7 @@ pub fn parse_subscription_with_selector(
     }
     if !selector.trim().is_empty() {
         return Err(
-            "a JSON selector was given but the source is not JSON".to_string(),
+            "a JSON selector was given but the source is not JSON".to_string()
         );
     }
     let ranges = text_ranges(body);
@@ -151,7 +151,8 @@ pub fn select_ranges(json: &Value, selector: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for path in selector.split(',').map(str::trim).filter(|p| !p.is_empty()) {
         let mut nodes: Vec<&Value> = vec![json];
-        for segment in path.split('.').map(str::trim).filter(|s| !s.is_empty()) {
+        for segment in path.split('.').map(str::trim).filter(|s| !s.is_empty())
+        {
             let mut next: Vec<&Value> = Vec::new();
             for node in nodes {
                 match node {
@@ -655,10 +656,11 @@ mod tests {
         assert!(parse_subscription_with_selector(body, "services.Nope.ipv4")
             .is_err());
         // A selector on a text source is a configuration error too.
-        assert!(
-            parse_subscription_with_selector("10.0.0.0/8\n", "prefixes.ipv4")
-                .is_err()
-        );
+        assert!(parse_subscription_with_selector(
+            "10.0.0.0/8\n",
+            "prefixes.ipv4"
+        )
+        .is_err());
     }
 
     #[test]

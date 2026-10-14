@@ -127,10 +127,7 @@ pub fn routes() -> Router<AppState> {
         .route("/logs/security", get(list_security))
         .route("/logs/access", get(list_access))
         .route("/logs/purge", axum::routing::delete(purge))
-        .route(
-            "/security-events/{event_id}/why",
-            get(explain_security),
-        )
+        .route("/security-events/{event_id}/why", get(explain_security))
 }
 
 /// Resolves the site filter and the caller's visibility at once.

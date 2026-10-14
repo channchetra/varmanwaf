@@ -2417,7 +2417,8 @@ mod tests {
     }
 
     #[test]
-    fn new_format_roundtrips() {        let cached = CachedRules {
+    fn new_format_roundtrips() {
+        let cached = CachedRules {
             sites: [(
                 "site-1".to_string(),
                 Arc::new(SiteRules {

@@ -21,7 +21,7 @@ use crate::api::common::parse_uuid;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
-use crate::models::alerts::{METRIC_BLOCKED_RATIO, METRICS};
+use crate::models::alerts::{METRICS, METRIC_BLOCKED_RATIO};
 use crate::models::{
     alert_rule, alert_silence, notification_channel, severity, site,
 };
@@ -35,11 +35,11 @@ pub fn routes() -> Router<AppState> {
             get(show_rule).put(update_rule).delete(delete_rule),
         )
         .route("/alerts/rules/{id}/preview", post(preview_rule))
+        .route("/alerts/silences", get(list_silences).post(create_silence))
         .route(
-            "/alerts/silences",
-            get(list_silences).post(create_silence),
+            "/alerts/silences/{id}",
+            axum::routing::delete(delete_silence),
         )
-        .route("/alerts/silences/{id}", axum::routing::delete(delete_silence))
 }
 
 /// Event types a rule may filter on. Mirrors the vocabulary the agents
@@ -105,9 +105,7 @@ async fn validate_rule(
 ) -> Result<ValidatedRule, ApiError> {
     let name = payload.name.trim().to_string();
     if name.is_empty() || name.chars().count() > 200 {
-        return Err(ApiError::bad_request(
-            "name must be 1-200 characters",
-        ));
+        return Err(ApiError::bad_request("name must be 1-200 characters"));
     }
     if !METRICS.contains(&payload.metric.as_str()) {
         return Err(ApiError::bad_request(format!(
@@ -125,7 +123,8 @@ async fn validate_rule(
             "a blocked-ratio threshold cannot exceed 100",
         ));
     }
-    if !(alerts::MIN_WINDOW..=alerts::MAX_WINDOW).contains(&payload.window_seconds)
+    if !(alerts::MIN_WINDOW..=alerts::MAX_WINDOW)
+        .contains(&payload.window_seconds)
     {
         return Err(ApiError::bad_request(format!(
             "window_seconds must be between {} and {}",
@@ -182,7 +181,10 @@ async fn validate_rule(
     }
     if !payload.channels.is_empty() {
         let found = notification_channel::Entity::find()
-            .filter(notification_channel::Column::Id.is_in(payload.channels.clone()))
+            .filter(
+                notification_channel::Column::Id
+                    .is_in(payload.channels.clone()),
+            )
             .all(&state.db)
             .await?;
         if found.len() != payload.channels.len() {
@@ -314,7 +316,9 @@ async fn delete_rule(
         .one(&state.db)
         .await?
         .ok_or_else(|| ApiError::not_found("alert rule not found"))?;
-    alert_rule::Entity::delete_by_id(row.id).exec(&state.db).await?;
+    alert_rule::Entity::delete_by_id(row.id)
+        .exec(&state.db)
+        .await?;
     tracing::info!(rule = %row.name, actor = %current.email, "alert rule deleted");
     Ok(StatusCode::NO_CONTENT)
 }

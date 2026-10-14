@@ -854,8 +854,8 @@ async fn persist_heartbeat(
     }
     // Applied policy revision: reported every heartbeat, so a removed
     // policy clears it back to `None`.
-    active.policy_revision = Set((message.policy_revision > 0)
-        .then_some(message.policy_revision));
+    active.policy_revision =
+        Set((message.policy_revision > 0).then_some(message.policy_revision));
     // Sync timestamps come from the agent's own clock, but they only feed
     // the dashboard's "last synced" display, so a skewed clock cannot make
     // a healthy agent look offline.

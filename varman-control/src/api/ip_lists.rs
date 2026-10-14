@@ -13,9 +13,9 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::api::error::ApiError;
 use crate::api::ip_groups::{ip_group_action, subscription_kind};
 use crate::api::state::AppState;
-use crate::api::error::ApiError;
 use crate::auth::AuthUser;
 use crate::ip_lists;
 use crate::models::ip_groups;
@@ -113,13 +113,16 @@ async fn import(
     let plan = match catalog_id {
         Some(id) => {
             let variant = payload.variant.as_deref().unwrap_or("").trim();
-            if !variant.is_empty() && variant != "compact" && variant != "detailed"
+            if !variant.is_empty()
+                && variant != "compact"
+                && variant != "detailed"
             {
                 return Err(ApiError::BadRequest(
                     "variant must be 'compact' or 'detailed'".to_string(),
                 ));
             }
-            ip_lists::resolve_import(id, variant).map_err(ApiError::BadRequest)?
+            ip_lists::resolve_import(id, variant)
+                .map_err(ApiError::BadRequest)?
         },
         None => {
             let url = custom_url.expect("checked above");
@@ -176,7 +179,10 @@ async fn import(
         )));
     }
 
-    let interval = payload.sync_interval_minutes.unwrap_or(1440).clamp(0, 10080);
+    let interval = payload
+        .sync_interval_minutes
+        .unwrap_or(1440)
+        .clamp(0, 10080);
     let now = chrono::Utc::now();
     let group = ip_groups::ActiveModel {
         id: Set(Uuid::new_v4()),
