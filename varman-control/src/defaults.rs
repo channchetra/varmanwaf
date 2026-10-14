@@ -64,7 +64,7 @@ pub async fn seed_ip_group_defaults(
         subscription_kind: Set(Some("url".to_string())),
         subscription_enabled: Set(true),
         source_url: Set(Some(CLOUDFLARE_IPS_URL.to_string())),
-        source_selector: Set(None),
+        source_selector: Set(String::new()),
         sync_interval_minutes: Set(Some(1440)),
         last_synced_at: Set(None),
         last_sync_error: Set(None),

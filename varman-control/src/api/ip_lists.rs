@@ -163,21 +163,12 @@ async fn import(
         )));
     }
 
-    // Deduplicate: the same source + selector is one group.
-    let mut duplicate = ip_groups::Entity::find().filter(
-        ip_groups::Column::SourceUrl.eq(plan.source_url.clone()),
-    );
-    duplicate = if plan.selector.is_empty() {
-        duplicate.filter(
-            sea_orm::Condition::any()
-                .add(ip_groups::Column::SourceSelector.is_null())
-                .add(ip_groups::Column::SourceSelector.eq("")),
-        )
-    } else {
-        duplicate.filter(
-            ip_groups::Column::SourceSelector.eq(plan.selector.clone()),
-        )
-    };
+    // Deduplicate: the same source + selector is one group. The selector
+    // column is NOT NULL with `''` for "auto-detect", so the comparison is a
+    // plain string match.
+    let duplicate = ip_groups::Entity::find()
+        .filter(ip_groups::Column::SourceUrl.eq(plan.source_url.clone()))
+        .filter(ip_groups::Column::SourceSelector.eq(plan.selector.clone()));
     if let Some(existing) = duplicate.one(&state.db).await? {
         return Err(ApiError::Conflict(format!(
             "this source is already imported as '{}' ({})",
@@ -205,11 +196,7 @@ async fn import(
         subscription_kind: Set(Some(subscription_kind::URL.to_string())),
         subscription_enabled: Set(true),
         source_url: Set(Some(plan.source_url.clone())),
-        source_selector: Set(if plan.selector.is_empty() {
-            None
-        } else {
-            Some(plan.selector.clone())
-        }),
+        source_selector: Set(plan.selector.clone()),
         sync_interval_minutes: Set(Some(interval)),
         last_synced_at: Set(None),
         last_sync_error: Set(None),

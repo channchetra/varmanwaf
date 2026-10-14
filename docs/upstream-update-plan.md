@@ -66,7 +66,7 @@ Rules:
 | 1 | Foundation crates: `pingap-acme`, `pingap-config`, `pingap-core`, `pingap-proxy`, `pingap-upstream` | **Landed** (v0.22.0) |
 | 2a | Protocol + agent model: proto fields, `varman-agent` cache/client/config, run-mode boxing | **Landed** (v0.22.1) |
 | 2b | Control plane (110 files) + `src` start-up | **Landed** (v0.22.2 / v0.23.0) |
-| 3a | Verified bots: `bot_dns.rs` (DNS reverse+forward confirmation), verified-bot IP ranges honoured by the plugin, Bot Protection UI | **Landed** (v0.35.0) |
+| 3a | Verified bots: `bot_dns.rs` (DNS reverse+forward confirmation), verified-bot IP ranges honoured by the plugin, Bot Protection UI | **Landed** (v0.35.1; v0.35.0 failed its E2E on a manual IP-group insert bug and was superseded) |
 | 3b | WAF plugin body staging: staged request bodies with limits, upstream hook model around our pipeline | Next |
 | 3c | Challenge + error pages: `challenge.rs`, `varman-challenge` cookie/JS deltas, `error_page.rs` | Planned |
 | 4 | Dashboard: `web` (82 files) — merge upstream pages/features into the rebranded dashboard, keep the Varman pages | Planned |
@@ -109,7 +109,7 @@ signature.
    then publish.
 5. Record the batch in this document and in the release notes.
 
-## Batch 3a detail (landed, v0.35.0)
+## Batch 3a detail (landed, v0.35.1)
 
 - `pingap-plugin/src/bot_dns.rs` (new, upstream): reverse + forward DNS
   confirmation of known crawler user agents, verdict cache keyed by

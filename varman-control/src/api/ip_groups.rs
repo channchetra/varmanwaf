@@ -307,7 +307,8 @@ async fn create(
         crate::subscription::validate_source_url(url)
             .map_err(ApiError::BadRequest)?;
     }
-    let source_selector = validate_selector(&payload.source_selector)?;
+    let source_selector =
+        validate_selector(&payload.source_selector)?.unwrap_or_default();
 
     let timestamp = chrono::Utc::now();
     // Groups created through the API are manual or URL subscriptions; the
@@ -416,7 +417,8 @@ async fn update(
         active.source_url = Set(stored);
     }
     if payload.source_selector.is_some() {
-        active.source_selector = Set(validate_selector(&payload.source_selector)?);
+        active.source_selector =
+            Set(validate_selector(&payload.source_selector)?.unwrap_or_default());
     }
     if let Some(interval) = payload.sync_interval_minutes {
         active.sync_interval_minutes = Set(normalise_interval(Some(interval)));
@@ -731,7 +733,7 @@ pub(crate) async fn sync_subscription(
             crate::subscription::fetch_subscription_ranges_with_selector(
                 &client,
                 &source_url,
-                group.source_selector.as_deref().unwrap_or(""),
+                group.source_selector.as_str(),
             )
             .await
         },
@@ -926,7 +928,7 @@ pub async fn seed_builtin_groups(
             )),
             subscription_enabled: Set(true),
             source_url: Set(None),
-            source_selector: Set(None),
+            source_selector: Set(String::new()),
             sync_interval_minutes: Set(Some(1440)),
             last_synced_at: Set(Some(now)),
             last_sync_error: Set(None),
@@ -944,4 +946,29 @@ pub async fn seed_builtin_groups(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selector_normalisation_rejects_bad_input() {
+        // Absent, empty and whitespace-only selectors all collapse to "auto".
+        assert_eq!(validate_selector(&None).unwrap(), None);
+        assert_eq!(validate_selector(&Some(String::new())).unwrap(), None);
+        assert_eq!(validate_selector(&Some("   ".to_string())).unwrap(), None);
+        assert_eq!(
+            validate_selector(&Some("  prefixes.ipv4  ".to_string())).unwrap(),
+            Some("prefixes.ipv4".to_string())
+        );
+        assert!(validate_selector(&Some("a".repeat(501))).is_err());
+        assert!(validate_selector(&Some("a\nb".to_string())).is_err());
+    }
+
+    #[test]
+    fn invalid_ranges_are_rejected_before_storage() {
+        assert!(validate_ip_ranges(&["10.0.0.0/8".to_string()]).is_ok());
+        assert!(validate_ip_ranges(&["not-an-ip".to_string()]).is_err());
+    }
 }
