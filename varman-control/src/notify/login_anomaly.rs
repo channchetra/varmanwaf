@@ -249,6 +249,14 @@ pub fn resolve_client_ip(
     peer
 }
 
+/// The `ip` column value for one login: the resolved address, or `unknown`.
+/// The history row is written either way — a login must never vanish from
+/// the audit trail just because no address could be resolved.
+fn stored_ip(ip: Option<IpAddr>) -> String {
+    ip.map(|ip| ip.to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 /// Looks up the geolocation of one address: the uploaded mmdb first (when
 /// enabled), then the online API. Private addresses are never looked up;
 /// failures return the `unknown` source with NULL geo fields.
@@ -375,7 +383,9 @@ pub fn capture_login(
 
 /// Records one login, looks up its geo and — when `judge` is set — compares
 /// the country against the account's recent baseline, emitting an alert on
-/// a mismatch. Runs detached; a failure only costs the history row.
+/// a mismatch. Runs detached. The history row is written even when no client
+/// IP can be resolved (stored as `unknown`, without geo or judging); a write
+/// failure only costs that row.
 #[allow(clippy::too_many_arguments)]
 pub async fn record_login(
     db: &DatabaseConnection,
@@ -386,10 +396,15 @@ pub async fn record_login(
     judge: bool,
 ) {
     let settings = LoginSecuritySettings::load(db).await;
-    let Some(ip) = resolve_client_ip(headers, peer, &settings) else {
-        tracing::debug!(%email, "login recorded without an IP");
-        return;
-    };
+    // A missing address must not cost the audit row; the marker makes the
+    // gap visible in the list instead of pretending an address was seen.
+    let ip = resolve_client_ip(headers, peer, &settings);
+    if ip.is_none() {
+        tracing::info!(
+            %email,
+            "login recorded without a resolvable client IP"
+        );
+    }
     let user_agent = headers
         .get(reqwest::header::USER_AGENT)
         .and_then(|value| value.to_str().ok())
@@ -404,12 +419,18 @@ pub async fn record_login(
             recent_countries(db, user_id, settings.baseline_count).await;
     }
 
-    let geo = lookup_geo(ip, &settings).await;
+    let geo = match ip {
+        Some(ip) => lookup_geo(ip, &settings).await,
+        None => GeoInfo {
+            source: crate::models::geo_source::UNKNOWN,
+            ..GeoInfo::default()
+        },
+    };
     let row = login_history::ActiveModel {
         id: Set(Uuid::new_v4()),
         user_id: Set(user_id),
         email: Set(email.to_string()),
-        ip: Set(ip.to_string()),
+        ip: Set(stored_ip(ip)),
         user_agent: Set(user_agent),
         country_code: Set(geo.country_code.clone()),
         region: Set(geo.region),
@@ -425,7 +446,7 @@ pub async fn record_login(
     if !judge || !settings.anomaly_enabled {
         return;
     }
-    let Some(country) = geo.country_code else {
+    let (Some(ip), Some(country)) = (ip, geo.country_code) else {
         return;
     };
     if !is_anomalous(&baseline_countries, &country, settings.baseline_count) {
@@ -530,6 +551,12 @@ mod tests {
         let peer = Some(ip("203.0.113.9"));
         assert_eq!(resolve_client_ip(&headers, peer, &settings), peer);
         assert_eq!(resolve_client_ip(&headers, None, &settings), None);
+    }
+
+    #[test]
+    fn a_missing_address_is_stored_as_unknown() {
+        assert_eq!(stored_ip(None), "unknown");
+        assert_eq!(stored_ip(Some(ip("203.0.113.9"))), "203.0.113.9");
     }
 
     #[test]

@@ -15,10 +15,12 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use axum::extract::connect_info::ConnectInfo;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post};
+use axum::Extension;
 use axum::Json;
 use axum::Router;
 use chrono::{DateTime, Utc};
@@ -387,7 +389,7 @@ async fn login_begin(
 /// `POST /api/v1/auth/passkey/login/finish`
 async fn login_finish(
     State(state): State<AppState>,
-    connect_info: Option<axum::Extension<crate::tls::ConnInfo>>,
+    connect_info: Option<Extension<ConnectInfo<crate::tls::ConnInfo>>>,
     headers: HeaderMap,
     Json(response): Json<LoginResponse>,
 ) -> Result<Response, ApiError> {
@@ -423,7 +425,7 @@ async fn login_finish(
             login_user_id,
             &login_email,
             &headers,
-            connect_info.map(|info| info.0.peer_addr.ip()),
+            connect_info.map(|Extension(info)| info.0.peer_addr.ip()),
             false,
         )
         .await;

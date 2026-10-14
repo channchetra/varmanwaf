@@ -146,6 +146,9 @@ async fn create(
         &payload.password,
         payload.name.clone(),
         assigned_role,
+        // The administrator typed this password: it is temporary, and the
+        // console forces a replacement at first sign-in.
+        true,
     )
     .await?;
 

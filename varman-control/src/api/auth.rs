@@ -1,10 +1,12 @@
 //! Authentication endpoints: login, registration, token refresh and the
 //! self-service profile routes the dashboard calls right after booting.
 
+use axum::extract::connect_info::ConnectInfo;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
+use axum::Extension;
 use axum::Json;
 use axum::Router;
 use chrono::{DateTime, Utc};
@@ -160,7 +162,7 @@ async fn status(
 /// `POST /api/v1/auth/login`
 async fn login(
     State(state): State<AppState>,
-    connect_info: Option<axum::Extension<crate::tls::ConnInfo>>,
+    connect_info: Option<Extension<ConnectInfo<crate::tls::ConnInfo>>>,
     headers: axum::http::HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
@@ -207,7 +209,7 @@ async fn login(
             user_id,
             &login_email,
             &headers,
-            connect_info.map(|info| info.0.peer_addr.ip()),
+            connect_info.map(|Extension(info)| info.0.peer_addr.ip()),
             true,
         )
         .await;
@@ -275,8 +277,16 @@ async fn register(
                     role::VIEWER
                 };
 
-                create_user(txn, &txn_email, &password, name, assigned_role)
-                    .await
+                create_user(
+                    txn,
+                    &txn_email,
+                    &password,
+                    name,
+                    assigned_role,
+                    // The account holder chose this password.
+                    false,
+                )
+                .await
             })
         })
         .await
@@ -499,6 +509,10 @@ pub(crate) fn normalise_email(raw: &str) -> Result<String, ApiError> {
 
 /// Inserts a new user row with a freshly hashed password.
 ///
+/// `must_change_password` marks the password as temporary: administrator-created
+/// accounts start with it set, so the console forces a replacement at first
+/// sign-in.
+///
 /// Accepts any connection so the registration transaction can run it on its
 /// own transaction handle.
 pub async fn create_user(
@@ -507,6 +521,7 @@ pub async fn create_user(
     password: &str,
     name: Option<String>,
     assigned_role: &str,
+    must_change_password: bool,
 ) -> Result<user::Model, ApiError> {
     if !role::is_valid(assigned_role) {
         return Err(ApiError::Internal(format!(
@@ -523,7 +538,7 @@ pub async fn create_user(
         name: Set(name),
         role: Set(assigned_role.to_string()),
         disabled: Set(false),
-        must_change_password: Set(false),
+        must_change_password: Set(must_change_password),
         token_version: Set(0),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
