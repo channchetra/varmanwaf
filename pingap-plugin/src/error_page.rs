@@ -81,7 +81,7 @@ fn invalid(message: impl Into<String>) -> Error {
 /// Shared CSS for the built-in pages. Registered as a partial so the individual
 /// pages stay small and consistent. Supports light/dark via
 /// `prefers-color-scheme` and uses the VarmanWAF orange accent.
-const PW_STYLE: &str = r##"<style>
+pub(crate) const PW_STYLE: &str = r##"<style>
 :root{
   --bg:#f6f7f9;--card:#ffffff;--fg:#141417;--muted:#6b6b73;--border:#e7e7ea;
   --accent:#f6821f;--code-bg:#fafafb;--shadow:0 24px 60px rgba(20,20,25,.10);

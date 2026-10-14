@@ -4752,7 +4752,9 @@ advanced_mode = true
             .as_deref()
             .map(String::from_utf8_lossy)
             .unwrap_or_default();
-        assert!(body.contains("403 Forbidden"), "body: {body}");
+        // The branded block page names the product and the verdict.
+        assert!(body.contains("Request Blocked"), "body: {body}");
+        assert!(body.contains("Protected by <b>VarmanWAF</b>"), "body: {body}");
         assert_eq!(entry.response_body_size, body.len() as u64);
         assert!(!entry.response_body_truncated);
     }

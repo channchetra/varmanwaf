@@ -215,11 +215,22 @@ impl CookieManager {
         self.cookie_name = name.to_string();
     }
 
-    /// Generate cookie attributes string (HttpOnly, Secure, SameSite, Path, Max-Age)
-    pub fn cookie_attributes(&self, payload: &ClearancePayload) -> String {
+    /// Generate cookie attributes string (HttpOnly, Secure, SameSite, Path, Max-Age).
+    ///
+    /// `Secure` is only attached for TLS origins: browsers reject storing a
+    /// `Secure` cookie on a plain HTTP page, which would make the challenge
+    /// unsolvable there.
+    pub fn cookie_attributes(
+        &self,
+        payload: &ClearancePayload,
+        secure: bool,
+    ) -> String {
         let max_age = payload.expires_at - Utc::now().timestamp();
         let max_age = if max_age < 0 { 0 } else { max_age };
-        format!("Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={max_age}")
+        let secure_attr = if secure { " Secure;" } else { "" };
+        format!(
+            "Path=/; HttpOnly;{secure_attr} SameSite=Lax; Max-Age={max_age}"
+        )
     }
 
     /// Encode a payload into the signed cookie format
@@ -328,12 +339,19 @@ mod tests {
             "site-1",
             "fp-hash",
         );
-        let attrs = manager.cookie_attributes(&payload);
+        let attrs = manager.cookie_attributes(&payload, true);
         assert!(attrs.contains("HttpOnly"));
         assert!(attrs.contains("Secure"));
         assert!(attrs.contains("SameSite=Lax"));
         assert!(attrs.contains("Path=/"));
         assert!(attrs.contains("Max-Age="));
+
+        // Without TLS the Secure attribute must be omitted: browsers refuse
+        // to store a Secure cookie on a plain HTTP page.
+        let insecure = manager.cookie_attributes(&payload, false);
+        assert!(insecure.contains("HttpOnly"));
+        assert!(!insecure.contains("Secure"));
+        assert!(insecure.contains("SameSite=Lax"));
     }
 
     #[test]

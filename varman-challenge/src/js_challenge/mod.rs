@@ -211,9 +211,13 @@ impl ChallengeEngine {
     }
 
     /// Verify a challenge solution submission
+    /// Verify a challenge solution submission. `secure` reflects whether the
+    /// request arrived over TLS and controls the clearance cookie's `Secure`
+    /// attribute (browsers reject `Secure` cookies on plain HTTP).
     pub fn verify_solution(
         &self,
         submission: &ChallengeSubmission,
+        secure: bool,
     ) -> VerifyResult {
         // 1. Verify timestamp (prevent replay)
         if !verify_timestamp(
@@ -283,7 +287,8 @@ impl ChallengeEngine {
                 &submission.site_id,
                 &fp_hash,
             );
-        let cookie_attributes = self.cookie_manager.cookie_attributes(&payload);
+        let cookie_attributes =
+            self.cookie_manager.cookie_attributes(&payload, secure);
 
         tracing::info!(
             request_id = %submission.request_id,
@@ -628,13 +633,27 @@ mod tests {
             site_id: "test-site".to_string(),
         };
 
-        match engine.verify_solution(&submission) {
+        match engine.verify_solution(&submission, true) {
             VerifyResult::Success {
                 cookie_value,
                 cookie_attributes,
             } => {
                 assert!(!cookie_value.is_empty());
                 assert!(cookie_attributes.contains("HttpOnly"));
+                assert!(cookie_attributes.contains("Secure"));
+            },
+            VerifyResult::Failed { reason } => {
+                panic!("Expected success but got failure: {reason}");
+            },
+        }
+
+        // A plain HTTP origin gets a storable cookie: no Secure attribute.
+        match engine.verify_solution(&submission, false) {
+            VerifyResult::Success {
+                cookie_attributes, ..
+            } => {
+                assert!(cookie_attributes.contains("HttpOnly"));
+                assert!(!cookie_attributes.contains("Secure"));
             },
             VerifyResult::Failed { reason } => {
                 panic!("Expected success but got failure: {reason}");
@@ -654,7 +673,7 @@ mod tests {
             site_id: "test-site".to_string(),
         };
 
-        match engine.verify_solution(&submission) {
+        match engine.verify_solution(&submission, true) {
             VerifyResult::Failed { reason } => {
                 assert!(reason.contains("expired"));
             },

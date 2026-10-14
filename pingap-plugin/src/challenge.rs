@@ -177,19 +177,169 @@ pub(crate) fn build_challenge_response(
     HttpResponse::builder(StatusCode::SERVICE_UNAVAILABLE)
         .body(body)
         .header(HTTP_HEADER_CONTENT_HTML.clone())
+        .header(edge_server_header())
+        .header(mitigated_header(Mitigation::Challenge))
         .no_store()
         .finish()
 }
 
-/// A simple 403 HTML block page.
-pub(crate) fn block_page(request_id: &str, reason: &str) -> HttpResponse {
-    let body = format!(
-        "<html><body><h1>403 Forbidden</h1><p>Request blocked by VarmanWAF.</p>\
-<p>Reason: {reason}</p><p>Event ID: {request_id}</p></body></html>"
+// ─────────────────────────────────────────────────────────────
+// Branded short-circuit pages
+// ─────────────────────────────────────────────────────────────
+
+/// The `Server` header every edge-generated response carries: visitors (and
+/// site owners) can tell at a glance the response came through VarmanWAF.
+pub(crate) fn edge_server_header() -> (header::HeaderName, HeaderValue) {
+    (header::SERVER, HeaderValue::from_static("varmanwaf"))
+}
+
+/// What kind of edge action produced the response, mirroring Cloudflare's
+/// `cf-mitigated`: a visitor (or the site owner debugging a report) sees from
+/// the header alone whether security intervened.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Mitigation {
+    /// A WAF verdict, rate limit or defense-mode IP block.
+    Block,
+    /// A challenge was issued and must be solved.
+    Challenge,
+}
+
+impl Mitigation {
+    fn value(self) -> &'static str {
+        match self {
+            Mitigation::Block => "block",
+            Mitigation::Challenge => "challenge",
+        }
+    }
+}
+
+fn mitigated_header(
+    mitigation: Mitigation,
+) -> (header::HeaderName, HeaderValue) {
+    (
+        header::HeaderName::from_static("x-varmanwaf-mitigated"),
+        HeaderValue::from_static(mitigation.value()),
+    )
+}
+
+/// Minimal HTML escaping for values embedded in brand pages. Reasons come
+/// from rule descriptions today, but any future user-influenced text keeps
+/// the page inert this way.
+fn escape_html(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Wraps short-circuit page content in the shared VarmanWAF page style (the
+/// same `PW_STYLE` partial the error-page plugin uses), so every
+/// edge-generated response looks like the product that issued it.
+///
+/// `details` rows are pre-built `<div class="row">…</div>` markup - callers
+/// escape their values via [`escape_html`].
+fn brand_page(
+    title: &str,
+    icon: &str,
+    code_label: &str,
+    heading: &str,
+    message_html: &str,
+    details: &str,
+) -> String {
+    format!(
+        r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} · VarmanWAF</title>
+{pw_style}
+</head>
+<body>
+<div class="card">
+  <div class="icon"><svg viewBox="0 0 24 24">{icon}</svg></div>
+  <div class="code">{code_label}</div>
+  <h1>{heading}</h1>
+  <p class="msg">{message_html}</p>
+  <div class="details">{details}</div>
+  <p class="brand">Protected by <b>VarmanWAF</b></p>
+</div>
+</body>
+</html>"##,
+        title = escape_html(title),
+        icon = icon,
+        code_label = escape_html(code_label),
+        heading = escape_html(heading),
+        message_html = message_html,
+        details = details,
+        pw_style = super::error_page::PW_STYLE,
+    )
+}
+
+/// One label/value pair for a brand page's details block.
+fn detail_row(label: &str, value: &str) -> String {
+    format!(
+        r#"<div class="row"><span class="k">{label}</span><span class="v">{}</span></div>"#,
+        escape_html(value)
+    )
+}
+
+/// Redirect target guard: only same-origin paths survive. An absolute URL,
+/// a protocol-relative `//host` or anything with a scheme is rejected (the
+/// original URL arrives from the request line, so a redirect built from it
+/// must never leave the site).
+fn safe_redirect_target(url: &str) -> &str {
+    let trimmed = url.trim();
+    if !trimmed.starts_with('/') || trimmed.starts_with("//") {
+        return "/";
+    }
+    if trimmed.contains("\\") {
+        // Browsers treat backslashes as separators; refuse the ambiguity.
+        return "/";
+    }
+    trimmed
+}
+
+/// The shared block-page body: makes unmistakably clear that *VarmanWAF
+/// Security* issued the block.
+fn block_body(request_id: &str, reason: &str) -> String {
+    let details = format!(
+        "{}{}{}",
+        detail_row("Request ID", request_id),
+        detail_row("Reason", reason),
+        detail_row(
+            "Time",
+            &chrono::Utc::now()
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        ),
     );
+    brand_page(
+        "Request Blocked",
+        r#"<path d="M12 3l7 3v5.5c0 4.4-2.9 7.6-7 9-4.1-1.4-7-4.6-7-9V6z"/><path d="M9.6 9.6l4.8 4.8M14.4 9.6l-4.8 4.8"/>"#,
+        "Error 403",
+        "Request Blocked",
+        "Your request was blocked by <b>VarmanWAF Security</b> before it \
+reached the website. If you believe this is a mistake, contact the site \
+administrator with the Request ID below.",
+        &details,
+    )
+}
+
+/// A 403 HTML block page.
+pub(crate) fn block_page(request_id: &str, reason: &str) -> HttpResponse {
     HttpResponse::builder(StatusCode::FORBIDDEN)
-        .body(body)
+        .body(block_body(request_id, reason))
         .header(HTTP_HEADER_CONTENT_HTML.clone())
+        .header(edge_server_header())
+        .header(mitigated_header(Mitigation::Block))
         .no_store()
         .finish()
 }
@@ -202,10 +352,19 @@ pub(crate) fn basic_auth_page(
     reason: &str,
 ) -> HttpResponse {
     let challenge = format!(r#"Basic realm="{realm}""#);
-    let body = format!(
-        "<html><body><h1>401 Unauthorized</h1>\
-<p>This resource requires basic authentication.</p>\
-<p>Reason: {reason}</p><p>Event ID: {request_id}</p></body></html>"
+    let details = format!(
+        "{}{}",
+        detail_row("Request ID", request_id),
+        detail_row("Reason", reason),
+    );
+    let body = brand_page(
+        "Authentication Required",
+        r#"<path d="M7 10V8a5 5 0 0 1 10 0v2"/><rect x="5" y="10" width="14" height="10" rx="2"/>"#,
+        "Error 401",
+        "Authentication Required",
+        "This resource requires <b>HTTP basic authentication</b>. Enter \
+your credentials to continue.",
+        &details,
     );
     HttpResponse::builder(StatusCode::UNAUTHORIZED)
         .body(body)
@@ -216,6 +375,8 @@ pub(crate) fn basic_auth_page(
                 HeaderValue::from_static("Basic realm=\"Restricted\""),
             ),
         ))
+        .header(edge_server_header())
+        .header(mitigated_header(Mitigation::Block))
         .no_store()
         .finish()
 }
@@ -225,10 +386,15 @@ pub(crate) fn basic_auth_page(
 /// log pipeline live, so the dashboard still shows the traffic.
 pub(crate) fn paused_page(request_id: &str) -> HttpResponse {
     const RETRY_AFTER_SECS: &str = "3600";
-    let body = format!(
-        "<html><body><h1>503 Service Unavailable</h1>\
-<p>This site is temporarily paused.</p>\
-<p>Event ID: {request_id}</p></body></html>"
+    let details = detail_row("Request ID", request_id);
+    let body = brand_page(
+        "Site Paused",
+        r#"<path d="M9 6v12M15 6v12"/>"#,
+        "Error 503",
+        "This site is temporarily paused",
+        "The site owner paused this site. It will be back shortly - \
+thanks for your patience.",
+        &details,
     );
     HttpResponse::builder(StatusCode::SERVICE_UNAVAILABLE)
         .body(body)
@@ -237,6 +403,7 @@ pub(crate) fn paused_page(request_id: &str) -> HttpResponse {
             header::RETRY_AFTER,
             HeaderValue::from_static(RETRY_AFTER_SECS),
         ))
+        .header(edge_server_header())
         .no_store()
         .finish()
 }
@@ -248,18 +415,33 @@ pub(crate) fn rate_limit_page(
     reason: &str,
     retry_after_secs: u64,
 ) -> HttpResponse {
-    let retry_hint = if retry_after_secs > 0 {
-        format!("<p>Please try again in about {retry_after_secs} seconds.</p>")
+    let message = if retry_after_secs > 0 {
+        format!(
+            "This request exceeded a rate limit. Please try again in about \
+             <b>{retry_after_secs} seconds</b>."
+        )
     } else {
-        String::new()
+        "This request exceeded a rate limit. Please try again later."
+            .to_string()
     };
-    let body = format!(
-        "<html><body><h1>429 Too Many Requests</h1><p>Rate limit exceeded.</p>\
-<p>Reason: {reason}</p>{retry_hint}<p>Event ID: {request_id}</p></body></html>"
+    let details = format!(
+        "{}{}",
+        detail_row("Request ID", request_id),
+        detail_row("Reason", reason),
+    );
+    let body = brand_page(
+        "Too Many Requests",
+        r#"<circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/>"#,
+        "Error 429",
+        "Too Many Requests",
+        &message,
+        &details,
     );
     let mut response = HttpResponse::builder(StatusCode::TOO_MANY_REQUESTS)
         .body(body)
         .header(HTTP_HEADER_CONTENT_HTML.clone())
+        .header(edge_server_header())
+        .header(mitigated_header(Mitigation::Block))
         .no_store();
     if retry_after_secs > 0 {
         response = response.header((
@@ -525,7 +707,12 @@ impl ChallengePlugin {
             site_id: pending.site_id,
         };
 
-        let result = self.engine.verify_solution(&submission);
+        // The clearance cookie's `Secure` attribute depends on how the
+        // verify request arrived: browsers refuse to store Secure cookies
+        // on a plain HTTP page, so an HTTP site must get a storable cookie.
+        let secure =
+            session.digest().is_some_and(|d| d.ssl_digest.is_some());
+        let result = self.engine.verify_solution(&submission, secure);
 
         match result {
             VerifyResult::Success {
@@ -536,13 +723,20 @@ impl ChallengePlugin {
                     "{}={}; {}",
                     self.cookie_name, cookie_value, cookie_attributes
                 );
+                // Only same-origin paths redirect, and the value is escaped
+                // into the JS string: the original URL comes from the
+                // request line, so it must never be trusted verbatim.
+                let target =
+                    escape_html(safe_redirect_target(&pending.original_url));
                 let mut builder =
                     HttpResponse::builder(StatusCode::OK).body(format!(
-                        "<html><body><script>window.location.href = \"{}\";\
-</script></body></html>",
-                        pending.original_url
+                        "<html><body><script>window.location.href = \
+                         \"{target}\";</script></body></html>"
                     ));
-                builder = builder.header(HTTP_HEADER_CONTENT_HTML.clone());
+                builder = builder
+                    .header(HTTP_HEADER_CONTENT_HTML.clone())
+                    .header(edge_server_header())
+                    .header(mitigated_header(Mitigation::Challenge));
                 if let Ok(hv) = HeaderValue::from_str(&set_cookie) {
                     builder = builder.header((header::SET_COOKIE, hv));
                 }
@@ -1055,5 +1249,87 @@ cookie_secret = "test-secret"
             panic!("expected the verify endpoint to answer");
         };
         assert_eq!(StatusCode::FORBIDDEN, resp.status);
+    }
+
+    fn header_value(resp: &HttpResponse, name: &str) -> Option<String> {
+        resp.headers.as_ref().and_then(|headers| {
+            headers
+                .iter()
+                .find(|(key, _)| key.as_str().eq_ignore_ascii_case(name))
+                .and_then(|(_, value)| value.to_str().ok())
+                .map(str::to_string)
+        })
+    }
+
+    #[test]
+    fn block_page_is_branded_and_stamped() {
+        let resp = block_page("req-1", "WAF rule matched");
+        assert_eq!(StatusCode::FORBIDDEN, resp.status);
+        let body = String::from_utf8_lossy(&resp.body);
+        assert!(body.contains("Protected by <b>VarmanWAF</b>"));
+        assert!(body.contains("VarmanWAF Security"));
+        assert!(body.contains("--accent:#f6821f"), "brand accent missing");
+        assert!(body.contains("req-1"));
+        assert_eq!(
+            header_value(&resp, "server").as_deref(),
+            Some("varmanwaf")
+        );
+        assert_eq!(
+            header_value(&resp, "x-varmanwaf-mitigated").as_deref(),
+            Some("block")
+        );
+    }
+
+    #[test]
+    fn block_page_escapes_reason_html() {
+        let resp = block_page("req-2", "<script>alert(1)</script>");
+        let body = String::from_utf8_lossy(&resp.body);
+        assert!(!body.contains("<script>alert(1)</script>"));
+        assert!(body.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    }
+
+    #[test]
+    fn status_pages_are_branded_edge_responses() {
+        let paused = paused_page("req-3");
+        assert_eq!(StatusCode::SERVICE_UNAVAILABLE, paused.status);
+        assert_eq!(
+            header_value(&paused, "server").as_deref(),
+            Some("varmanwaf")
+        );
+        assert!(
+            String::from_utf8_lossy(&paused.body).contains("Protected by")
+        );
+
+        let limited = rate_limit_page("req-4", "20 req/min", 60);
+        assert_eq!(StatusCode::TOO_MANY_REQUESTS, limited.status);
+        assert_eq!(
+            header_value(&limited, "retry-after").as_deref(),
+            Some("60")
+        );
+        assert_eq!(
+            header_value(&limited, "x-varmanwaf-mitigated").as_deref(),
+            Some("block")
+        );
+
+        let auth = basic_auth_page("req-5", "Staging", "site-wide basic auth");
+        assert_eq!(StatusCode::UNAUTHORIZED, auth.status);
+        assert!(
+            header_value(&auth, "www-authenticate")
+                .unwrap_or_default()
+                .contains("Staging")
+        );
+    }
+
+    #[test]
+    fn safe_redirect_target_keeps_same_origin_paths_only() {
+        assert_eq!(safe_redirect_target("/admin?q=1"), "/admin?q=1");
+        assert_eq!(safe_redirect_target("  /a/b  "), "/a/b");
+        // Absolute, protocol-relative and scheme-bearing targets fall back
+        // to the site root instead of bouncing the browser elsewhere.
+        assert_eq!(safe_redirect_target("https://evil.example/x"), "/");
+        assert_eq!(safe_redirect_target("//evil.example/x"), "/");
+        assert_eq!(safe_redirect_target("javascript:alert(1)"), "/");
+        assert_eq!(safe_redirect_target("/a\\b"), "/");
+        assert_eq!(safe_redirect_target(""), "/");
     }
 }
