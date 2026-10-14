@@ -547,6 +547,9 @@ async fn deliver_to(
         crate::models::channel_kind::WEBHOOK => {
             webhook::send_generic(http, &channel.config, event).await
         },
+        crate::models::channel_kind::TELEGRAM => {
+            webhook::send_telegram(http, &channel.config, event).await
+        },
         other => Err(format!("unknown channel kind '{other}'")),
     }
 }

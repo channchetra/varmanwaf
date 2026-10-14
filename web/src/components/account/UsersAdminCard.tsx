@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Check,
+  Key,
   PencilSimple,
   Plus,
   Prohibit,
@@ -61,6 +62,8 @@ export function UsersAdminCard() {
   const [editEmail, setEditEmail] = useState('')
   const [editRole, setEditRole] = useState<string>('viewer')
   const [pendingDisable, setPendingDisable] = useState<User | null>(null)
+  const [resetting, setResetting] = useState<User | null>(null)
+  const [resetPassword, setResetPassword] = useState('')
 
   const usersQuery = useQuery({
     queryKey: usersKeys.list(),
@@ -94,6 +97,17 @@ export function UsersAdminCard() {
       // session profile.
       if (updated.id === me?.id) setUser(updated)
       toast.success(t('pages.account.users.updated'))
+    },
+  })
+
+  const reset = useMutation({
+    mutationFn: ({ id, password }: { id: string; password: string }) =>
+      usersApi.resetPassword(id, password),
+    onSuccess: () => {
+      setResetting(null)
+      setResetPassword('')
+      void queryClient.invalidateQueries({ queryKey: usersKeys.all })
+      toast.success(t('pages.account.users.passwordReset'))
     },
   })
 
@@ -204,29 +218,43 @@ export function UsersAdminCard() {
               onClick={() => openEdit(u)}
               icon={<PencilSimple weight="duotone" className="h-4 w-4" />}
             />
-            {u.id !== me?.id &&
-              (u.disabled ? (
+            {u.id !== me?.id && (
+              <>
                 <Button
                   size="icon"
                   variant="ghost"
-                  aria-label={t('pages.account.users.enable')}
-                  disabled={update.isPending}
-                  onClick={() =>
-                    update.mutate({ id: u.id, data: { disabled: false } })
-                  }
-                  icon={<Check weight="duotone" className="h-4 w-4" />}
+                  aria-label={t('pages.account.users.resetPassword')}
+                  disabled={reset.isPending}
+                  onClick={() => {
+                    setResetPassword('')
+                    setResetting(u)
+                  }}
+                  icon={<Key weight="duotone" className="h-4 w-4" />}
                 />
-              ) : (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="hover:text-fg-danger"
-                  aria-label={t('pages.account.users.disable')}
-                  disabled={update.isPending}
-                  onClick={() => setPendingDisable(u)}
-                  icon={<Prohibit weight="duotone" className="h-4 w-4" />}
-                />
-              ))}
+                {u.disabled ? (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={t('pages.account.users.enable')}
+                    disabled={update.isPending}
+                    onClick={() =>
+                      update.mutate({ id: u.id, data: { disabled: false } })
+                    }
+                    icon={<Check weight="duotone" className="h-4 w-4" />}
+                  />
+                ) : (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="hover:text-fg-danger"
+                    aria-label={t('pages.account.users.disable')}
+                    disabled={update.isPending}
+                    onClick={() => setPendingDisable(u)}
+                    icon={<Prohibit weight="duotone" className="h-4 w-4" />}
+                  />
+                )}
+              </>
+            )}
           </div>
         ),
       },
@@ -410,6 +438,56 @@ export function UsersAdminCard() {
             />
           </div>
         )}
+      </Dialog>
+
+      {/* Reset password: an administrator-set temporary password */}
+      <Dialog
+        open={resetting !== null}
+        onClose={reset.isPending ? () => undefined : () => setResetting(null)}
+        title={t('pages.account.users.resetPassword')}
+        description={resetting?.email}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setResetting(null)}
+              disabled={reset.isPending}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              loading={reset.isPending}
+              disabled={
+                resetting === null || resetPassword.length < MIN_PASSWORD
+              }
+              onClick={() => {
+                if (!resetting) return
+                reset.mutate({
+                  id: resetting.id,
+                  password: resetPassword,
+                })
+              }}
+            >
+              {t('pages.account.users.resetPasswordConfirm')}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <Input
+            type="password"
+            label={t('pages.account.users.password')}
+            value={resetPassword}
+            autoComplete="new-password"
+            hint={t('auth.passwordHint', { min: MIN_PASSWORD })}
+            onChange={(e) => setResetPassword(e.target.value)}
+            required
+          />
+          <p className="text-xs text-fg-subtle">
+            {t('pages.account.users.resetPasswordHint')}
+          </p>
+        </div>
       </Dialog>
 
       <ConfirmDialog

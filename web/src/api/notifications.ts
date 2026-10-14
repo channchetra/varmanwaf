@@ -9,7 +9,12 @@ import { apiClient } from './client'
  * value.
  */
 
-export type ChannelKind = 'email' | 'wecom' | 'dingtalk' | 'webhook'
+export type ChannelKind =
+  | 'email'
+  | 'wecom'
+  | 'dingtalk'
+  | 'webhook'
+  | 'telegram'
 
 export interface NotificationChannel {
   id: string

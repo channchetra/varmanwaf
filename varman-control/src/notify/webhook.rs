@@ -1,10 +1,11 @@
-//! Webhook senders: WeCom (企业微信), DingTalk (钉钉) and a generic JSON
-//! webhook.
+//! Webhook senders: WeCom (企业微信), DingTalk (钉钉), a generic JSON
+//! webhook and the Telegram bot API.
 //!
 //! Both chat platforms receive a Markdown-formatted message; DingTalk
 //! additionally supports the "signing key" secret mode, where every request
 //! must carry a timestamp plus an HMAC-SHA256 signature of `"{timestamp}\n
-//! {secret}"`, base64-encoded and URL-escaped.
+//! {secret}"`, base64-encoded and URL-escaped. Telegram delivers through the
+//! fixed `api.telegram.org` host with a sealed bot token.
 
 use base64::Engine as _;
 use hmac::digest::KeyInit as _;
@@ -294,9 +295,78 @@ pub async fn send_generic(
     Ok(())
 }
 
+/// Telegram bot API: `POST https://api.telegram.org/bot<token>/sendMessage`.
+///
+/// The bot token travels in the URL path, so transport errors are stripped of
+/// the URL before they reach logs or the test-channel response, and the reply
+/// body is never echoed (same SSRF-read rationale as [`post_json`]). The host
+/// is fixed, so no operator URL is involved and no SSRF guard is needed.
+pub async fn send_telegram(
+    http: &reqwest::Client,
+    config: &Value,
+    event: &AlertEvent,
+) -> Result<(), String> {
+    let token = config
+        .get("bot_token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| {
+            "missing 'bot_token' in the channel config".to_string()
+        })?;
+    let chat_id = config
+        .get("chat_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|chat| !chat.is_empty())
+        .ok_or_else(|| "missing 'chat_id' in the channel config".to_string())?;
+
+    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+    let payload = json!({
+        // Plain text (no parse_mode): alert text is operator-visible prose,
+        // and MarkdownV2's escaping rules would reject it unpredictably.
+        "text": markdown(event),
+        "chat_id": chat_id,
+        "disable_web_page_preview": true,
+    });
+    let response = http
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|err| format!("request failed: {}", err.without_url()))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("telegram replied {status}"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn telegram_requires_bot_token_and_chat_id() {
+        let http = reqwest::Client::new();
+        let event = AlertEvent {
+            event_type: "agent.offline".to_string(),
+            severity: "warning",
+            title: "t".to_string(),
+            message: "m".to_string(),
+            details: None,
+            dedup_key: None,
+        };
+        let missing_token =
+            send_telegram(&http, &json!({}), &event).await.unwrap_err();
+        assert!(missing_token.contains("bot_token"));
+        let missing_chat =
+            send_telegram(&http, &json!({ "bot_token": "123:ABC" }), &event)
+                .await
+                .unwrap_err();
+        assert!(missing_chat.contains("chat_id"));
+    }
 
     #[test]
     fn truncation_respects_char_boundaries() {

@@ -10,8 +10,10 @@ pub mod channel_kind {
     pub const DINGTALK: &str = "dingtalk";
     /// Generic JSON webhook: the full event payload is POSTed as-is.
     pub const WEBHOOK: &str = "webhook";
+    /// Telegram bot API: a bot token (sealed) plus a chat id.
+    pub const TELEGRAM: &str = "telegram";
 
-    pub const ALL: [&str; 4] = [EMAIL, WECOM, DINGTALK, WEBHOOK];
+    pub const ALL: [&str; 5] = [EMAIL, WECOM, DINGTALK, WEBHOOK, TELEGRAM];
 }
 
 /// Event types emitted by the control plane.

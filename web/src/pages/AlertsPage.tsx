@@ -1037,6 +1037,11 @@ function ChannelDialog({
   const [to, setTo] = useState(
     Array.isArray(config.to) ? (config.to as string[]).join(', ') : '',
   )
+  // Telegram config fields.
+  const [botToken, setBotToken] = useState(
+    typeof config.bot_token === 'string' ? config.bot_token : '',
+  )
+  const [chatId, setChatId] = useState(String(config.chat_id ?? ''))
 
   const save = useMutation({
     mutationFn: () => {
@@ -1057,7 +1062,9 @@ function ChannelDialog({
                   .map((entry) => entry.trim())
                   .filter(Boolean),
               }
-            : { url: url.trim() },
+            : kind === 'telegram'
+              ? { bot_token: botToken.trim(), chat_id: chatId.trim() }
+              : { url: url.trim() },
         events: selected,
         enabled,
       }
@@ -1074,7 +1081,12 @@ function ChannelDialog({
     onError: (error) => toast.error(t('pages.alerts.channelSaveFailed'), String(error)),
   })
 
-  const configFilled = kind !== 'email' ? url.trim() !== '' : smtpHost.trim() !== ''
+  const configFilled =
+    kind === 'email'
+      ? smtpHost.trim() !== ''
+      : kind === 'telegram'
+        ? botToken.trim() !== '' && chatId.trim() !== ''
+        : url.trim() !== ''
 
   return (
     <Dialog
@@ -1095,10 +1107,12 @@ function ChannelDialog({
             label={t('pages.alerts.kind')}
             value={kind}
             onChange={(e) => setKind(e.target.value as NotificationChannel['kind'])}
-            options={['email', 'wecom', 'dingtalk', 'webhook'].map((value) => ({
-              value,
-              label: value,
-            }))}
+            options={['email', 'wecom', 'dingtalk', 'webhook', 'telegram'].map(
+              (value) => ({
+                value,
+                label: value,
+              }),
+            )}
           />
         </div>
         {kind === 'email' ? (
@@ -1147,6 +1161,22 @@ function ChannelDialog({
                 onChange={(e) => setTo(e.target.value)}
               />
             </div>
+          </div>
+        ) : kind === 'telegram' ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Input
+              label={t('pages.alerts.telegramToken')}
+              hint={t('pages.alerts.telegramTokenHint')}
+              value={botToken}
+              onChange={(e) => setBotToken(e.target.value)}
+            />
+            <Input
+              label={t('pages.alerts.telegramChatId')}
+              hint={t('pages.alerts.telegramChatIdHint')}
+              placeholder="-1001234567890"
+              value={chatId}
+              onChange={(e) => setChatId(e.target.value)}
+            />
           </div>
         ) : (
           <Input

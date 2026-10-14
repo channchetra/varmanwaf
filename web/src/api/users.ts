@@ -21,6 +21,14 @@ export const usersApi = {
 
   update: (id: string, data: UpdateUserRequest) =>
     apiClient.put<User>(`/users/${id}`, data),
+
+  /**
+   * Sets a temporary password: the account must replace it at first sign-in
+   * and every outstanding session is revoked. One's own password stays on
+   * `/auth/password` (current password required).
+   */
+  resetPassword: (id: string, password: string) =>
+    apiClient.post<User>(`/users/${id}/reset-password`, { password }),
 }
 
 export const usersKeys = {

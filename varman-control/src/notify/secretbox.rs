@@ -23,8 +23,8 @@ use serde_json::{json, Value};
 
 /// Config keys that must never be stored or returned in plain text.
 /// Shared with the API layer, which redacts them in responses.
-pub(crate) const SECRET_KEYS: [&str; 3] =
-    ["smtp_pass", "secret", "secret_token"];
+pub(crate) const SECRET_KEYS: [&str; 4] =
+    ["smtp_pass", "secret", "secret_token", "bot_token"];
 
 /// Versioned marker of a sealed value; only this prefix is ever decrypted.
 const PREFIX: &str = "enc:v1:";

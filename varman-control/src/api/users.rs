@@ -8,7 +8,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::Utc;
 use sea_orm::{
@@ -23,7 +23,7 @@ use crate::api::common::{parse_uuid, Page, Pagination};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::middleware::AdminUser;
-use crate::auth::password::validate_password;
+use crate::auth::password::{hash_password, validate_password};
 use crate::models::{login_history, role, user};
 
 #[derive(Debug, Deserialize)]
@@ -63,6 +63,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/users", get(list).post(create))
         .route("/users/{user_id}", put(update))
+        .route("/users/{user_id}/reset-password", post(reset_password))
 }
 
 /// `GET /api/v1/users`
@@ -264,6 +265,54 @@ async fn update(
     active.updated_at = Set(Utc::now());
 
     let updated = active.update(&state.db).await?;
+    Ok(Json(UserResponse::from(updated)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResetPasswordRequest {
+    /// The temporary password; the account must replace it at first sign-in.
+    pub password: String,
+}
+
+/// `POST /api/v1/users/{user_id}/reset-password` — administrators only.
+///
+/// Sets a temporary password for the account: the first-sign-in flag forces
+/// a replacement, and the token version bump revokes every outstanding
+/// session (the account's own sign-ins included). Resetting one's own
+/// password stays on `/auth/password`, where the current password is
+/// required — this route must not become a self-service bypass.
+async fn reset_password(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(user_id): Path<String>,
+    Json(payload): Json<ResetPasswordRequest>,
+) -> Result<Json<UserResponse>, ApiError> {
+    let id = parse_uuid(&user_id, "user id")?;
+    if id == admin.id() {
+        return Err(ApiError::BadRequest(
+            "use your own password change to replace your password".to_string(),
+        ));
+    }
+    validate_password(&payload.password)
+        .map_err(|err| ApiError::BadRequest(err.to_string()))?;
+    let account = user::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("user {id} not found")))?;
+
+    let mut active: user::ActiveModel = account.into();
+    active.password_hash = Set(hash_password(&payload.password)
+        .map_err(|err| ApiError::BadRequest(err.to_string()))?);
+    active.must_change_password = Set(true);
+    active.token_version = Set(active.token_version.unwrap() + 1);
+    active.updated_at = Set(Utc::now());
+    let updated = active.update(&state.db).await?;
+
+    tracing::info!(
+        user_id = %id,
+        admin = %admin.email,
+        "password reset by administrator"
+    );
     Ok(Json(UserResponse::from(updated)))
 }
 

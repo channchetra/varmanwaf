@@ -86,6 +86,20 @@ fn validate_config(kind: &str, config: &Value) -> Result<(), ApiError> {
         channel_kind::WEBHOOK => {
             get_url()?;
         },
+        channel_kind::TELEGRAM => {
+            for key in ["bot_token", "chat_id"] {
+                config
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        ApiError::BadRequest(format!(
+                            "config.{key} is required"
+                        ))
+                    })?;
+            }
+        },
         other => {
             return Err(ApiError::BadRequest(format!(
                 "unknown channel kind '{other}' (expected one of: {})",
