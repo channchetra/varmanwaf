@@ -74,6 +74,7 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
     { kind: 'leaf', to: '/dashboard', labelKey: 'nav.dashboard', icon: House },
     { kind: 'leaf', to: '/sites', labelKey: 'nav.sites', icon: Globe },
     { kind: 'leaf', to: '/policies', labelKey: 'nav.policies', icon: Stack },
+    { kind: 'leaf', to: '/crs', labelKey: 'nav.crs', icon: Stack },
     {
       kind: 'group',
       labelKey: 'nav.security',

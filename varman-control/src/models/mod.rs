@@ -22,6 +22,8 @@ pub mod certificates;
 pub mod challenge_settings;
 pub mod config_versions;
 pub mod control_plane_tls;
+pub mod crs_rules;
+pub mod crs_rulesets;
 pub mod defense_settings;
 pub mod error_pages;
 pub mod geo_rules;
@@ -66,6 +68,8 @@ pub use control_plane_tls::{
     control_plane_certificates as control_plane_certificate,
     source as tls_source,
 };
+pub use crs_rules as crs_rule;
+pub use crs_rulesets as crs_ruleset;
 pub use host_samples::host_samples as host_sample;
 pub use instance_settings::instance_settings as instance_setting;
 pub use login_histories::{geo_source, login_history};

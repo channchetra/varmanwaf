@@ -13,6 +13,7 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod config_history;
+pub mod crs;
 pub mod defaults;
 pub mod es;
 pub mod frontend;

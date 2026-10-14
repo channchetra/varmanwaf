@@ -1427,6 +1427,58 @@ pub async fn build_rule_bundle(
         }
     }
 
+    let mut waf_config = waf_config_with_policy(
+        &custom_rules,
+        &groups,
+        waf_settings.as_ref(),
+        Some(&policy_layers),
+    );
+
+    // An imported CRS ruleset compiles into the same SecLang source the
+    // edge evaluates as virtual patches; the explicit layer source, when
+    // present, runs first.
+    if let Some(layer) = policy_layers.layers.get(policy::LAYER_CRS_IMPORT)
+    {
+        let ruleset_id = layer
+            .get("ruleset_id")
+            .and_then(Value::as_str)
+            .and_then(|raw| Uuid::parse_str(raw.trim()).ok());
+        if let Some(ruleset_id) = ruleset_id {
+            let paranoia_max = layer
+                .get("paranoia_level_max")
+                .and_then(Value::as_i64)
+                .map(|value| value as i32);
+            let categories: Vec<String> = layer
+                .get("categories")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Ok((source, count)) = crate::crs::compile_source(
+                db,
+                ruleset_id,
+                paranoia_max,
+                &categories,
+            )
+            .await
+            {
+                if count > 0 {
+                    waf_config.virtual_patches =
+                        if waf_config.virtual_patches.trim().is_empty() {
+                            source
+                        } else {
+                            format!("{}\n{}", waf_config.virtual_patches, source)
+                        };
+                }
+            }
+        }
+    }
+
     let mut bundle = RuleBundle {
         site_id: site_row.id.to_string(),
         // Filled in below, once every other field is final.
@@ -1437,12 +1489,7 @@ pub async fn build_rule_bundle(
             .map(|id| id.to_string())
             .unwrap_or_default(),
         policy_revision: policy_layers.revision,
-        waf: Some(waf_config_with_policy(
-            &custom_rules,
-            &groups,
-            waf_settings.as_ref(),
-            Some(&policy_layers),
-        )),
+        waf: Some(waf_config),
         rate_limit_rules: rate_limits
             .iter()
             .map(rate_limit_to_proto)

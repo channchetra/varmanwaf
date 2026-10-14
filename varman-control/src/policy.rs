@@ -53,9 +53,13 @@ pub const LAYER_RATE_LIMIT: &str = "rate_limit";
 pub const LAYER_IP_ACCESS: &str = "ip_access";
 /// Bot-protection layer kind: bot posture overrides.
 pub const LAYER_BOT: &str = "bot";
+/// CRS-import layer kind: `{ "ruleset_id": "<uuid>", … }` binding an
+/// imported CRS ruleset (with optional paranoia ceiling and categories)
+/// to the policy.
+pub const LAYER_CRS_IMPORT: &str = "crs_import";
 
 /// Every layer kind a policy (or a site override) may carry.
-pub const LAYER_KINDS: [&str; 9] = [
+pub const LAYER_KINDS: [&str; 10] = [
     LAYER_ENGINE,
     LAYER_CRS,
     LAYER_CUSTOM_RULES,
@@ -65,6 +69,7 @@ pub const LAYER_KINDS: [&str; 9] = [
     LAYER_RATE_LIMIT,
     LAYER_IP_ACCESS,
     LAYER_BOT,
+    LAYER_CRS_IMPORT,
 ];
 
 /// Longest accepted custom rule expression.
@@ -334,6 +339,7 @@ pub fn validate_layer(kind: &str, config: &Value) -> Result<(), String> {
         LAYER_RATE_LIMIT => validate_rate_limit(config),
         LAYER_IP_ACCESS => validate_ip_access(config),
         LAYER_BOT => validate_bot(config),
+        LAYER_CRS_IMPORT => validate_crs_import(config),
         other => Err(format!(
             "unknown layer kind '{other}' (expected one of: {})",
             LAYER_KINDS.join(", ")
@@ -571,8 +577,55 @@ fn validate_api_schema(config: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_bot(config: &Value) -> Result<(), String> {
-    let map = as_object(LAYER_BOT, config)?;
+fn validate_crs_import(config: &Value) -> Result<(), String> {
+    let map = as_object(LAYER_CRS_IMPORT, config)?;
+    for (key, value) in map {
+        match key.as_str() {
+            "ruleset_id" => {
+                let raw = expect_str(key, value)?;
+                if Uuid::parse_str(raw.trim()).is_err() {
+                    return Err("'ruleset_id' must be a UUID".to_string());
+                }
+            }
+            "paranoia_level_max" => {
+                let level = expect_i64(key, value)?;
+                if !(1..=4).contains(&level) {
+                    return Err(
+                        "'paranoia_level_max' must be between 1 and 4"
+                            .to_string(),
+                    );
+                }
+            }
+            "categories" => {
+                let items = value.as_array().ok_or_else(|| {
+                    "'categories' must be an array of strings".to_string()
+                })?;
+                if items.len() > 20 {
+                    return Err(
+                        "'categories' must hold at most 20 entries".to_string()
+                    );
+                }
+                for item in items {
+                    let entry = item.as_str().ok_or_else(|| {
+                        "'categories' must be an array of strings".to_string()
+                    })?;
+                    if entry.trim().is_empty() || entry.chars().count() > 64 {
+                        return Err(
+                            "each category must be 1-64 characters"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            other => {
+                return Err(format!("unknown crs_import key '{other}'"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_bot(config: &Value) -> Result<(), String> {    let map = as_object(LAYER_BOT, config)?;
     for (key, value) in map {
         match key.as_str() {
             "enabled"
@@ -1284,7 +1337,7 @@ fn apply_layer(resolved: &mut Resolved, kind: &str, config: &Value) {
         LAYER_RULE_OVERRIDES => {
             merge_overrides(&mut resolved.overrides, &parse_overrides(config));
         }
-        LAYER_VIRTUAL_PATCHES | LAYER_API_SCHEMA | LAYER_BOT => {
+        LAYER_VIRTUAL_PATCHES | LAYER_API_SCHEMA | LAYER_BOT | LAYER_CRS_IMPORT => {
             // Key-level merge: overlay keys win over the policy's.
             let entry = resolved
                 .layers
@@ -2234,6 +2287,34 @@ mod tests {
         )
         .unwrap_err()
         .contains("at least one range"));
+
+        // CRS import binding.
+        assert!(validate_layer(
+            LAYER_CRS_IMPORT,
+            &json!({
+                "ruleset_id": "0b3f2b6e-4f11-4a5e-9d3e-3a0a5f6c9d21",
+                "paranoia_level_max": 2,
+                "categories": ["sqli"]
+            })
+        )
+        .is_ok());
+        assert!(validate_layer(LAYER_CRS_IMPORT, &json!({"ruleset_id": "nope"}))
+            .unwrap_err()
+            .contains("must be a UUID"));
+        assert!(validate_layer(
+            LAYER_CRS_IMPORT,
+            &json!({"ruleset_id": "0b3f2b6e-4f11-4a5e-9d3e-3a0a5f6c9d21",
+                    "paranoia_level_max": 9})
+        )
+        .unwrap_err()
+        .contains("between 1 and 4"));
+        assert!(validate_layer(
+            LAYER_CRS_IMPORT,
+            &json!({"ruleset_id": "0b3f2b6e-4f11-4a5e-9d3e-3a0a5f6c9d21",
+                    "extra": true})
+        )
+        .unwrap_err()
+        .contains("unknown crs_import key"));
     }
 
     #[test]

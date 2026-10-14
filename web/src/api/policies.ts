@@ -21,6 +21,7 @@ export type PolicyLayerKind =
   | 'rate_limit'
   | 'ip_access'
   | 'bot'
+  | 'crs_import'
 
 export interface PolicyRef {
   id: string
@@ -175,6 +176,17 @@ export interface BotLayerConfig {
   behavioral_analysis?: boolean
   ip_verification_enabled?: boolean
   dns_verification_enabled?: boolean
+}
+
+/**
+ * `crs_import` layer payload: binds an imported CRS ruleset to the policy.
+ * The edge receives the supported rules as SecLang source; unsupported
+ * rules stay visible in the catalogue with their parser error.
+ */
+export interface CrsImportLayerConfig {
+  ruleset_id: string
+  paranoia_level_max?: number
+  categories?: string[]
 }
 
 /** `GET /managed-rules` - the built-in managed-rule catalogue. */

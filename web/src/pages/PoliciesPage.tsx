@@ -18,6 +18,7 @@ import { ErrorState } from '@/components/ErrorState'
 import { PolicyTesterDialog } from '@/components/PolicyTesterDialog'
 import { useCanWrite } from '@/hooks'
 import { cn } from '@/lib/utils'
+import { crsApi, crsKeys } from '@/api/crs'
 import {
   EXCLUSION_TARGETS,
   MANAGED_RULE_IDS,
@@ -27,6 +28,7 @@ import {
   policyKeys,
   type ApiSchemaLayerConfig,
   type BotLayerConfig,
+  type CrsImportLayerConfig,
   type CrsLayerConfig,
   type CustomRulesLayerConfig,
   type EngineLayerConfig,
@@ -59,6 +61,7 @@ const LAYER_TABS: PolicyLayerKind[] = [
   'rate_limit',
   'ip_access',
   'bot',
+  'crs_import',
 ]
 
 /**
@@ -742,10 +745,21 @@ function LayerEditor({
       />
     )
   }
+  if (tab === 'bot') {
+    return (
+      <BotLayerForm
+        policyId={policy.id}
+        stored={stored?.config as BotLayerConfig | undefined}
+        hasStored={Boolean(stored)}
+        canWrite={canWrite}
+        onStored={onStored}
+      />
+    )
+  }
   return (
-    <BotLayerForm
+    <CrsImportForm
       policyId={policy.id}
-      stored={stored?.config as BotLayerConfig | undefined}
+      stored={stored?.config as CrsImportLayerConfig | undefined}
       hasStored={Boolean(stored)}
       canWrite={canWrite}
       onStored={onStored}
@@ -2129,6 +2143,115 @@ function RecipeDialog({
         </div>
       </div>
     </Dialog>
+  )
+}
+
+function CrsImportForm({
+  policyId,
+  stored,
+  hasStored,
+  canWrite,
+  onStored,
+}: {
+  policyId: string
+  stored?: CrsImportLayerConfig
+  hasStored: boolean
+  canWrite: boolean
+  onStored: () => void
+}) {
+  const { t } = useTranslation()
+  const save = useLayerMutation(policyId, 'crs_import', onStored)
+  const remove = useMutation({
+    mutationFn: () => policiesApi.deleteLayer(policyId, 'crs_import'),
+    onSuccess: onStored,
+  })
+  const rulesets = useQuery({
+    queryKey: crsKeys.list(),
+    queryFn: () => crsApi.rulesets(),
+  })
+  const [rulesetId, setRulesetId] = useState(stored?.ruleset_id ?? '')
+  const [paranoia, setParanoia] = useState(
+    stored?.paranoia_level_max ? String(stored.paranoia_level_max) : '',
+  )
+  const [categories, setCategories] = useState<string[]>(
+    stored?.categories ?? [],
+  )
+  const selected = (rulesets.data ?? []).find(
+    (ruleset) => ruleset.id === rulesetId,
+  )
+
+  const config = (): CrsImportLayerConfig => {
+    const out: CrsImportLayerConfig = { ruleset_id: rulesetId }
+    if (paranoia) out.paranoia_level_max = Number(paranoia)
+    if (categories.length > 0) out.categories = categories
+    return out
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="grid flex-1 gap-4 overflow-y-auto px-5 py-4 md:grid-cols-2">
+        <div className="space-y-2 md:col-span-2">
+          <Select
+            label={t('pages.policies.fields.crsImportRuleset')}
+            hint={t('pages.policies.fields.crsImportRulesetHint')}
+            value={rulesetId}
+            disabled={!canWrite}
+            onChange={(e) => setRulesetId(e.target.value)}
+            options={[
+              { value: '', label: t('pages.crs.pickRuleset') },
+              ...(rulesets.data ?? []).map((ruleset) => ({
+                value: ruleset.id,
+                label: `${ruleset.name}${
+                  ruleset.version ? ` ${ruleset.version}` : ''
+                } (${ruleset.supported_count})`,
+              })),
+            ]}
+          />
+          {rulesets.data && rulesets.data.length === 0 && (
+            <p className="text-[13px] text-fg-subtle">
+              {t('pages.policies.fields.crsImportEmpty')}
+            </p>
+          )}
+          {selected && (
+            <p className="text-[12px] text-fg-subtle">
+              {t('pages.policies.fields.crsImportCounts', {
+                supported: selected.supported_count,
+                unsupported: selected.unsupported_count,
+                directives: selected.directive_count,
+              })}
+            </p>
+          )}
+        </div>
+        <TriSelect
+          label={t('pages.policies.fields.crsImportParanoia')}
+          hint={t('pages.policies.fields.crsImportParanoiaHint')}
+          value={paranoia}
+          onChange={setParanoia}
+          options={['1', '2', '3', '4'].map((value) => ({
+            value,
+            label: t('pages.policies.fields.paranoiaLevel', { n: value }),
+          }))}
+        />
+        <div className="md:col-span-2">
+          <TagInput
+            label={t('pages.policies.fields.crsImportCategories')}
+            hint={t('pages.policies.fields.crsImportCategoriesHint')}
+            value={categories}
+            onChange={setCategories}
+            disabled={!canWrite}
+          />
+        </div>
+      </div>
+      <LayerFooter
+        canWrite={canWrite}
+        hasStored={hasStored}
+        saving={save.isPending}
+        onSave={() => {
+          if (rulesetId) save.mutate(config())
+        }}
+        onRemove={() => remove.mutate()}
+      />
+    </div>
   )
 }
 

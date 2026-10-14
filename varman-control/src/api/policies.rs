@@ -1549,7 +1549,7 @@ async fn test_policy(
     config.monitor_custom_rules = monitored.into_iter().collect();
 
     // Virtual patches: the policy layer wins, else the site's own source.
-    let patches = resolved
+    let mut patches = resolved
         .layers
         .get(policy::LAYER_VIRTUAL_PATCHES)
         .and_then(|value| value.get("source"))
@@ -1563,12 +1563,61 @@ async fn test_policy(
                 .filter(|source| !source.is_empty())
         });
 
-    let result = policy_test::evaluate(
+    // Imported CRS rules join the patch source, exactly like the edge.
+    let mut imported_applied = false;
+    if let Some(layer) = resolved.layers.get(policy::LAYER_CRS_IMPORT) {
+        let ruleset_id = layer
+            .get("ruleset_id")
+            .and_then(Value::as_str)
+            .and_then(|raw| Uuid::parse_str(raw.trim()).ok());
+        if let Some(ruleset_id) = ruleset_id {
+            let paranoia_max = layer
+                .get("paranoia_level_max")
+                .and_then(Value::as_i64)
+                .map(|value| value as i32);
+            let categories: Vec<String> = layer
+                .get("categories")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Ok((source, count)) = crate::crs::compile_source(
+                &state.db,
+                ruleset_id,
+                paranoia_max,
+                &categories,
+            )
+            .await
+            {
+                if count > 0 {
+                    patches = Some(match patches {
+                        Some(existing) if !existing.trim().is_empty() => {
+                            format!("{existing}\n{source}")
+                        }
+                        _ => source,
+                    });
+                    imported_applied = true;
+                }
+            }
+        }
+    }
+
+    let mut result = policy_test::evaluate(
         &config,
         patches.as_deref(),
         &payload.request,
         &sources,
     );
+    if imported_applied {
+        result
+            .simulated
+            .push("imported CRS rules (crs_import layer)".to_string());
+    }
     Ok(Json(PolicyTestView {
         result,
         effective,
