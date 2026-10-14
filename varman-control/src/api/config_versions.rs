@@ -150,7 +150,9 @@ async fn show_version(
 ///
 /// Restores the snapshot inside a transaction, then pushes the restored
 /// configuration to the agents like any other change. The rollback itself is
-/// recorded as a new version attributed to the operator.
+/// recorded as a new version attributed to the operator — *after* the site
+/// touch and with the same fingerprint the push path computes, so the push
+/// dedups against it instead of recording a second, `api`-sourced version.
 async fn rollback_version(
     State(state): State<AppState>,
     current: AuthUser,
@@ -158,38 +160,54 @@ async fn rollback_version(
 ) -> Result<Json<Value>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
 
-    let outcome =
-        config_history::rollback(&state.db, version_id, Some(&current.email))
-            .await
-            .map_err(|err| match err {
-                sea_orm::DbErr::RecordNotFound(message) => {
-                    ApiError::NotFound(message)
-                },
-                other => ApiError::from(other),
-            })?;
+    let restored = config_history::restore(&state.db, version_id)
+        .await
+        .map_err(|err| match err {
+            sea_orm::DbErr::RecordNotFound(message) => {
+                ApiError::NotFound(message)
+            },
+            other => ApiError::from(other),
+        })?;
 
-    match outcome.scope {
+    let new_version = match restored.scope {
         VersionScope::Site(site_id) => {
+            // Touch first: agents must re-pull even when the restore is a
+            // no-op, and the touch's timestamp is part of the fingerprint
+            // the push will compute.
             touch_site(&state, site_id).await?;
+            let recorded = config_history::record_rollback(
+                &state.db,
+                restored.scope,
+                Some(&current.email),
+            )
+            .await?;
             notify_config_changed(&state, site_id, Some(&current.email)).await;
+            recorded
         },
         VersionScope::Global => {
             // The restored global settings ride in every bundle.
+            let recorded = config_history::record_rollback(
+                &state.db,
+                restored.scope,
+                Some(&current.email),
+            )
+            .await?;
             notify_all_config_changed(&state, Some(&current.email)).await;
+            recorded
         },
-    }
+    };
 
     tracing::info!(
         actor = %current.email,
-        restored = outcome.restored_version,
-        new_version = ?outcome.new_version,
+        restored = restored.restored_version,
+        new_version = ?new_version,
         "configuration rolled back from the console"
     );
 
     Ok(Json(serde_json::json!({
-        "restored_version": outcome.restored_version,
-        "new_version": outcome.new_version,
-        "scope": match outcome.scope {
+        "restored_version": restored.restored_version,
+        "new_version": new_version,
+        "scope": match restored.scope {
             VersionScope::Site(site_id) => site_id.to_string(),
             VersionScope::Global => "global".to_string(),
         },

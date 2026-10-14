@@ -697,6 +697,34 @@ pub async fn rollback(
     version_id: i64,
     actor: Option<&str>,
 ) -> Result<RollbackOutcome, DbErr> {
+    let restored = restore(db, version_id).await?;
+    let new_version = record_rollback(db, restored.scope, actor).await?;
+    Ok(RollbackOutcome {
+        restored_version: restored.restored_version,
+        scope: restored.scope,
+        new_version,
+    })
+}
+
+/// A bare restore: the snapshot is written back, nothing is recorded.
+pub struct Restored {
+    /// The version whose snapshot was restored.
+    pub restored_version: i64,
+    /// The scope that snapshot covered.
+    pub scope: VersionScope,
+}
+
+/// Restores a version's snapshot inside a transaction, recording nothing.
+///
+/// The console path needs this split: it touches the site (so agents re-pull
+/// even when the restore is a no-op) *before* the rollback version is
+/// recorded, so the stored fingerprint matches the configuration the
+/// follow-up push will compute. [`rollback`] keeps the restore-and-record
+/// shape for the CLI.
+pub async fn restore(
+    db: &DatabaseConnection,
+    version_id: i64,
+) -> Result<Restored, DbErr> {
     let version = config_version::Entity::find_by_id(version_id)
         .one(db)
         .await?
@@ -722,49 +750,41 @@ pub async fn rollback(
     tracing::info!(
         restored = version.id,
         scope = %scope.describe(),
-        actor = actor.unwrap_or("unknown"),
-        "configuration rolled back"
+        "configuration snapshot restored"
     );
 
-    // The restored configuration becomes a new version, so the history shows
-    // the rollback as a first-class change and the dedup window does not
-    // hide it.
-    let hash = config_hash_after(db, scope).await.unwrap_or_default();
-    let new_version = record_version(
-        db,
-        scope,
-        config_version::source::ROLLBACK,
-        actor,
-        &hash,
-    )
-    .await?;
-
-    Ok(RollbackOutcome {
+    Ok(Restored {
         restored_version: version.id,
         scope,
-        new_version,
     })
 }
 
-/// Fingerprint of a scope's configuration after a restore, matching what the
-/// agents compare. Empty string when it cannot be computed (e.g. global
-/// scope, which has no per-site bundle).
+/// Records the rollback's own version with the same fingerprint the push
+/// path computes, so the follow-up push dedups against it instead of
+/// recording a second, `api`-sourced version moments later. Returns `None`
+/// when the fingerprint already matches the latest recorded version.
+pub async fn record_rollback(
+    db: &DatabaseConnection,
+    scope: VersionScope,
+    actor: Option<&str>,
+) -> Result<Option<i64>, DbErr> {
+    let hash = config_hash_after(db, scope).await.unwrap_or_default();
+    record_version(db, scope, config_version::source::ROLLBACK, actor, &hash)
+        .await
+}
+
+/// Fingerprint of a scope's configuration after a restore: the same
+/// `build_site_config` fingerprint the push path records (for the global
+/// scope, over the same site set the deployment-wide push builds from), so
+/// the hash-based dedup in [`record_version`] holds across both paths.
 async fn config_hash_after(
     db: &DatabaseConnection,
     scope: VersionScope,
 ) -> Option<String> {
     match scope {
-        VersionScope::Global => None,
+        VersionScope::Global => crate::grpc::global_config_hash(db).await,
         VersionScope::Site(site_id) => {
-            let site_row = site::Entity::find_by_id(site_id)
-                .one(db)
-                .await
-                .ok()
-                .flatten()?;
-            let bundle = crate::grpc::config::build_rule_bundle(db, &site_row)
-                .await
-                .ok()?;
-            Some(bundle.config_hash)
+            crate::grpc::site_config_hash(db, site_id).await
         },
     }
 }

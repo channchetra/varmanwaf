@@ -196,30 +196,17 @@ pub async fn notify_config_changed(
     }
 }
 
-/// Notifies every registered agent that a deployment-wide setting changed.
-///
-/// Meant for changes that land in *every* site's bundle (the global error
-/// pages today): calling [`notify_config_changed`] per site would rebuild one
-/// site at a time and fan a single edit out into as many database passes as
-/// there are sites. Instead the affected site ids are collected from the agent
-/// table and built in one pass; each agent then receives only its own site, the
-/// same payload a normal push carries, so an agent's cache never grows beyond
-/// the site it is bound to.
-pub async fn notify_all_config_changed(state: &AppState, actor: Option<&str>) {
-    let agents = match agent::Entity::find().all(&state.db).await {
-        Ok(rows) => rows,
-        Err(err) => {
-            tracing::warn!(error = %err, "failed to list agents for config push");
-            return;
-        },
-    };
-
-    // The union of every agent's visible sites feeds the version snapshot.
+/// The agent rows plus the per-agent visible-site map and their union: the
+/// resolution both the deployment-wide push and its fingerprint use.
+pub(crate) async fn resolve_visible_sites(
+    db: &DatabaseConnection,
+) -> Result<(Vec<agent::Model>, HashMap<String, Vec<Uuid>>, Vec<Uuid>), DbErr> {
+    let agents = agent::Entity::find().all(db).await?;
     let mut visible_per_agent: HashMap<String, Vec<Uuid>> = HashMap::new();
     let mut all_site_ids: std::collections::HashSet<Uuid> =
         std::collections::HashSet::new();
     for row in &agents {
-        match agent_visible_site_ids(&state.db, row).await {
+        match agent_visible_site_ids(db, row).await {
             Ok(ids) => {
                 all_site_ids.extend(ids.iter().copied());
                 visible_per_agent.insert(row.id.to_string(), ids);
@@ -233,7 +220,58 @@ pub async fn notify_all_config_changed(state: &AppState, actor: Option<&str>) {
             },
         };
     }
-    let site_ids: Vec<Uuid> = all_site_ids.into_iter().collect();
+    Ok((
+        agents,
+        visible_per_agent,
+        all_site_ids.into_iter().collect(),
+    ))
+}
+
+/// The fingerprint a per-site push records: the same `build_site_config`
+/// fingerprint the push recorder dedups against. The rollback path reuses it
+/// so the follow-up push does not record a second version.
+pub async fn site_config_hash(
+    db: &DatabaseConnection,
+    site_id: Uuid,
+) -> Option<String> {
+    build_site_config(db, Some(&[site_id]))
+        .await
+        .ok()
+        .map(|config| config.config_hash)
+}
+
+/// The fingerprint a deployment-wide push records, over the same site set
+/// that push builds from.
+pub async fn global_config_hash(db: &DatabaseConnection) -> Option<String> {
+    let (_, _, site_ids) = resolve_visible_sites(db).await.ok()?;
+    build_site_config(db, Some(&site_ids))
+        .await
+        .ok()
+        .map(|config| config.config_hash)
+}
+
+/// Notifies every registered agent that a deployment-wide setting changed.
+///
+/// Meant for changes that land in *every* site's bundle (the global error
+/// pages today): calling [`notify_config_changed`] per site would rebuild one
+/// site at a time and fan a single edit out into as many database passes as
+/// there are sites. Instead the affected site ids are collected from the agent
+/// table and built in one pass; each agent then receives only its own site, the
+/// same payload a normal push carries, so an agent's cache never grows beyond
+/// the site it is bound to.
+pub async fn notify_all_config_changed(state: &AppState, actor: Option<&str>) {
+    // The union of every agent's visible sites feeds the version snapshot.
+    let (agents, visible_per_agent, site_ids) =
+        match resolve_visible_sites(&state.db).await {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "failed to list agents for config push"
+                );
+                return;
+            },
+        };
     let config = match build_site_config(&state.db, Some(&site_ids)).await {
         Ok(config) => config,
         Err(err) => {
