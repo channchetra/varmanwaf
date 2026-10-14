@@ -71,8 +71,8 @@ Rules:
 | 3c | Challenge + error pages: branded edge pages, provenance headers, storable clearance on HTTP, redirect guard | **Landed** (v0.38.0) |
 | 4 | Dashboard: `web` (82 files) — merge upstream pages/features into the rebranded dashboard, keep the Varman pages | **Split 4a/4b/4c** (below) |
 | 4a | Account & identity: `AccountPage`, `ProfilePage`, `account/*` cards (API keys, passkeys, users admin), `ForceChangePasswordDialog`, `users` + `loginSecurity` APIs | **Landed** (v0.39.1; v0.39.0 failed its E2E on the missing first-sign-in flag and empty login history, and was superseded) |
-| 4b | Ops surfaces: `BlockedIpsPage`, `NotificationsPage`, `WorldMapChart`, `wafLinkage`, per-site `FailoverPanel` | Planned |
-| 4c | Assistant widgets (`components/assistant/*`, widget store/hook) evaluated against our AssistantPage; upstream's site-page restructure (`basic/*`, panel renames) is skipped — our structure is authoritative | Planned |
+| 4b | Ops surfaces: `BlockedIpsPage`, `NotificationsPage`, `WorldMapChart`, `wafLinkage`, per-site `FailoverPanel` | **Landed** (v0.40.0; channels stay on the Alerts page - one owner - and the failover panel replaces the site-settings stub) |
+| 4c | Assistant widgets (`components/assistant/*`, widget store/hook) evaluated against our AssistantPage; upstream's site-page restructure (`basic/*`, panel renames) is skipped — our structure is authoritative | Next |
 | 5 | Feature branches (`config-versioning-and-notifications`, `per-site-failover`) once main is synced | Planned |
 
 ### Batch 1 detail (landed)

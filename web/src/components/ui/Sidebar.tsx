@@ -21,6 +21,8 @@ import {
   Sparkle,
   Stack,
   BellRinging,
+  Bell,
+  Prohibit,
   type Icon,
 } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
@@ -106,6 +108,8 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
     { kind: 'leaf', to: site('origin'), labelKey: 'nav.origin', icon: Network, requiresSite: true },
     { kind: 'leaf', to: site('caching'), labelKey: 'nav.caching', icon: Lightning, requiresSite: true },
     { kind: 'leaf', to: '/ip-groups', labelKey: 'nav.ipGroups', icon: FunnelSimple },
+    { kind: 'leaf', to: '/blocked-ips', labelKey: 'nav.blockedIps', icon: Prohibit },
+    { kind: 'leaf', to: '/notifications', labelKey: 'nav.notifications', icon: Bell },
     // SSL/TLS and traffic in the sidebar are the *global* surfaces; each site's
     // own certificates and traffic live in that site's tab bar.
     { kind: 'leaf', to: '/ssl', labelKey: 'nav.ssl', icon: Lock },

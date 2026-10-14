@@ -47,6 +47,8 @@ const crumbKeys: Record<string, string> = {
   logs: 'pages.logs.title',
   assistant: 'pages.assistant.title',
   agents: 'pages.agents.title',
+  'blocked-ips': 'pages.blockedIps.title',
+  notifications: 'pages.notifications.title',
   lifecycle: 'pages.lifecycle.title',
 }
 

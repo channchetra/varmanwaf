@@ -18,6 +18,10 @@ export const geoApi = {
   /** Requests per country over the trailing window, for the bar chart. */
   stats: (siteId: string) =>
     apiClient.get<GeoCountryStat[]>(`/sites/${siteId}/geo/stats`),
+
+  /** Cross-site aggregate for the world map on the global traffic page. */
+  globalStats: (params: { hours?: number; limit?: number } = {}) =>
+    apiClient.get<GeoCountryStat[]>('/geo/global-stats', { query: params }),
 }
 
 /** Defaults matching the server-side `GeoConfig::default()`. */

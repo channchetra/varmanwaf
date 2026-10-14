@@ -197,6 +197,10 @@ export interface ManagedRuleInfo {
   severity: number
   tags: string[]
   stacks: string[]
+  /** Attack family whose per-category downgrade also covers this rule. */
+  category: string | null
+  /** Strict-mode-only rule: grading never downgrades it. */
+  strict_only: boolean
 }
 
 /** The engine knobs the next bundle will actually carry for a site. */

@@ -37,7 +37,8 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonStat } from '@/components/ui/Skeleton'
 import { ErrorState } from '@/components/ErrorState'
 import { trafficApi, trafficKeys, RANGE_HOURS, TRAFFIC_STEP, groupStatusCodes } from '@/api/traffic'
-import { countryFlag } from '@/api/geo'
+import { countryFlag, geoApi } from '@/api/geo'
+import { WorldMapChart } from '@/components/charts/WorldMapChart'
 import { cn } from '@/lib/utils'
 import {
   formatBitrate,
@@ -95,6 +96,19 @@ export function TrafficPanels({ siteId }: { siteId?: string }) {
     queryFn: () => trafficApi.overview(siteId, range),
     enabled: scoped ? Boolean(siteId) : true,
     refetchInterval: 60_000,
+  })
+
+  // The country heat map reads the per-site endpoint on a site page and the
+  // cross-site aggregate on the global page; both return the same rows.
+  const geoQuery = useQuery({
+    queryKey: scoped
+      ? ['sites', siteId, 'geo', 'stats']
+      : ['geo', 'global-stats', range],
+    queryFn: () =>
+      scoped
+        ? geoApi.stats(siteId ?? '')
+        : geoApi.globalStats({ hours: RANGE_HOURS[range] }),
+    enabled: scoped ? Boolean(siteId) : true,
   })
 
   const data = overviewQuery.data
@@ -513,6 +527,30 @@ export function TrafficPanels({ siteId }: { siteId?: string }) {
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title={t('pages.traffic.geoMap.title')}
+              description={
+                scoped
+                  ? t('pages.traffic.geoMap.hintSite')
+                  : t('pages.traffic.geoMap.hint')
+              }
+            />
+            <CardBody>
+              {geoQuery.isPending ? (
+                <div className="h-64 w-full animate-pulse rounded-md bg-recessed" />
+              ) : geoQuery.isError ? (
+                <ErrorState
+                  error={geoQuery.error}
+                  onRetry={() => geoQuery.refetch()}
+                  retrying={geoQuery.isFetching}
+                />
+              ) : (
+                <WorldMapChart data={geoQuery.data ?? []} />
               )}
             </CardBody>
           </Card>

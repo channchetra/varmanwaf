@@ -444,6 +444,7 @@ export interface WafSettings {
   virtual_patches: string
   openapi_spec: string
   monitor_categories: WafCategory[] | string[]
+  monitor_managed_rules: string[]
   monitor_stacks: WafStack[] | string[]
   created_at: string
   updated_at: string
@@ -461,6 +462,7 @@ export interface UpdateWafSettingsRequest {
   virtual_patches?: string
   openapi_spec?: string
   monitor_categories?: string[]
+  monitor_managed_rules?: string[]
   monitor_stacks?: string[]
 }
 
@@ -1572,6 +1574,55 @@ export interface UnblockIpResponse {
   ip: string
   agents: number
   delivered: number
+}
+
+/**
+ * One IP blocked at any site, for the global cross-site view. `site_id` /
+ * `site_name` name the site the block belongs to; blocks of different sites
+ * for the same IP stay separate rows.
+ */
+export interface GlobalBlockedIp {
+  ip: string
+  site_id: string
+  site_name: string
+  reason: string | null
+  blocked_at: string
+  expires_at: string | null
+  agent_count: number
+  attack_count: number
+  last_attack_at: string | null
+}
+
+/** `POST /blocked-ips/block` - a manual dynamic block fanned out to agents. */
+export interface ManualBlockIpRequest {
+  site_id: string
+  ip: string
+  duration_seconds?: number
+  reason?: string
+}
+
+export interface ManualBlockIpResponse {
+  ip: string
+  site_id: string
+  /** null/0 = permanent (no automatic expiry). */
+  duration_seconds: number | null
+  agents: number
+  delivered: number
+}
+
+/* ── Site failover (disconnected-edge behaviour) ──────────────────── */
+
+/**
+ * What a site's edge serves while the control plane is unreachable and the
+ * host has no synced rule bundle: `inherit` follows the control-plane-wide
+ * default, `open` keeps proxying, `closed` answers 503.
+ */
+export type FailoverPolicy = 'inherit' | 'open' | 'closed'
+
+export interface FailoverSettings {
+  failover_policy: FailoverPolicy
+  /** The control-plane-wide default the `inherit` policy resolves to. */
+  default_fail_open: boolean
 }
 
 /* ── Rewrite rules ────────────────────────────────────────────────── */

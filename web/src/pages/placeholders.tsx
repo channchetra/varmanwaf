@@ -7,7 +7,6 @@ import {
   ChartLine,
   Sliders,
   FileHtml,
-  Gear,
 } from '@phosphor-icons/react'
 import { PlaceholderPage } from '@/components/PlaceholderPage'
 
@@ -99,14 +98,3 @@ export function ErrorPagesPage() {
   )
 }
 
-export function SiteSettingsPage() {
-  const { t } = useTranslation()
-  return (
-    <PlaceholderPage
-      title={t('pages.siteSettings.title')}
-      description={t('pages.siteSettings.description')}
-      icon={<Gear weight="duotone" />}
-      emptyTitle={t('pages.siteSettings.title')}
-    />
-  )
-}

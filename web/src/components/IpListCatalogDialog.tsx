@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { DownloadSimple, Info, Warning } from '@phosphor-icons/react'
+import { DownloadSimple, Info, Warning, X } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
@@ -9,7 +9,9 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { SkeletonRows } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
-import { ipGroupKeys } from '@/api/ipGroups'
+import { ApiError } from '@/api/client'
+import { errorMessage } from '@/api/errors'
+import { ipGroupsApi, ipGroupKeys } from '@/api/ipGroups'
 import {
   ipListsApi,
   ipListKeys,
@@ -20,6 +22,15 @@ import { cn } from '@/lib/utils'
 
 const CATEGORIES = ['all', 'country', 'bot', 'vpn', 'asn', 'custom'] as const
 type Category = (typeof CATEGORIES)[number]
+
+/**
+ * The outcome of the last import, shown inline above the list so an
+ * import that failed its first fetch (or hit an existing subscription)
+ * stays visible with its fix at hand instead of vanishing as a toast.
+ */
+type ImportNotice =
+  | { kind: 'unsynced'; name: string; groupId: string; error: string }
+  | { kind: 'duplicate'; message: string }
 
 /**
  * Browse and import curated IP lists (country blocks, crawler / monitoring
@@ -41,6 +52,8 @@ export function IpListCatalogDialog({ onClose }: { onClose: () => void }) {
   const [customSelector, setCustomSelector] = useState('')
   // ASN panel.
   const [asn, setAsn] = useState('')
+  // Last import outcome (inline banner above the list).
+  const [notice, setNotice] = useState<ImportNotice | null>(null)
 
   const catalog = useQuery({
     queryKey: ipListKeys.catalog({
@@ -73,6 +86,7 @@ export function IpListCatalogDialog({ onClose }: { onClose: () => void }) {
     mutationFn: (payload: IpListImportRequest) => ipListsApi.import(payload),
     onSuccess: (result) => {
       if (result.synced) {
+        setNotice(null)
         toast.success(
           t('pages.ipLists.imported'),
           t('pages.ipLists.importedDetail', {
@@ -81,15 +95,47 @@ export function IpListCatalogDialog({ onClose }: { onClose: () => void }) {
           }),
         )
       } else {
-        toast.warning(
-          t('pages.ipLists.importedUnsynced'),
-          result.error ?? result.group.last_sync_error ?? '',
-        )
+        // The group exists, but its first fetch failed. Keep the failure
+        // and its remedy on screen instead of a transient toast.
+        setNotice({
+          kind: 'unsynced',
+          name: result.group.name,
+          groupId: result.group.id,
+          error: result.error ?? result.group.last_sync_error ?? '',
+        })
       }
       void queryClient.invalidateQueries({ queryKey: ipGroupKeys.all })
       void queryClient.invalidateQueries({ queryKey: ipListKeys.all })
     },
-    onError: (error) => toast.error(t('pages.ipLists.importFailed'), String(error)),
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        setNotice({ kind: 'duplicate', message: errorMessage(error) })
+        return
+      }
+      toast.error(t('pages.ipLists.importFailed'), errorMessage(error))
+    },
+  })
+
+  const retrySync = useMutation({
+    mutationFn: (groupId: string) => ipGroupsApi.sync(groupId),
+    onSuccess: (result) => {
+      toast.success(
+        t('pages.ipLists.retrySucceeded'),
+        t('pages.ipLists.importedDetail', {
+          name: notice?.kind === 'unsynced' ? notice.name : result.id,
+          ranges: result.ip_count,
+        }),
+      )
+      setNotice(null)
+      void queryClient.invalidateQueries({ queryKey: ipGroupKeys.all })
+      void queryClient.invalidateQueries({ queryKey: ipListKeys.all })
+    },
+    onError: (error) =>
+      setNotice((current) =>
+        current && current.kind === 'unsynced'
+          ? { ...current, error: errorMessage(error) }
+          : current,
+      ),
   })
 
   const actionFor = (entry: IpListCatalogEntry) =>
@@ -170,6 +216,61 @@ export function IpListCatalogDialog({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+          {notice && (
+            <div
+              className={cn(
+                'mb-3 rounded-md border px-3 py-2 text-[12px]',
+                notice.kind === 'unsynced'
+                  ? 'border-warning/40 bg-warning/10'
+                  : 'border-focus/30 bg-focus/5',
+              )}
+            >
+              <div className="flex items-start gap-2">
+                {notice.kind === 'unsynced' ? (
+                  <Warning weight="duotone" className="mt-0.5 h-4 w-4 shrink-0" />
+                ) : (
+                  <Info weight="duotone" className="mt-0.5 h-4 w-4 shrink-0" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-fg">
+                    {notice.kind === 'unsynced'
+                      ? t('pages.ipLists.importedUnsynced')
+                      : t('pages.ipLists.duplicateTitle')}
+                  </p>
+                  <p className="mt-0.5 break-words text-fg-subtle">
+                    {notice.kind === 'unsynced'
+                      ? `${notice.name}: ${notice.error}`
+                      : notice.message}
+                  </p>
+                  {notice.kind === 'duplicate' && (
+                    <p className="mt-0.5 text-fg-subtle">
+                      {t('pages.ipLists.duplicateHint')}
+                    </p>
+                  )}
+                </div>
+                {notice.kind === 'unsynced' && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={retrySync.isPending}
+                    onClick={() => retrySync.mutate(notice.groupId)}
+                  >
+                    {t('pages.ipLists.retrySync')}
+                  </Button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setNotice(null)}
+                  title={t('common.close')}
+                  aria-label={t('common.close')}
+                  className="shrink-0 rounded p-0.5 text-fg-subtle transition-colors hover:text-fg"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {category === 'asn' ? (
             <div className="space-y-3">
               <p className="text-[13px] text-fg-subtle">

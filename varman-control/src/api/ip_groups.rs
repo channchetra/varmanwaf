@@ -730,12 +730,35 @@ pub(crate) async fn sync_subscription(
                 },
             };
             let client = crate::subscription::subscription_client();
-            crate::subscription::fetch_subscription_ranges_with_selector(
-                &client,
-                &source_url,
-                group.source_selector.as_str(),
-            )
-            .await
+            // One retry on a failed fetch: a single network hiccup must not
+            // leave a fresh subscription empty (or a daily refresh stale)
+            // until the next scheduled sync. A parse-style failure fails the
+            // same way twice, so the retry costs one extra request at most.
+            let mut result =
+                crate::subscription::fetch_subscription_ranges_with_selector(
+                    &client,
+                    &source_url,
+                    group.source_selector.as_str(),
+                )
+                .await;
+            if let Err(error) = &result {
+                tracing::warn!(
+                    group_id = %group.id,
+                    url = %source_url,
+                    %error,
+                    "subscription fetch failed; retrying once"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(750))
+                    .await;
+                result =
+                    crate::subscription::fetch_subscription_ranges_with_selector(
+                        &client,
+                        &source_url,
+                        group.source_selector.as_str(),
+                    )
+                    .await;
+            }
+            result
         },
     };
 

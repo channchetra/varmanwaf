@@ -26,6 +26,7 @@ export function defaultWafSettings(): WafSettings {
     virtual_patches: '',
     openapi_spec: '',
     monitor_categories: [],
+    monitor_managed_rules: [],
     monitor_stacks: [],
     created_at: '',
     updated_at: '',

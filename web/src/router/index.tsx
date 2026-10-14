@@ -37,7 +37,9 @@ import { LifecyclePage } from '@/pages/LifecyclePage'
 import { PoliciesPage } from '@/pages/PoliciesPage'
 import { CrsPage } from '@/pages/CrsPage'
 import { AlertsPage } from '@/pages/AlertsPage'
-import { SiteSettingsPage } from '@/pages/placeholders'
+import { BlockedIpsPage } from '@/pages/BlockedIpsPage'
+import { NotificationsPage } from '@/pages/NotificationsPage'
+import { SiteSettingsPage } from '@/pages/sites/SiteSettingsPage'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Button } from '@/components/ui/Button'
 
@@ -128,9 +130,11 @@ export const router = createBrowserRouter([
       { path: 'assistant', element: <AssistantPage /> },
       { path: 'agents', element: <AgentsPage /> },
       { path: 'ip-groups', element: <IpGroupsPage /> },
+      { path: 'blocked-ips', element: <BlockedIpsPage /> },
       { path: 'policies', element: <PoliciesPage /> },
       { path: 'crs', element: <CrsPage /> },
       { path: 'alerts', element: <AlertsPage /> },
+      { path: 'notifications', element: <NotificationsPage /> },
       { path: 'lifecycle', element: <LifecyclePage /> },
       // Global surfaces. The per-site counterparts live under `/sites/:siteId`.
       { path: 'ssl', element: <GlobalSslPage /> },
