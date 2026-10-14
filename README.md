@@ -9,12 +9,13 @@ Central control plane · Lightweight edge agents · Pingora data plane · Postgr
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
 [![Docker](https://img.shields.io/badge/docker-compose%20ready-2496ED?logo=docker&logoColor=white)](./docker-compose.yml)
-[![Release](https://img.shields.io/badge/release-v0.23.0-brightgreen.svg)](./docs/releases/v0.23.0.md)
+[![Release](https://img.shields.io/badge/release-v0.42.0-brightgreen.svg)](./docs/releases/v0.42.0.md)
 
-**v0.21.1 - post-rollout completion** (2026-10-08): tail inspection,
-WebSocket frame inspection, JSON-Schema bodies, SQL AST tier, shadow report,
-fuzz targets. See [release notes](./docs/releases/v0.23.0.md) (and the
-[v0.21.0 rollout notes](./docs/releases/v0.21.0.md)).
+**v0.42.0 - the sync program is complete** (2026-10-14): upstream batches
+1-5 are absorbed (dashboard 4a-4c: account surfaces, IP blacklist,
+notifications, world map, failover, assistant widget) and the WAF category
+switches now keep their managed-rule families in step. See
+[release notes](./docs/releases/v0.42.0.md).
 
 </div>
 
@@ -126,10 +127,18 @@ Tests and lint (the CI gates):
 ```bash
 cargo test --workspace --features full
 cargo clippy --features full --all-targets -- -D warnings
+# The tree predates the current stable rustfmt; a `cargo fmt --all`
+# normalisation round is queued, so formatting is not part of the gate yet.
 cargo fmt --all -- --check
 ```
 
 ## Development notes
+
+- **CI is local.** The GitHub Actions workflows were removed while the account
+  is billing-locked; they can be restored from git history once that clears.
+  The gate is the local one: the cargo commands above, `npm run build` in
+  `web/`, and the `run-e2e-*.ps1` scripts in `build-artifacts/` run against
+  the deployed stack.
 
 - **Shadow mode:** run the data plane with `VARMAN_WAF_SHADOW=1` to execute
   the Varman pipeline beside the enforcing engine and record how the two
