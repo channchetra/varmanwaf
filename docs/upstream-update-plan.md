@@ -67,7 +67,7 @@ Rules:
 | 2a | Protocol + agent model: proto fields, `varman-agent` cache/client/config, run-mode boxing | **Landed** (v0.22.1) |
 | 2b | Control plane (110 files) + `src` start-up | **Landed** (v0.22.2 / v0.23.0) |
 | 3a | Verified bots: `bot_dns.rs` (DNS reverse+forward confirmation), verified-bot IP ranges honoured by the plugin, Bot Protection UI | **Landed** (v0.35.1; v0.35.0 failed its E2E on a manual IP-group insert bug and was superseded) |
-| 3b | WAF plugin body staging: staged request bodies with limits, upstream hook model around our pipeline | Next |
+| 3b | WAF plugin body staging: staged request bodies with limits, upstream hook model around our pipeline | **Landed** (v0.37.0) |
 | 3c | Challenge + error pages: `challenge.rs`, `varman-challenge` cookie/JS deltas, `error_page.rs` | Planned |
 | 4 | Dashboard: `web` (82 files) — merge upstream pages/features into the rebranded dashboard, keep the Varman pages | Planned |
 | 5 | Feature branches (`config-versioning-and-notifications`, `per-site-failover`) once main is synced | Planned |
@@ -109,7 +109,7 @@ signature.
    then publish.
 5. Record the batch in this document and in the release notes.
 
-## Batch 3b plan (next): request-body staging
+## Batch 3b detail (landed, v0.37.0)
 
 Upstream model extracted from `aa597371` (all in
 `pingap-plugin/src/waf.rs`); our fork lacks it (our `waf_stream.rs` covers
