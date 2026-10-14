@@ -29,18 +29,20 @@ use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::grpc::notify_config_changed;
 use crate::models::{
-    agent, api_key, config_version, site, site_waf_policy,
+    agent, api_key, config_version, rule, site, site_waf_policy,
     site_waf_policy_override, waf_policy, waf_policy_layer, waf_policy_version,
     waf_settings,
 };
 use crate::policy::{self, LAYER_CUSTOM_RULES, LAYER_KINDS};
 use crate::policy_content;
+use crate::policy_test;
 
 /// Routes contributed to `/api/v1`.
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/policies", get(list_policies).post(create_policy))
         .route("/policies/preview", post(preview_policy))
+        .route("/policies/test", post(test_policy))
         .route("/policies/templates", get(list_templates))
         .route("/policies/recipes", get(list_recipes))
         .route("/policies/from-template", post(create_from_template))
@@ -1411,8 +1413,170 @@ async fn preview_policy(
     }))
 }
 
-async fn respond_with_detail(
-    state: &AppState,
+/* ── Rule tester ───────────────────────────────────────────────────────── */
+
+#[derive(Debug, Deserialize)]
+pub struct TestPolicyRequest {
+    #[serde(default)]
+    pub policy_id: Option<Uuid>,
+    #[serde(default)]
+    pub site_id: Option<Uuid>,
+    /// Draft layers, applied like in the preview.
+    #[serde(default)]
+    pub layers: HashMap<String, Value>,
+    pub request: policy_test::TestRequestInput,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PolicyTestView {
+    pub result: policy_test::TestResult,
+    pub effective: policy::EffectiveEngine,
+    pub plan: Vec<policy::RulePlan>,
+}
+
+/// `POST /api/v1/policies/test` - evaluates one sample request against a
+/// candidate policy (stored layers + draft + the site's context) with the
+/// same native engine configuration the edge would receive. Rate limits,
+/// IP/geo access and bot checks are edge decisions and are reported as
+/// skipped instead of guessed.
+async fn test_policy(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Json(payload): Json<TestPolicyRequest>,
+) -> Result<Json<PolicyTestView>, ApiError> {
+    if !payload.request.path.starts_with('/') {
+        return Err(ApiError::bad_request("request path must start with '/'"));
+    }
+    let mut layers: BTreeMap<String, Value> = BTreeMap::new();
+    let mut policy_name = None;
+    let mut revision = 0;
+    if let Some(policy_id) = payload.policy_id {
+        let policy = load_policy(&state, policy_id).await?;
+        policy_name = Some(policy.name.clone());
+        revision = policy.revision;
+        for row in load_layers(&state, policy_id).await? {
+            layers.insert(row.kind, row.config);
+        }
+    }
+    for (kind, config) in &payload.layers {
+        validate_layer_payload(kind, config)?;
+        layers.insert(kind.clone(), config.clone());
+    }
+    let mut overlay = None;
+    let mut settings = None;
+    let mut site_rules = Vec::new();
+    if let Some(site_id) = payload.site_id {
+        load_site_read(&state.db, site_id, &current).await?;
+        overlay = site_waf_policy_override::Entity::find_by_id(site_id)
+            .one(&state.db)
+            .await?
+            .map(|row| row.config);
+        settings = waf_settings::Entity::find()
+            .filter(waf_settings::Column::SiteId.eq(site_id))
+            .one(&state.db)
+            .await?;
+        site_rules = rule::Entity::find()
+            .filter(rule::Column::SiteId.eq(site_id))
+            .filter(rule::Column::Enabled.eq(true))
+            .order_by_asc(rule::Column::Priority)
+            .all(&state.db)
+            .await?;
+    }
+
+    let resolved = policy::resolve_maps(
+        payload.policy_id,
+        policy_name,
+        revision,
+        &layers,
+        overlay.as_ref(),
+    );
+    let effective = resolved.effective_engine(settings.as_ref());
+    let plan = policy::rule_plan(&effective);
+
+    // Compile custom rules: policy rules first, then the site's own. A rule
+    // in monitor mode is downgraded through the engine's monitor set.
+    let mut compiled = Vec::new();
+    let mut sources: BTreeMap<String, (String, &'static str)> =
+        BTreeMap::new();
+    let mut monitored: Vec<String> = Vec::new();
+    let policy_tag = resolved
+        .policy_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "draft".to_string());
+    for (index, rule) in resolved.rules.iter().enumerate() {
+        if !rule.enabled {
+            continue;
+        }
+        let id = format!("policy:{policy_tag}:{index}");
+        let Some(compiled_rule) = policy_test::compile_rule(
+            &id,
+            &rule.name,
+            &rule.expression,
+            &rule.action,
+            &rule.mode,
+            rule.severity,
+            &rule.tags,
+        ) else {
+            continue;
+        };
+        if rule.mode == "monitor" {
+            monitored.push(id.clone());
+        }
+        sources.insert(id, (rule.name.clone(), "policy"));
+        compiled.push(compiled_rule);
+    }
+    for row in &site_rules {
+        let id = row.id.to_string();
+        let Some(compiled_rule) = policy_test::compile_rule(
+            &id,
+            &row.name,
+            &row.expression,
+            &row.action,
+            &row.mode,
+            row.severity.max(0) as u8,
+            &row.tags,
+        ) else {
+            continue;
+        };
+        if row.mode == "monitor" {
+            monitored.push(id.clone());
+        }
+        sources.insert(id, (row.name.clone(), "site"));
+        compiled.push(compiled_rule);
+    }
+
+    let mut config = policy_test::engine_config(&effective, compiled);
+    config.monitor_custom_rules = monitored.into_iter().collect();
+
+    // Virtual patches: the policy layer wins, else the site's own source.
+    let patches = resolved
+        .layers
+        .get(policy::LAYER_VIRTUAL_PATCHES)
+        .and_then(|value| value.get("source"))
+        .and_then(Value::as_str)
+        .filter(|source| !source.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            settings
+                .as_ref()
+                .map(|row| row.virtual_patches.clone())
+                .filter(|source| !source.is_empty())
+        });
+
+    let result = policy_test::evaluate(
+        &config,
+        patches.as_deref(),
+        &payload.request,
+        &sources,
+    );
+    Ok(Json(PolicyTestView {
+        result,
+        effective,
+        plan,
+    }))
+}
+
+async fn respond_with_detail(    state: &AppState,
     policy: &waf_policy::Model,
 ) -> Result<Json<PolicyDetail>, ApiError> {
     let layers = load_layers(state, policy.id).await?;

@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Cloud, Gauge, ShieldCheck, Warning } from '@phosphor-icons/react'
+import { Cloud, Gauge, ShieldCheck, Stack, Warning } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Tabs } from '@/components/ui/Tabs'
 import { Switch } from '@/components/ui/Switch'
@@ -10,14 +10,16 @@ import { SkeletonCard } from '@/components/ui/Skeleton'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { challengeApi, challengeKeys } from '@/api/challenge'
+import { policiesApi, policyKeys } from '@/api/policies'
 import { useCanWrite } from '@/hooks'
 import { ProtectionSettingsPanel } from './ProtectionSettingsPanel'
 import { WafRulesPanel } from './WafRulesPanel'
 import { CcPanel } from './CcPanel'
+import { PolicyPage } from './PolicyPage'
 
-type ProtectionTab = 'settings' | 'rules' | 'cc'
+type ProtectionTab = 'settings' | 'rules' | 'cc' | 'policy'
 
-const PROTECTION_TABS: ProtectionTab[] = ['settings', 'rules', 'cc']
+const PROTECTION_TABS: ProtectionTab[] = ['settings', 'rules', 'cc', 'policy']
 
 function parseTab(value: string | null): ProtectionTab {
   return PROTECTION_TABS.includes(value as ProtectionTab)
@@ -43,6 +45,14 @@ export function ProtectionPage() {
     params.set('tab', next)
     setSearchParams(params, { replace: true })
   }
+
+  // Whether this site follows a shared policy: the banner on the other
+  // tabs says so, because a policy overrides those settings.
+  const sitePolicy = useQuery({
+    queryKey: policyKeys.sitePolicy(siteId),
+    queryFn: () => policiesApi.getSitePolicy(siteId),
+    enabled: Boolean(siteId),
+  })
 
   const challengeQuery = useQuery({
     queryKey: challengeKeys.config(siteId),
@@ -162,12 +172,36 @@ export function ProtectionPage() {
             label: t('pages.protection.tabCc'),
             icon: <Cloud weight="duotone" className="h-4 w-4" />,
           },
+          {
+            value: 'policy',
+            label: t('pages.protection.tabPolicy'),
+            icon: <Stack weight="duotone" className="h-4 w-4" />,
+          },
         ]}
       />
+
+      {sitePolicy.data?.policy && tab !== 'policy' && (
+        <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand/10 px-4 py-3 text-[13px]">
+          <Stack weight="duotone" className="h-4 w-4 text-brand" />
+          <span className="text-fg-strong">
+            {t('pages.protection.policyBanner', {
+              name: sitePolicy.data.policy.name,
+              n: sitePolicy.data.policy.revision,
+            })}
+          </span>
+          <Link
+            to="?tab=policy"
+            className="ml-auto font-medium text-link"
+          >
+            {t('pages.protection.policyBannerLink')}
+          </Link>
+        </div>
+      )}
 
       {tab === 'settings' && <ProtectionSettingsPanel />}
       {tab === 'rules' && <WafRulesPanel />}
       {tab === 'cc' && <CcPanel />}
+      {tab === 'policy' && <PolicyPage />}
 
       <ConfirmDialog
         open={confirmUnderAttack}

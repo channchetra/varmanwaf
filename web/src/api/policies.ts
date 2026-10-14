@@ -309,6 +309,43 @@ export interface RecipeApplied {
   policy: PolicyDetail
 }
 
+/** A sample request for the rule tester. */
+export interface TestRequestInput {
+  method?: string
+  path: string
+  query?: string
+  headers?: Record<string, string>
+  body?: string
+  client_ip?: string
+  host?: string
+}
+
+/** One rule that contributed to a tester verdict. */
+export interface PolicyTestHit {
+  id: string
+  name: string
+  source: 'managed' | 'policy' | 'site' | 'patch' | string
+  action: string
+  tuned: boolean
+}
+
+/** The rule tester's verdict. */
+export interface PolicyTestResult {
+  action: 'pass' | 'monitor' | 'block' | 'challenge'
+  score: number
+  details: string
+  matched_rules: PolicyTestHit[]
+  notes: string[]
+  simulated: string[]
+  skipped: string[]
+}
+
+export interface PolicyTestView {
+  result: PolicyTestResult
+  effective: EffectiveEngine
+  plan: RulePlanEntry[]
+}
+
 /** Per-node application state for one site. */
 export interface ApplyStatus {  site_id: string
   published: {
@@ -435,6 +472,13 @@ export const policiesApi = {
     id: string,
     data: { recipe_id: string; params: Record<string, string> },
   ) => apiClient.post<RecipeApplied>(`/policies/${id}/recipes`, data),
+
+  test: (payload: {
+    policy_id?: string
+    site_id?: string
+    layers?: Partial<Record<PolicyLayerKind, unknown>>
+    request: TestRequestInput
+  }) => apiClient.post<PolicyTestView>('/policies/test', payload),
 }
 
 export const policyKeys = {

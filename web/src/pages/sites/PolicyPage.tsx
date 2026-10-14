@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FloppyDisk, Stack, Trash } from '@phosphor-icons/react'
+import { FloppyDisk, Play, Stack, Trash } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
@@ -11,6 +11,7 @@ import { SkeletonCard } from '@/components/ui/Skeleton'
 import { Textarea } from '@/components/ui/Textarea'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
+import { PolicyTesterDialog } from '@/components/PolicyTesterDialog'
 import { useCanWrite } from '@/hooks'
 import {
   policiesApi,
@@ -110,6 +111,7 @@ export function PolicyPage() {  const { t } = useTranslation()
 
   // Raw JSON draft of the overlay; `null` means "show the saved value".
   const [draft, setDraft] = useState<string | null>(null)
+  const [testOpen, setTestOpen] = useState(false)
   const savedJson = useMemo(
     () => JSON.stringify(override.data?.config ?? {}, null, 2),
     [override.data],
@@ -298,13 +300,25 @@ export function PolicyPage() {  const { t } = useTranslation()
           description={t('pages.sitePolicy.effectiveHint')}
           action={
             effectiveData && (
-              <Badge tone={effectiveData.source === 'policy' ? 'brand' : 'neutral'}>
-                {effectiveData.source === 'policy'
-                  ? t('pages.sitePolicy.sourcePolicy', {
-                      name: effectiveData.policy?.name ?? '',
-                    })
-                  : t('pages.sitePolicy.sourceSite')}
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge
+                  tone={effectiveData.source === 'policy' ? 'brand' : 'neutral'}
+                >
+                  {effectiveData.source === 'policy'
+                    ? t('pages.sitePolicy.sourcePolicy', {
+                        name: effectiveData.policy?.name ?? '',
+                      })
+                    : t('pages.sitePolicy.sourceSite')}
+                </Badge>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<Play weight="fill" className="h-3.5 w-3.5" />}
+                  onClick={() => setTestOpen(true)}
+                >
+                  {t('pages.policies.test')}
+                </Button>
+              </div>
             )
           }
         />
@@ -527,6 +541,13 @@ export function PolicyPage() {  const { t } = useTranslation()
           </ul>
         </CardBody>
       </Card>
+
+      {testOpen && (
+        <PolicyTesterDialog
+          siteId={siteId}
+          onClose={() => setTestOpen(false)}
+        />
+      )}
     </div>
   )
 }

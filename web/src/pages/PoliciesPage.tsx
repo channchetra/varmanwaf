@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Stack, Trash } from '@phosphor-icons/react'
+import { Play, Plus, Stack, Trash } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardFooter, CardHeader } from '@/components/ui/Card'
@@ -15,6 +15,7 @@ import { Switch } from '@/components/ui/Switch'
 import { Textarea } from '@/components/ui/Textarea'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
+import { PolicyTesterDialog } from '@/components/PolicyTesterDialog'
 import { useCanWrite } from '@/hooks'
 import { cn } from '@/lib/utils'
 import {
@@ -356,6 +357,7 @@ function PolicyEditorDialog({
   const queryClient = useQueryClient()
   const [tab, setTab] = useState<PolicyLayerKind>('engine')
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [testOpen, setTestOpen] = useState(false)
 
   const detail = useQuery({
     queryKey: policyKeys.detail(policyId),
@@ -405,6 +407,14 @@ function PolicyEditorDialog({
           >
             {t('pages.policies.history')}
           </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Play weight="fill" className="h-3.5 w-3.5" />}
+            onClick={() => setTestOpen(true)}
+          >
+            {t('pages.policies.test')}
+          </Button>
         </div>
 
         {detail.isLoading || !policy ? (
@@ -431,6 +441,12 @@ function PolicyEditorDialog({
             policyId={policyId}
             canWrite={canWrite}
             onClose={() => setHistoryOpen(false)}
+          />
+        )}
+        {testOpen && (
+          <PolicyTesterDialog
+            policyId={policyId}
+            onClose={() => setTestOpen(false)}
           />
         )}
       </div>
@@ -1086,6 +1102,7 @@ function RuleOverridesForm({
 
   // Draft preview: compiles the layer as if it were saved.
   const [preview, setPreview] = useState<PolicyPreview | null>(null)
+  const [testDraftOpen, setTestDraftOpen] = useState(false)
   const runPreview = useMutation({
     mutationFn: () =>
       policiesApi.preview({
@@ -1113,6 +1130,14 @@ function RuleOverridesForm({
             onClick={() => runPreview.mutate()}
           >
             {t('pages.policies.preview')}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Play weight="fill" className="h-3.5 w-3.5" />}
+            onClick={() => setTestDraftOpen(true)}
+          >
+            {t('pages.policies.testDraft')}
           </Button>
         </div>
         {selectors.length > 0 && (
@@ -1217,6 +1242,13 @@ function RuleOverridesForm({
         <RulePlanDialog
           plan={preview.plan}
           onClose={() => setPreview(null)}
+        />
+      )}
+      {testDraftOpen && (
+        <PolicyTesterDialog
+          policyId={policyId}
+          layers={{ rule_overrides: payload() }}
+          onClose={() => setTestDraftOpen(false)}
         />
       )}
     </div>

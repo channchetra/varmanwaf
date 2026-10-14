@@ -86,12 +86,6 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
           requiresSite: true,
         },
         {
-          to: site('security/policy'),
-          labelKey: 'nav.securityPolicy',
-          icon: Stack,
-          requiresSite: true,
-        },
-        {
           to: site('security/rate-limiting'),
           labelKey: 'nav.securityRateLimiting',
           icon: Gauge,
