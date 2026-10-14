@@ -23,6 +23,30 @@ export const logsApi = {
 
   purge: (params: { site_id?: string; older_than_days?: number } = {}) =>
     apiClient.delete<PurgeResult>('/logs/purge', { query: params }),
+
+  /**
+   * `GET /security-events/{id}/why` - the resolved decision chain behind
+   * one security event (auto-block, rate limit, producing rule with
+   * provenance, policy binding, tuning). Unknowns are reported as such.
+   */
+  whySecurity: (eventId: number) =>
+    apiClient.get<EventExplanation>(`/security-events/${eventId}/why`),
+}
+
+/** One resolved stage of an event's decision chain. */
+export interface ExplanationStep {
+  stage: string
+  status: 'hit' | 'miss' | 'unknown'
+  title: string
+  detail: string
+  data: unknown
+}
+
+export interface EventExplanation {
+  verdict: string
+  blocked_by: string | null
+  steps: ExplanationStep[]
+  notes: string[]
 }
 
 /**

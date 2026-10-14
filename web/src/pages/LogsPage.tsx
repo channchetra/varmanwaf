@@ -892,6 +892,7 @@ export function LogsPage() {
               )}
               {selectedEvent.rule_name && <Badge tone="info">{selectedEvent.rule_name}</Badge>}
             </div>
+            <WhyPanel eventId={selectedEvent.id} />
             <DefinitionGrid
               rows={[
                 [t('pages.logs.time'), formatDateTime(selectedEvent.timestamp)],
@@ -1237,6 +1238,105 @@ function RawRequestPanel({ log, onCopy }: { log: AccessLog; onCopy: () => void }
         truncated={log.response_body_truncated}
         lines={responseLines(log, t('pages.logs.noResponseBody'))}
       />
+    </div>
+  )
+}
+
+const WHY_STATUS_TONE: Record<string, 'info' | 'neutral' | 'warning'> = {
+  hit: 'info',
+  miss: 'neutral',
+  unknown: 'warning',
+}
+
+const WHY_VERDICT_TONE: Record<
+  string,
+  'danger' | 'warning' | 'info' | 'success' | 'neutral'
+> = {
+  blocked: 'danger',
+  monitored: 'warning',
+  challenged: 'info',
+  allowed: 'success',
+}
+
+/**
+ * "Why was this blocked?" - expands the resolved decision chain the control
+ * plane can actually prove (auto-block state, rate limit, producing rule
+ * with its source, policy binding, tuning). Unknowns are listed, not
+ * guessed.
+ */
+function WhyPanel({ eventId }: { eventId: number }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const explanation = useQuery({
+    queryKey: ['logs', 'why', eventId],
+    queryFn: () => logsApi.whySecurity(eventId),
+    enabled: open,
+    retry: false,
+  })
+
+  return (
+    <div className="rounded-md border border-line">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-[13px] font-medium text-fg hover:bg-recessed"
+        onClick={() => setOpen((value) => !value)}
+      >
+        {t('pages.logs.whyTitle')}
+        <span className="text-fg-subtle">
+          {open ? t('common.hide') : t('common.show')}
+        </span>
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-line px-3 py-2">
+          {explanation.isLoading ? (
+            <p className="text-xs text-fg-subtle">{t('common.loading')}</p>
+          ) : explanation.isError ? (
+            <p className="text-xs text-fg-danger">
+              {t('pages.logs.whyFailed')}
+            </p>
+          ) : explanation.data ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={WHY_VERDICT_TONE[explanation.data.verdict] ?? 'neutral'}>
+                  {explanation.data.verdict}
+                </Badge>
+                {explanation.data.blocked_by && (
+                  <code className="text-xs text-fg-subtle">
+                    {explanation.data.blocked_by}
+                  </code>
+                )}
+              </div>
+              <ol className="space-y-2">
+                {explanation.data.steps.map((step) => (
+                  <li key={step.stage} className="flex gap-2">
+                    <Badge tone={WHY_STATUS_TONE[step.status] ?? 'neutral'}>
+                      {t(`pages.logs.stages.${step.stage}`, step.stage)}
+                    </Badge>
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium text-fg">
+                        {step.title}
+                      </p>
+                      <p className="text-[12px] text-fg-subtle">{step.detail}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              {explanation.data.notes.length > 0 && (
+                <div>
+                  <p className="mb-1 text-[12px] font-medium text-fg-subtle">
+                    {t('pages.logs.whyNotes')}
+                  </p>
+                  <ul className="list-disc space-y-1 pl-4 text-[12px] text-fg-subtle">
+                    {explanation.data.notes.map((note, index) => (
+                      <li key={index}>{note}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          ) : null}
+        </div>
+      )}
     </div>
   )
 }

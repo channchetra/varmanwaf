@@ -36,6 +36,7 @@ import { OriginPage } from '@/pages/sites/OriginPage'
 import { LifecyclePage } from '@/pages/LifecyclePage'
 import { PoliciesPage } from '@/pages/PoliciesPage'
 import { CrsPage } from '@/pages/CrsPage'
+import { AlertsPage } from '@/pages/AlertsPage'
 import { SiteSettingsPage } from '@/pages/placeholders'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Button } from '@/components/ui/Button'
@@ -129,6 +130,7 @@ export const router = createBrowserRouter([
       { path: 'ip-groups', element: <IpGroupsPage /> },
       { path: 'policies', element: <PoliciesPage /> },
       { path: 'crs', element: <CrsPage /> },
+      { path: 'alerts', element: <AlertsPage /> },
       { path: 'lifecycle', element: <LifecyclePage /> },
       // Global surfaces. The per-site counterparts live under `/sites/:siteId`.
       { path: 'ssl', element: <GlobalSslPage /> },

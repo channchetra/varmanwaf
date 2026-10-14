@@ -38,8 +38,10 @@ pub mod event_type {
     /// An admin signed in from a country outside their recent-login
     /// baseline (see `crate::notify::login_anomaly`).
     pub const AUTH_LOGIN_ANOMALY: &str = "auth.login_anomaly";
+    /// A security alert rule fired (see [`crate::alerts`]).
+    pub const SECURITY_ALERT: &str = "security.alert";
 
-    pub const ALL: [&str; 10] = [
+    pub const ALL: [&str; 11] = [
         AGENT_OFFLINE,
         AGENT_ONLINE,
         AGENT_RESOURCE,
@@ -50,6 +52,7 @@ pub mod event_type {
         CONFIG_SYNC_FAILED,
         SITE_FAILOVER_CHANGED,
         AUTH_LOGIN_ANOMALY,
+        SECURITY_ALERT,
     ];
 }
 

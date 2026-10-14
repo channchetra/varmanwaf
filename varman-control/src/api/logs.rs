@@ -1,6 +1,6 @@
 //! Log queries: security events produced by the WAF and the full access log.
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::Json;
 use axum::Router;
@@ -20,6 +20,7 @@ use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::models::{access_log, security_event, site};
+use crate::provenance;
 
 /// How far back a query may reach when the client does not say.
 const DEFAULT_WINDOW_HOURS: i64 = 24;
@@ -126,6 +127,10 @@ pub fn routes() -> Router<AppState> {
         .route("/logs/security", get(list_security))
         .route("/logs/access", get(list_access))
         .route("/logs/purge", axum::routing::delete(purge))
+        .route(
+            "/security-events/{event_id}/why",
+            get(explain_security),
+        )
 }
 
 /// Resolves the site filter and the caller's visibility at once.
@@ -175,6 +180,47 @@ fn apply_scope(
         },
         Some(ids) => condition.add(column.is_in(ids.iter().copied())),
     }
+}
+
+/// `GET /api/v1/security-events/{event_id}/why` - explains the decision
+/// chain behind one security event (see [`crate::provenance`]): auto-block
+/// state, rate-limit/bot involvement, the producing rule (managed catalogue,
+/// imported CRS catalogue with file/line, policy layer or site rule), the
+/// site's current policy binding and the tuning that applied.
+async fn explain_security(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(event_id): Path<i64>,
+) -> Result<Json<provenance::Explanation>, ApiError> {
+    let event = security_event::Entity::find_by_id(event_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::not_found("security event not found"))?;
+
+    // Same visibility rule as the log list: non-admins only see their own
+    // sites; an invisible event answers 404 rather than revealing existence.
+    if !current.is_admin() {
+        let visible = match event.site_id {
+            Some(site_id) => {
+                let scope = resolve_scope(
+                    &state.db,
+                    &Some(site_id.to_string()),
+                    &current,
+                )
+                .await?;
+                matches!(scope, Some(ids) if ids.contains(&site_id))
+            },
+            None => false,
+        };
+        if !visible {
+            return Err(ApiError::not_found("security event not found"));
+        }
+    }
+
+    let explanation = provenance::explain(&state.db, &event)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(explanation))
 }
 
 /// Splits a comma-separated filter value (`a,b`) into its trimmed, non-empty

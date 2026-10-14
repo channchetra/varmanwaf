@@ -52,6 +52,16 @@ pub fn routes() -> Router<AppState> {
             get(show_settings).put(update_settings),
         )
         .route("/notifications/events", get(list_events))
+        .route("/notifications/event-types", get(list_event_types))
+}
+
+/// `GET /api/v1/notifications/event-types` - the event types a channel may
+/// subscribe to, straight from the server's own list so the console never
+/// offers a value the API would reject.
+async fn list_event_types(
+    _current: AuthUser,
+) -> Json<Vec<&'static str>> {
+    Json(event_type::ALL.to_vec())
 }
 
 /// Validates the stored config for a channel kind, so a broken channel is

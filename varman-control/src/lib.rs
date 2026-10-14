@@ -9,6 +9,7 @@
 //! blocks until a shutdown signal is received.
 
 pub mod ai;
+pub mod alerts;
 pub mod api;
 pub mod auth;
 pub mod config;
@@ -27,6 +28,7 @@ pub mod pki;
 pub mod policy;
 pub mod policy_content;
 pub mod policy_test;
+pub mod provenance;
 pub mod subscription;
 pub mod tls;
 
@@ -198,6 +200,11 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
     notify_manager.reload().await;
     let _notify_reload_handle = start_notify_reload_loop(state.clone());
     let _self_monitor_handle = notify::self_monitor::start(state.clone());
+
+    // ── 6g. Security alert rules ────────────────────────────────────────────
+    // Threshold rules over stored security events; they dispatch through the
+    // notification manager, so `notify::init` must have run first.
+    let _alert_evaluator_handle = alerts::spawn(db.clone());
 
     if control_tls.is_enabled() {
         match api::system_tls::load_active_certificate(&state).await {

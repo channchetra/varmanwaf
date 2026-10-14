@@ -20,6 +20,7 @@ import {
   FlowArrow,
   Sparkle,
   Stack,
+  BellRinging,
   type Icon,
 } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
@@ -75,6 +76,7 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
     { kind: 'leaf', to: '/sites', labelKey: 'nav.sites', icon: Globe },
     { kind: 'leaf', to: '/policies', labelKey: 'nav.policies', icon: Stack },
     { kind: 'leaf', to: '/crs', labelKey: 'nav.crs', icon: Stack },
+    { kind: 'leaf', to: '/alerts', labelKey: 'nav.alerts', icon: BellRinging },
     {
       kind: 'group',
       labelKey: 'nav.security',

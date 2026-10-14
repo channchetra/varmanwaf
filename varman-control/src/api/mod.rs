@@ -7,6 +7,7 @@
 pub mod agents;
 pub mod ai;
 pub mod ai_rate_limit;
+pub mod alerts;
 pub mod analytics;
 pub mod api_protection;
 pub mod auth;
@@ -113,6 +114,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(mcp::routes())
         .merge(config_versions::routes())
         .merge(crs::routes())
+        .merge(alerts::routes())
         .merge(notifications::routes())
         .merge(login_security::routes())
         .merge(policies::routes())

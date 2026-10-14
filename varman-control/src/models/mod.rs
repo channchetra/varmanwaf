@@ -14,6 +14,7 @@ pub mod agent_blocked_ips;
 pub mod agent_metrics;
 pub mod agents;
 pub mod ai;
+pub mod alerts;
 pub mod api_protection;
 pub mod bot_protection;
 pub mod cache_settings;
@@ -54,6 +55,7 @@ pub mod waf_settings;
 pub use agent_blocked_ips::agent_blocked_ips as agent_blocked_ip;
 pub use agent_metrics::agent_metrics as agent_metric;
 pub use agents::{agent_status, agents as agent};
+pub use alerts::{alert_rules as alert_rule, alert_silences as alert_silence};
 pub use ai::{
     ai_conversations as ai_conversation, ai_defaults,
     ai_messages as ai_message, ai_settings as ai_setting, message_role,

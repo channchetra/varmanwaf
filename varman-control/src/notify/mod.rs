@@ -136,6 +136,9 @@ pub struct NotificationSettings {
     /// Deliver anomalous-login alerts.
     #[serde(default = "default_true")]
     pub notify_auth_login_anomaly: bool,
+    /// Deliver security alert-rule firings (`security.alert`).
+    #[serde(default = "default_true")]
+    pub notify_security_alert: bool,
     /// Warn when a certificate expires within this many days.
     #[serde(default = "default_cert_expiry_warn_days")]
     pub cert_expiry_warn_days: u32,
@@ -166,6 +169,7 @@ impl Default for NotificationSettings {
             notify_config_sync_failed: true,
             notify_site_failover_changed: true,
             notify_auth_login_anomaly: true,
+            notify_security_alert: true,
             cert_expiry_warn_days: 30,
         }
     }
@@ -195,6 +199,7 @@ impl NotificationSettings {
                 self.notify_site_failover_changed
             },
             event_type::AUTH_LOGIN_ANOMALY => self.notify_auth_login_anomaly,
+            event_type::SECURITY_ALERT => self.notify_security_alert,
             // Unknown types (e.g. the test button) are always delivered.
             _ => true,
         }
@@ -282,8 +287,15 @@ pub fn global() -> Option<&'static NotificationManager> {
 /// Raises an alert on the global manager; a no-op before [`init`], which
 /// keeps unit tests and the maintenance CLI silent.
 pub async fn emit(event: AlertEvent) {
+    emit_to(event, None).await;
+}
+
+/// Raises an alert restricted to the given channel ids; `None` delivers to
+/// every channel subscribed to the event type. Security alert rules bind
+/// their own channels through this.
+pub async fn emit_to(event: AlertEvent, channels: Option<Vec<Uuid>>) {
     if let Some(manager) = global() {
-        manager.dispatch(event).await;
+        manager.dispatch_to(event, channels).await;
     }
 }
 
@@ -336,6 +348,16 @@ impl NotificationManager {
     /// Persists the alert into the dashboard history, then delivers it to
     /// every matching channel. Never fails: delivery problems are logged.
     pub async fn dispatch(&self, event: AlertEvent) {
+        self.dispatch_to(event, None).await;
+    }
+
+    /// [`Self::dispatch`] restricted to specific channel ids; `None` keeps
+    /// the subscription-only behaviour.
+    pub async fn dispatch_to(
+        &self,
+        event: AlertEvent,
+        only_channels: Option<Vec<Uuid>>,
+    ) {
         self.persist_event(&event).await;
 
         // Noise gate: the history above always lands, but delivery to the
@@ -349,6 +371,10 @@ impl NotificationManager {
         let matching: Vec<&notification_channel::Model> = channels
             .iter()
             .filter(|channel| channel.enabled && subscribed(channel, &event))
+            .filter(|channel| match &only_channels {
+                Some(ids) => ids.contains(&channel.id),
+                None => true,
+            })
             .collect();
         if matching.is_empty() {
             return;
