@@ -42,6 +42,8 @@ pub mod event_type {
     pub const AUTH_LOGIN_ANOMALY: &str = "auth.login_anomaly";
     /// A security alert rule fired (see [`crate::alerts`]).
     pub const SECURITY_ALERT: &str = "security.alert";
+    /// A scheduled interception report was generated and dispatched.
+    pub const REPORT_SCHEDULED: &str = "report.scheduled";
 
     pub const ALL: [&str; 11] = [
         AGENT_OFFLINE,

@@ -290,12 +290,31 @@ pub async fn emit(event: AlertEvent) {
     emit_to(event, None).await;
 }
 
+/// A generated artifact riding along with one alert: e-mail channels attach
+/// it, chat channels deliver the message alone.
+#[derive(Debug, Clone)]
+pub struct AlertAttachment {
+    pub filename: String,
+    pub html: String,
+}
+
 /// Raises an alert restricted to the given channel ids; `None` delivers to
 /// every channel subscribed to the event type. Security alert rules bind
 /// their own channels through this.
 pub async fn emit_to(event: AlertEvent, channels: Option<Vec<Uuid>>) {
     if let Some(manager) = global() {
         manager.dispatch_to(event, channels).await;
+    }
+}
+
+/// Raises an alert carrying a generated artifact (the scheduled reports
+/// path): e-mail channels attach it, every other channel gets the message.
+pub async fn emit_with_attachment(
+    event: AlertEvent,
+    attachment: AlertAttachment,
+) {
+    if let Some(manager) = global() {
+        manager.dispatch_with_attachment(event, attachment).await;
     }
 }
 
@@ -348,7 +367,7 @@ impl NotificationManager {
     /// Persists the alert into the dashboard history, then delivers it to
     /// every matching channel. Never fails: delivery problems are logged.
     pub async fn dispatch(&self, event: AlertEvent) {
-        self.dispatch_to(event, None).await;
+        self.dispatch_inner(event, None, None).await;
     }
 
     /// [`Self::dispatch`] restricted to specific channel ids; `None` keeps
@@ -357,6 +376,25 @@ impl NotificationManager {
         &self,
         event: AlertEvent,
         only_channels: Option<Vec<Uuid>>,
+    ) {
+        self.dispatch_inner(event, only_channels, None).await;
+    }
+
+    /// [`Self::dispatch`] carrying a generated artifact: e-mail channels
+    /// attach it, every other channel delivers the message alone.
+    pub async fn dispatch_with_attachment(
+        &self,
+        event: AlertEvent,
+        attachment: AlertAttachment,
+    ) {
+        self.dispatch_inner(event, None, Some(attachment)).await;
+    }
+
+    async fn dispatch_inner(
+        &self,
+        event: AlertEvent,
+        only_channels: Option<Vec<Uuid>>,
+        attachment: Option<AlertAttachment>,
     ) {
         self.persist_event(&event).await;
 
@@ -381,6 +419,7 @@ impl NotificationManager {
         }
 
         let event = Arc::new(event);
+        let attachment = attachment.map(Arc::new);
         for channel in matching {
             if self.suppressed(channel.id, &event) {
                 continue;
@@ -388,10 +427,14 @@ impl NotificationManager {
             let channel = channel.clone();
             let http = self.http.clone();
             let event = (*event).clone();
+            let attachment = attachment.clone();
             // Deliveries run concurrently and detached: a slow SMTP server
             // must not stall the caller (often the gRPC ingest path).
             tokio::spawn(async move {
-                if let Err(err) = deliver_to(&http, &channel, &event).await {
+                if let Err(err) =
+                    deliver_to(&http, &channel, &event, attachment.as_deref())
+                        .await
+                {
                     tracing::warn!(
                         channel = %channel.name,
                         kind = %channel.kind,
@@ -410,7 +453,7 @@ impl NotificationManager {
         channel: &notification_channel::Model,
         event: &AlertEvent,
     ) -> Result<(), String> {
-        deliver_to(&self.http, channel, event).await
+        deliver_to(&self.http, channel, event, None).await
     }
 
     /// Sends a test alert through one channel and reports the outcome.
@@ -528,15 +571,18 @@ impl NotificationManager {
 }
 
 /// Routes one event to one channel by kind. Free-standing so a detached
-/// delivery task needs nothing but the HTTP client.
+/// delivery task needs nothing but the HTTP client. The attachment (a
+/// generated report) only concerns e-mail; chat channels deliver the
+/// message alone.
 async fn deliver_to(
     http: &reqwest::Client,
     channel: &notification_channel::Model,
     event: &AlertEvent,
+    attachment: Option<&AlertAttachment>,
 ) -> Result<(), String> {
     match channel.kind.as_str() {
         crate::models::channel_kind::EMAIL => {
-            email::send(http, &channel.config, event).await
+            email::send(http, &channel.config, event, attachment).await
         },
         crate::models::channel_kind::WECOM => {
             webhook::send_wecom(http, &channel.config, event).await

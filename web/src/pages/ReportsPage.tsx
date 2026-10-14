@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { DownloadSimple, Eye, FileText } from '@phosphor-icons/react'
+import { DownloadSimple, Eye, FileText, PaperPlaneTilt } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Callout } from '@/components/ui/Callout'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Select'
 import { Input } from '@/components/ui/Input'
+import { Switch } from '@/components/ui/Switch'
 import { StatGrid } from '@/components/ui/StatGrid'
 import { Dialog } from '@/components/ui/Dialog'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -19,8 +20,10 @@ import {
   reportKeys,
   fetchInterceptionReport,
   downloadInterceptionReport,
+  DEFAULT_REPORT_SCHEDULE,
   type ReportActionFilter,
   type ReportQuery,
+  type ReportSchedule,
 } from '@/api/reports'
 import {
   REPORT_PRESETS,
@@ -30,7 +33,7 @@ import {
 import { useAuthStore } from '@/stores/authStore'
 import { useSitesList } from '@/hooks'
 import { errorMessage } from '@/api/errors'
-import { formatNumber } from '@/lib/format'
+import { formatDateTime, formatNumber } from '@/lib/format'
 
 const ACTION_FILTERS: ReportActionFilter[] = ['all', 'blocked', 'monitor']
 
@@ -78,6 +81,7 @@ function ReportsWorkspace() {
   const [search, setSearch] = useState('')
   const [titleDraft, setTitleDraft] = useState<string | null>(null)
   const [noteDraft, setNoteDraft] = useState<string | null>(null)
+  const [schedDraft, setSchedDraft] = useState<ReportSchedule | null>(null)
   const [preview, setPreview] = useState<{
     html: string
     filename: string
@@ -108,21 +112,41 @@ function ReportsWorkspace() {
   const settings = settingsQuery.data
   const titleValue = titleDraft ?? settings?.title ?? 'Interception report'
   const noteValue = noteDraft ?? settings?.footer_note ?? ''
+  const sched = schedDraft ?? settings?.schedule ?? DEFAULT_REPORT_SCHEDULE
 
   const saveSettings = useMutation({
     mutationFn: () =>
       reportsApi.saveSettings({
         title: titleValue.trim(),
         footer_note: noteValue.trim() || null,
+        schedule: sched,
+        last_fired: settings?.last_fired ?? null,
       }),
     onSuccess: (saved) => {
       setTitleDraft(null)
       setNoteDraft(null)
+      setSchedDraft(null)
       queryClient.setQueryData(reportKeys.settings(), saved)
       toast.success(t('pages.reports.settingsSaved'))
     },
     onError: (error) =>
       toast.error(t('pages.reports.settingsSaveFailed'), errorMessage(error)),
+  })
+
+  const sendNow = useMutation({
+    mutationFn: () => reportsApi.sendNow(),
+    onSuccess: (fired) => {
+      toast.success(
+        t('pages.reports.sendNowSent'),
+        t('pages.reports.sendNowDetail', {
+          events: formatNumber(fired.events),
+          blocked: formatNumber(fired.blocked),
+          filename: fired.filename,
+        }),
+      )
+    },
+    onError: (error) =>
+      toast.error(t('pages.reports.sendNowFailed'), errorMessage(error)),
   })
 
   const previewReport = useMutation({
@@ -347,6 +371,175 @@ function ReportsWorkspace() {
             value={noteValue}
             onChange={(event) => setNoteDraft(event.target.value)}
           />
+
+          <div className="border-t border-line pt-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <Switch
+                checked={sched.enabled}
+                onCheckedChange={(enabled) =>
+                  setSchedDraft({ ...sched, enabled })
+                }
+                label={t('pages.reports.scheduleEnabled')}
+              />
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<PaperPlaneTilt weight="bold" className="h-4 w-4" />}
+                loading={sendNow.isPending}
+                onClick={() => sendNow.mutate()}
+              >
+                {t('pages.reports.sendNow')}
+              </Button>
+              {settings?.last_fired && (
+                <span className="text-[11px] text-fg-subtle">
+                  {t('pages.reports.lastFired', {
+                    at: formatDateTime(settings.last_fired),
+                  })}
+                </span>
+              )}
+            </div>
+            <div className="mt-4 flex flex-wrap items-end gap-3">
+              <Select
+                containerClassName="w-36"
+                label={t('pages.reports.interval')}
+                value={sched.interval}
+                options={(['daily', 'weekly', 'monthly'] as const).map(
+                  (value) => ({
+                    value,
+                    label: t(`pages.reports.interval_${value}`),
+                  }),
+                )}
+                onChange={(event) =>
+                  setSchedDraft({
+                    ...sched,
+                    interval: event.target
+                      .value as ReportSchedule['interval'],
+                  })
+                }
+              />
+              <Input
+                containerClassName="w-24"
+                type="number"
+                min={0}
+                max={23}
+                label={t('pages.reports.hour')}
+                value={String(sched.hour)}
+                onChange={(event) =>
+                  setSchedDraft({
+                    ...sched,
+                    hour: Math.min(
+                      23,
+                      Math.max(0, Number(event.target.value) || 0),
+                    ),
+                  })
+                }
+              />
+              <Input
+                containerClassName="w-24"
+                type="number"
+                min={0}
+                max={59}
+                label={t('pages.reports.minute')}
+                value={String(sched.minute)}
+                onChange={(event) =>
+                  setSchedDraft({
+                    ...sched,
+                    minute: Math.min(
+                      59,
+                      Math.max(0, Number(event.target.value) || 0),
+                    ),
+                  })
+                }
+              />
+              {sched.interval === 'weekly' && (
+                <Select
+                  containerClassName="w-40"
+                  label={t('pages.reports.day')}
+                  value={String(sched.day)}
+                  options={[0, 1, 2, 3, 4, 5, 6].map((day) => ({
+                    value: String(day),
+                    label: t(`pages.reports.weekday_${day}`),
+                  }))}
+                  onChange={(event) =>
+                    setSchedDraft({ ...sched, day: Number(event.target.value) })
+                  }
+                />
+              )}
+              {sched.interval === 'monthly' && (
+                <Input
+                  containerClassName="w-28"
+                  type="number"
+                  min={1}
+                  max={28}
+                  label={t('pages.reports.dayOfMonth')}
+                  value={String(sched.day)}
+                  onChange={(event) =>
+                    setSchedDraft({
+                      ...sched,
+                      day: Math.min(
+                        28,
+                        Math.max(1, Number(event.target.value) || 1),
+                      ),
+                    })
+                  }
+                />
+              )}
+              <Input
+                containerClassName="w-32"
+                type="number"
+                min={1}
+                max={92}
+                label={t('pages.reports.windowDays')}
+                hint={t('pages.reports.windowDaysHint')}
+                value={String(sched.window_days)}
+                onChange={(event) =>
+                  setSchedDraft({
+                    ...sched,
+                    window_days: Math.min(
+                      92,
+                      Math.max(1, Number(event.target.value) || 1),
+                    ),
+                  })
+                }
+              />
+              <Select
+                containerClassName="w-56"
+                label={t('pages.reports.site')}
+                value={sched.site_id ?? ''}
+                options={[
+                  { value: '', label: t('pages.reports.allSites') },
+                  ...(sites ?? []).map((site) => ({
+                    value: site.id,
+                    label: site.name || site.domain,
+                  })),
+                ]}
+                onChange={(event) =>
+                  setSchedDraft({
+                    ...sched,
+                    site_id: event.target.value || null,
+                  })
+                }
+              />
+              <Select
+                containerClassName="w-40"
+                label={t('pages.reports.action')}
+                value={sched.action ?? 'all'}
+                options={ACTION_FILTERS.map((value) => ({
+                  value,
+                  label: t(`pages.reports.action_${value}`),
+                }))}
+                onChange={(event) =>
+                  setSchedDraft({
+                    ...sched,
+                    action: event.target.value as ReportActionFilter,
+                  })
+                }
+              />
+            </div>
+            <p className="mt-3 text-[11px] text-fg-subtle">
+              {t('pages.reports.scheduleHint')}
+            </p>
+          </div>
         </CardBody>
       </Card>
 

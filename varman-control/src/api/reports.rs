@@ -17,10 +17,10 @@ use std::fmt::Write as _;
 use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
-use sea_orm::{ActiveModelTrait, EntityTrait, Value};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Value};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -28,6 +28,7 @@ use crate::api::common::{load_site_read, parse_uuid, query_all};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
+use crate::notify::{self, AlertAttachment, AlertEvent};
 
 /// Longest range a report may cover.
 const MAX_RANGE_DAYS: i64 = 92;
@@ -40,6 +41,7 @@ pub fn routes() -> Router<AppState> {
         .route("/reports/summary", get(summary))
         .route("/reports/interception", get(interception_report))
         .route("/reports/settings", get(show_settings).put(save_settings))
+        .route("/reports/send-now", post(send_now))
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,10 +151,59 @@ pub struct ReportSettings {
     /// Optional operator note; printed above the data-source note.
     #[serde(default)]
     pub footer_note: Option<String>,
+    /// Cron-style delivery schedule (UTC); disabled by default.
+    #[serde(default)]
+    pub schedule: ReportSchedule,
+    /// When the schedule last fired. Set (armed) when the settings are
+    /// saved with the schedule enabled; read-only in the UI.
+    #[serde(default)]
+    pub last_fired: Option<DateTime<Utc>>,
+}
+
+/// A cron-style delivery schedule: daily, weekly or monthly at HH:MM UTC.
+/// The report covers `window_days` ending at the trigger time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportSchedule {
+    #[serde(default)]
+    pub enabled: bool,
+    /// `daily` | `weekly` | `monthly`.
+    #[serde(default = "default_interval")]
+    pub interval: String,
+    /// Trigger hour, 0-23 UTC.
+    #[serde(default)]
+    pub hour: u8,
+    /// Trigger minute, 0-59.
+    #[serde(default)]
+    pub minute: u8,
+    /// Weekly: 0 = Monday .. 6 = Sunday. Monthly: 1..=28 (every month has
+    /// those days, so a 31-day month can never skip a firing).
+    #[serde(default = "default_day")]
+    pub day: u8,
+    /// Days the report covers, ending at the trigger time (1..=92).
+    #[serde(default = "default_window_days")]
+    pub window_days: i64,
+    /// Scope: `None`/empty = all sites.
+    #[serde(default)]
+    pub site_id: Option<String>,
+    /// `all` | `blocked` | `monitor`.
+    #[serde(default)]
+    pub action: Option<String>,
 }
 
 fn default_title() -> String {
     "Interception report".to_string()
+}
+
+fn default_interval() -> String {
+    "daily".to_string()
+}
+
+fn default_day() -> u8 {
+    1
+}
+
+fn default_window_days() -> i64 {
+    7
 }
 
 impl Default for ReportSettings {
@@ -160,6 +211,23 @@ impl Default for ReportSettings {
         Self {
             title: default_title(),
             footer_note: None,
+            schedule: ReportSchedule::default(),
+            last_fired: None,
+        }
+    }
+}
+
+impl Default for ReportSchedule {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval: default_interval(),
+            hour: 0,
+            minute: 0,
+            day: default_day(),
+            window_days: default_window_days(),
+            site_id: None,
+            action: None,
         }
     }
 }
@@ -184,7 +252,120 @@ impl ReportSettings {
                 ));
             }
         }
+        self.schedule.validate()
+    }
+}
+
+impl ReportSchedule {
+    fn validate(&self) -> Result<(), ApiError> {
+        match self.interval.as_str() {
+            "daily" | "weekly" | "monthly" => {},
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "unknown interval '{other}' (use daily, weekly or monthly)"
+                )))
+            },
+        }
+        if self.hour > 23 {
+            return Err(ApiError::BadRequest(
+                "schedule hour must be 0-23".to_string(),
+            ));
+        }
+        if self.minute > 59 {
+            return Err(ApiError::BadRequest(
+                "schedule minute must be 0-59".to_string(),
+            ));
+        }
+        match self.interval.as_str() {
+            "weekly" if self.day > 6 => {
+                return Err(ApiError::BadRequest(
+                    "weekly day must be 0 (Monday) to 6 (Sunday)".to_string(),
+                ))
+            },
+            "monthly" if !(1..=28).contains(&self.day) => {
+                return Err(ApiError::BadRequest(
+                    "monthly day must be 1-28".to_string(),
+                ))
+            },
+            _ => {},
+        }
+        if !(1..=MAX_RANGE_DAYS).contains(&self.window_days) {
+            return Err(ApiError::BadRequest(format!(
+                "window_days must be 1-{MAX_RANGE_DAYS}"
+            )));
+        }
+        if let Some(raw) = self
+            .site_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|raw| !raw.is_empty())
+        {
+            parse_uuid(raw, "site id")?;
+        }
+        ActionFilter::parse(self.action.as_deref())?;
         Ok(())
+    }
+}
+
+/// The most recent instant the schedule came due at or before `now` (UTC);
+/// `None` when disabled or misconfigured. Pure so it is unit-testable.
+fn last_due(
+    schedule: &ReportSchedule,
+    now: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    use chrono::{Datelike, NaiveTime};
+
+    if !schedule.enabled {
+        return None;
+    }
+    let time = NaiveTime::from_hms_opt(
+        u32::from(schedule.hour),
+        u32::from(schedule.minute),
+        0,
+    )?;
+    let today = now.date_naive();
+    match schedule.interval.as_str() {
+        "weekly" => {
+            let target = u32::from(schedule.day.min(6));
+            for back in 0..=7 {
+                let date = today - Duration::days(back);
+                if date.weekday().num_days_from_monday() == target {
+                    let candidate = date.and_time(time).and_utc();
+                    if candidate <= now {
+                        return Some(candidate);
+                    }
+                }
+            }
+            None
+        },
+        "monthly" => {
+            let day = u32::from(schedule.day.clamp(1, 28));
+            let candidate = chrono::NaiveDate::from_ymd_opt(
+                today.year(),
+                today.month(),
+                day,
+            )?
+            .and_time(time)
+            .and_utc();
+            if candidate <= now {
+                return Some(candidate);
+            }
+            let (year, month) = if today.month() == 1 {
+                (today.year() - 1, 12)
+            } else {
+                (today.year(), today.month() - 1)
+            };
+            chrono::NaiveDate::from_ymd_opt(year, month, day)
+                .map(|date| date.and_time(time).and_utc())
+        },
+        _ => {
+            let candidate = today.and_time(time).and_utc();
+            if candidate <= now {
+                Some(candidate)
+            } else {
+                Some(candidate - Duration::days(1))
+            }
+        },
     }
 }
 
@@ -197,7 +378,44 @@ async fn show_settings(
     Ok(Json(load_settings(&state.db).await))
 }
 
+/// Persists the settings row (used by the save handler and the scheduler's
+/// `last_fired` bookkeeping).
+async fn store_settings(
+    db: &sea_orm::DatabaseConnection,
+    settings: &ReportSettings,
+) -> Result<(), ApiError> {
+    use crate::models::instance_setting;
+
+    let value = serde_json::to_string(settings)
+        .map_err(|err| ApiError::Internal(err.to_string()))?;
+    let existing = instance_setting::Entity::find_by_id(SETTINGS_KEY)
+        .one(db)
+        .await?;
+    match existing {
+        Some(row) => {
+            let mut active: instance_setting::ActiveModel = row.into();
+            active.value = sea_orm::Set(value);
+            active.updated_at = sea_orm::Set(Utc::now());
+            active.update(db).await?;
+        },
+        None => {
+            instance_setting::ActiveModel {
+                key: sea_orm::Set(SETTINGS_KEY.to_string()),
+                value: sea_orm::Set(value),
+                updated_at: sea_orm::Set(Utc::now()),
+            }
+            .insert(db)
+            .await?;
+        },
+    }
+    Ok(())
+}
+
 /// `PUT /api/v1/reports/settings` — administrators only.
+///
+/// Saving with the schedule enabled **arms** it (`last_fired = now`), so the
+/// first report goes out at the next occurrence rather than immediately
+/// catching up on a past-due slot.
 async fn save_settings(
     State(state): State<AppState>,
     current: AuthUser,
@@ -210,32 +428,18 @@ async fn save_settings(
         .footer_note
         .map(|note| note.trim().to_string())
         .filter(|note| !note.is_empty());
+    settings.last_fired = if settings.schedule.enabled {
+        Some(Utc::now())
+    } else {
+        None
+    };
     settings.validate()?;
-
-    use crate::models::instance_setting;
-    let value = serde_json::to_string(&settings)
-        .map_err(|err| ApiError::Internal(err.to_string()))?;
-    let existing = instance_setting::Entity::find_by_id(SETTINGS_KEY)
-        .one(&state.db)
-        .await?;
-    match existing {
-        Some(row) => {
-            let mut active: instance_setting::ActiveModel = row.into();
-            active.value = sea_orm::Set(value);
-            active.updated_at = sea_orm::Set(Utc::now());
-            active.update(&state.db).await?;
-        },
-        None => {
-            instance_setting::ActiveModel {
-                key: sea_orm::Set(SETTINGS_KEY.to_string()),
-                value: sea_orm::Set(value),
-                updated_at: sea_orm::Set(Utc::now()),
-            }
-            .insert(&state.db)
-            .await?;
-        },
-    }
-    tracing::info!(title = %settings.title, "report settings saved");
+    store_settings(&state.db, &settings).await?;
+    tracing::info!(
+        title = %settings.title,
+        schedule_enabled = settings.schedule.enabled,
+        "report settings saved"
+    );
     Ok(Json(settings))
 }
 
@@ -363,7 +567,10 @@ pub struct ReportSummary {
     pub daily: Vec<DailyPoint>,
 }
 
-async fn totals(state: &AppState, window: &Window) -> Result<Totals, ApiError> {
+async fn totals(
+    db: &DatabaseConnection,
+    window: &Window,
+) -> Result<Totals, ApiError> {
     let (filter, values) = window.filter();
     let sql = format!(
         "SELECT COUNT(*) AS events, \
@@ -372,7 +579,7 @@ async fn totals(state: &AppState, window: &Window) -> Result<Totals, ApiError> {
                 COUNT(DISTINCT path) AS paths \
          FROM security_events WHERE {filter}"
     );
-    let row = query_all(&state.db, &sql, values).await?.into_iter().next();
+    let row = query_all(db, &sql, values).await?.into_iter().next();
     let read = |name: &str| -> i64 {
         row.as_ref()
             .and_then(|row| row.try_get::<i64>("", name).ok())
@@ -389,7 +596,7 @@ async fn totals(state: &AppState, window: &Window) -> Result<Totals, ApiError> {
 /// Interception types: rule groups classified through the managed-rule
 /// catalogue, merged by label and ranked.
 async fn type_rows(
-    state: &AppState,
+    db: &DatabaseConnection,
     window: &Window,
 ) -> Result<Vec<LabelCount>, ApiError> {
     let (filter, values) = window.filter();
@@ -400,7 +607,7 @@ async fn type_rows(
          FROM security_events WHERE {filter} \
          GROUP BY 1, 2 ORDER BY n DESC LIMIT 200"
     );
-    let rows = query_all(&state.db, &sql, values).await?;
+    let rows = query_all(db, &sql, values).await?;
     let catalogue = catalogue();
     let mut merged: HashMap<String, i64> = HashMap::new();
     for row in &rows {
@@ -422,7 +629,7 @@ async fn type_rows(
 }
 
 async fn top_country(
-    state: &AppState,
+    db: &DatabaseConnection,
     window: &Window,
 ) -> Result<Option<LabelCount>, ApiError> {
     let (filter, values) = window.filter();
@@ -431,7 +638,7 @@ async fn top_country(
          WHERE {filter} AND country_code IS NOT NULL AND country_code <> '' \
          GROUP BY 1 ORDER BY n DESC LIMIT 1"
     );
-    let row = query_all(&state.db, &sql, values).await?.into_iter().next();
+    let row = query_all(db, &sql, values).await?.into_iter().next();
     Ok(row.map(|row| LabelCount {
         label: row
             .try_get::<String>("", "country_code")
@@ -449,7 +656,7 @@ struct IpRow {
 }
 
 async fn top_ips(
-    state: &AppState,
+    db: &DatabaseConnection,
     window: &Window,
 ) -> Result<Vec<IpRow>, ApiError> {
     let (filter, values) = window.filter();
@@ -461,7 +668,7 @@ async fn top_ips(
          FROM security_events WHERE {filter} \
          GROUP BY client_ip ORDER BY requests DESC LIMIT {TOP_ROWS}"
     );
-    Ok(query_all(&state.db, &sql, values)
+    Ok(query_all(db, &sql, values)
         .await?
         .into_iter()
         .map(|row| IpRow {
@@ -477,7 +684,7 @@ async fn top_ips(
 /// The attack-IP ranking: the same rows ordered by blocked count first, so
 /// the "attack" list leads with addresses actually refused.
 async fn top_ips_by_blocked(
-    state: &AppState,
+    db: &DatabaseConnection,
     window: &Window,
 ) -> Result<Vec<IpRow>, ApiError> {
     let (filter, values) = window.filter();
@@ -490,7 +697,7 @@ async fn top_ips_by_blocked(
          GROUP BY client_ip ORDER BY blocked DESC, requests DESC \
          LIMIT {TOP_ROWS}"
     );
-    Ok(query_all(&state.db, &sql, values)
+    Ok(query_all(db, &sql, values)
         .await?
         .into_iter()
         .map(|row| IpRow {
@@ -510,7 +717,7 @@ struct PathRow {
 }
 
 async fn top_paths(
-    state: &AppState,
+    db: &DatabaseConnection,
     window: &Window,
 ) -> Result<Vec<PathRow>, ApiError> {
     let (filter, values) = window.filter();
@@ -520,7 +727,7 @@ async fn top_paths(
          FROM security_events WHERE {filter} \
          GROUP BY 1 ORDER BY requests DESC LIMIT {TOP_ROWS}"
     );
-    Ok(query_all(&state.db, &sql, values)
+    Ok(query_all(db, &sql, values)
         .await?
         .into_iter()
         .map(|row| PathRow {
@@ -532,7 +739,7 @@ async fn top_paths(
 }
 
 async fn daily(
-    state: &AppState,
+    db: &DatabaseConnection,
     window: &Window,
 ) -> Result<Vec<DailyPoint>, ApiError> {
     let (filter, values) = window.filter();
@@ -542,7 +749,7 @@ async fn daily(
                 COUNT(*) FILTER (WHERE action = 'block') AS blocked \
          FROM security_events WHERE {filter} GROUP BY 1 ORDER BY 1"
     );
-    Ok(query_all(&state.db, &sql, values)
+    Ok(query_all(db, &sql, values)
         .await?
         .into_iter()
         .map(|row| DailyPoint {
@@ -616,11 +823,11 @@ async fn summary(
     current.require_admin().map_err(ApiError::from)?;
     let window = resolve_window(&state, &current, &query).await?;
 
-    let totals = totals(&state, &window).await?;
-    let types = type_rows(&state, &window).await?;
-    let country = top_country(&state, &window).await?;
-    let ips = top_ips(&state, &window).await?;
-    let daily = daily(&state, &window).await?;
+    let totals = totals(&state.db, &window).await?;
+    let types = type_rows(&state.db, &window).await?;
+    let country = top_country(&state.db, &window).await?;
+    let ips = top_ips(&state.db, &window).await?;
+    let daily = daily(&state.db, &window).await?;
 
     Ok(Json(ReportSummary {
         from: window.from,
@@ -654,12 +861,12 @@ async fn interception_report(
     current.require_admin().map_err(ApiError::from)?;
     let window = resolve_window(&state, &current, &query).await?;
 
-    let totals = totals(&state, &window).await?;
-    let types = type_rows(&state, &window).await?;
-    let ips = top_ips(&state, &window).await?;
-    let ips_by_blocked = top_ips_by_blocked(&state, &window).await?;
-    let paths = top_paths(&state, &window).await?;
-    let daily = daily(&state, &window).await?;
+    let totals = totals(&state.db, &window).await?;
+    let types = type_rows(&state.db, &window).await?;
+    let ips = top_ips(&state.db, &window).await?;
+    let ips_by_blocked = top_ips_by_blocked(&state.db, &window).await?;
+    let paths = top_paths(&state.db, &window).await?;
+    let daily = daily(&state.db, &window).await?;
     let settings = load_settings(&state.db).await;
 
     let scope = match window.site {
@@ -710,6 +917,188 @@ async fn interception_report(
         html,
     )
         .into_response())
+}
+
+/* ── Scheduled delivery ───────────────────────────────────────────── */
+
+/// How often the scheduler checks for a due report.
+const SCHEDULER_TICK: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// What a firing produced; returned by the send-now route and logged.
+#[derive(Debug, Serialize)]
+pub struct FiredReport {
+    pub filename: String,
+    pub from: String,
+    pub to: String,
+    pub events: i64,
+    pub blocked: i64,
+    pub monitored: i64,
+}
+
+/// Spawns the scheduled-report tick: every minute it checks the stored
+/// schedule and, when one came due since it last fired, generates and
+/// dispatches the report through the notification channels.
+pub fn spawn(db: DatabaseConnection) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(SCHEDULER_TICK);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            match run_due(&db, Utc::now()).await {
+                Ok(true) => {
+                    tracing::info!("scheduled interception report dispatched")
+                },
+                Ok(false) => {},
+                Err(err) => tracing::warn!(
+                    error = %err,
+                    "scheduled report check failed"
+                ),
+            }
+        }
+    })
+}
+
+/// Fires when the schedule came due after `last_fired`; records the firing
+/// so one occurrence never dispatches twice.
+async fn run_due(
+    db: &DatabaseConnection,
+    now: DateTime<Utc>,
+) -> Result<bool, ApiError> {
+    let settings = load_settings(db).await;
+    let Some(due) = last_due(&settings.schedule, now) else {
+        return Ok(false);
+    };
+    if settings.last_fired.is_some_and(|fired| fired >= due) {
+        return Ok(false);
+    }
+    let fired = fire(db, &settings, now).await?;
+    tracing::info!(
+        filename = %fired.filename,
+        events = fired.events,
+        "scheduled report fired"
+    );
+    let mut updated = settings;
+    updated.last_fired = Some(now);
+    store_settings(db, &updated).await?;
+    Ok(true)
+}
+
+/// `POST /api/v1/reports/send-now` — administrators only. Generates and
+/// dispatches the report immediately with the schedule's window and scope,
+/// without touching `last_fired` (the next scheduled occurrence still runs).
+async fn send_now(
+    State(state): State<AppState>,
+    current: AuthUser,
+) -> Result<Json<FiredReport>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
+    let settings = load_settings(&state.db).await;
+    Ok(Json(fire(&state.db, &settings, Utc::now()).await?))
+}
+
+/// Generates the report for the schedule's window/scope and dispatches it
+/// through the notification channels (e-mail channels attach the HTML).
+async fn fire(
+    db: &DatabaseConnection,
+    settings: &ReportSettings,
+    now: DateTime<Utc>,
+) -> Result<FiredReport, ApiError> {
+    let schedule = &settings.schedule;
+    let site = schedule
+        .site_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| parse_uuid(raw, "site id"))
+        .transpose()?;
+    let window = Window {
+        from: now
+            - Duration::days(schedule.window_days.clamp(1, MAX_RANGE_DAYS)),
+        to: now,
+        site,
+        action: ActionFilter::parse(schedule.action.as_deref())?,
+        q: None,
+    };
+
+    let totals = totals(db, &window).await?;
+    let events = totals.events;
+    let blocked = totals.blocked;
+    let monitored = events - blocked;
+    let types = type_rows(db, &window).await?;
+    let ips = top_ips(db, &window).await?;
+    let ips_by_blocked = top_ips_by_blocked(db, &window).await?;
+    let paths = top_paths(db, &window).await?;
+    let daily = daily(db, &window).await?;
+
+    let scope = match window.site {
+        Some(id) => crate::models::site::Entity::find_by_id(id)
+            .one(db)
+            .await?
+            .map(|site| {
+                if site.name.is_empty() {
+                    site.domain
+                } else {
+                    format!("{} ({})", site.name, site.domain)
+                }
+            })
+            .unwrap_or_else(|| id.to_string()),
+        None => "All sites".to_string(),
+    };
+
+    let html = render_report(ReportData {
+        from: window.from,
+        to: window.to,
+        scope,
+        actor: "scheduled delivery".to_string(),
+        title: settings.title.clone(),
+        footer_note: settings.footer_note.clone(),
+        totals,
+        types,
+        ips,
+        ips_by_blocked,
+        paths,
+        daily,
+    });
+
+    let from_label = window.from.date_naive();
+    let to_label = (window.to - Duration::seconds(1)).date_naive();
+    let filename =
+        format!("varmanwaf-interception-{from_label}-{to_label}.html");
+    let message = format!(
+        "Interception report {from_label} to {to_label}: {events} \
+         interceptions ({blocked} blocked, {monitored} monitor-only). The \
+         full report is attached where the channel supports it."
+    );
+    notify::emit_with_attachment(
+        AlertEvent {
+            event_type: crate::models::event_type::REPORT_SCHEDULED.to_string(),
+            severity: crate::models::severity::INFO,
+            title: settings.title.clone(),
+            message,
+            details: Some(serde_json::json!({
+                "from": from_label.to_string(),
+                "to": to_label.to_string(),
+                "filename": filename,
+                "events": events,
+                "blocked": blocked,
+                "monitored": monitored,
+            })),
+            dedup_key: None,
+        },
+        AlertAttachment {
+            filename: filename.clone(),
+            html,
+        },
+    )
+    .await;
+
+    Ok(FiredReport {
+        filename,
+        from: from_label.to_string(),
+        to: to_label.to_string(),
+        events,
+        blocked,
+        monitored,
+    })
 }
 
 /* ── HTML rendering ───────────────────────────────────────────────── */
@@ -1115,6 +1504,83 @@ mod tests {
         );
         assert_eq!(escape_html("a & b"), "a &amp; b");
         assert_eq!(escape_html("\"quoted\""), "&quot;quoted&quot;");
+    }
+
+    fn schedule(
+        interval: &str,
+        hour: u8,
+        minute: u8,
+        day: u8,
+    ) -> ReportSchedule {
+        ReportSchedule {
+            enabled: true,
+            interval: interval.to_string(),
+            hour,
+            minute,
+            day,
+            window_days: 7,
+            site_id: None,
+            action: None,
+        }
+    }
+
+    #[test]
+    fn last_due_walks_back_to_the_most_recent_occurrence() {
+        let now = at("2026-10-14T15:00:00Z"); // Wednesday
+                                              // Daily at 08:30: today's slot already passed.
+        assert_eq!(
+            last_due(&schedule("daily", 8, 30, 1), now),
+            Some(at("2026-10-14T08:30:00Z"))
+        );
+        // Daily at 20:00: today's slot is ahead, so yesterday's counts.
+        assert_eq!(
+            last_due(&schedule("daily", 20, 0, 1), now),
+            Some(at("2026-10-13T20:00:00Z"))
+        );
+        // Weekly on Monday (0) at 06:00: the most recent Monday.
+        assert_eq!(
+            last_due(&schedule("weekly", 6, 0, 0), now),
+            Some(at("2026-10-12T06:00:00Z"))
+        );
+        // Weekly on Wednesday (2) at 09:00: today.
+        assert_eq!(
+            last_due(&schedule("weekly", 9, 0, 2), now),
+            Some(at("2026-10-14T09:00:00Z"))
+        );
+        // Monthly on the 20th at 00:00: this month's slot is ahead, so
+        // September's.
+        assert_eq!(
+            last_due(&schedule("monthly", 0, 0, 20), now),
+            Some(at("2026-09-20T00:00:00Z"))
+        );
+        // Monthly on the 5th: this month.
+        assert_eq!(
+            last_due(&schedule("monthly", 0, 0, 5), now),
+            Some(at("2026-10-05T00:00:00Z"))
+        );
+    }
+
+    #[test]
+    fn last_due_respects_enabled_and_validates_bounds() {
+        let now = at("2026-10-14T15:00:00Z");
+        let mut disabled = schedule("daily", 8, 0, 1);
+        disabled.enabled = false;
+        assert_eq!(last_due(&disabled, now), None);
+
+        let mut bad = schedule("daily", 8, 0, 1);
+        bad.hour = 24;
+        assert!(bad.validate().is_err());
+        bad = schedule("hourly", 8, 0, 1);
+        assert!(bad.validate().is_err());
+        bad = schedule("weekly", 8, 0, 7);
+        assert!(bad.validate().is_err());
+        bad = schedule("monthly", 8, 0, 29);
+        assert!(bad.validate().is_err());
+        bad = schedule("daily", 8, 0, 1);
+        bad.window_days = 200;
+        assert!(bad.validate().is_err());
+        let good = schedule("daily", 8, 0, 1);
+        assert!(good.validate().is_ok());
     }
 
     #[test]

@@ -1,12 +1,14 @@
 //! SMTP e-mail sender for the notification system, on top of `lettre`.
 
 use lettre::{
-    message::Mailbox, transport::smtp::authentication::Credentials,
-    AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
+    message::header::ContentType, message::Attachment, message::Mailbox,
+    message::MultiPart, message::SinglePart,
+    transport::smtp::authentication::Credentials, AsyncSmtpTransport,
+    AsyncTransport, Tokio1Executor,
 };
 use serde_json::Value;
 
-use super::AlertEvent;
+use super::{AlertAttachment, AlertEvent};
 
 /// The channel `config` JSON object.
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +80,7 @@ pub async fn send(
     _http: &reqwest::Client,
     config: &Value,
     event: &AlertEvent,
+    attachment: Option<&AlertAttachment>,
 ) -> Result<(), String> {
     let config = EmailConfig::from_json(config)?;
 
@@ -101,9 +104,25 @@ pub async fn send(
         event.severity,
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
     );
-    let message = builder
-        .body(body)
-        .map_err(|err| format!("cannot build the e-mail: {err}"))?;
+    let message = match attachment {
+        // A generated report rides along as an HTML attachment; the plain
+        // body stays the message so text-only clients still read it.
+        Some(attachment) => builder
+            .multipart(
+                MultiPart::mixed()
+                    .singlepart(SinglePart::plain(body))
+                    .singlepart(
+                        Attachment::new(attachment.filename.clone()).body(
+                            attachment.html.clone(),
+                            ContentType::TEXT_HTML,
+                        ),
+                    ),
+            )
+            .map_err(|err| format!("cannot build the e-mail: {err}"))?,
+        None => builder
+            .body(body)
+            .map_err(|err| format!("cannot build the e-mail: {err}"))?,
+    };
 
     let transport = build_transport(&config)?;
     transport

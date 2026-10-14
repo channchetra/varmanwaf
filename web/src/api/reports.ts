@@ -44,10 +44,52 @@ export interface ReportQuery {
   q?: string
 }
 
-/** Operator-customizable report presentation. */
+/** A cron-style delivery schedule (UTC). */
+export interface ReportSchedule {
+  enabled: boolean
+  interval: 'daily' | 'weekly' | 'monthly'
+  /** Trigger hour, 0-23 UTC. */
+  hour: number
+  /** Trigger minute, 0-59. */
+  minute: number
+  /** Weekly: 0 = Monday .. 6 = Sunday. Monthly: 1..=28. */
+  day: number
+  /** Days the report covers, ending at the trigger time. */
+  window_days: number
+  /** Scope: null = all sites. */
+  site_id: string | null
+  action: ReportActionFilter | null
+}
+
+/** UI default until the server answers. */
+export const DEFAULT_REPORT_SCHEDULE: ReportSchedule = {
+  enabled: false,
+  interval: 'daily',
+  hour: 8,
+  minute: 0,
+  day: 1,
+  window_days: 30,
+  site_id: null,
+  action: null,
+}
+
+/** Operator-customizable report presentation and schedule. */
 export interface ReportSettings {
   title: string
   footer_note: string | null
+  schedule: ReportSchedule
+  /** When the schedule last fired; set by the server when armed. */
+  last_fired: string | null
+}
+
+/** What a firing produced (`POST /reports/send-now`). */
+export interface FiredReport {
+  filename: string
+  from: string
+  to: string
+  events: number
+  blocked: number
+  monitored: number
 }
 
 export const reportsApi = {
@@ -58,6 +100,9 @@ export const reportsApi = {
 
   saveSettings: (settings: ReportSettings) =>
     apiClient.put<ReportSettings>('/reports/settings', settings),
+
+  /** Generates and dispatches the report immediately. */
+  sendNow: () => apiClient.post<FiredReport>('/reports/send-now', {}),
 }
 
 export const reportKeys = {

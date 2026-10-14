@@ -83,6 +83,7 @@ export const NOTIFICATION_EVENT_TYPES = [
   'site.failover_changed',
   'auth.login_anomaly',
   'security.alert',
+  'report.scheduled',
 ] as const
 
 export const REDACTED = '__REDACTED__'

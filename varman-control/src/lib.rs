@@ -207,6 +207,12 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
     // notification manager, so `notify::init` must have run first.
     let _alert_evaluator_handle = alerts::spawn(db.clone());
 
+    // ── 6h. Scheduled reports ──────────────────────────────────────────────
+    // The report scheduler dispatches through the same notification manager;
+    // a due schedule generates the HTML report and delivers it (e-mail
+    // channels attach the file).
+    let _report_scheduler_handle = api::reports::spawn(db.clone());
+
     if control_tls.is_enabled() {
         match api::system_tls::load_active_certificate(&state).await {
             Ok(Some(certificate)) => tracing::info!(
