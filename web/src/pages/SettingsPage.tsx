@@ -82,6 +82,7 @@ import { errorMessage, handleApiError } from '@/api/errors'
 import { isPasskeyCancellation, passkeysSupported } from '@/lib/webauthn'
 import { useAuthStore } from '@/stores/authStore'
 import { useCanWrite } from '@/hooks'
+import { UsersAdminCard } from '@/components/account/UsersAdminCard'
 import { useThemeStore, type ThemeMode } from '@/stores/themeStore'
 import { supportedLanguages } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -124,6 +125,7 @@ const PROJECT_URL = 'https://github.com/channchetra/varmanwaf'
 const SETTINGS_NAV = [
   { id: 'appearance', labelKey: 'pages.settings.appearance' },
   { id: 'account', labelKey: 'pages.settings.account' },
+  { id: 'users', labelKey: 'pages.settings.users' },
   { id: 'passkeys', labelKey: 'pages.settings.passkeys' },
   { id: 'control-plane-tls', labelKey: 'pages.settings.controlPlaneTls' },
   { id: 'observation-mode', labelKey: 'pages.settings.observationMode' },
@@ -229,6 +231,13 @@ export function SettingsPage() {
               <ErrorPagesCard canWrite={canWrite} />
             ) : (
               <AdminOnlyCard title={t('pages.settings.errorPages')} />
+            )}
+          </section>
+          <section id="users" className="scroll-mt-6">
+            {canWrite ? (
+              <UsersAdminCard />
+            ) : (
+              <AdminOnlyCard title={t('pages.settings.users')} />
             )}
           </section>
           <section id="api-keys" className="scroll-mt-6">
@@ -349,6 +358,9 @@ function AccountCard() {
   const setUser = useAuthStore((s) => s.setUser)
 
   const [name, setName] = useState('')
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginError, setLoginError] = useState<string | null>(null)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -362,6 +374,7 @@ function AccountCard() {
   if (serverName !== lastServerName) {
     setLastServerName(serverName)
     setName(serverName)
+    setLoginEmail(user?.email ?? '')
   }
 
   const profile = useMutation({
@@ -370,6 +383,32 @@ function AccountCard() {
       setUser(updated)
       void queryClient.invalidateQueries({ queryKey: ['auth'] })
       toast.success(t('pages.settings.profileSaved'))
+    },
+  })
+
+  // The login name is the token claim: changing it revokes every outstanding
+  // token, so it requires the current password.
+  const loginName = useMutation({
+    mutationFn: () =>
+      authApi.updateProfile({
+        email: loginEmail.trim(),
+        current_password: loginPassword,
+      }),
+    meta: { silentToast: true },
+    onSuccess: (updated) => {
+      setUser(updated)
+      setLoginPassword('')
+      setLoginError(null)
+      void queryClient.invalidateQueries({ queryKey: ['auth'] })
+      toast.success(t('pages.settings.loginNameChanged'))
+    },
+    onError: (err) => {
+      const message = errorMessage(err)
+      setLoginError(
+        /current password is incorrect/i.test(message)
+          ? t('pages.settings.passwordWrongCurrent')
+          : message,
+      )
     },
   })
 
@@ -448,6 +487,46 @@ function AccountCard() {
           >
             {t('common.save')}
           </Button>
+        </div>
+
+        <div className="border-t border-line pt-4">
+          <p className="mb-3 text-[13px] font-medium text-fg">
+            {t('pages.settings.loginName')}
+          </p>
+          <div className="grid max-w-3xl grid-cols-1 items-end gap-4 sm:grid-cols-2">
+            <Input
+              type="email"
+              label={t('pages.settings.loginName')}
+              value={loginEmail}
+              autoComplete="off"
+              hint={t('pages.settings.loginNameHint')}
+              error={loginError ?? undefined}
+              onChange={(e) => setLoginEmail(e.target.value)}
+            />
+            <div className="flex items-end gap-2">
+              <div className="min-w-0 flex-1">
+                <Input
+                  type="password"
+                  label={t('pages.settings.currentPassword')}
+                  value={loginPassword}
+                  autoComplete="current-password"
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                />
+              </div>
+              <Button
+                variant="secondary"
+                loading={loginName.isPending}
+                disabled={
+                  loginEmail.trim() === (user?.email ?? '') ||
+                  loginEmail.trim() === '' ||
+                  loginPassword === ''
+                }
+                onClick={() => loginName.mutate()}
+              >
+                {t('common.save')}
+              </Button>
+            </div>
+          </div>
         </div>
 
         <div className="border-t border-line pt-4">

@@ -69,7 +69,10 @@ Rules:
 | 3a | Verified bots: `bot_dns.rs` (DNS reverse+forward confirmation), verified-bot IP ranges honoured by the plugin, Bot Protection UI | **Landed** (v0.35.1; v0.35.0 failed its E2E on a manual IP-group insert bug and was superseded) |
 | 3b | WAF plugin body staging: staged request bodies with limits, upstream hook model around our pipeline | **Landed** (v0.37.0) |
 | 3c | Challenge + error pages: branded edge pages, provenance headers, storable clearance on HTTP, redirect guard | **Landed** (v0.38.0) |
-| 4 | Dashboard: `web` (82 files) — merge upstream pages/features into the rebranded dashboard, keep the Varman pages | Planned |
+| 4 | Dashboard: `web` (82 files) — merge upstream pages/features into the rebranded dashboard, keep the Varman pages | **Split 4a/4b/4c** (below) |
+| 4a | Account & identity: `AccountPage`, `ProfilePage`, `account/*` cards (API keys, passkeys, users admin), `ForceChangePasswordDialog`, `users` + `loginSecurity` APIs | Next |
+| 4b | Ops surfaces: `BlockedIpsPage`, `NotificationsPage`, `WorldMapChart`, `wafLinkage`, per-site `FailoverPanel` | Planned |
+| 4c | Assistant widgets (`components/assistant/*`, widget store/hook) evaluated against our AssistantPage; upstream's site-page restructure (`basic/*`, panel renames) is skipped — our structure is authoritative | Planned |
 | 5 | Feature branches (`config-versioning-and-notifications`, `per-site-failover`) once main is synced | Planned |
 
 ### Batch 1 detail (landed)

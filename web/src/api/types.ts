@@ -32,8 +32,31 @@ export interface User {
   email: string
   name: string | null
   role: UserRole | string
+  /** The console walks first-login accounts through a password change. */
+  must_change_password: boolean
+  /** Disabled accounts cannot sign in (admin user list only). */
+  disabled: boolean
   created_at: string
   updated_at: string
+  /** Most recent successful login (admin list only); absent when never. */
+  last_login_at?: string
+  last_login_ip?: string
+}
+
+/** `api::users::CreateUserRequest` */
+export interface CreateUserRequest {
+  email: string
+  password: string
+  name?: string
+  role?: string
+}
+
+/** `api::users::UpdateUserRequest` */
+export interface UpdateUserRequest {
+  name?: string
+  email?: string
+  role?: string
+  disabled?: boolean
 }
 
 export interface LoginRequest {
@@ -79,6 +102,9 @@ export interface ChangePasswordRequest {
 
 export interface UpdateProfileRequest {
   name?: string | null
+  /** Changing the login name requires `current_password`. */
+  email?: string
+  current_password?: string
 }
 
 /* ── Sites ────────────────────────────────────────────────────────── */

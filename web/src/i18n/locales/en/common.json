@@ -134,6 +134,7 @@
     "anonymous": "Anonymous",
     "role": {
       "admin": "Administrator",
+      "auditor": "Auditor",
       "viewer": "Viewer"
     }
   },
@@ -224,6 +225,41 @@
     "featureAnalytics": "Real-time analytics"
   },
   "pages": {
+    "account": {
+      "title": "Account administration",
+      "description": "Dashboard users and the API keys that reach this control plane. Personal settings (profile, password, passkeys) live under your account card in Settings.",
+      "users": {
+        "title": "Dashboard users",
+        "description": "Accounts that can sign in to this console, with their role, status and most recent login. Role and status changes revoke the account's outstanding tokens immediately.",
+        "colAccount": "Account",
+        "colStatus": "Status",
+        "colLastLogin": "Last login",
+        "role": "Role",
+        "active": "Active",
+        "disabled": "Disabled",
+        "you": "you",
+        "neverLoggedIn": "Never signed in",
+        "add": "New user",
+        "createdHint": "The account is created with the password you set; its holder can change it after signing in.",
+        "created": "User created",
+        "updated": "User updated",
+        "email": "Login name (e-mail)",
+        "emailHint": "Changing the login name revokes the account's outstanding tokens.",
+        "password": "Initial password",
+        "edit": "Edit user",
+        "enable": "Enable account",
+        "disable": "Disable account",
+        "disableTitle": "Disable this account?",
+        "disableDescription": "The account can no longer sign in and its outstanding tokens are revoked. Re-enable it at any time.",
+        "selfRoleHint": "Your own role cannot be changed here; the last enabled administrator always survives.",
+        "error": "Could not load the user list"
+      },
+      "forceChange": {
+        "title": "Replace your password",
+        "description": "This account was created with a temporary password. Choose a new one to continue - the console keeps refusing writes until the password is changed.",
+        "submit": "Set new password"
+      }
+    },
     "policies": {
     "overviewTitle": "Shared policy documents",
     "overview": "A policy is a named, revisioned configuration every assigned site follows: engine posture, custom rules, rule tuning, rate limits, IP access and imported CRS rulesets. Sites keep their own settings until you assign a policy on their Policy tab; site-local deltas belong in the site overlay. Every change is recorded in the policy history.",
@@ -1890,11 +1926,15 @@
       "themePreference": "Theme",
       "notifications": "Notifications",
       "apiKeys": "API keys",
+      "users": "Dashboard users",
       "apiKeysDescription": "Manage programmatic access keys for agents and integrations.",
       "apiDocs": "API documentation",
       "account": "Account",
       "adminOnly": "This section is only available to administrators.",
       "displayName": "Display name",
+      "loginName": "Login name (e-mail)",
+      "loginNameHint": "Changing the login name requires the current password and signs out every other session.",
+      "loginNameChanged": "Login name changed",
       "changePassword": "Change password",
       "currentPassword": "Current password",
       "newPassword": "New password",

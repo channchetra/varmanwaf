@@ -18,6 +18,7 @@ import { Sidebar } from '@/components/ui/Sidebar'
 import { Breadcrumb, type BreadcrumbItem } from '@/components/ui/Breadcrumb'
 import { Button } from '@/components/ui/Button'
 import { GlobalSearch } from '@/components/GlobalSearch'
+import { ForceChangePasswordDialog } from '@/components/ForceChangePasswordDialog'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { supportedLanguages } from '@/i18n'
@@ -186,6 +187,10 @@ export function AppLayout() {
             </button>
 
             {searchOpen && <GlobalSearch onClose={() => setSearchOpen(false)} />}
+
+            {/* First-sign-in accounts replace their password before anything
+                else; the dialog hides itself once the flag clears. */}
+            <ForceChangePasswordDialog />
 
             {/* Language */}
             <div className="relative" ref={langMenuRef}>
