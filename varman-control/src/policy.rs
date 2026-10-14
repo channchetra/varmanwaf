@@ -547,9 +547,18 @@ fn validate_api_schema(config: &Value) -> Result<(), String> {
                         .map_err(|err| {
                             format!("'openapi_spec' must be a JSON document: {err}")
                         })?;
-                    if !parsed.is_object() {
+                    let object = parsed.as_object().ok_or_else(|| {
+                        "'openapi_spec' must be a JSON object".to_string()
+                    })?;
+                    // Engine parity: the data plane rejects a document
+                    // without a `paths` object, so the write is refused too.
+                    if !object
+                        .get("paths")
+                        .is_some_and(Value::is_object)
+                    {
                         return Err(
-                            "'openapi_spec' must be a JSON object".to_string()
+                            "'openapi_spec' must contain a 'paths' object"
+                                .to_string(),
                         );
                     }
                 }
@@ -2121,10 +2130,11 @@ mod tests {
             .unwrap_err()
             .contains("unknown virtual_patches key"));
 
-        // OpenAPI document must be a JSON object.
+        // OpenAPI document must be a JSON object with a `paths` object
+        // (the data plane rejects a document without one).
         assert!(validate_layer(
             LAYER_API_SCHEMA,
-            &json!({"openapi_spec": "{\"openapi\":\"3.0.0\"}"})
+            &json!({"openapi_spec": "{\"openapi\":\"3.0.0\",\"paths\":{}}"})
         )
         .is_ok());
         assert!(validate_layer(
@@ -2136,6 +2146,12 @@ mod tests {
         assert!(validate_layer(LAYER_API_SCHEMA, &json!({"openapi_spec": "[1]"}))
             .unwrap_err()
             .contains("must be a JSON object"));
+        assert!(validate_layer(
+            LAYER_API_SCHEMA,
+            &json!({"openapi_spec": "{\"openapi\":\"3.0.0\"}"})
+        )
+        .unwrap_err()
+        .contains("'paths' object"));
 
         // Bot posture.
         assert!(validate_layer(
