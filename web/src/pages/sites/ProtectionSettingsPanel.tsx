@@ -13,6 +13,8 @@ import { SkeletonCard } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
 import { wafSettingsApi, wafSettingsKeys } from '@/api/wafSettings'
+import { managedRulesApi, managedRuleKeys } from '@/api/policies'
+import { applyCategoryLinkage } from '@/lib/wafLinkage'
 import { useCanWrite } from '@/hooks'
 import { cn } from '@/lib/utils'
 import {
@@ -46,6 +48,13 @@ export function ProtectionSettingsPanel() {
   })
   const settings = settingsQuery.data
 
+  // The managed-rule catalogue maps a category to its literal-expression
+  // rule family (wafLinkage); shared cache with the Policies rule browser.
+  const rulesQuery = useQuery({
+    queryKey: managedRuleKeys.all,
+    queryFn: () => managedRulesApi.list(),
+  })
+
   const update = useMutation({
     mutationFn: (payload: UpdateWafSettingsRequest) =>
       wafSettingsApi.update(siteId, payload),
@@ -76,6 +85,9 @@ export function ProtectionSettingsPanel() {
                 }),
                 ...(payload.monitor_categories !== undefined && {
                   monitor_categories: payload.monitor_categories,
+                }),
+                ...(payload.monitor_managed_rules !== undefined && {
+                  monitor_managed_rules: payload.monitor_managed_rules,
                 }),
                 ...(payload.monitor_stacks !== undefined && {
                   monitor_stacks: payload.monitor_stacks,
@@ -129,11 +141,13 @@ export function ProtectionSettingsPanel() {
   const openapiValue = openapiDraft ?? settings.openapi_spec ?? ''
 
   const toggleCategory = (category: string, on: boolean) => {
-    update.mutate({
-      monitor_categories: on
-        ? [...categoriesOn, category]
-        : categoriesOn.filter((c) => c !== category),
-    })
+    // The category switch covers the signature surface; literal-expression
+    // family rules only follow the per-rule list, so one payload carries
+    // both (see `wafLinkage`). Without the catalogue the per-rule list is
+    // left untouched rather than guessed at.
+    update.mutate(
+      applyCategoryLinkage(category, on, settings, rulesQuery.data ?? []),
+    )
   }
   const toggleStack = (stack: string, on: boolean) => {
     update.mutate({
@@ -327,7 +341,7 @@ export function ProtectionSettingsPanel() {
                     <Switch
                       size="sm"
                       checked={on}
-                      disabled={!canWrite || busy}
+                      disabled={!canWrite || busy || rulesQuery.isPending}
                       aria-label={t(`pages.waf.${category}`)}
                       onCheckedChange={(enabled) =>
                         toggleCategory(category, enabled)
@@ -337,6 +351,9 @@ export function ProtectionSettingsPanel() {
                 )
               })}
             </div>
+            <p className="mt-2 text-[11px] text-fg-subtle">
+              {t('pages.protection.categoryLinkageHint')}
+            </p>
           </section>
 
           <section>

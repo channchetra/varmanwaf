@@ -975,6 +975,9 @@ function EngineLayerForm({
             value={categories}
             onChange={setCategories}
           />
+          <p className="mt-1.5 text-[11px] text-fg-subtle">
+            {t('pages.policies.fields.monitorCategoriesLinkage')}
+          </p>
         </div>
         <div className="md:col-span-2">
           <PillMultiSelect
