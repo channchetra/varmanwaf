@@ -1812,6 +1812,60 @@ fn register_pending_access(request_id: &str, pending: PendingAccess) {
 /// otherwise leave its entry behind forever. Entries that already hold
 /// response facts are logged with what arrived; the rest are dropped. Runs
 /// off the data plane's periodic task.
+/// Per-request body staging: the remainder of an over-window request body
+/// (one the early read could not consume inside the replay window) is
+/// withheld from the upstream up to the inspection cap, scanned, and only
+/// then forwarded. Upstream's staging model, adapted to our early-read
+/// pipeline: past the cap the rest flows untouched (the tail scan covers
+/// it) instead of buffering unbounded bytes.
+struct DeferredBody {
+    /// Bytes withheld from the upstream so far.
+    buffer: BytesMut,
+    /// Past the cap: later chunks flow without staging.
+    passthrough: bool,
+    created_at: Instant,
+}
+
+/// Entries live only while their request is streaming; answered requests
+/// leave one behind until the periodic sweep drops it.
+static DEFERRED_BODY: LazyLock<DashMap<String, DeferredBody>> =
+    LazyLock::new(DashMap::new);
+
+/// The per-chunk decision [`stage_chunk`] returns.
+#[derive(Debug)]
+enum StageAction {
+    /// Absorbed into the buffer: the caller replaces the outgoing chunk
+    /// with an empty one so the upstream stays byte-silent.
+    Withhold,
+    /// The cap was hit with this chunk: scan the staged bytes once, then
+    /// hand them over and let the rest through.
+    Flush(Bytes),
+    /// Staging is inactive: leave the chunk as it is.
+    PassThrough,
+}
+
+/// Decides what happens to one streaming body chunk. Pure so the staging
+/// state machine is unit-testable without a proxy session.
+fn stage_chunk(
+    cap: usize,
+    passthrough: &mut bool,
+    buffer: &mut BytesMut,
+    chunk: Option<&[u8]>,
+) -> StageAction {
+    if *passthrough {
+        return StageAction::PassThrough;
+    }
+    if let Some(chunk) = chunk {
+        buffer.extend_from_slice(chunk);
+    }
+    if buffer.len() > cap {
+        *passthrough = true;
+        StageAction::Flush(std::mem::take(buffer).freeze())
+    } else {
+        StageAction::Withhold
+    }
+}
+
 pub fn sweep_stale_access(ttl: Duration) -> usize {
     let expired: Vec<String> = PENDING_ACCESS
         .iter()
@@ -1833,7 +1887,12 @@ pub fn sweep_stale_access(ttl: Duration) -> usize {
             emit_access(agent, &request_id, pending, facts);
         }
     }
-    swept
+    // Body-staging entries abandoned mid-exchange - a client that vanished
+    // while sending, or a request answered before its body filter ran -
+    // hold staged bytes; drop them on the same window.
+    let before = DEFERRED_BODY.len();
+    DEFERRED_BODY.retain(|_, entry| entry.created_at.elapsed() < ttl);
+    swept + (before - DEFERRED_BODY.len())
 }
 
 /// Emit an access log entry, either when the response is complete or
@@ -2715,6 +2774,9 @@ impl Plugin for WafPlugin {
         // works standalone - a static deployment blocks POST payloads just
         // the same.
         let mut body_truncated = false;
+        // Set when the early read stopped before the end of the body: the
+        // remainder is staged (withheld and scanned) by the body filter.
+        let mut stage_remainder = false;
         if (agent.is_some() && body_limit > 0 || capture_body)
             && !(method == "POST" && path == VERIFY_ENDPOINT)
         {
@@ -2851,7 +2913,22 @@ impl Plugin for WafPlugin {
                     );
                     return Ok(RequestPluginResult::Respond(response));
                 }
+                // Staging policy: withhold and scan the remainder before
+                // any of it reaches the upstream.
+                if capture_body {
+                    stage_remainder = true;
+                }
             }
+        }
+        if stage_remainder && self.tail_inspection {
+            DEFERRED_BODY.insert(
+                request_id.clone(),
+                DeferredBody {
+                    buffer: BytesMut::new(),
+                    passthrough: false,
+                    created_at: Instant::now(),
+                },
+            );
         }
         let (log_body, log_body_size, log_body_truncated) =
             log_body_prefix.finish();
@@ -3638,6 +3715,57 @@ impl Plugin for WafPlugin {
             return self
                 .inspect_tunnel(&request_id, ctx, true, bytes, end_of_stream)
                 .map(|()| None);
+        }
+        // Staged remainder: withhold chunks up to the cap, scan them before
+        // the upstream sees a byte, then let the rest through. Past the cap
+        // the tail scan below takes over as before.
+        if let Some(mut entry) = DEFERRED_BODY.remove(&request_id).map(|e| e.1) {
+            if !end_of_stream {
+                match stage_chunk(
+                    self.max_body_size,
+                    &mut entry.passthrough,
+                    &mut entry.buffer,
+                    Some(bytes),
+                ) {
+                    StageAction::Withhold => {
+                        // An empty chunk: pingora skips it entirely, so the
+                        // upstream stays byte-silent and keeps its
+                        // end-of-body state. Never `None` - that would
+                        // truncate the upstream request.
+                        *body = Some(Bytes::new());
+                        DEFERRED_BODY.insert(request_id, entry);
+                        return Ok(None);
+                    },
+                    StageAction::Flush(staged) => {
+                        // The cap was hit mid-body: scan what is staged
+                        // (prefix plus this chunk) once, while the upstream
+                        // still has no body byte; the rest then flows
+                        // through untouched.
+                        if let Some(response) =
+                            self.inspect_tail(&request_id, ctx, &staged)
+                        {
+                            return Ok(Some(response));
+                        }
+                        *body = Some(staged);
+                        return Ok(None);
+                    },
+                    StageAction::PassThrough => {
+                        DEFERRED_BODY.insert(request_id.clone(), entry);
+                    },
+                }
+            } else if !entry.passthrough {
+                // Completion: scan the staged remainder, then hand it over
+                // with the end-of-body flag.
+                entry.buffer.extend_from_slice(bytes);
+                let staged = std::mem::take(&mut entry.buffer).freeze();
+                if let Some(response) =
+                    self.inspect_tail(&request_id, ctx, &staged)
+                {
+                    return Ok(Some(response));
+                }
+                *body = Some(staged);
+                return Ok(None);
+            }
         }
         if !self.tail_inspection {
             return Ok(None);
@@ -5866,6 +5994,47 @@ advanced_mode = true
         // Needle longer than haystack, and empty needle, are not matches.
         assert!(!contains_ignore_case("ab", "abc"));
         assert!(!contains_ignore_case("anything", ""));
+    }
+
+    #[test]
+    fn stage_chunk_withholds_until_the_cap() {
+        let mut passthrough = false;
+        let mut buffer = BytesMut::new();
+        // Below the cap: withheld, nothing forwarded.
+        assert!(matches!(
+            stage_chunk(8, &mut passthrough, &mut buffer, Some(b"12345")),
+            StageAction::Withhold
+        ));
+        assert!(!passthrough);
+        assert_eq!(&buffer[..], b"12345");
+        // Exactly at the cap: still withheld (the cap is a ceiling).
+        assert!(matches!(
+            stage_chunk(8, &mut passthrough, &mut buffer, Some(b"678")),
+            StageAction::Withhold
+        ));
+        assert_eq!(&buffer[..], b"12345678");
+        // One byte past: everything staged is flushed once for scanning.
+        let StageAction::Flush(staged) =
+            stage_chunk(8, &mut passthrough, &mut buffer, Some(b"9"))
+        else {
+            panic!("the cap must flush");
+        };
+        assert_eq!(&staged[..], b"123456789");
+        assert!(passthrough);
+        assert!(buffer.is_empty());
+        // Afterwards the stream flows untouched.
+        assert!(matches!(
+            stage_chunk(8, &mut passthrough, &mut buffer, Some(b"tail")),
+            StageAction::PassThrough
+        ));
+        // An end-of-stream call with no chunk must not flush on its own.
+        let mut passthrough = false;
+        let mut buffer = BytesMut::new();
+        assert!(matches!(
+            stage_chunk(8, &mut passthrough, &mut buffer, None),
+            StageAction::Withhold
+        ));
+        assert!(buffer.is_empty());
     }
 
     /// A block action answers non-browser agents with 403 even with the WAF
