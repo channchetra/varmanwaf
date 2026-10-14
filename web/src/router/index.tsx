@@ -40,6 +40,7 @@ import { AlertsPage } from '@/pages/AlertsPage'
 import { BlockedIpsPage } from '@/pages/BlockedIpsPage'
 import { NotificationsPage } from '@/pages/NotificationsPage'
 import { ConfigHistoryPage } from '@/pages/ConfigHistoryPage'
+import { ReportsPage } from '@/pages/ReportsPage'
 import { SiteSettingsPage } from '@/pages/sites/SiteSettingsPage'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Button } from '@/components/ui/Button'
@@ -137,6 +138,7 @@ export const router = createBrowserRouter([
       { path: 'alerts', element: <AlertsPage /> },
       { path: 'notifications', element: <NotificationsPage /> },
       { path: 'config-history', element: <ConfigHistoryPage /> },
+      { path: 'reports', element: <ReportsPage /> },
       { path: 'lifecycle', element: <LifecyclePage /> },
       // Global surfaces. The per-site counterparts live under `/sites/:siteId`.
       { path: 'ssl', element: <GlobalSslPage /> },

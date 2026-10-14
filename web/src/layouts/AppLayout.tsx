@@ -53,6 +53,7 @@ const crumbKeys: Record<string, string> = {
   'blocked-ips': 'pages.blockedIps.title',
   notifications: 'pages.notifications.title',
   'config-history': 'pages.configHistory.title',
+  reports: 'pages.reports.title',
   lifecycle: 'pages.lifecycle.title',
 }
 

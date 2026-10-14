@@ -29,7 +29,8 @@
     "selectSiteFirst": "Select a site first",
     "blockedIps": "IP Blacklist",
     "notifications": "Notifications",
-    "configHistory": "Config history"
+    "configHistory": "Config history",
+    "reports": "Reports"
   },
   "sidebar": {
     "collapse": "Collapse",
@@ -2659,6 +2660,43 @@
       "rollbackFailed": "Rollback failed",
       "empty": "No versions recorded",
       "emptyDescription": "Configuration versions appear here as soon as a change is recorded for this scope."
+    },
+    "reports": {
+      "title": "Interception reports",
+      "description": "Summary numbers in the console; the full report is generated and downloaded on demand.",
+      "overviewTitle": "Summary here, full report on demand",
+      "overview": "The console loads only the aggregates below. The complete report - interception types, daily timeline, attack-IP and URL rankings - is built when you generate it and downloads as a self-contained HTML file: no scripts, no external assets, opens offline and prints to A4. Generation is bounded (92 days maximum, top-20 lists), so the control plane stays light.",
+      "adminOnlyTitle": "Administrator access required",
+      "adminOnly": "Reports are administrator-only; ask an administrator for a copy.",
+      "range": "Range",
+      "preset_24h": "Last 24 hours",
+      "preset_7d": "Last 7 days",
+      "preset_30d": "Last 30 days",
+      "preset_90d": "Last 90 days",
+      "preset_custom": "Custom dates",
+      "from": "From",
+      "to": "To",
+      "site": "Scope",
+      "allSites": "All sites",
+      "generate": "Generate & download",
+      "generateHint": "The report covers the selected range and scope; it is generated on demand and downloads immediately.",
+      "summaryTitle": "Summary",
+      "summaryHint": "Interceptions recorded in the selected range.",
+      "events": "Interceptions",
+      "blocked": "Blocked",
+      "monitored": "Monitor-only",
+      "uniqueIps": "Unique IPs",
+      "uniquePaths": "Unique paths",
+      "topType": "Top type",
+      "topCountry": "Top country",
+      "topIp": "Top IP",
+      "empty": "No interceptions in this range.",
+      "generated": "Report downloaded",
+      "generateFailed": "Report generation failed",
+      "dashboardTitle": "Interception report (30 days)",
+      "dashboardLine": "{{events}} interceptions · {{blocked}} blocked · top type {{type}}",
+      "open": "Open reports",
+      "none": "none"
     }
   },
   "challengeLevels": {

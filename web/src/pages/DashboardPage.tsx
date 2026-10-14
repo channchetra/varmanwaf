@@ -26,6 +26,7 @@ import {
   Clock,
   Compass,
   UploadSimple,
+  FileText,
 } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
@@ -38,6 +39,8 @@ import { Table, type Column } from '@/components/ui/Table'
 import { ErrorState } from '@/components/ErrorState'
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton'
 import { analyticsApi, analyticsKeys } from '@/api/analytics'
+import { reportsApi, reportKeys } from '@/api/reports'
+import { rangeDays } from '@/lib/reportRange'
 import { agentsApi, agentKeys } from '@/api/agents'
 import { useSitesList } from '@/hooks'
 import { cn } from '@/lib/utils'
@@ -131,6 +134,14 @@ export function DashboardPage() {
     queryKey: analyticsKeys.summary(range),
     queryFn: () => analyticsApi.summary(range),
     refetchInterval: REFRESH_MS,
+  })
+
+  // Report summary: the dashboard shows only these aggregates; the full
+  // report is generated and downloaded on demand from /reports.
+  const reportRange = useMemo(() => rangeDays(30), [])
+  const reportSummary = useQuery({
+    queryKey: reportKeys.summary(reportRange),
+    queryFn: () => reportsApi.summary(reportRange),
   })
 
   const traffic = useQuery({
@@ -474,6 +485,39 @@ export function DashboardPage() {
       >
         {t('pages.dashboard.overview')}
       </Callout>
+
+      {/* Interception report summary (full report generated on demand) */}
+      <Card className="mb-4 p-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-2 text-sm font-semibold text-fg-strong">
+              <FileText weight="duotone" className="h-4 w-4 text-brand" />
+              {t('pages.reports.dashboardTitle')}
+            </p>
+            {reportSummary.data ? (
+              <p className="mt-1 text-[13px] text-fg-subtle">
+                {t('pages.reports.dashboardLine', {
+                  events: formatCompactNumber(reportSummary.data.events),
+                  blocked: formatCompactNumber(reportSummary.data.blocked),
+                  type:
+                    reportSummary.data.top_type?.label ??
+                    t('pages.reports.none'),
+                })}
+              </p>
+            ) : (
+              <Skeleton className="mt-1.5 h-4 w-64" />
+            )}
+          </div>
+          <Link to="/reports">
+            <Button
+              variant="secondary"
+              icon={<ArrowRight weight="bold" className="h-4 w-4" />}
+            >
+              {t('pages.reports.open')}
+            </Button>
+          </Link>
+        </div>
+      </Card>
 
       {/* Stat cards */}
       {summary.isError && !summary.data ? (

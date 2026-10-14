@@ -38,6 +38,7 @@ pub mod passkeys;
 pub mod policies;
 pub mod rate_limit;
 pub mod rate_limiting;
+pub mod reports;
 pub mod rewrite;
 pub mod rules;
 pub mod self_protection;
@@ -91,6 +92,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(cache::routes())
         .merge(logs::routes())
         .merge(analytics::routes())
+        .merge(reports::routes())
         .merge(settings::routes())
         .merge(log_retention::routes())
         .merge(ssl::routes())
