@@ -36,6 +36,7 @@ import { RewritePage } from '@/pages/sites/RewritePage'
 import { OriginPage } from '@/pages/sites/OriginPage'
 import { LifecyclePage } from '@/pages/LifecyclePage'
 import { PoliciesPage } from '@/pages/PoliciesPage'
+import { PolicyDetailPage } from '@/pages/PolicyDetailPage'
 import { CrsPage } from '@/pages/CrsPage'
 import { AlertsPage } from '@/pages/AlertsPage'
 import { BlockedIpsPage } from '@/pages/BlockedIpsPage'
@@ -135,6 +136,7 @@ export const router = createBrowserRouter([
       { path: 'ip-groups', element: <IpGroupsPage /> },
       { path: 'blocked-ips', element: <BlockedIpsPage /> },
       { path: 'policies', element: <PoliciesPage /> },
+      { path: 'policies/:policyId', element: <PolicyDetailPage /> },
       { path: 'crs', element: <CrsPage /> },
       { path: 'alerts', element: <AlertsPage /> },
       { path: 'notifications', element: <Navigate to="/alerts" replace /> },

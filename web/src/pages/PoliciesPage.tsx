@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  ClockCounterClockwise,
+  CaretRight,
   Play,
   Plus,
   Stack,
@@ -60,7 +60,7 @@ import {
 import { WAF_CATEGORIES, WAF_ENGINE_MODES, WAF_STACKS } from '@/api/types'
 
 /** Layer tabs of the editor, in display order. */
-const LAYER_TABS: PolicyLayerKind[] = [
+export const LAYER_TABS: PolicyLayerKind[] = [
   'engine',
   'crs',
   'custom_rules',
@@ -85,7 +85,6 @@ export function PoliciesPage() {
   const toast = useToast()
   const queryClient = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
-  const [editorId, setEditorId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<PolicySummary | null>(null)
 
   const list = useQuery({
@@ -217,14 +216,14 @@ export function PoliciesPage() {
                 </div>
               </CardBody>
               <CardFooter className="justify-between">
-                <Button
-                  size="sm"
-                  onClick={() => setEditorId(policy.id)}
-                >
-                  {canWrite
-                    ? t('pages.policies.edit')
-                    : t('pages.policies.view')}
-                </Button>
+                <Link to={`/policies/${policy.id}`}>
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-line bg-elevated px-3 py-1.5 text-[13px] font-medium text-fg-strong transition-colors hover:border-fill">
+                    {canWrite
+                      ? t('pages.policies.open')
+                      : t('pages.policies.view')}
+                    <CaretRight weight="bold" className="h-3.5 w-3.5" />
+                  </span>
+                </Link>
                 {canWrite && (
                   <Button
                     size="sm"
@@ -246,19 +245,10 @@ export function PoliciesPage() {
         onClose={() => setCreateOpen(false)}
         onCreated={(id) => {
           setCreateOpen(false)
-          setEditorId(id)
           void queryClient.invalidateQueries({ queryKey: policyKeys.all })
+          navigate(`/policies/${id}`)
         }}
       />
-
-      {editorId && (
-        <PolicyEditorDialog
-          key={editorId}
-          policyId={editorId}
-          canWrite={canWrite}
-          onClose={() => setEditorId(null)}
-        />
-      )}
 
       <ConfirmDialog
         open={deleteTarget !== null}
@@ -376,136 +366,8 @@ function CreatePolicyDialog({
 
 /* ── Editor ───────────────────────────────────────────────────────────── */
 
-function PolicyEditorDialog({
-  policyId,
-  canWrite,
-  onClose,
-}: {
-  policyId: string
-  canWrite: boolean
-  onClose: () => void
-}) {
-  const { t } = useTranslation()
-  const queryClient = useQueryClient()
-  const [tab, setTab] = useState<PolicyLayerKind>('engine')
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [testOpen, setTestOpen] = useState(false)
-
-  const detail = useQuery({
-    queryKey: policyKeys.detail(policyId),
-    queryFn: () => policiesApi.get(policyId),
-  })
-
-  const policy = detail.data
-
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      size="xl"
-      title={policy?.name ?? t('pages.policies.loading')}
-      description={
-        policy
-          ? t('pages.policies.editorDescription', {
-              revision: policy.revision,
-              sites: policy.site_count,
-            })
-          : undefined
-      }
-    >
-      <div className="flex min-h-0 flex-1 flex-col">
-        {/* Meta + actions row: room to breathe, actions away from the tabs. */}
-        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line bg-recessed/40 px-5 py-3">
-          <Badge tone="brand">
-            {t('pages.policies.revision', { n: policy?.revision ?? 0 })}
-          </Badge>
-          <span className="text-[13px] text-fg-subtle">
-            {t('pages.policies.editorContext', {
-              n: policy?.site_count ?? 0,
-            })}
-          </span>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<ClockCounterClockwise className="h-4 w-4" />}
-              onClick={() => setHistoryOpen(true)}
-            >
-              {t('pages.policies.history')}
-            </Button>
-            <Button
-              size="sm"
-              icon={<Play weight="fill" className="h-3.5 w-3.5" />}
-              onClick={() => setTestOpen(true)}
-            >
-              {t('pages.policies.test')}
-            </Button>
-          </div>
-        </div>
-
-        {/* Layer tabs: bigger hit areas for comfortable switching. */}
-        <div className="flex shrink-0 flex-wrap gap-1 border-b border-line px-5 pt-2">
-          {LAYER_TABS.map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              onClick={() => setTab(kind)}
-              className={cn(
-                'rounded-t-md border-b-2 px-4 py-2.5 text-[13px] font-medium transition-colors',
-                tab === kind
-                  ? 'border-link text-fg-strong'
-                  : 'border-transparent text-fg-subtle hover:text-fg',
-              )}
-            >
-              {t(`pages.policies.layers.${kind}`)}
-            </button>
-          ))}
-        </div>
-
-        {/* What a change here means - stated before any field. */}
-        <p className="mx-5 mt-4 shrink-0 rounded-lg border border-focus/30 bg-focus/5 px-4 py-2.5 text-[12px] text-fg-subtle">
-          {t('pages.policies.editorBanner')}
-        </p>
-
-        {detail.isLoading || !policy ? (
-          <div className="p-5">
-            <SkeletonCard />
-          </div>
-        ) : (
-          <LayerEditor
-            policy={policy}
-            tab={tab}
-            canWrite={canWrite}
-            onStored={() => {
-              void queryClient.invalidateQueries({
-                queryKey: policyKeys.detail(policyId),
-              })
-              void queryClient.invalidateQueries({
-                queryKey: policyKeys.list(),
-              })
-            }}
-          />
-        )}
-        {historyOpen && (
-          <PolicyHistoryDialog
-            policyId={policyId}
-            canWrite={canWrite}
-            onClose={() => setHistoryOpen(false)}
-          />
-        )}
-        {testOpen && (
-          <PolicyTesterDialog
-            policyId={policyId}
-            onClose={() => setTestOpen(false)}
-          />
-        )}
-      </div>
-    </Dialog>
-  )
-}
-
 /** Version history: list, diff against the previous version, rollback. */
-function PolicyHistoryDialog({
+export function PolicyHistoryDialog({
   policyId,
   canWrite,
   onClose,
@@ -693,7 +555,7 @@ function useLayerMutation(
   })
 }
 
-function LayerEditor({
+export function LayerEditor({
   policy,
   tab,
   canWrite,
@@ -1325,7 +1187,7 @@ function RuleOverridesForm({
 }
 
 /** Read-only table of a compiled rule plan. */
-function RulePlanDialog({
+export function RulePlanDialog({
   plan,
   onClose,
 }: {
@@ -2112,7 +1974,7 @@ function CustomRulesForm({
 }
 
 /** Recipe gallery: pick a recipe, fill its parameters, apply it. */
-function RecipeDialog({
+export function RecipeDialog({
   policyId,
   onClose,
   onApplied,
