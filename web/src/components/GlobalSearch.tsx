@@ -171,7 +171,14 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
     })
   }, [filtered, needle])
 
-  useEffect(() => setActive(0), [query])
+  // Reset the highlighted row when the query changes. Adjusting the state
+  // during render (instead of in an effect) avoids a cascading render - the
+  // pattern React documents for "adjusting state when a prop changes".
+  const [activeQuery, setActiveQuery] = useState(query)
+  if (activeQuery !== query) {
+    setActiveQuery(query)
+    setActive(0)
+  }
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'ArrowDown') {
