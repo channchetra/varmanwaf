@@ -1609,6 +1609,27 @@ mod tests {
     }
 
     #[test]
+    fn path_scoped_exclusions_apply_within_their_prefix_only() {
+        let inside = req("GET", "/.git/config", "");
+        let outside = req("GET", "/.svn/config", "");
+        assert_eq!(engine().inspect(&inside).action, WafAction::Block);
+        assert_eq!(engine().inspect(&outside).action, WafAction::Block);
+
+        let cfg = WafEngineConfig {
+            path_target_exclusions: vec![PathTargetExclusion {
+                rule_id: "VARMAN-1020".to_string(),
+                targets: vec!["path".to_string()],
+                path_prefix: "/.git".to_string(),
+            }],
+            ..Default::default()
+        };
+        let engine = WafEngine::new(&cfg);
+        let v = engine.inspect(&inside);
+        assert_eq!(v.action, WafAction::Pass, "details: {}", v.details);
+        assert_eq!(engine.inspect(&outside).action, WafAction::Block);
+    }
+
+    #[test]
     fn score_override_replaces_the_severity_contribution() {
         let r = req("GET", "/.env", "");
         let base = engine().inspect(&r);

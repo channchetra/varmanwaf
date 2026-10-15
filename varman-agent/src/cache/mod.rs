@@ -1912,6 +1912,9 @@ impl RuleCache {
             rule_target_exclusions: w
                 .rule_target_exclusions
                 .iter()
+                // Path-scoped entries live in `path_target_exclusions`; a
+                // package exclusion must never widen into a site-wide one.
+                .filter(|entry| entry.path_prefix.is_empty())
                 .map(|entry| (entry.rule_id.clone(), entry.targets.clone()))
                 .collect(),
             path_target_exclusions: w
@@ -2172,6 +2175,38 @@ impl RuleCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Path-scoped exclusions stay out of the site-wide map: a package
+    /// exclusion must never widen beyond its prefix.
+    #[test]
+    fn path_scoped_exclusions_stay_out_of_the_site_wide_map() {
+        let proto_config = proto::WafConfig {
+            enabled: true,
+            rule_target_exclusions: vec![
+                proto::RuleTargetExclusions {
+                    rule_id: "VARMAN-1020".to_string(),
+                    targets: vec!["path".to_string()],
+                    path_prefix: "/.git".to_string(),
+                },
+                proto::RuleTargetExclusions {
+                    rule_id: "VARMAN-1003".to_string(),
+                    targets: vec!["body".to_string()],
+                    path_prefix: String::new(),
+                },
+            ],
+            ..Default::default()
+        };
+        let cfg = RuleCache::convert_waf_config(&proto_config);
+        assert_eq!(cfg.path_target_exclusions.len(), 1);
+        assert_eq!(cfg.path_target_exclusions[0].path_prefix, "/.git");
+        assert_eq!(cfg.path_target_exclusions[0].targets, vec!["path"]);
+        assert_eq!(
+            cfg.rule_target_exclusions.len(),
+            1,
+            "only the site-wide entry stays in the map"
+        );
+        assert!(cfg.rule_target_exclusions.contains_key("VARMAN-1003"));
+    }
 
     /// A `sites.json` written before origin pools existed carries none of the
     /// new fields; it must still load.

@@ -1156,6 +1156,13 @@ async fn exclusion_package_exclusions(
             });
         }
     }
+    if !exclusions.is_empty() {
+        tracing::info!(
+            site_id = %site_id,
+            exclusions = exclusions.len(),
+            "exclusion packages compiled into the site bundle"
+        );
+    }
     Ok(exclusions)
 }
 

@@ -3999,6 +3999,39 @@ ml_threshold = 0.75
         assert_eq!(PluginStep::EarlyRequest, plugin.plugin_step);
     }
 
+    #[test]
+    fn path_scoped_exclusion_reaches_the_site_engine() {
+        let mut cfg = cache_waf_config(false, Vec::new(), Vec::new());
+        cfg.engine_mode = "varman".into();
+        cfg.path_target_exclusions =
+            vec![varman_agent::cache::PathTargetExclusion {
+                rule_id: "VARMAN-1020".to_string(),
+                targets: vec!["path".to_string()],
+                path_prefix: "/.git".to_string(),
+            }];
+        let engine = build_site_engine(&cfg);
+
+        let mut inside = probe("");
+        inside.path = "/.git/config".to_string();
+        let verdict = engine.inspect(&inside);
+        assert_eq!(
+            WafAction::Pass,
+            verdict.action,
+            "details: {}",
+            verdict.details
+        );
+
+        let mut outside = probe("");
+        outside.path = "/.svn/config".to_string();
+        let verdict = engine.inspect(&outside);
+        assert_eq!(
+            WafAction::Block,
+            verdict.action,
+            "details: {}",
+            verdict.details
+        );
+    }
+
     fn cache_waf_config(
         advanced_mode: bool,
         monitor_categories: Vec<String>,
@@ -5322,6 +5355,87 @@ advanced_mode = true
             run_request(&plugin, "198.51.100.4").await
                 == RequestPluginResult::Continue
         );
+    }
+
+    /// A path-scoped exclusion from a package suppresses its rule under the
+    /// prefix only, through the whole data plane (bundle -> cache -> engine).
+    #[tokio::test]
+    async fn test_exclusion_package_suppresses_under_its_prefix() {
+        let (_guard, agent, _dir) = install_test_agent().await;
+        agent
+            .rule_cache
+            .update_from_site_config(&proto::SiteConfig {
+                sites: vec![proto::Site {
+                    id: "site-1".to_string(),
+                    name: "example".to_string(),
+                    domain: "example.com".to_string(),
+                    alternate_domains: Vec::new(),
+                    status: 0,
+                    rules: Some(proto::RuleBundle {
+                        site_id: "site-1".to_string(),
+                        config_hash: "hash-1".to_string(),
+                        waf: Some(proto::WafConfig {
+                            enabled: true,
+                            mode: proto::WafMode::Block as i32,
+                            // The native engine enforces; the pipeline
+                            // defaults to shadow when no mode is selected.
+                            engine_mode: "varman".to_string(),
+                            rule_target_exclusions: vec![
+                                proto::RuleTargetExclusions {
+                                    rule_id: "VARMAN-1020".to_string(),
+                                    targets: vec!["path".to_string()],
+                                    path_prefix: "/.git".to_string(),
+                                },
+                            ],
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                config_hash: "hash-1".to_string(),
+                updated_at: None,
+            })
+            .unwrap();
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+
+        let probe = |path: &str| {
+            let header =
+                format!("GET {path} HTTP/1.1\r\nHost: example.com\r\n\r\n");
+            let plugin = &plugin;
+            async move {
+                let mock_io = Builder::new().read(header.as_bytes()).build();
+                let mut session = Session::new_h1(Box::new(mock_io));
+                session.read_request().await.unwrap();
+                let mut ctx = Ctx::default();
+                ctx.conn.client_ip = Some("203.0.113.7".to_string());
+                plugin
+                    .handle_request(
+                        PluginStep::EarlyRequest,
+                        &mut session,
+                        &mut ctx,
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let inside = probe("/.git/config").await;
+        eprintln!("inside result: {inside:?}");
+        assert_eq!(
+            RequestPluginResult::Continue,
+            inside,
+            "the exclusion must suppress the dotfile rule under /.git"
+        );
+        let outside = probe("/.svn/config").await;
+        eprintln!("outside result: {outside:?}");
+        let RequestPluginResult::Respond(resp) = outside else {
+            panic!("expected the dotfile rule to answer outside the prefix");
+        };
+        assert_eq!(http::StatusCode::FORBIDDEN, resp.status);
     }
 
     /// A geo policy denies a client inside the synced country ranges, and
