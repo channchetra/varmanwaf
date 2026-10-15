@@ -2864,7 +2864,8 @@
       "removed": "Binding removed",
       "reinstall": "Reinstall",
       "stale": "Update available",
-      "review": "Review before attaching: an exclusion is a scoped blind spot for the listed rules."
+      "review": "Review before attaching: an exclusion is a scoped blind spot for the listed rules.",
+      "targetsHint": "Entries may name a member - query:q, body:content, cookie:session, header:x-api-key - to exclude just that value from the addressed rule, or name a plain source to exclude all of it. Custom rule ids are addressable too."
     },
     "tuning": {
       "quickNav": "On this page",

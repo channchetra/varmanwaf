@@ -180,6 +180,9 @@ export function ExclusionPackagesPanel() {
               }
             />
           ))}
+          <p className="text-[11px] text-fg-subtle">
+            {t('pages.exclusions.targetsHint')}
+          </p>
         </CardBody>
       </Card>
     </div>

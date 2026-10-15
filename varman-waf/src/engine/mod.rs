@@ -250,6 +250,37 @@ impl FilteredCtx {
         let excluded = |target: &str| exclusions.iter().any(|t| t == target);
         let path_excluded = excluded("path");
         let query_excluded = excluded("query");
+
+        // Named forms (`query:q`, `body:content`, `cookie:session`,
+        // `header:x-api-key`) remove one member instead of the whole
+        // source. Names are matched case-sensitively for query and body
+        // parameters and case-insensitively for headers and cookies.
+        let named = |kind: &str| -> Vec<&str> {
+            exclusions
+                .iter()
+                .filter_map(|target| {
+                    target
+                        .strip_prefix(kind)
+                        .and_then(|rest| rest.strip_prefix(':'))
+                        .filter(|name| !name.is_empty())
+                })
+                .collect()
+        };
+        let query_names = named("query");
+        let body_names = named("body");
+        let cookie_names = named("cookie");
+        let header_names = named("header");
+
+        // The query view composites into the full URI, so a named query
+        // exclusion rewrites it.
+        let full_uri = if path_excluded || query_excluded {
+            String::new()
+        } else if query_names.is_empty() {
+            base.full_uri.to_string()
+        } else {
+            filter_query_from_uri(base.full_uri, &query_names)
+        };
+
         Self {
             method: if excluded("method") {
                 String::new()
@@ -261,13 +292,7 @@ impl FilteredCtx {
             } else {
                 base.path.to_string()
             },
-            // The full-URI view composites path and query, so excluding
-            // either removes it as well.
-            full_uri: if path_excluded || query_excluded {
-                String::new()
-            } else {
-                base.full_uri.to_string()
-            },
+            full_uri,
             host: if excluded("host") {
                 String::new()
             } else {
@@ -280,18 +305,40 @@ impl FilteredCtx {
             },
             body: if excluded("body") {
                 None
-            } else {
+            } else if body_names.is_empty() {
                 base.body.map(str::to_string)
+            } else {
+                base.body.map(|body| filter_body(body, &body_names))
             },
             headers: if excluded("header") {
                 Vec::new()
-            } else {
+            } else if header_names.is_empty() {
                 base.headers.to_vec()
+            } else {
+                base.headers
+                    .iter()
+                    .filter(|(name, _)| {
+                        !header_names
+                            .iter()
+                            .any(|excluded| name.eq_ignore_ascii_case(excluded))
+                    })
+                    .cloned()
+                    .collect()
             },
             cookies: if excluded("cookie") {
                 Vec::new()
-            } else {
+            } else if cookie_names.is_empty() {
                 base.cookies.to_vec()
+            } else {
+                base.cookies
+                    .iter()
+                    .filter(|(name, _)| {
+                        !cookie_names
+                            .iter()
+                            .any(|excluded| name.eq_ignore_ascii_case(excluded))
+                    })
+                    .cloned()
+                    .collect()
             },
         }
     }
@@ -311,7 +358,72 @@ impl FilteredCtx {
     }
 }
 
-/// Multi-stage WAF detection engine. Clone is intentionally not derived —
+/// Removes the named parameters from a URI's query, keeping the rest of the
+/// URI intact.
+fn filter_query_from_uri(uri: &str, names: &[&str]) -> String {
+    let Some((path, query)) = uri.split_once('?') else {
+        return uri.to_string();
+    };
+    let filtered = filter_urlencoded(query, names);
+    if filtered.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{filtered}")
+    }
+}
+
+/// Drops `name=value` pairs whose name is excluded (exact match).
+fn filter_urlencoded(body: &str, names: &[&str]) -> String {
+    body.split('&')
+        .filter(|pair| !pair.is_empty())
+        .filter(|pair| {
+            let name = pair.split('=').next().unwrap_or_default();
+            !names.contains(&name)
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// Filters one body: JSON bodies lose the named keys (dotted paths descend),
+/// urlencoded bodies lose the named pairs; anything else is left untouched
+/// because the member cannot be addressed safely.
+fn filter_body(body: &str, names: &[&str]) -> String {
+    let trimmed = body.trim_start();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(body) {
+            for name in names {
+                remove_json_path(&mut value, name);
+            }
+            if let Ok(serialized) = serde_json::to_string(&value) {
+                return serialized;
+            }
+        }
+        return body.to_string();
+    }
+    filter_urlencoded(body, names)
+}
+
+/// Removes a dotted path (`content`, `a.b`) from a JSON object.
+fn remove_json_path(value: &mut serde_json::Value, path: &str) {
+    let mut parts = path.split('.').peekable();
+    let mut cursor = value;
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            if let Some(map) = cursor.as_object_mut() {
+                map.remove(part);
+            }
+            return;
+        }
+        let Some(next) =
+            cursor.as_object_mut().and_then(|map| map.get_mut(part))
+        else {
+            return;
+        };
+        cursor = next;
+    }
+}
+
+/// Multi-stage WAF detection engine. Clone is intentionally not derived -
 /// share an `Arc<WafEngine>` instead so the Aho-Corasick automaton stays put.
 /// A typed body field (form member / JSON member) above this decoded length
 /// is treated as pasted bulk content — code, documents, uploaded HTML — and
@@ -1627,6 +1739,216 @@ mod tests {
         let v = engine.inspect(&inside);
         assert_eq!(v.action, WafAction::Pass, "details: {}", v.details);
         assert_eq!(engine.inspect(&outside).action, WafAction::Block);
+    }
+
+    /// Named exclusions (`query:name`, `body:name`, `cookie:name`,
+    /// `header:name`) remove one member while everything else stays
+    /// inspectable.
+    #[test]
+    fn named_exclusions_remove_one_member_only() {
+        let compile = |id: &str, expression: &str| {
+            CompiledRule::compile(
+                id.to_string(),
+                id.to_string(),
+                expression,
+                RuleAction::Block,
+                5,
+                Vec::new(),
+            )
+            .unwrap()
+        };
+        let rules = vec![
+            compile(
+                "custom-query",
+                r#"http.request.uri.path eq "/q" and http.request.uri.query contains "marker-value""#,
+            ),
+            compile(
+                "custom-body",
+                r#"http.request.uri.path eq "/b" and http.request.body contains "marker-value""#,
+            ),
+            compile(
+                "custom-json",
+                r#"http.request.uri.path eq "/j" and http.request.body contains "marker-value""#,
+            ),
+            compile(
+                "custom-header",
+                r#"http.request.uri.path eq "/h" and http.request.headers["x-marker"] contains "marker-value""#,
+            ),
+            compile(
+                "custom-cookie",
+                r#"http.request.uri.path eq "/c" and http.request.cookies["session"] contains "marker-value""#,
+            ),
+            compile("custom-path", r#"http.request.uri.path eq "/qp""#),
+        ];
+        let build = |exclusions: &[(&str, &[&str])]| {
+            let config = WafEngineConfig {
+                rules: rules.clone(),
+                rule_target_exclusions: exclusions
+                    .iter()
+                    .map(|(id, targets)| {
+                        (
+                            id.to_string(),
+                            targets.iter().map(|t| t.to_string()).collect(),
+                        )
+                    })
+                    .collect(),
+                ..WafEngineConfig::default()
+            };
+            WafEngine::new(&config)
+        };
+        let with_header = |request: RequestData, name: &str, value: &str| {
+            let mut request = request;
+            request.headers.push((name.to_string(), value.to_string()));
+            request
+        };
+        let with_body = |request: RequestData, body: &str| {
+            let mut request = request;
+            request.body = Some(body.as_bytes().to_vec());
+            request
+        };
+
+        let plain = build(&[]);
+        assert_eq!(
+            plain
+                .inspect(&req("GET", "/q", "keep=1&secret=marker-value"))
+                .action,
+            WafAction::Block
+        );
+
+        // Query: only the named parameter leaves the query view.
+        let scoped = build(&[("custom-query", &["query:secret"])]);
+        assert_eq!(
+            scoped
+                .inspect(&req("GET", "/q", "keep=1&secret=marker-value"))
+                .action,
+            WafAction::Pass
+        );
+        let wrong_name = build(&[("custom-query", &["query:other"])]);
+        assert_eq!(
+            wrong_name
+                .inspect(&req("GET", "/q", "keep=1&secret=marker-value"))
+                .action,
+            WafAction::Block
+        );
+        // The path view is untouched by a query exclusion: the path rule
+        // still matches while the query member is excluded.
+        assert_eq!(
+            scoped
+                .inspect(&req("GET", "/qp", "secret=marker-value"))
+                .action,
+            WafAction::Block
+        );
+
+        // Urlencoded body: the named pair is removed.
+        let scoped = build(&[("custom-body", &["body:secret"])]);
+        assert_eq!(
+            scoped
+                .inspect(&with_body(
+                    req("POST", "/b", ""),
+                    "keep=1&secret=marker-value"
+                ))
+                .action,
+            WafAction::Pass
+        );
+        assert_eq!(
+            scoped
+                .inspect(&with_body(
+                    req("POST", "/b", ""),
+                    "keep=1&other=marker-value"
+                ))
+                .action,
+            WafAction::Block
+        );
+
+        // JSON body: top-level and dotted paths are removable.
+        let scoped = build(&[("custom-json", &["body:secret"])]);
+        assert_eq!(
+            scoped
+                .inspect(&with_body(
+                    req("POST", "/j", ""),
+                    r#"{"keep":1,"secret":"marker-value"}"#
+                ))
+                .action,
+            WafAction::Pass
+        );
+        let dotted = build(&[("custom-json", &["body:a.b"])]);
+        assert_eq!(
+            dotted
+                .inspect(&with_body(
+                    req("POST", "/j", ""),
+                    r#"{"a":{"b":"marker-value"},"c":2}"#
+                ))
+                .action,
+            WafAction::Pass
+        );
+        // A body that cannot be addressed safely is left untouched.
+        let unparsable = build(&[("custom-json", &["body:secret"])]);
+        assert_eq!(
+            unparsable
+                .inspect(&with_body(req("POST", "/j", ""), "marker-value"))
+                .action,
+            WafAction::Block
+        );
+
+        // Headers and cookies: names match case-insensitively.
+        assert_eq!(
+            plain
+                .inspect(&with_header(
+                    req("GET", "/h", ""),
+                    "X-Marker",
+                    "marker-value"
+                ))
+                .action,
+            WafAction::Block,
+            "the header rule must match before any exclusion"
+        );
+        let scoped = build(&[("custom-header", &["header:x-marker"])]);
+        assert_eq!(
+            scoped
+                .inspect(&with_header(
+                    req("GET", "/h", ""),
+                    "X-Marker",
+                    "marker-value"
+                ))
+                .action,
+            WafAction::Pass
+        );
+        // A different header name does not suppress the match.
+        let wrong_name = build(&[("custom-header", &["header:x-other"])]);
+        assert_eq!(
+            wrong_name
+                .inspect(&with_header(
+                    req("GET", "/h", ""),
+                    "X-Marker",
+                    "marker-value"
+                ))
+                .action,
+            WafAction::Block
+        );
+
+        let scoped = build(&[("custom-cookie", &["cookie:session"])]);
+        assert_eq!(
+            scoped
+                .inspect(&with_header(
+                    req("GET", "/c", ""),
+                    "Cookie",
+                    "session=marker-value; keep=1"
+                ))
+                .action,
+            WafAction::Pass
+        );
+        // A different cookie name does not suppress the match.
+        let wrong_name = build(&[("custom-cookie", &["cookie:other"])]);
+        assert_eq!(
+            wrong_name
+                .inspect(&with_header(
+                    req("GET", "/c", ""),
+                    "Cookie",
+                    "session=marker-value"
+                ))
+                .action,
+            WafAction::Block
+        );
     }
 
     #[test]

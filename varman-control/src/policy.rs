@@ -135,6 +135,11 @@ pub struct RuleOverrideEntry {
 }
 
 /// Request targets a rule override may exclude from evaluation.
+///
+/// A plain source (`path`, `query`, `body`, `header`, `cookie`,
+/// `user_agent`, `host`, `method`) removes the whole source; a named form
+/// (`query:q`, `body:content`, `cookie:session`, `header:x-api-key`)
+/// removes one member of it.
 pub const EXCLUSION_TARGETS: [&str; 8] = [
     "path",
     "query",
@@ -145,6 +150,23 @@ pub const EXCLUSION_TARGETS: [&str; 8] = [
     "host",
     "method",
 ];
+
+/// Whether one exclusion target is expressible: a plain source, or a
+/// `kind:name` member form for the four map-like sources.
+pub fn valid_exclusion_target(target: &str) -> bool {
+    match target.split_once(':') {
+        None => EXCLUSION_TARGETS.contains(&target),
+        Some((kind, name)) => {
+            matches!(kind, "query" | "body" | "cookie" | "header")
+                && !name.is_empty()
+                && name.len() <= 128
+                && name.chars().all(|c| {
+                    c.is_ascii_alphanumeric()
+                        || matches!(c, '_' | '-' | '.' | '[' | ']' | '*')
+                })
+        },
+    }
+}
 
 /// The managed-rule catalogue, built once: selector expansion and tag
 /// validation read it on every resolution.
@@ -227,9 +249,11 @@ impl RuleOverrideEntry {
             _ => {},
         }
         for target in &self.exclude_targets {
-            if !EXCLUSION_TARGETS.contains(&target.as_str()) {
+            if !valid_exclusion_target(target) {
                 return Err(format!(
-                    "unknown exclusion target '{target}' (expected one of: {})",
+                    "unknown exclusion target '{target}' (expected a source \
+                     from: {}, or a named member like query:q, body:content, \
+                     cookie:session, header:x-api-key)",
                     EXCLUSION_TARGETS.join(", ")
                 ));
             }

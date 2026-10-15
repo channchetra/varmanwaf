@@ -634,10 +634,9 @@ pub struct EvalContext<'a> {
 
 impl EvalContext<'_> {
     pub fn header(&self, name: &str) -> Option<&str> {
-        let needle = name.to_ascii_lowercase();
         self.headers
             .iter()
-            .find(|(k, _)| *k == needle)
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
     }
 

@@ -249,9 +249,10 @@ fn validate_entry(entry: &Entry) -> Result<(), String> {
         return Err("every entry needs a rule id or a tag/severity selector"
             .to_string());
     }
-    if !entry.rule_id.is_empty() && !entry.rule_id.starts_with("VARMAN-") {
+    if !entry.rule_id.is_empty() && !valid_rule_id(&entry.rule_id) {
         return Err(format!(
-            "'{}' is not a managed rule id (VARMAN-...)",
+            "'{}' is not a rule id (managed `VARMAN-...` or a custom rule \
+             id)",
             entry.rule_id
         ));
     }
@@ -259,14 +260,24 @@ fn validate_entry(entry: &Entry) -> Result<(), String> {
         return Err("every entry needs at least one target".to_string());
     }
     for target in &entry.targets {
-        if !EXCLUSION_TARGETS.contains(&target.as_str()) {
+        if !crate::policy::valid_exclusion_target(target) {
             return Err(format!(
-                "'{target}' is not a request target ({})",
-                EXCLUSION_TARGETS.join(", ")
+                "'{target}' is not an exclusion target (a source like \
+                 query, or a named member like query:q, body:content, \
+                 cookie:session, header:x-api-key)"
             ));
         }
     }
     Ok(())
+}
+
+/// Rule ids a package entry may address: managed (`VARMAN-...`) or custom
+/// (operator-defined ids like `custom-1`, `sig.xss.script_tag`).
+fn valid_rule_id(id: &str) -> bool {
+    id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 /// Expands a package's entries against the managed catalogue into
@@ -320,7 +331,13 @@ pub fn validate_path_prefix(prefix: &str) -> Result<String, String> {
     if trimmed.contains("..") {
         return Err("the path prefix must not contain '..'".to_string());
     }
-    Ok(trimmed.trim_end_matches('/').to_string())
+    let normalised = trimmed.trim_end_matches('/');
+    // The root prefix covers every path; keep it as `/` so the engine's
+    // prefix check never sees an empty string (which it skips).
+    if normalised.is_empty() {
+        return Ok("/".to_string());
+    }
+    Ok(normalised.to_string())
 }
 
 #[cfg(test)]
@@ -394,11 +411,19 @@ mod tests {
         .is_ok());
         assert!(
             parse_entries(&serde_json::json!([{
-                "rule_id": "XSS-001",
+                "rule_id": "custom-1",
+                "targets": ["query:q"]
+            }]))
+            .is_ok(),
+            "custom rule ids and named targets are accepted"
+        );
+        assert!(
+            parse_entries(&serde_json::json!([{
+                "rule_id": "bad id!",
                 "targets": ["path"]
             }]))
             .is_err(),
-            "non-managed ids are rejected"
+            "malformed rule ids are rejected"
         );
         assert!(
             parse_entries(&serde_json::json!([{
@@ -408,6 +433,37 @@ mod tests {
             .is_err(),
             "unknown targets are rejected"
         );
+        assert!(
+            parse_entries(&serde_json::json!([{
+                "rule_id": "VARMAN-1020",
+                "targets": ["query:"]
+            }]))
+            .is_err(),
+            "an empty member name is rejected"
+        );
+
+        // The named member forms the engine understands.
+        for target in [
+            "path",
+            "query",
+            "query:q",
+            "body:content",
+            "body:a.b",
+            "cookie:session",
+            "header:x-api-key",
+            "user_agent",
+        ] {
+            assert!(
+                crate::policy::valid_exclusion_target(target),
+                "{target} must be accepted"
+            );
+        }
+        for target in ["query:", "path:x", "args:q", "query:has space", ""] {
+            assert!(
+                !crate::policy::valid_exclusion_target(target),
+                "{target} must be rejected"
+            );
+        }
 
         assert_eq!(validate_path_prefix("/wp-admin/").unwrap(), "/wp-admin");
         assert!(validate_path_prefix("wp-admin").is_err());
