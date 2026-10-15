@@ -514,6 +514,14 @@ message GeoConfig {
   repeated string blocked_asns = 4;
   bool block_unknown = 5;
   WafAction action = 6;
+  // Ranges synced from ipverse for the listed countries (blocked, or
+  // allowed in whitelist mode). Empty means the data is not synced yet.
+  repeated string country_ranges = 7;
+  // Ranges synced from ipverse for the blocked ASNs.
+  repeated string asn_ranges = 8;
+  // Listed countries/ASNs whose dataset is not synced: enforcement for
+  // them is off until the data exists (surfaced, never silently ignored).
+  repeated string missing_keys = 9;
 }
 
 message CacheRule {

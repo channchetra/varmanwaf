@@ -31,6 +31,7 @@ pub mod geo_rules;
 pub mod host_samples;
 pub mod instance_settings;
 pub mod ip_access_rules;
+pub mod ip_datasets;
 pub mod ip_group_sites;
 pub mod ip_groups;
 pub mod log_retention;

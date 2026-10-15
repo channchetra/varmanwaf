@@ -16,6 +16,12 @@ export interface IpAnalysisGeo {
   action: string
   matched: boolean
   reason: string
+  /** Where the enforcement data comes from: always `ipverse`. */
+  source: string
+  /** False when a listed country/ASN has no synced dataset. */
+  synced: boolean
+  /** Listed keys whose dataset is missing: not enforced until synced. */
+  missing_keys: string[]
 }
 
 export interface IpAnalysisRule {
@@ -35,8 +41,10 @@ export interface IpAnalysisGroup {
 
 export interface IpAnalysis {
   ip: string
+  /** Display label from the built-in table (not used for enforcement). */
   country: string | null
-  asn: number | null
+  /** Blocked ASNs whose synced ranges contain the address. */
+  asn_matches: string[]
   geo: IpAnalysisGeo
   ip_rule: IpAnalysisRule | null
   groups: IpAnalysisGroup[]

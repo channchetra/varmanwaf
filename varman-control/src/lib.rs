@@ -20,6 +20,7 @@ pub mod es;
 pub mod frontend;
 pub mod grpc;
 pub mod ip_lists;
+pub mod ipverse;
 pub mod mcp;
 pub mod migration;
 pub mod models;
@@ -347,7 +348,9 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
         es_client.clone(),
         cache_status,
     );
-    let grpc_server = ControlPlaneServer::new(control_plane_service);
+    let grpc_server = ControlPlaneServer::new(control_plane_service)
+        .max_decoding_message_size(varman_protocol::MAX_GRPC_MESSAGE_BYTES)
+        .max_encoding_message_size(varman_protocol::MAX_GRPC_MESSAGE_BYTES);
 
     // ── 9. Start agent health monitor ───────────────────────────────────────
     let monitor_config =

@@ -44,6 +44,7 @@
   },
   "common": {
     "save": "Save",
+    "sync": "Sync",
     "cancel": "Cancel",
     "delete": "Delete",
     "edit": "Edit",
@@ -2214,7 +2215,10 @@
       "noCountriesFound": "No countries match your search.",
       "blockedAsns": "Blocked ASNs",
       "blockedAsnsHint": "Deny entire autonomous systems.",
-      "asnNotEnforceable": "The embedded geo database carries country data only: these entries are stored but do not match. Country rules are unaffected.",
+      "asnNotSynced": "Not synced yet: these ASNs have no ipverse ranges, so they are not enforced. Sync them in the IP data card.",
+      "asnSynced": "Enforced through the synced ipverse ranges ({{count}} ASNs).",
+      "countriesNotSynced": "{{count}} selected countries have no synced ranges yet and are not enforced - sync them in the IP data card.",
+      "blockUnknownRanges": "With ipverse ranges, this denies every address outside the listed countries - the same as allow list mode.",
       "asn": "ASN",
       "noAsns": "No blocked ASNs",
       "invalidAsn": "Enter a valid ASN number.",
@@ -2773,7 +2777,8 @@
       "noGroup": "No group contains this address.",
       "limitations": "What this cannot see",
       "unknown": "unknown",
-      "observed": "Observation mode: recorded, not enforced"
+      "observed": "Observation mode: recorded, not enforced",
+      "missingKeys": "Not enforced until synced from ipverse: {{keys}}."
     },
     "apiAssets": {
       "title": "API assets",
@@ -2807,6 +2812,22 @@
       "specOnlyEmpty": "Every declared operation saw traffic (or nothing is declared).",
       "specOnlyTruncated": "Not computed: the observed list hit its cap.",
       "limitations": "What this cannot see"
+    },
+    "geoData": {
+      "title": "IP data (ipverse)",
+      "hint": "The country and ASN ranges the geo policy enforces with, downloaded from ipverse.",
+      "syncAll": "Sync all",
+      "sync": "Sync",
+      "country": "Country",
+      "asn": "ASN",
+      "syncedAt": "Synced {{at}} · {{ranges}} ranges",
+      "notSynced": "Not synced",
+      "error": "Last sync failed",
+      "noKeys": "No geo policy references any country or ASN yet.",
+      "syncPartial": "{{count}} key(s) failed to sync",
+      "synced": "Synced {{count}} dataset(s), re-pushed {{sites}} site(s)",
+      "syncFailed": "Could not sync the datasets",
+      "note": "Enforcement uses these ranges only; country labels in logs and stats come from the built-in table."
     }
   },
   "challengeLevels": {

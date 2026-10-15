@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation } from '@tanstack/react-query'
-import { MagnifyingGlass } from '@phosphor-icons/react'
+import { MagnifyingGlass, WarningCircle } from '@phosphor-icons/react'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -104,6 +104,18 @@ function AnalysisResult({ result }: { result: IpAnalysis }) {
         )}
       </div>
 
+      {!result.geo.synced && result.geo.missing_keys.length > 0 && (
+        <p className="flex items-start gap-1.5 text-[12px] text-fg-warning">
+          <WarningCircle
+            weight="duotone"
+            className="mt-0.5 h-4 w-4 shrink-0"
+          />
+          {t('pages.ipAnalysis.missingKeys', {
+            keys: result.geo.missing_keys.join(', '),
+          })}
+        </p>
+      )}
+
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[13px]">
         <dt className="text-fg-subtle">{t('pages.ipAnalysis.country')}</dt>
         <dd>
@@ -113,7 +125,9 @@ function AnalysisResult({ result }: { result: IpAnalysis }) {
         </dd>
         <dt className="text-fg-subtle">{t('pages.ipAnalysis.asn')}</dt>
         <dd className="pw-mono">
-          {result.asn ? `AS${result.asn}` : t('pages.ipAnalysis.unknown')}
+          {result.asn_matches.length > 0
+            ? result.asn_matches.join(', ')
+            : t('pages.ipAnalysis.unknown')}
         </dd>
         <dt className="text-fg-subtle">{t('pages.ipAnalysis.geo')}</dt>
         <dd>

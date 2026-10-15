@@ -419,19 +419,11 @@ pub(crate) fn lookup_country_addr(addr: IpAddr) -> Option<String> {
         .map(|code| code.as_ref().to_string())
 }
 
+/// Resolves the ASN with the embedded database (display/rate-limit counting
+/// only; the embedded data carries no ASN entries, so this is `None` today
+/// and ASN counting falls back to a single bucket).
 fn lookup_asn_addr(addr: IpAddr) -> Option<u32> {
     GEO_DB.lookup_asn(addr)
-}
-
-/// Parses a configured ASN, which operators write either bare or with an `AS`
-/// prefix (`13335`, `AS13335`).
-fn parse_asn(value: &str) -> Option<u32> {
-    let trimmed = value.trim();
-    let digits = trimmed
-        .strip_prefix("AS")
-        .or_else(|| trimmed.strip_prefix("as"))
-        .unwrap_or(trimmed);
-    digits.parse::<u32>().ok()
 }
 
 /// What an IP access rule does when the client IP matches it.
@@ -452,12 +444,17 @@ struct IpRule {
     ranges: IpRules,
 }
 
-/// Geo restrictions with the country and ASN lists normalised once.
+/// Geo restrictions: the enforcement data is IP ranges synced from ipverse
+/// (country datasets and ASN datasets), matched against the client address.
 struct GeoRule {
     enabled: bool,
-    blocked_countries: HashSet<String>,
-    allowed_countries: HashSet<String>,
-    blocked_asns: HashSet<u32>,
+    /// Ranges of the listed countries (blocked, or allowed in whitelist
+    /// mode).
+    country_ranges: IpRules,
+    /// Ranges of the blocked ASNs.
+    asn_ranges: IpRules,
+    /// Whitelist mode: an address outside `country_ranges` is denied.
+    allow_list: bool,
     block_unknown: bool,
     challenge: bool,
     /// The policy answers with a basic auth prompt instead of a block page.
@@ -547,7 +544,7 @@ impl AccessPolicy {
         &self,
         ip: &str,
         addr: Option<IpAddr>,
-        country: Option<&str>,
+        _country: Option<&str>,
     ) -> PolicyOutcome {
         if let Some(addr) = addr {
             for rule in &self.ip_rules {
@@ -596,38 +593,36 @@ impl AccessPolicy {
         let Some(geo) = self.geo.as_ref().filter(|geo| geo.enabled) else {
             return PolicyOutcome::NoMatch;
         };
-        let asn_denied = !geo.blocked_asns.is_empty()
-            && addr.is_some_and(|addr| {
-                lookup_asn_addr(addr)
-                    .is_some_and(|asn| geo.blocked_asns.contains(&asn))
-            });
-        let country_denied = match country {
-            Some(code) => {
-                geo.blocked_countries.contains(code)
-                    || (!geo.allowed_countries.is_empty()
-                        && !geo.allowed_countries.contains(code))
-            },
-            None => geo.block_unknown,
+        let Some(addr) = addr else {
+            // Ranges need a parsed address; without one the geo policy
+            // cannot match.
+            return PolicyOutcome::NoMatch;
         };
-        if !asn_denied && !country_denied {
+        let in_country = geo.country_ranges.is_match_addr(&addr);
+        let in_asn = geo.asn_ranges.is_match_addr(&addr);
+        let denied = if geo.allow_list {
+            !in_country
+        } else {
+            in_country || in_asn || (geo.block_unknown && !in_country)
+        };
+        if !denied {
             return PolicyOutcome::NoMatch;
         }
+        let detail = if geo.allow_list {
+            "the client address is outside the allowed countries".to_string()
+        } else if in_country {
+            "the client address is in a blocked country range".to_string()
+        } else if in_asn {
+            "the client address is in a blocked network (ASN) range".to_string()
+        } else {
+            "the client address is outside the listed countries (block \
+             unknown is on)"
+                .to_string()
+        };
         PolicyOutcome::Denied(Denial {
             rule_id: "geo_restriction".to_string(),
             rule_name: "Geo restriction".to_string(),
-            detail: match (country, asn_denied) {
-                (Some(code), true) => {
-                    format!("country {code} and its network are restricted")
-                },
-                (Some(code), false) => {
-                    format!("country {code} is restricted for this site")
-                },
-                (None, true) => "the client network is restricted".to_string(),
-                (None, false) => {
-                    "the country of the client could not be determined"
-                        .to_string()
-                },
-            },
+            detail,
             challenge: geo.challenge,
             basic_auth: geo.basic_auth,
             monitor: geo.monitor,
@@ -637,21 +632,11 @@ impl AccessPolicy {
 
 impl GeoRule {
     fn build(cfg: &CacheGeoConfig) -> Self {
-        let country_set = |list: &[String]| -> HashSet<String> {
-            list.iter()
-                .map(|code| code.trim().to_uppercase())
-                .filter(|code| !code.is_empty())
-                .collect()
-        };
         let rule = Self {
             enabled: cfg.enabled,
-            blocked_countries: country_set(&cfg.blocked_countries),
-            allowed_countries: country_set(&cfg.allowed_countries),
-            blocked_asns: cfg
-                .blocked_asns
-                .iter()
-                .filter_map(|asn| parse_asn(asn))
-                .collect(),
+            country_ranges: IpRules::new(&cfg.country_ranges),
+            asn_ranges: IpRules::new(&cfg.asn_ranges),
+            allow_list: !cfg.allowed_countries.is_empty(),
             block_unknown: cfg.block_unknown,
             challenge: matches!(
                 cfg.action,
@@ -660,13 +645,14 @@ impl GeoRule {
             basic_auth: matches!(cfg.action, CacheWafAction::BasicAuth),
             monitor: matches!(cfg.action, CacheWafAction::Log),
         };
-        // The embedded database carries country data only; an ASN list
-        // cannot match. Say so once per compiled site instead of letting
-        // the operator believe the list is enforced.
-        if !rule.blocked_asns.is_empty() {
+        // Listed countries/ASNs whose ipverse dataset is not synced cannot
+        // match. Say so once per compiled site instead of letting the
+        // operator believe they are enforced.
+        if rule.enabled && !cfg.missing_keys.is_empty() {
             warn!(
-                "geo blocked_asns configured but the embedded geo database \
-                 carries no ASN data; the list cannot match"
+                keys = ?cfg.missing_keys,
+                "geo policy lists countries/ASNs whose ipverse dataset is \
+                 not synced; they cannot match until the data exists"
             );
         }
         rule
@@ -5327,13 +5313,13 @@ advanced_mode = true
         );
     }
 
-    /// A geo policy denies a client whose country is on the blocked list, and
-    /// the denial carries the country on the emitted security event.
+    /// A geo policy denies a client inside the synced country ranges, and
+    /// the denial carries the display country on the emitted security event.
     #[tokio::test]
     async fn test_geo_rule_blocks_listed_country() {
         LazyLock::force(&GEO_DB);
         let country = lookup_country_addr("8.8.8.8".parse().unwrap())
-            .expect("embedded db resolves 8.8.8.8");
+            .expect("embedded db resolves 8.8.8.8 for display");
 
         let (_guard, agent, _dir) = install_test_agent().await;
         agent
@@ -5351,6 +5337,7 @@ advanced_mode = true
                         geo: Some(proto::GeoConfig {
                             enabled: true,
                             blocked_countries: vec![country.clone()],
+                            country_ranges: vec!["8.8.8.0/24".to_string()],
                             action: proto::WafAction::Block as i32,
                             ..Default::default()
                         }),
@@ -5377,6 +5364,12 @@ advanced_mode = true
         let event = agent.client.pop_log().await.unwrap();
         assert_eq!(country, event.country_code);
         assert_eq!("geo_restriction", event.waf_rule_id);
+
+        // An address outside the synced ranges is not touched.
+        assert_eq!(
+            RequestPluginResult::Continue,
+            run_request(&plugin, "1.1.1.1").await
+        );
     }
 
     /// The geo policy's monitor action records the decision without
@@ -5385,7 +5378,7 @@ advanced_mode = true
     async fn test_geo_rule_monitor_action_records_without_blocking() {
         LazyLock::force(&GEO_DB);
         let country = lookup_country_addr("8.8.8.8".parse().unwrap())
-            .expect("embedded db resolves 8.8.8.8");
+            .expect("embedded db resolves 8.8.8.8 for display");
 
         let (_guard, agent, _dir) = install_test_agent().await;
         agent
@@ -5403,6 +5396,7 @@ advanced_mode = true
                         geo: Some(proto::GeoConfig {
                             enabled: true,
                             blocked_countries: vec![country.clone()],
+                            country_ranges: vec!["8.8.8.0/24".to_string()],
                             action: proto::WafAction::Log as i32,
                             ..Default::default()
                         }),
@@ -5428,6 +5422,174 @@ advanced_mode = true
         assert_eq!(country, event.country_code);
         assert_eq!("geo_restriction", event.waf_rule_id);
         assert_eq!("monitor", event.waf_action);
+    }
+
+    /// Whitelist mode: the synced ranges are the allowed set; everything
+    /// outside them is denied.
+    #[tokio::test]
+    async fn test_geo_allow_list_denies_outside_ranges() {
+        let (_guard, agent, _dir) = install_test_agent().await;
+        agent
+            .rule_cache
+            .update_from_site_config(&proto::SiteConfig {
+                sites: vec![proto::Site {
+                    id: "site-1".to_string(),
+                    name: "example".to_string(),
+                    domain: "example.com".to_string(),
+                    alternate_domains: Vec::new(),
+                    status: 0,
+                    rules: Some(proto::RuleBundle {
+                        site_id: "site-1".to_string(),
+                        config_hash: "hash-1".to_string(),
+                        geo: Some(proto::GeoConfig {
+                            enabled: true,
+                            allowed_countries: vec!["US".to_string()],
+                            country_ranges: vec!["8.8.8.0/24".to_string()],
+                            action: proto::WafAction::Block as i32,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                config_hash: "hash-1".to_string(),
+                updated_at: None,
+            })
+            .unwrap();
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            RequestPluginResult::Continue,
+            run_request(&plugin, "8.8.8.8").await
+        );
+        let RequestPluginResult::Respond(resp) =
+            run_request(&plugin, "1.1.1.1").await
+        else {
+            panic!("expected the allow list to deny outside its ranges");
+        };
+        assert_eq!(http::StatusCode::FORBIDDEN, resp.status);
+    }
+
+    /// `block_unknown` with range data means "outside the listed countries":
+    /// addresses matching no listed country range are denied too.
+    #[tokio::test]
+    async fn test_geo_block_unknown_denies_unlisted_addresses() {
+        let (_guard, agent, _dir) = install_test_agent().await;
+        agent
+            .rule_cache
+            .update_from_site_config(&proto::SiteConfig {
+                sites: vec![proto::Site {
+                    id: "site-1".to_string(),
+                    name: "example".to_string(),
+                    domain: "example.com".to_string(),
+                    alternate_domains: Vec::new(),
+                    status: 0,
+                    rules: Some(proto::RuleBundle {
+                        site_id: "site-1".to_string(),
+                        config_hash: "hash-1".to_string(),
+                        geo: Some(proto::GeoConfig {
+                            enabled: true,
+                            blocked_countries: vec!["US".to_string()],
+                            country_ranges: vec!["8.8.8.0/24".to_string()],
+                            block_unknown: true,
+                            action: proto::WafAction::Block as i32,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                config_hash: "hash-1".to_string(),
+                updated_at: None,
+            })
+            .unwrap();
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+
+        for ip in ["1.1.1.1", "8.8.8.8"] {
+            let RequestPluginResult::Respond(resp) =
+                run_request(&plugin, ip).await
+            else {
+                panic!("expected {ip} to be denied");
+            };
+            assert_eq!(http::StatusCode::FORBIDDEN, resp.status);
+        }
+    }
+
+    /// Blocked ASNs are enforced through their synced ranges.
+    #[tokio::test]
+    async fn test_geo_asn_ranges_deny() {
+        let (_guard, agent, _dir) = install_test_agent().await;
+        agent
+            .rule_cache
+            .update_from_site_config(&proto::SiteConfig {
+                sites: vec![proto::Site {
+                    id: "site-1".to_string(),
+                    name: "example".to_string(),
+                    domain: "example.com".to_string(),
+                    alternate_domains: Vec::new(),
+                    status: 0,
+                    rules: Some(proto::RuleBundle {
+                        site_id: "site-1".to_string(),
+                        config_hash: "hash-1".to_string(),
+                        geo: Some(proto::GeoConfig {
+                            enabled: true,
+                            blocked_asns: vec!["13335".to_string()],
+                            asn_ranges: vec!["1.1.1.0/24".to_string()],
+                            action: proto::WafAction::Block as i32,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                config_hash: "hash-1".to_string(),
+                updated_at: None,
+            })
+            .unwrap();
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+
+        let RequestPluginResult::Respond(resp) =
+            run_request(&plugin, "1.1.1.1").await
+        else {
+            panic!("expected the ASN range to deny");
+        };
+        assert_eq!(http::StatusCode::FORBIDDEN, resp.status);
+        assert_eq!(
+            RequestPluginResult::Continue,
+            run_request(&plugin, "8.8.8.8").await
+        );
+    }
+
+    /// A listed key without synced data does not deny anything - it is
+    /// surfaced by the control plane instead of guessing.
+    #[test]
+    fn test_geo_missing_keys_do_not_deny() {
+        let rule = GeoRule::build(&CacheGeoConfig {
+            enabled: true,
+            blocked_countries: vec!["US".to_string()],
+            allowed_countries: Vec::new(),
+            blocked_asns: Vec::new(),
+            block_unknown: false,
+            action: CacheWafAction::Block,
+            country_ranges: Vec::new(),
+            asn_ranges: Vec::new(),
+            missing_keys: vec!["US".to_string()],
+        });
+        // The compiled rule carries no ranges and never matches; the
+        // missing key is a control-plane surface, not a denial.
+        let addr: std::net::IpAddr = "8.8.8.8".parse().unwrap();
+        assert!(rule.enabled);
+        assert!(!rule.country_ranges.is_match_addr(&addr));
+        assert!(!rule.asn_ranges.is_match_addr(&addr));
     }
 
     #[tokio::test]

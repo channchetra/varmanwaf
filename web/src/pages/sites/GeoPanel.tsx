@@ -8,6 +8,7 @@ import {
   Trash,
   MagnifyingGlass,
   Check,
+  CheckCircle,
   Buildings,
   Minus,
   WarningCircle,
@@ -47,7 +48,9 @@ import {
   GEO_MODES,
   type GeoConfig,
 } from '@/api/types'
+import { ipDatasetsApi, ipDatasetsKeys } from '@/api/ipDatasets'
 import { IpAnalysisCard } from './IpAnalysisCard'
+import { IpDataCard } from './IpDataCard'
 
 /** The geo restriction module of the site's access-control tab. */
 export function GeoPanel() {
@@ -72,6 +75,24 @@ export function GeoPanel() {
     queryFn: () => geoApi.stats(siteId),
     enabled: Boolean(siteId),
   })
+
+  // Which referenced keys have synced ipverse ranges (the enforcement data).
+  const datasetsQuery = useQuery({
+    queryKey: ipDatasetsKeys.list(),
+    queryFn: () => ipDatasetsApi.list(),
+  })
+  const syncedKeys = new Set(
+    (datasetsQuery.data?.referenced ?? [])
+      .filter((entry) => entry.synced)
+      .map((entry) => `${entry.kind}:${entry.key}`),
+  )
+  const normaliseAsn = (value: string) => value.trim().replace(/^AS/i, '')
+  const missingAsns = (config?.blocked_asns ?? []).filter(
+    (asn) => !syncedKeys.has(`asn:${normaliseAsn(asn)}`),
+  )
+  const missingCountries = (config?.countries ?? []).filter(
+    (code) => !syncedKeys.has(`country:${code.toUpperCase()}`),
+  )
 
   // Seed the form from the query (render-phase reset on new data / first
   // failure), so nothing flashes stale values on the first paint.
@@ -243,6 +264,11 @@ export function GeoPanel() {
                   label={t('pages.geo.blockUnknown')}
                   description={t('pages.geo.blockUnknownHint')}
                 />
+                {config.block_unknown && config.mode === 'block_list' && (
+                  <p className="text-[12px] text-fg-subtle">
+                    {t('pages.geo.blockUnknownRanges')}
+                  </p>
+                )}
               </CardBody>
             </Card>
 
@@ -262,6 +288,17 @@ export function GeoPanel() {
                 }
               />
               <CardBody>
+                {config.countries.length > 0 && missingCountries.length > 0 && (
+                  <p className="mb-3 flex items-start gap-1.5 rounded-md border border-line bg-recessed/40 px-3 py-2 text-[12px] text-fg-subtle">
+                    <WarningCircle
+                      weight="duotone"
+                      className="mt-0.5 h-4 w-4 shrink-0 text-fg-warning"
+                    />
+                    {t('pages.geo.countriesNotSynced', {
+                      count: missingCountries.length,
+                    })}
+                  </p>
+                )}
                 <CountryPicker
                   selected={config.countries}
                   disabled={!canWrite}
@@ -283,15 +320,28 @@ export function GeoPanel() {
                 }
               />
               <CardBody className="flex flex-col gap-4">
-                {config.blocked_asns.length > 0 && (
-                  <p className="flex items-start gap-1.5 rounded-md border border-line bg-recessed/40 px-3 py-2 text-[12px] text-fg-subtle">
-                    <WarningCircle
-                      weight="duotone"
-                      className="mt-0.5 h-4 w-4 shrink-0 text-fg-warning"
-                    />
-                    {t('pages.geo.asnNotEnforceable')}
-                  </p>
-                )}
+                {config.blocked_asns.length > 0 &&
+                  (missingAsns.length > 0 ? (
+                    <p className="flex items-start gap-1.5 rounded-md border border-line bg-recessed/40 px-3 py-2 text-[12px] text-fg-subtle">
+                      <WarningCircle
+                        weight="duotone"
+                        className="mt-0.5 h-4 w-4 shrink-0 text-fg-warning"
+                      />
+                      {t('pages.geo.asnNotSynced', {
+                        count: missingAsns.length,
+                      })}
+                    </p>
+                  ) : (
+                    <p className="flex items-start gap-1.5 rounded-md border border-line bg-recessed/40 px-3 py-2 text-[12px] text-fg-subtle">
+                      <CheckCircle
+                        weight="duotone"
+                        className="mt-0.5 h-4 w-4 shrink-0 text-fg-success"
+                      />
+                      {t('pages.geo.asnSynced', {
+                        count: config.blocked_asns.length,
+                      })}
+                    </p>
+                  ))}
                 {canWrite && (
                   <div className="flex flex-wrap items-end gap-2">
                     <Input
@@ -351,6 +401,7 @@ export function GeoPanel() {
 
           {/* Stats sidebar */}
           <div className="flex flex-col gap-6">
+            <IpDataCard />
             <IpAnalysisCard />
             <Card>
               <CardHeader title={t('pages.geo.byCountry')} />

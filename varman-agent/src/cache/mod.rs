@@ -526,6 +526,13 @@ pub struct GeoConfig {
     pub blocked_asns: Vec<String>,
     pub block_unknown: bool,
     pub action: WafAction,
+    /// Ranges synced from ipverse for the listed countries (blocked, or
+    /// allowed in whitelist mode).
+    pub country_ranges: Vec<String>,
+    /// Ranges synced from ipverse for the blocked ASNs.
+    pub asn_ranges: Vec<String>,
+    /// Listed keys whose dataset is not synced yet.
+    pub missing_keys: Vec<String>,
 }
 
 // ─── Cache Rules ────────────────────────────────────────────
@@ -1945,6 +1952,9 @@ impl RuleCache {
             blocked_asns: g.blocked_asns.clone(),
             block_unknown: g.block_unknown,
             action: WafAction::from(g.action),
+            country_ranges: g.country_ranges.clone(),
+            asn_ranges: g.asn_ranges.clone(),
+            missing_keys: g.missing_keys.clone(),
         }
     }
 

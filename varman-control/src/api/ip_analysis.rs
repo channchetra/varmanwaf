@@ -3,9 +3,10 @@
 //! The answer is computed from the same stored configuration the control
 //! plane compiles into the site bundle - the site's IP access rules in
 //! priority order, then the enabled IP groups that apply to the site, then
-//! the geo policy - resolved against the same embedded geo database the
-//! edge uses. What this cannot see is stated explicitly in `limitations`
-//! rather than guessed at.
+//! the geo policy - with the geo side matching the **ipverse-synced ranges**
+//! exactly as the edge does. Country codes shown here are display labels
+//! from the built-in table; they play no part in enforcement. What this
+//! cannot see is stated explicitly in `limitations` rather than guessed at.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -23,9 +24,10 @@ use uuid::Uuid;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
+use crate::ipverse::{self, KIND_ASN, KIND_COUNTRY};
 use crate::models::{defense_settings, geo_rules, ip_groups, site};
 
-/// The embedded geo database - the same data the edge resolves with.
+/// The embedded country table - display labels only, never enforcement.
 static GEO_DB: LazyLock<Arc<GeoipDb>> = LazyLock::new(GeoipDb::new_embedded);
 
 /// Routes contributed to `/api/v1`.
@@ -44,9 +46,10 @@ struct AnalysisQuery {
 #[derive(Debug, Serialize)]
 pub struct IpAnalysis {
     ip: String,
-    /// ISO 3166-1 alpha-2, from the embedded database the edge uses.
+    /// Display label from the built-in table (not used for enforcement).
     country: Option<String>,
-    asn: Option<u32>,
+    /// Blocked ASNs whose synced ranges contain the address.
+    asn_matches: Vec<String>,
     geo: GeoAnalysis,
     /// The first matching IP access rule: site rules first (priority
     /// order), then groups - the order the compiled policy evaluates.
@@ -69,6 +72,12 @@ pub struct GeoAnalysis {
     matched: bool,
     /// Why the policy matched (or did not).
     reason: String,
+    /// Where the enforcement data comes from: always `ipverse`.
+    source: String,
+    /// False when a listed country/ASN has no synced dataset.
+    synced: bool,
+    /// Listed keys whose dataset is missing: not enforced until synced.
+    missing_keys: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -102,7 +111,7 @@ pub struct Verdict {
 async fn analyze(
     State(state): State<AppState>,
     current: AuthUser,
-    Path(site_id): Path<Uuid>,
+    Path(site_id): Path<String>,
     Query(query): Query<AnalysisQuery>,
 ) -> Result<Json<IpAnalysis>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
@@ -112,16 +121,16 @@ async fn analyze(
         ApiError::BadRequest(format!("'{raw}' is not an IP address"))
     })?;
 
-    let exists = site::Entity::find_by_id(site_id)
+    let exists = site::Entity::find_by_id(parse_uuid(&site_id)?)
         .one(&state.db)
         .await?
         .is_some();
     if !exists {
         return Err(ApiError::NotFound("site not found".to_string()));
     }
+    let site_id = parse_uuid(&site_id)?;
 
     let country = lookup_country(ip);
-    let asn = lookup_asn(ip);
 
     // ── IP access rules and groups, in the compiled evaluation order ──
     let rules =
@@ -175,12 +184,13 @@ async fn analyze(
         })
         .collect();
 
-    // ── Geo policy ──
+    // ── Geo policy, matched against the ipverse-synced ranges ──
     let geo_row = geo_rules::Entity::find()
         .filter(geo_rules::Column::SiteId.eq(site_id))
         .one(&state.db)
         .await?;
-    let geo = geo_analysis(geo_row.as_ref(), country.as_deref(), asn);
+    let (geo, asn_matches) =
+        geo_analysis(&state.db, geo_row.as_ref(), ip).await?;
 
     // ── Verdict: IP rules decide first; geo only when none matched ──
     let (mut action, decided_by) = match &ip_rule {
@@ -201,8 +211,9 @@ async fn analyze(
             .is_some_and(|row| row.observation_mode);
 
     let mut limitations = vec![
-        "The embedded geo database carries country data only, so ASN \
-         lookups and ASN block lists cannot match."
+        "Enforcement uses the ipverse ranges synced on the Access control \
+         page; the country shown here is a display label from the built-in \
+         table and plays no part in the decision."
             .to_string(),
         "Policy-layer IP rules (Policies) are not simulated here; the \
          verdict covers this site's IP rules, IP groups and geo policy."
@@ -211,6 +222,12 @@ async fn analyze(
          tracking) is not visible to the control plane."
             .to_string(),
     ];
+    if !geo.missing_keys.is_empty() {
+        limitations.push(format!(
+            "Not enforced until synced from ipverse: {}.",
+            geo.missing_keys.join(", ")
+        ));
+    }
     if observed {
         limitations.push(
             "Observation mode is on: the edge records decisions without \
@@ -222,7 +239,7 @@ async fn analyze(
     Ok(Json(IpAnalysis {
         ip: ip.to_string(),
         country,
-        asn,
+        asn_matches,
         geo,
         ip_rule,
         groups: group_context,
@@ -235,111 +252,130 @@ async fn analyze(
     }))
 }
 
-/// Mirrors the edge's geo evaluation exactly (see the WAF plugin).
-fn geo_analysis(
+/// Mirrors the edge's geo evaluation exactly: the listed countries and ASNs
+/// resolve to their synced ipverse ranges, and the same range logic decides.
+async fn geo_analysis(
+    db: &sea_orm::DatabaseConnection,
     row: Option<&geo_rules::Model>,
-    country: Option<&str>,
-    asn: Option<u32>,
-) -> GeoAnalysis {
+    ip: IpAddr,
+) -> Result<(GeoAnalysis, Vec<String>), ApiError> {
     let Some(geo) = row else {
-        return GeoAnalysis {
-            enabled: false,
-            mode: "block_list".to_string(),
-            action: crate::models::action::BLOCK.to_string(),
-            matched: false,
-            reason: "no geo policy is configured for this site".to_string(),
-        };
+        return Ok((
+            GeoAnalysis {
+                enabled: false,
+                mode: "block_list".to_string(),
+                action: crate::models::action::BLOCK.to_string(),
+                matched: false,
+                reason: "no geo policy is configured for this site".to_string(),
+                source: "ipverse".to_string(),
+                synced: true,
+                missing_keys: Vec::new(),
+            },
+            Vec::new(),
+        ));
     };
     if !geo.enabled {
-        return GeoAnalysis {
-            enabled: false,
+        return Ok((
+            GeoAnalysis {
+                enabled: false,
+                mode: geo.mode.clone(),
+                action: geo.action.clone(),
+                matched: false,
+                reason: "the geo policy is disabled".to_string(),
+                source: "ipverse".to_string(),
+                synced: true,
+                missing_keys: Vec::new(),
+            },
+            Vec::new(),
+        ));
+    }
+
+    let country_map =
+        ipverse::load_map(db, KIND_COUNTRY, &geo.countries).await?;
+    let asn_map = ipverse::load_map(db, KIND_ASN, &geo.blocked_asns).await?;
+
+    let mut country_ranges = Vec::new();
+    let mut missing_keys = Vec::new();
+    for key in &geo.countries {
+        match ipverse::normalise_key(KIND_COUNTRY, key)
+            .ok()
+            .and_then(|key| country_map.get(&key))
+        {
+            Some(dataset) => country_ranges.extend(dataset.all()),
+            None => missing_keys.push(key.clone()),
+        }
+    }
+
+    let mut asn_ranges = Vec::new();
+    let mut asn_matches = Vec::new();
+    for key in &geo.blocked_asns {
+        match ipverse::normalise_key(KIND_ASN, key)
+            .ok()
+            .and_then(|key| asn_map.get(&key))
+        {
+            Some(dataset) => {
+                let ranges = dataset.all();
+                let normalised = ipverse::normalise_key(KIND_ASN, key)
+                    .unwrap_or_else(|_| key.clone());
+                if ranges.iter().any(|range| range_contains(range, ip)) {
+                    asn_matches.push(format!("AS{normalised}"));
+                }
+                asn_ranges.extend(ranges);
+            },
+            None => missing_keys.push(format!(
+                "AS{}",
+                key.trim_start_matches(['A', 'S', 'a', 's'])
+            )),
+        }
+    }
+
+    let in_country =
+        country_ranges.iter().any(|range| range_contains(range, ip));
+    let in_asn = asn_ranges.iter().any(|range| range_contains(range, ip));
+    let allow_list = geo.mode == "allow_list";
+    let matched = if allow_list {
+        !in_country
+    } else {
+        in_country || in_asn || (geo.block_unknown && !in_country)
+    };
+    let reason = if allow_list {
+        if in_country {
+            "the client address is inside the allowed countries".to_string()
+        } else {
+            "the client address is outside the allowed countries".to_string()
+        }
+    } else if in_country {
+        "the client address is inside a blocked country's ranges".to_string()
+    } else if in_asn {
+        "the client address is inside a blocked ASN's ranges".to_string()
+    } else if geo.block_unknown {
+        "the client address is outside every listed country (block \
+         unknown is on)"
+            .to_string()
+    } else {
+        "the client address is not inside any listed range".to_string()
+    };
+
+    Ok((
+        GeoAnalysis {
+            enabled: true,
             mode: geo.mode.clone(),
             action: geo.action.clone(),
-            matched: false,
-            reason: "the geo policy is disabled".to_string(),
-        };
-    }
-
-    let blocked: Vec<String> = geo
-        .countries
-        .iter()
-        .map(|code| code.trim().to_uppercase())
-        .collect();
-    let asn_denied = !geo.blocked_asns.is_empty()
-        && asn.is_some_and(|asn| {
-            geo.blocked_asns
-                .iter()
-                .filter_map(|entry| parse_asn(entry))
-                .any(|blocked| blocked == asn)
-        });
-    let country_denied = match country {
-        Some(code) => {
-            let code = code.to_uppercase();
-            if geo.mode == "allow_list" {
-                !blocked.contains(&code)
-            } else {
-                blocked.contains(&code)
-            }
+            matched,
+            reason,
+            source: "ipverse".to_string(),
+            synced: missing_keys.is_empty(),
+            missing_keys,
         },
-        None => geo.block_unknown,
-    };
-
-    let matched = asn_denied || country_denied;
-    let reason = match (country, asn_denied, country_denied) {
-        (Some(code), true, _) => {
-            format!("country {code} and its network are restricted")
-        },
-        (Some(code), false, true) if geo.mode == "allow_list" => {
-            format!("country {code} is not on the allow list")
-        },
-        (Some(code), false, true) => {
-            format!("country {code} is on the block list")
-        },
-        (Some(code), false, false) if geo.mode == "allow_list" => {
-            format!("country {code} is on the allow list")
-        },
-        (Some(code), false, false) => {
-            format!("country {code} is not restricted")
-        },
-        (None, true, _) => "the client network is restricted".to_string(),
-        (None, false, true) => {
-            "the country of the client could not be determined and unknown \
-             countries are blocked"
-                .to_string()
-        },
-        (None, false, false) => {
-            "the country of the client could not be determined".to_string()
-        },
-    };
-
-    GeoAnalysis {
-        enabled: true,
-        mode: geo.mode.clone(),
-        action: geo.action.clone(),
-        matched,
-        reason,
-    }
+        asn_matches,
+    ))
 }
 
-/// Resolves the country with the embedded database the edge uses.
+/// Resolves the display country label with the built-in table.
 fn lookup_country(ip: IpAddr) -> Option<String> {
     GEO_DB
         .lookup_country_code(ip)
         .map(|code| code.as_ref().to_uppercase())
-}
-
-fn lookup_asn(ip: IpAddr) -> Option<u32> {
-    GEO_DB.lookup_asn(ip)
-}
-
-/// Parses an ASN written bare or with an `AS` prefix (`13335`, `AS13335`).
-fn parse_asn(value: &str) -> Option<u32> {
-    let trimmed = value.trim();
-    let digits = trimmed
-        .strip_prefix("AS")
-        .or_else(|| trimmed.strip_prefix("as"))
-        .unwrap_or(trimmed);
-    digits.parse::<u32>().ok()
 }
 
 /// Whether a configured range (CIDR or a bare address) contains the IP.
@@ -350,6 +386,11 @@ fn range_contains(range: &str, ip: IpAddr) -> bool {
         .map(|net| net.contains(&ip))
         .or_else(|_| trimmed.parse::<IpAddr>().map(|addr| addr == ip))
         .unwrap_or(false)
+}
+
+fn parse_uuid(raw: &str) -> Result<Uuid, ApiError> {
+    raw.parse::<Uuid>()
+        .map_err(|_| ApiError::BadRequest(format!("'{raw}' is not a uuid")))
 }
 
 #[cfg(test)]
@@ -363,49 +404,5 @@ mod tests {
         assert!(range_contains("203.0.113.7", ip));
         assert!(!range_contains("198.51.100.0/24", ip));
         assert!(!range_contains("not-a-range", ip));
-    }
-
-    #[test]
-    fn asns_parse_with_and_without_prefix() {
-        assert_eq!(parse_asn("AS13335"), Some(13335));
-        assert_eq!(parse_asn("as13335"), Some(13335));
-        assert_eq!(parse_asn("13335"), Some(13335));
-        assert_eq!(parse_asn("nope"), None);
-    }
-
-    #[test]
-    fn geo_analysis_matches_the_edge_semantics() {
-        let row = geo_rules::Model {
-            id: Uuid::new_v4(),
-            site_id: Uuid::new_v4(),
-            enabled: true,
-            mode: "block_list".to_string(),
-            countries: vec!["RU".to_string()],
-            blocked_asns: vec!["AS13335".to_string()],
-            block_unknown: false,
-            action: "log".to_string(),
-            updated_at: chrono::Utc::now(),
-        };
-        let blocked = geo_analysis(Some(&row), Some("ru"), None);
-        assert!(blocked.matched);
-        assert_eq!(blocked.action, "log");
-
-        let asn_blocked = geo_analysis(Some(&row), Some("US"), Some(13335));
-        assert!(asn_blocked.matched);
-
-        let clean = geo_analysis(Some(&row), Some("US"), Some(15169));
-        assert!(!clean.matched);
-
-        let unknown = geo_analysis(Some(&row), None, None);
-        assert!(!unknown.matched);
-
-        let allow_row = geo_rules::Model {
-            mode: "allow_list".to_string(),
-            block_unknown: true,
-            ..row
-        };
-        let outside = geo_analysis(Some(&allow_row), Some("US"), None);
-        assert!(outside.matched);
-        assert!(outside.reason.contains("allow list"));
     }
 }

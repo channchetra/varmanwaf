@@ -1105,34 +1105,82 @@ fn ip_group_to_proto(row: &ip_groups::Model) -> IpAccessRule {
     }
 }
 
-/// Converts stored geo rules into the protocol representation.
-fn geo_to_proto(row: Option<&geo_rules::Model>) -> GeoConfig {
-    match row {
-        Some(g) => GeoConfig {
-            enabled: g.enabled,
-            blocked_countries: if g.mode == "block_list" {
-                g.countries.clone()
-            } else {
-                Vec::new()
-            },
-            allowed_countries: if g.mode == "allow_list" {
-                g.countries.clone()
-            } else {
-                Vec::new()
-            },
-            blocked_asns: g.blocked_asns.clone(),
-            block_unknown: g.block_unknown,
-            action: action::to_proto(&g.action),
-        },
-        None => GeoConfig {
+/// Converts stored geo rules into the protocol representation, resolving
+/// the listed countries and ASNs to their ipverse-synced ranges.
+///
+/// A listed key without a synced dataset goes into `missing_keys`: the
+/// bundle carries no ranges for it, so the edge cannot enforce it - the
+/// console and the analysis tool surface that instead of guessing.
+async fn geo_to_proto(
+    db: &DatabaseConnection,
+    row: Option<&geo_rules::Model>,
+) -> Result<GeoConfig, sea_orm::DbErr> {
+    let Some(g) = row else {
+        return Ok(GeoConfig {
             enabled: false,
             blocked_countries: Vec::new(),
             allowed_countries: Vec::new(),
             blocked_asns: Vec::new(),
             block_unknown: false,
             action: action::to_proto(action::BLOCK),
-        },
+            country_ranges: Vec::new(),
+            asn_ranges: Vec::new(),
+            missing_keys: Vec::new(),
+        });
+    };
+
+    let country_datasets = crate::ipverse::load_map(
+        db,
+        crate::ipverse::KIND_COUNTRY,
+        &g.countries,
+    )
+    .await?;
+    let asn_datasets =
+        crate::ipverse::load_map(db, crate::ipverse::KIND_ASN, &g.blocked_asns)
+            .await?;
+
+    let mut country_ranges = Vec::new();
+    let mut missing_keys = Vec::new();
+    for key in &g.countries {
+        let normalised =
+            crate::ipverse::normalise_key(crate::ipverse::KIND_COUNTRY, key);
+        match normalised.ok().and_then(|key| country_datasets.get(&key)) {
+            Some(dataset) => country_ranges.extend(dataset.all()),
+            None => missing_keys.push(key.clone()),
+        }
     }
+    let mut asn_ranges = Vec::new();
+    for key in &g.blocked_asns {
+        let normalised =
+            crate::ipverse::normalise_key(crate::ipverse::KIND_ASN, key);
+        match normalised.ok().and_then(|key| asn_datasets.get(&key)) {
+            Some(dataset) => asn_ranges.extend(dataset.all()),
+            None => missing_keys.push(format!(
+                "AS{}",
+                key.trim_start_matches(['A', 'S', 'a', 's'])
+            )),
+        }
+    }
+
+    Ok(GeoConfig {
+        enabled: g.enabled,
+        blocked_countries: if g.mode == "block_list" {
+            g.countries.clone()
+        } else {
+            Vec::new()
+        },
+        allowed_countries: if g.mode == "allow_list" {
+            g.countries.clone()
+        } else {
+            Vec::new()
+        },
+        blocked_asns: g.blocked_asns.clone(),
+        block_unknown: g.block_unknown,
+        action: action::to_proto(&g.action),
+        country_ranges,
+        asn_ranges,
+        missing_keys,
+    })
 }
 
 /// Converts stored challenge settings into the protocol representation.
@@ -1513,7 +1561,7 @@ pub async fn build_rule_bundle(
             .chain(ip_groups.iter().map(ip_group_to_proto))
             .chain(policy_ip_rules)
             .collect(),
-        geo: Some(geo_to_proto(geo.as_ref())),
+        geo: Some(geo_to_proto(db, geo.as_ref()).await?),
         cache_rules: caches
             .iter()
             .map(|row| cache_rule_to_proto(row, site_row.cache_quota_mb))

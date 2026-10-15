@@ -13,6 +13,15 @@ use varman_protocol::control_plane::{
     self as proto, control_plane_client::ControlPlaneClient as ProtoClient,
 };
 
+/// Builds a control-plane client with the bundle-sized message limits the
+/// geo datasets need: ipverse country ranges make site bundles far larger
+/// than tonic's 4 MiB default.
+fn proto_client(channel: Channel) -> ProtoClient<Channel> {
+    ProtoClient::new(channel)
+        .max_decoding_message_size(varman_protocol::MAX_GRPC_MESSAGE_BYTES)
+        .max_encoding_message_size(varman_protocol::MAX_GRPC_MESSAGE_BYTES)
+}
+
 use crate::cache::{BlockedIpEntry, RuleCache};
 use crate::cert_events::{
     attribute_events, cert_event_buffer, CertAttribution,
@@ -233,7 +242,7 @@ impl ControlPlaneClient {
         &self,
         channel: Channel,
     ) -> anyhow::Result<proto::RegisterAgentResponse> {
-        let mut client = ProtoClient::new(channel);
+        let mut client = proto_client(channel);
 
         let hostname = get_hostname();
         let (cpu_cores, memory_bytes, os_info) = get_system_info();
@@ -450,7 +459,7 @@ impl ControlPlaneClient {
             debug!("Metric shipping disabled");
             return Ok(());
         }
-        let mut client = ProtoClient::new(channel);
+        let mut client = proto_client(channel);
         let agent_token = self.agent_token.load_full();
 
         let mut interval =
@@ -582,7 +591,7 @@ impl ControlPlaneClient {
         channel: Channel,
         reg_response: &proto::RegisterAgentResponse,
     ) -> anyhow::Result<()> {
-        let mut client = ProtoClient::new(channel);
+        let mut client = proto_client(channel);
 
         // The control plane decides the heartbeat cadence ΓÇö its staleness
         // thresholds are derived from the same value ΓÇö so the interval it
@@ -841,7 +850,7 @@ impl ControlPlaneClient {
         channel: Channel,
         agent_id: &str,
     ) -> anyhow::Result<()> {
-        let mut client = ProtoClient::new(channel);
+        let mut client = proto_client(channel);
         let agent_token = self.agent_token.load_full();
         let mut receiver = self.log_receiver.lock().await;
         let mut batch: Vec<proto::LogEntry> =
@@ -957,7 +966,7 @@ impl ControlPlaneClient {
         channel: Channel,
         agent_id: &str,
     ) -> anyhow::Result<()> {
-        let mut client = ProtoClient::new(channel);
+        let mut client = proto_client(channel);
         let agent_token = self.agent_token.load_full();
 
         let flush_interval =

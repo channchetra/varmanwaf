@@ -851,6 +851,13 @@ pub fn start_subscription_sync_scheduler(
                     "IP group subscription sweep failed"
                 );
             }
+            if let Err(err) = crate::ipverse::sync_due_datasets(&state.db).await
+            {
+                tracing::warn!(
+                    error = %err,
+                    "ipverse dataset refresh sweep failed"
+                );
+            }
         }
     })
 }
