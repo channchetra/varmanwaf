@@ -360,6 +360,10 @@ pub struct WafConfig {
     /// while the request path starts with `path_prefix`.
     #[serde(default)]
     pub path_target_exclusions: Vec<PathTargetExclusion>,
+    /// Per-operation API controls: how the OpenAPI layer treats one
+    /// observed endpoint (`off` / `observe` / `enforce`).
+    #[serde(default)]
+    pub api_operations: Vec<ApiOperationControl>,
 }
 
 /// One path-scoped target exclusion from a package binding.
@@ -368,6 +372,17 @@ pub struct PathTargetExclusion {
     pub rule_id: String,
     pub targets: Vec<String>,
     pub path_prefix: String,
+}
+
+/// One observed endpoint's schema-validation mode.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ApiOperationControl {
+    /// Lowercase HTTP method.
+    pub method: String,
+    /// Path template, e.g. `/orders/{id}`.
+    pub path: String,
+    /// `off`, `observe` or `enforce`.
+    pub mode: String,
 }
 
 /// Default for [`WafConfig::engine_mode`]: follow the process-wide
@@ -1925,6 +1940,15 @@ impl RuleCache {
                     rule_id: entry.rule_id.clone(),
                     targets: entry.targets.clone(),
                     path_prefix: entry.path_prefix.clone(),
+                })
+                .collect(),
+            api_operations: w
+                .api_operations
+                .iter()
+                .map(|entry| ApiOperationControl {
+                    method: entry.method.clone(),
+                    path: entry.path.clone(),
+                    mode: entry.mode.clone(),
                 })
                 .collect(),
         }

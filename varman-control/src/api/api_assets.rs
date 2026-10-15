@@ -42,6 +42,10 @@ pub fn routes() -> Router<AppState> {
         .route("/sites/{site_id}/api-assets/learn", post(learn))
         .route("/sites/{site_id}/api-assets/learned", get(learned))
         .route(
+            "/sites/{site_id}/api-assets/learned/{row_id}/mode",
+            axum::routing::put(set_operation_mode),
+        )
+        .route(
             "/sites/{site_id}/api-assets/openapi-draft",
             get(openapi_draft),
         )
@@ -402,6 +406,9 @@ async fn learn(
                     request_schema: Set(request_schema),
                     query_schema: Set(query_schema),
                     sample_count: Set(entry.samples as i64),
+                    // Learned endpoints start in observe: findings are
+                    // recorded, never enforced, until an operator says so.
+                    mode: Set("observe".to_string()),
                     first_seen: Set(entry.first),
                     last_seen: Set(entry.last),
                     updated_at: Set(Utc::now()),
@@ -481,6 +488,48 @@ async fn openapi_draft(
         window_days,
         &endpoints,
     )))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OperationModeRequest {
+    /// `off`, `observe` or `enforce`.
+    pub mode: String,
+}
+
+/// `PUT /api/v1/sites/{site_id}/api-assets/learned/{row_id}/mode` - writers
+/// only: how the OpenAPI layer treats this observed endpoint. The change is
+/// pushed to the edge in the same call.
+async fn set_operation_mode(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path((site_id, row_id)): Path<(String, String)>,
+    Json(payload): Json<OperationModeRequest>,
+) -> Result<Json<api_learned_schemas::Model>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let row_id = parse_uuid(&row_id, "row id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    let mode = payload.mode.trim().to_lowercase();
+    if !matches!(mode.as_str(), "off" | "observe" | "enforce") {
+        return Err(ApiError::BadRequest(
+            "mode must be off, observe or enforce".to_string(),
+        ));
+    }
+
+    let row = api_learned_schemas::Entity::find_by_id(row_id)
+        .filter(api_learned_schemas::Column::SiteId.eq(id))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound("learned endpoint not found".to_string())
+        })?;
+    let mut active: api_learned_schemas::ActiveModel = row.into();
+    active.mode = Set(mode);
+    active.updated_at = Set(Utc::now());
+    let saved = active.update(&state.db).await?;
+
+    crate::grpc::notify_config_changed(&state, id, Some(&current.email)).await;
+    Ok(Json(saved))
 }
 
 /// Parses the OpenAPI document into declared operations.

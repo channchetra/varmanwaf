@@ -5,7 +5,7 @@
 //! of SQL and lets the REST API reuse the exact same builder when it pushes a
 //! configuration update to a connected agent.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
@@ -19,24 +19,25 @@ use sea_orm::{
 use serde_json::Value;
 use uuid::Uuid;
 use varman_protocol::control_plane::{
-    BasicAuthConfig, BasicAuthCredential, BotProtectionConfig, CacheRule,
-    ChallengeConfig, CustomErrorPage, FailoverMode, GeoConfig,
-    GlobalCacheSettings, HealthCheckConfig, IpAccessRule, RateLimitRule,
-    RewriteOperation, RewriteRule, RouteConfig, RuleBundle,
-    RuleTargetExclusions, Site, SiteCacheSettings, SiteConfig, SitePolicy,
-    SslConfig, UpstreamConfig, UpstreamPeer, WafConfig, WafRule,
+    ApiOperationControl, BasicAuthConfig, BasicAuthCredential,
+    BotProtectionConfig, CacheRule, ChallengeConfig, CustomErrorPage,
+    FailoverMode, GeoConfig, GlobalCacheSettings, HealthCheckConfig,
+    IpAccessRule, RateLimitRule, RewriteOperation, RewriteRule, RouteConfig,
+    RuleBundle, RuleTargetExclusions, Site, SiteCacheSettings, SiteConfig,
+    SitePolicy, SslConfig, UpstreamConfig, UpstreamPeer, WafConfig, WafRule,
 };
 
 use crate::api::challenge::challenge_level;
 use crate::api::ip_rules::ip_action;
 use crate::api::site_basic_auth as site_basic_auth_api;
 use crate::models::{
-    acme_challenge, action, bot_protection, cache_rules, challenge_settings,
-    characteristic, client_cert_status, defense_settings, error_pages,
-    exclusion_packages, geo_rules, ip_access_rules, ip_group_sites, ip_groups,
-    mode, mtls_client_certificate, rate_limit_rules, rewrite_rules, rule,
-    rule_groups, site, site_basic_auth, site_certificates, site_routes,
-    site_ssl, site_status, site_upstream_pools, site_upstreams, waf_settings,
+    acme_challenge, action, api_learned_schemas, bot_protection, cache_rules,
+    challenge_settings, characteristic, client_cert_status, defense_settings,
+    error_pages, exclusion_packages, geo_rules, ip_access_rules,
+    ip_group_sites, ip_groups, mode, mtls_client_certificate, rate_limit_rules,
+    rewrite_rules, rule, rule_groups, site, site_basic_auth, site_certificates,
+    site_routes, site_ssl, site_status, site_upstream_pools, site_upstreams,
+    waf_settings,
 };
 use crate::pki::mtls::normalise_fingerprint;
 use crate::policy;
@@ -811,6 +812,7 @@ fn waf_config_to_proto(
         disabled_rules: Vec::new(),
         rule_scores: HashMap::new(),
         rule_target_exclusions: Vec::new(),
+        api_operations: Vec::new(),
     }
 }
 
@@ -1142,6 +1144,52 @@ async fn seclang_package_sources(
         .filter_map(|package| package.source.clone())
         .filter(|source| !source.trim().is_empty())
         .collect())
+}
+
+/// Per-operation API controls from the site's learned inventory: one entry
+/// per (method, templatized path), the most restrictive mode winning when
+/// several observed paths collapse onto one template.
+async fn api_operation_controls(
+    db: &DatabaseConnection,
+    site_id: Uuid,
+) -> Result<Vec<ApiOperationControl>, sea_orm::DbErr> {
+    let rows = api_learned_schemas::Entity::find()
+        .filter(api_learned_schemas::Column::SiteId.eq(site_id))
+        .all(db)
+        .await?;
+    Ok(merge_operation_modes(
+        rows.into_iter().map(|row| (row.method, row.path, row.mode)),
+    )
+    .into_iter()
+    .map(|(method, path, mode)| ApiOperationControl { method, path, mode })
+    .collect())
+}
+
+/// Merges observed rows into per-template controls: the most restrictive
+/// mode wins when several observed paths collapse onto one template.
+fn merge_operation_modes(
+    rows: impl Iterator<Item = (String, String, String)>,
+) -> Vec<(String, String, String)> {
+    let rank = |mode: &str| match mode {
+        "enforce" => 3,
+        "observe" => 2,
+        _ => 1,
+    };
+    let mut merged: BTreeMap<(String, String), String> = BTreeMap::new();
+    for (method, path, mode) in rows {
+        let template = crate::api_learn::templatize_path(&path);
+        let key = (method.to_ascii_lowercase(), template);
+        match merged.get(&key) {
+            Some(existing) if rank(existing) >= rank(&mode) => {},
+            _ => {
+                merged.insert(key, mode);
+            },
+        }
+    }
+    merged
+        .into_iter()
+        .map(|((method, path), mode)| (method, path, mode))
+        .collect()
 }
 
 /// Expands the site's exclusion-package bindings into path-scoped target
@@ -1595,6 +1643,10 @@ pub async fn build_rule_bundle(
         .rule_target_exclusions
         .extend(exclusion_package_exclusions(db, site_row.id).await?);
 
+    // Per-operation API controls from the learned inventory: how the
+    // OpenAPI layer treats each observed endpoint.
+    waf_config.api_operations = api_operation_controls(db, site_row.id).await?;
+
     // An imported CRS ruleset compiles into the same SecLang source the
     // edge evaluates as virtual patches; the explicit layer source, when
     // present, runs first.
@@ -1845,6 +1897,39 @@ mod tests {
     use super::*;
     use crate::models::route_match_type;
     use serde_json::json;
+
+    #[test]
+    fn operation_modes_merge_by_template_most_restrictive_wins() {
+        let rows = vec![
+            (
+                "GET".to_string(),
+                "/orders/42".to_string(),
+                "off".to_string(),
+            ),
+            (
+                "GET".to_string(),
+                "/orders/43".to_string(),
+                "enforce".to_string(),
+            ),
+            (
+                "post".to_string(),
+                "/orders".to_string(),
+                "observe".to_string(),
+            ),
+        ];
+        let merged = merge_operation_modes(rows.into_iter());
+        assert!(merged.contains(&(
+            "get".to_string(),
+            "/orders/{id}".to_string(),
+            "enforce".to_string()
+        )));
+        assert!(merged.contains(&(
+            "post".to_string(),
+            "/orders".to_string(),
+            "observe".to_string()
+        )));
+        assert_eq!(merged.len(), 2, "one control per template: {merged:?}");
+    }
 
     #[test]
     fn timestamps_roundtrip() {

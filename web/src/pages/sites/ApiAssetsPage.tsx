@@ -67,6 +67,22 @@ export function ApiAssetsPage() {
       toast.error(t('pages.apiAssets.learnFailed'), errorMessage(error)),
   })
 
+  const setMode = useMutation({
+    mutationFn: (payload: { id: string; mode: string }) =>
+      apiAssetsApi.setOperationMode(siteId, payload.id, payload.mode),
+    onSuccess: (saved) => {
+      toast.success(
+        t('pages.apiAssets.modeSaved', {
+          path: saved.path,
+          mode: t(`pages.apiAssets.mode_${saved.mode}`),
+        }),
+      )
+      void queryClient.invalidateQueries({ queryKey: apiAssetsKeys.all })
+    },
+    onError: (error) =>
+      toast.error(t('pages.apiAssets.modeFailed'), errorMessage(error)),
+  })
+
   const data = query.data
 
   return (
@@ -313,6 +329,9 @@ export function ApiAssetsPage() {
                         <th className="py-2 pr-3 text-right font-semibold">
                           {t('pages.apiAssets.learnKeys')}
                         </th>
+                        <th className="py-2 pr-3 font-semibold">
+                          {t('pages.apiAssets.control')}
+                        </th>
                         <th className="py-2 font-semibold">
                           {t('pages.apiAssets.lastSeen')}
                         </th>
@@ -341,6 +360,39 @@ export function ApiAssetsPage() {
                             {Object.keys(row.request_schema?.keys ?? {})
                               .length +
                               Object.keys(row.query_schema ?? {}).length}
+                          </td>
+                          <td className="py-1.5 pr-3">
+                            {canWrite ? (
+                              <Select
+                                containerClassName="w-32"
+                                value={row.mode}
+                                options={['off', 'observe', 'enforce'].map(
+                                  (mode) => ({
+                                    value: mode,
+                                    label: t(
+                                      `pages.apiAssets.mode_${mode}`,
+                                    ),
+                                  }),
+                                )}
+                                onChange={(event) =>
+                                  setMode.mutate({
+                                    id: row.id,
+                                    mode: event.target.value,
+                                  })
+                                }
+                              />
+                            ) : (
+                              <Badge
+                                tone={
+                                  row.mode === 'enforce'
+                                    ? 'warning'
+                                    : 'neutral'
+                                }
+                                size="sm"
+                              >
+                                {t(`pages.apiAssets.mode_${row.mode}`)}
+                              </Badge>
+                            )}
                           </td>
                           <td className="py-1.5 text-fg-subtle">
                             {row.last_seen ? formatDateTime(row.last_seen) : '-'}
@@ -374,6 +426,9 @@ export function ApiAssetsPage() {
               </div>
               <p className="text-[11px] text-fg-subtle">
                 {t('pages.apiAssets.learnNote')}
+              </p>
+              <p className="text-[11px] text-fg-subtle">
+                {t('pages.apiAssets.modeNote')}
               </p>
             </CardBody>
           </Card>

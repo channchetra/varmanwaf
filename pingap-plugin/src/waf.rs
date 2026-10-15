@@ -310,6 +310,7 @@ impl SiteContext {
                 crate::waf_custom::CustomLayers::build(
                     &cfg.virtual_patches,
                     &cfg.openapi_spec,
+                    &cfg.api_operations,
                 )
             })
             .unwrap_or_default();
@@ -4064,6 +4065,7 @@ ml_threshold = 0.75
             rule_scores: Default::default(),
             rule_target_exclusions: Default::default(),
             path_target_exclusions: Default::default(),
+            api_operations: Default::default(),
         }
     }
 

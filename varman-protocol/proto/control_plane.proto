@@ -415,6 +415,21 @@ message WafConfig {
   // of the listed sources (path, query, body, header, cookie, user_agent,
   // host, method) is suppressed.
   repeated RuleTargetExclusions rule_target_exclusions = 50;
+
+  // Per-operation API controls: how the OpenAPI validation layer treats one
+  // observed endpoint. `off` skips it, `observe` records findings as
+  // monitor (the default), `enforce` escalates them to a block.
+  repeated ApiOperationControl api_operations = 51;
+}
+
+// One observed endpoint's schema-validation mode.
+message ApiOperationControl {
+  // Lowercase HTTP method.
+  string method = 1;
+  // Path template, e.g. `/orders/{id}`.
+  string path = 2;
+  // `off`, `observe` or `enforce`.
+  string mode = 3;
 }
 
 message RuleTargetExclusions {

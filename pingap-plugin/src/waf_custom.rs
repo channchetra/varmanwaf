@@ -699,11 +699,33 @@ fn common_prefix(operations: &[Operation]) -> String {
     out
 }
 
+/// One observed endpoint's schema-validation mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OperationMode {
+    /// Skip the OpenAPI layer for this endpoint.
+    Off,
+    /// Record findings as monitor (the default when no control exists).
+    Observe,
+    /// Escalate findings to a block.
+    Enforce,
+}
+
+/// One compiled per-operation control.
+#[derive(Debug, Clone)]
+struct OperationControl {
+    method: String,
+    segments: Vec<Option<String>>,
+    mode: OperationMode,
+}
+
 /// Compiled per-site custom layers.
 #[derive(Default)]
 pub struct CustomLayers {
     patches: Option<VirtualPatches>,
     openapi: Option<OpenApiSpec>,
+    /// Per-operation controls from the learned inventory: they decide how
+    /// the OpenAPI layer treats one observed endpoint.
+    operations: Vec<OperationControl>,
 }
 
 impl CustomLayers {
@@ -713,6 +735,7 @@ impl CustomLayers {
     pub fn build(
         virtual_patches: &str,
         openapi_spec: &str,
+        operations: &[varman_agent::cache::ApiOperationControl],
     ) -> (Option<Arc<Self>>, Vec<String>) {
         let mut errors = Vec::new();
         let patches = if virtual_patches.trim().is_empty() {
@@ -737,10 +760,59 @@ impl CustomLayers {
                 },
             }
         };
+        // Controls with an unknown mode are ignored loudly: the control
+        // plane validates on write, so this only covers a stale cache.
+        let mut compiled = Vec::with_capacity(operations.len());
+        for operation in operations {
+            let mode = match operation.mode.as_str() {
+                "off" => OperationMode::Off,
+                "observe" => OperationMode::Observe,
+                "enforce" => OperationMode::Enforce,
+                other => {
+                    errors.push(format!(
+                        "api operation {} {}: unknown mode {other:?}; ignored",
+                        operation.method, operation.path
+                    ));
+                    continue;
+                },
+            };
+            compiled.push(OperationControl {
+                method: operation.method.to_ascii_lowercase(),
+                segments: split_path(&operation.path),
+                mode,
+            });
+        }
         if patches.is_none() && openapi.is_none() {
             return (None, errors);
         }
-        (Some(Arc::new(Self { patches, openapi })), errors)
+        (
+            Some(Arc::new(Self {
+                patches,
+                openapi,
+                operations: compiled,
+            })),
+            errors,
+        )
+    }
+
+    /// The control for one request, when the learned inventory names it.
+    fn operation_mode(
+        &self,
+        method: &str,
+        path: &str,
+    ) -> Option<OperationMode> {
+        if self.operations.is_empty() {
+            return None;
+        }
+        let method = method.to_ascii_lowercase();
+        let segments = split_path(path);
+        self.operations
+            .iter()
+            .find(|control| {
+                control.method == method
+                    && segments_match(&control.segments, &segments)
+            })
+            .map(|control| control.mode)
     }
 
     /// Whether any configured layer needs the request body (an OpenAPI spec
@@ -780,14 +852,26 @@ impl CustomLayers {
             ));
         }
         if let Some(openapi) = &self.openapi {
+            let mode = self.operation_mode(request.method(), request.path());
+            // An operation switched off skips the schema layer entirely.
+            if mode == Some(OperationMode::Off) {
+                return None;
+            }
             let findings = openapi.validate(request);
             let finding = findings
                 .into_iter()
                 .next()
                 .or_else(|| openapi.validate_body(request, body_complete));
             if let Some((rule_id, score, detail)) = finding {
+                // `enforce` escalates the finding to a block; everything
+                // else records it (the layer's historical behaviour).
+                let action = if mode == Some(OperationMode::Enforce) {
+                    WafAction::Block
+                } else {
+                    WafAction::Monitor
+                };
                 return Some(verdict(
-                    WafAction::Monitor,
+                    action,
                     score,
                     vec![rule_id.to_string()],
                     detail,
@@ -850,6 +934,7 @@ mod tests {
             "SecRule REQUEST_URI \"@contains /cve-2026-0001\" \
              \"id:900001,phase:1,block,msg:'CVE patch'\"",
             "",
+            &[],
         )
         .0
         .expect("layers");
@@ -868,6 +953,7 @@ mod tests {
         let (layers, errors) = CustomLayers::build(
             "SecRule ARGS \"@definitelyNotAnOperator x\" \"id:1,block\"",
             "",
+            &[],
         );
         assert!(layers.is_none());
         assert_eq!(errors.len(), 1);
@@ -943,7 +1029,7 @@ mod tests {
 
     #[test]
     fn openapi_layers_monitor_and_escalate_only() {
-        let layers = CustomLayers::build("", SPEC).0.expect("layers");
+        let layers = CustomLayers::build("", SPEC, &[]).0.expect("layers");
         let hit = layers
             .evaluate(&canonical("/v1/unknown", "GET"), true)
             .expect("must monitor");
@@ -952,6 +1038,62 @@ mod tests {
             layers
                 .evaluate(&canonical("/v1/items?page=1", "GET"), true)
                 .is_none()
+        );
+    }
+
+    /// Per-operation controls: off skips the layer, observe records,
+    /// enforce blocks - for the addressed endpoint only.
+    #[test]
+    fn openapi_per_operation_controls_gate_the_layer() {
+        let control = |mode: &str| {
+            vec![varman_agent::cache::ApiOperationControl {
+                method: "get".to_string(),
+                path: "/v1/items".to_string(),
+                mode: mode.to_string(),
+            }]
+        };
+
+        // A violation on the controlled endpoint: the required `page`
+        // parameter is missing.
+        let request = canonical("/v1/items", "GET");
+
+        let layers = CustomLayers::build("", SPEC, &control("off"))
+            .0
+            .expect("layers");
+        assert!(
+            layers.evaluate(&request, true).is_none(),
+            "off must skip the layer"
+        );
+
+        let layers = CustomLayers::build("", SPEC, &control("observe"))
+            .0
+            .expect("layers");
+        let hit = layers.evaluate(&request, true).expect("must monitor");
+        assert_eq!(hit.action, WafAction::Monitor);
+
+        let layers = CustomLayers::build("", SPEC, &control("enforce"))
+            .0
+            .expect("layers");
+        let hit = layers.evaluate(&request, true).expect("must block");
+        assert_eq!(hit.action, WafAction::Block);
+        assert!(hit.matched_rules[0].contains("api."));
+
+        // Other endpoints are untouched by the control.
+        let layers = CustomLayers::build("", SPEC, &control("off"))
+            .0
+            .expect("layers");
+        let hit = layers
+            .evaluate(&canonical("/v1/unknown", "GET"), true)
+            .expect("must monitor elsewhere");
+        assert_eq!(hit.action, WafAction::Monitor);
+
+        // An unknown mode is reported and ignored (the control plane
+        // validates on write; this only covers a stale cache).
+        let (layers, errors) = CustomLayers::build("", SPEC, &control("wat"));
+        assert!(layers.is_some());
+        assert!(
+            errors.iter().any(|error| error.contains("unknown mode")),
+            "errors: {errors:?}"
         );
     }
 
@@ -1066,7 +1208,7 @@ mod tests {
 
     #[test]
     fn openapi_body_violation_monitors_through_layers() {
-        let layers = CustomLayers::build("", SPEC).0.expect("layers");
+        let layers = CustomLayers::build("", SPEC, &[]).0.expect("layers");
         let hit = layers
             .evaluate(
                 &canonical_body("/v1/items", "POST", r#"{"price":1}"#),

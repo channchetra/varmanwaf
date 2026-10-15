@@ -52,6 +52,8 @@ export interface LearnedSchema {
   } | null
   query_schema: Record<string, { types: string[]; count: number }>
   sample_count: number
+  /** Per-operation API control: `off`, `observe` or `enforce`. */
+  mode: string
   first_seen: string | null
   last_seen: string | null
   updated_at: string
@@ -78,6 +80,12 @@ export const apiAssetsApi = {
 
   learned: (siteId: string) =>
     apiClient.get<LearnedSchema[]>(`/sites/${siteId}/api-assets/learned`),
+
+  setOperationMode: (siteId: string, rowId: string, mode: string) =>
+    apiClient.put<LearnedSchema>(
+      `/sites/${siteId}/api-assets/learned/${rowId}/mode`,
+      { mode },
+    ),
 
   /** Fetches the draft with the caller's token and saves it as a file. */
   downloadDraft: async (siteId: string, filename: string) => {

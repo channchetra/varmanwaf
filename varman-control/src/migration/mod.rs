@@ -66,6 +66,7 @@ mod m20240101_000058_ip_datasets;
 mod m20240101_000059_exclusion_packages;
 mod m20240101_000060_api_learned_schemas;
 mod m20240101_000061_exclusion_package_import;
+mod m20240101_000062_api_operation_mode;
 
 use sea_orm_migration::prelude::*;
 
@@ -143,6 +144,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000059_exclusion_packages::Migration),
             Box::new(m20240101_000060_api_learned_schemas::Migration),
             Box::new(m20240101_000061_exclusion_package_import::Migration),
+            Box::new(m20240101_000062_api_operation_mode::Migration),
         ]
     }
 }
@@ -154,7 +156,7 @@ mod tests {
     #[test]
     fn migrations_are_ordered_and_unique() {
         let migrations = Migrator::migrations();
-        assert_eq!(migrations.len(), 61);
+        assert_eq!(migrations.len(), 62);
         let names: Vec<String> =
             migrations.iter().map(|m| m.name().to_owned()).collect();
         let mut sorted = names.clone();

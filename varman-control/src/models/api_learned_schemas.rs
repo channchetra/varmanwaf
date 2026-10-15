@@ -29,6 +29,9 @@ pub struct Model {
     pub query_schema: Json,
     /// JSON bodies merged into this row.
     pub sample_count: i64,
+    /// Per-operation API control: `off`, `observe` (default) or `enforce`.
+    #[sea_orm(default_value = "observe")]
+    pub mode: String,
     pub first_seen: Option<DateTimeUtc>,
     pub last_seen: Option<DateTimeUtc>,
     pub updated_at: DateTimeUtc,
