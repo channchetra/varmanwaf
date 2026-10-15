@@ -25,6 +25,7 @@ import {
   AccessControlPage,
   LegacySecurityRedirect,
 } from '@/pages/sites/AccessControlPage'
+import { ApiAssetsPage } from '@/pages/sites/ApiAssetsPage'
 import { CachingPage } from '@/pages/sites/CachingPage'
 import { SslPage } from '@/pages/sites/SslPage'
 import { TrafficPage } from '@/pages/sites/TrafficPage'
@@ -94,6 +95,7 @@ export const router = createBrowserRouter([
           { path: 'security/rate-limiting', element: <RateLimitingPage /> },
           { path: 'security/bot', element: <BotProtectionPage /> },
           { path: 'security/access', element: <AccessControlPage /> },
+          { path: 'security/api-assets', element: <ApiAssetsPage /> },
           // The policy surface lives inside Web Protection now; old links
           // keep working.
           {

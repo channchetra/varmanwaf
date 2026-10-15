@@ -9,6 +9,7 @@ pub mod ai;
 pub mod ai_rate_limit;
 pub mod alerts;
 pub mod analytics;
+pub mod api_assets;
 pub mod api_protection;
 pub mod auth;
 pub mod blocked_ips;
@@ -106,6 +107,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(blocked_ips::routes())
         .merge(geo::routes())
         .merge(ip_analysis::routes())
+        .merge(api_assets::routes())
         .merge(bot::routes())
         .merge(challenge::routes())
         .merge(waf_settings::routes())

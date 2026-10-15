@@ -18,6 +18,7 @@ import {
   Network,
   Warning,
   Gear,
+  BracketsCurly,
   type Icon,
 } from '@phosphor-icons/react'
 import { Link } from 'react-router-dom'
@@ -90,6 +91,11 @@ export function SiteDetailPage() {
         to: `${base}/security/access`,
         label: t('nav.securityAccess'),
         icon: IdentificationCard,
+      },
+      {
+        to: `${base}/security/api-assets`,
+        label: t('nav.securityApiAssets'),
+        icon: BracketsCurly,
       },
     ],
     [
