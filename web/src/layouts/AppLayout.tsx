@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { useQuery } from '@tanstack/react-query'
 import {
   List,
   MagnifyingGlass,
@@ -24,6 +25,8 @@ import { AssistantWidget } from '@/components/assistant/AssistantWidget'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useAssistantWidgetStore } from '@/stores/assistantWidgetStore'
+import { displayApi, displayKeys } from '@/api/display'
+import { setDisplayTimeZone } from '@/lib/format'
 import { supportedLanguages } from '@/i18n'
 
 const langLabels: Record<string, string> = {
@@ -65,6 +68,15 @@ export function AppLayout() {
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const toggleAssistant = useAssistantWidgetStore((s) => s.toggle)
+  // The instance timezone renders every absolute timestamp in the console;
+  // applied here once, and again from the Settings card after a change.
+  const display = useQuery({
+    queryKey: displayKeys.settings(),
+    queryFn: () => displayApi.get(),
+  })
+  useEffect(() => {
+    if (display.data) setDisplayTimeZone(display.data.timezone)
+  }, [display.data])
   // The assistant stays administrator-only (fork divergence): the provider
   // key is shared fleet-wide and its write tools can reach every site.
   const isAdmin = user?.role === 'admin'

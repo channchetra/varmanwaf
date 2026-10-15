@@ -926,6 +926,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "chrono-tz"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6139a8597ed92cf816dfb33f5dd6cf0bb93a6adc938f11039f371bc5bcd26c3"
+dependencies = [
+ "chrono",
+ "phf",
+]
+
+[[package]]
 name = "ciborium"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4579,6 +4589,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "phf"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7"
+dependencies = [
+ "phf_shared",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06005508882fb681fd97892ecff4b7fd0fee13ef1aa569f8695dae7ab9099981"
+dependencies = [
+ "siphasher",
+]
+
+[[package]]
 name = "pin-project"
 version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4606,7 +4634,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pingap-acme"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -4640,7 +4668,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-cache"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -4673,7 +4701,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-certificate"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4699,7 +4727,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-config"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4734,7 +4762,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-core"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "TinyUFO",
  "ahash",
@@ -4763,7 +4791,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-discovery"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "async-trait",
  "bollard",
@@ -4782,7 +4810,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-health"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4804,7 +4832,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-imageoptim"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "async-trait",
  "bytemuck",
@@ -4832,7 +4860,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-location"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4853,7 +4881,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-logger"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4886,7 +4914,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-otel"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4903,7 +4931,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-performance"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4933,7 +4961,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-plugin"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "TinyUFO",
  "ahash",
@@ -4994,7 +5022,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-proxy"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -5028,7 +5056,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-pyroscope"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "async-trait",
  "pingora",
@@ -5041,14 +5069,14 @@ dependencies = [
 
 [[package]]
 name = "pingap-sentry"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "sentry-core",
 ]
 
 [[package]]
 name = "pingap-upstream"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -5079,7 +5107,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-util"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "aes-gcm-siv",
  "ahash",
@@ -5101,7 +5129,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-webhook"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "async-trait",
  "local-ip-address",
@@ -7262,6 +7290,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "siphasher"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8589,7 +8623,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "varman"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "ahash",
  "anyhow",
@@ -8661,7 +8695,7 @@ dependencies = [
 
 [[package]]
 name = "varman-agent"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -8701,7 +8735,7 @@ dependencies = [
 
 [[package]]
 name = "varman-control"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -8710,6 +8744,7 @@ dependencies = [
  "base64 0.23.1",
  "bcrypt",
  "chrono",
+ "chrono-tz",
  "flate2",
  "futures-util",
  "hex",
@@ -8766,7 +8801,7 @@ dependencies = [
 
 [[package]]
 name = "varman-protocol"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "prost 0.14.4",
  "prost-types 0.14.4",

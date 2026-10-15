@@ -61,13 +61,35 @@ interface DateFormatters {
 
 const formatterCache = new Map<string, DateFormatters>()
 
+/**
+ * IANA timezone the absolute formatters render in; `undefined` keeps the
+ * browser's local zone. The console calls {@link setDisplayTimeZone} with
+ * the instance setting (Settings -> Display) once it loads.
+ */
+let displayTimeZone: string | undefined = undefined
+
+/** Point the absolute date formatters at the instance timezone. */
+export function setDisplayTimeZone(timeZone: string | null | undefined): void {
+  const next = timeZone?.trim() || undefined
+  if (next === displayTimeZone) return
+  displayTimeZone = next
+  formatterCache.clear()
+}
+
+/** The timezone the console currently renders in (undefined = browser). */
+export function displayTimeZoneSetting(): string | undefined {
+  return displayTimeZone
+}
+
 function formatters(): DateFormatters {
-  const key = displayLocale ?? 'default'
+  const key = `${displayLocale ?? 'default'}|${displayTimeZone ?? 'local'}`
   const cached = formatterCache.get(key)
   if (cached) return cached
   const locale = displayLocale
+  const zone = displayTimeZone ? { timeZone: displayTimeZone } : {}
   const set: DateFormatters = {
     absolute: new Intl.DateTimeFormat(locale, {
+      ...zone,
       year: 'numeric',
       month: 'short',
       day: '2-digit',
@@ -76,10 +98,12 @@ function formatters(): DateFormatters {
       second: '2-digit',
     }),
     shortTime: new Intl.DateTimeFormat(locale, {
+      ...zone,
       hour: '2-digit',
       minute: '2-digit',
     }),
     shortDate: new Intl.DateTimeFormat(locale, {
+      ...zone,
       month: 'short',
       day: '2-digit',
     }),

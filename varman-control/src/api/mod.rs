@@ -21,6 +21,7 @@ pub mod config_versions;
 pub mod crs;
 pub mod debug;
 pub mod defense;
+pub mod display;
 pub mod error;
 pub mod error_pages;
 pub mod geo;
@@ -93,6 +94,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(logs::routes())
         .merge(analytics::routes())
         .merge(reports::routes())
+        .merge(display::routes())
         .merge(settings::routes())
         .merge(log_retention::routes())
         .merge(ssl::routes())

@@ -24,6 +24,7 @@ axum = { workspace = true, features = ["multipart"] }
 base64 = { workspace = true }
 bcrypt = { workspace = true }
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 # Drives the provider response streams and the SSE chat endpoint.
 futures-util = { workspace = true }
 flate2 = { workspace = true }

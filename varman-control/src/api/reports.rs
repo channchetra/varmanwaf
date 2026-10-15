@@ -19,7 +19,8 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
+use chrono_tz::Tz;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Value};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -87,6 +88,8 @@ struct Window {
     action: ActionFilter,
     /// Substring filter over client IP and path; `None` = no filter.
     q: Option<String>,
+    /// The instance timezone: date-only bounds and daily buckets follow it.
+    tz: Tz,
 }
 
 impl Window {
@@ -448,8 +451,13 @@ async fn resolve_window(
     current: &AuthUser,
     query: &ReportQuery,
 ) -> Result<Window, ApiError> {
-    let (from, to) =
-        window_bounds(query.from.as_deref(), query.to.as_deref(), Utc::now())?;
+    let tz = crate::api::display::timezone(&state.db).await;
+    let (from, to) = window_bounds(
+        query.from.as_deref(),
+        query.to.as_deref(),
+        Utc::now(),
+        tz,
+    )?;
     let site = match query
         .site_id
         .as_deref()
@@ -476,6 +484,7 @@ async fn resolve_window(
         site,
         action,
         q,
+        tz,
     })
 }
 
@@ -485,13 +494,14 @@ fn window_bounds(
     from: Option<&str>,
     to: Option<&str>,
     now: DateTime<Utc>,
+    tz: Tz,
 ) -> Result<(DateTime<Utc>, DateTime<Utc>), ApiError> {
     let to = match to.map(str::trim).filter(|raw| !raw.is_empty()) {
-        Some(raw) => parse_bound(raw, true)?,
+        Some(raw) => parse_bound(raw, true, tz)?,
         None => now,
     };
     let from = match from.map(str::trim).filter(|raw| !raw.is_empty()) {
-        Some(raw) => parse_bound(raw, false)?,
+        Some(raw) => parse_bound(raw, false, tz)?,
         None => to - Duration::hours(24),
     };
     if from >= to {
@@ -507,22 +517,32 @@ fn window_bounds(
     Ok((from, to))
 }
 
-/// Parses one bound: RFC 3339, or a bare `YYYY-MM-DD` (an end date covers
-/// that whole day).
-fn parse_bound(raw: &str, is_end: bool) -> Result<DateTime<Utc>, ApiError> {
+/// Parses one bound: RFC 3339, or a bare `YYYY-MM-DD` interpreted in the
+/// instance timezone (an end date covers that whole local day).
+fn parse_bound(
+    raw: &str,
+    is_end: bool,
+    tz: Tz,
+) -> Result<DateTime<Utc>, ApiError> {
     if let Ok(instant) = DateTime::parse_from_rfc3339(raw) {
         return Ok(instant.with_timezone(&Utc));
     }
     if let Ok(day) = NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
-        let midnight = day
-            .and_hms_opt(0, 0, 0)
-            .expect("midnight is a valid time")
-            .and_utc();
-        return Ok(if is_end {
-            midnight + Duration::days(1)
+        let target = if is_end {
+            day.succ_opt().unwrap_or(day)
         } else {
-            midnight
-        });
+            day
+        };
+        let midnight = target
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is a valid time");
+        // A DST gap at local midnight resolves to the earliest valid
+        // instant; zones without such transitions are unaffected.
+        let local = tz
+            .from_local_datetime(&midnight)
+            .earliest()
+            .unwrap_or_else(|| tz.from_utc_datetime(&midnight));
+        return Ok(local.with_timezone(&Utc));
     }
     Err(ApiError::BadRequest(format!(
         "invalid date '{raw}' (use YYYY-MM-DD or RFC 3339)"
@@ -742,12 +762,14 @@ async fn daily(
     db: &DatabaseConnection,
     window: &Window,
 ) -> Result<Vec<DailyPoint>, ApiError> {
-    let (filter, values) = window.filter();
+    let (filter, mut values) = window.filter();
+    values.push(window.tz.name().to_string().into());
     let sql = format!(
-        "SELECT to_char(timestamp AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, \
+        "SELECT to_char(timestamp AT TIME ZONE ${}::text, 'YYYY-MM-DD') AS day, \
                 COUNT(*) AS total, \
                 COUNT(*) FILTER (WHERE action = 'block') AS blocked \
-         FROM security_events WHERE {filter} GROUP BY 1 ORDER BY 1"
+         FROM security_events WHERE {filter} GROUP BY 1 ORDER BY 1",
+        values.len(),
     );
     Ok(query_all(db, &sql, values)
         .await?
@@ -891,6 +913,7 @@ async fn interception_report(
         actor: current.email.clone(),
         title: settings.title.clone(),
         footer_note: settings.footer_note.clone(),
+        tz: window.tz,
         totals,
         types,
         ips,
@@ -899,8 +922,10 @@ async fn interception_report(
         daily,
     });
 
-    let from_label = window.from.date_naive();
-    let to_label = (window.to - Duration::seconds(1)).date_naive();
+    let from_label = window.from.with_timezone(&window.tz).date_naive();
+    let to_label = (window.to - Duration::seconds(1))
+        .with_timezone(&window.tz)
+        .date_naive();
     let filename =
         format!("varmanwaf-interception-{from_label}-{to_label}.html");
 
@@ -1017,6 +1042,7 @@ async fn fire(
         site,
         action: ActionFilter::parse(schedule.action.as_deref())?,
         q: None,
+        tz: crate::api::display::timezone(db).await,
     };
 
     let totals = totals(db, &window).await?;
@@ -1051,6 +1077,7 @@ async fn fire(
         actor: "scheduled delivery".to_string(),
         title: settings.title.clone(),
         footer_note: settings.footer_note.clone(),
+        tz: window.tz,
         totals,
         types,
         ips,
@@ -1059,8 +1086,10 @@ async fn fire(
         daily,
     });
 
-    let from_label = window.from.date_naive();
-    let to_label = (window.to - Duration::seconds(1)).date_naive();
+    let from_label = window.from.with_timezone(&window.tz).date_naive();
+    let to_label = (window.to - Duration::seconds(1))
+        .with_timezone(&window.tz)
+        .date_naive();
     let filename =
         format!("varmanwaf-interception-{from_label}-{to_label}.html");
     let message = format!(
@@ -1112,6 +1141,8 @@ struct ReportData {
     title: String,
     /// Optional operator note printed above the data-source note.
     footer_note: Option<String>,
+    /// Instance timezone: the cover and filenames print local dates.
+    tz: Tz,
     totals: Totals,
     types: Vec<LabelCount>,
     ips: Vec<IpRow>,
@@ -1184,8 +1215,10 @@ td.num, th.num { text-align: right; white-space: nowrap; }
 
 fn render_report(data: ReportData) -> String {
     let mut html = String::with_capacity(32 * 1024);
-    let from_label = data.from.date_naive();
-    let to_label = (data.to - Duration::seconds(1)).date_naive();
+    let from_label = data.from.with_timezone(&data.tz).date_naive();
+    let to_label = (data.to - Duration::seconds(1))
+        .with_timezone(&data.tz)
+        .date_naive();
     let generated = Utc::now().format("%Y-%m-%d %H:%M UTC");
 
     let title = escape_html(&data.title);
@@ -1435,33 +1468,57 @@ mod tests {
     #[test]
     fn window_defaults_to_the_last_24_hours() {
         let now = at("2026-10-14T12:00:00Z");
-        let (from, to) = window_bounds(None, None, now).unwrap();
+        let (from, to) = window_bounds(None, None, now, Tz::UTC).unwrap();
         assert_eq!(to, now);
         assert_eq!(from, at("2026-10-13T12:00:00Z"));
     }
 
     #[test]
-    fn a_bare_end_date_covers_that_whole_day() {
+    fn a_bare_end_date_covers_that_whole_local_day() {
         let now = at("2026-10-14T12:00:00Z");
         let (from, to) =
-            window_bounds(Some("2026-09-14"), Some("2026-10-14"), now).unwrap();
+            window_bounds(Some("2026-09-14"), Some("2026-10-14"), now, Tz::UTC)
+                .unwrap();
         assert_eq!(from, at("2026-09-14T00:00:00Z"));
         assert_eq!(to, at("2026-10-15T00:00:00Z"));
+
+        // The same dates in a UTC+7 zone start seven hours earlier in UTC.
+        let (from, to) = window_bounds(
+            Some("2026-10-14"),
+            Some("2026-10-14"),
+            now,
+            chrono_tz::Asia::Phnom_Penh,
+        )
+        .unwrap();
+        assert_eq!(from, at("2026-10-13T17:00:00Z"));
+        assert_eq!(to, at("2026-10-14T17:00:00Z"));
     }
 
     #[test]
     fn windows_validate_order_and_the_cap() {
         let now = at("2026-10-14T12:00:00Z");
-        assert!(
-            window_bounds(Some("2026-10-14"), Some("2026-10-14"), now).is_ok()
-        );
-        assert!(
-            window_bounds(Some("2026-10-15"), Some("2026-10-14"), now).is_err()
-        );
-        assert!(
-            window_bounds(Some("2026-01-01"), Some("2026-10-14"), now).is_err()
-        );
-        assert!(window_bounds(Some("nonsense"), None, now).is_err());
+        assert!(window_bounds(
+            Some("2026-10-14"),
+            Some("2026-10-14"),
+            now,
+            Tz::UTC
+        )
+        .is_ok());
+        assert!(window_bounds(
+            Some("2026-10-15"),
+            Some("2026-10-14"),
+            now,
+            Tz::UTC
+        )
+        .is_err());
+        assert!(window_bounds(
+            Some("2026-01-01"),
+            Some("2026-10-14"),
+            now,
+            Tz::UTC
+        )
+        .is_err());
+        assert!(window_bounds(Some("nonsense"), None, now, Tz::UTC).is_err());
     }
 
     #[test]
@@ -1609,6 +1666,7 @@ mod tests {
             site: Some(Uuid::new_v4()),
             action: ActionFilter::Blocked,
             q: Some("1.2.3".to_string()),
+            tz: Tz::UTC,
         };
         let (sql, values) = window.filter();
         // from, to, site, q.
@@ -1624,6 +1682,7 @@ mod tests {
             site: None,
             action: ActionFilter::Monitor,
             q: None,
+            tz: Tz::UTC,
         };
         let (sql, values) = bare.filter();
         assert_eq!(values.len(), 2);
@@ -1640,6 +1699,7 @@ mod tests {
             actor: "admin@varman.local".to_string(),
             title: "Interception report".to_string(),
             footer_note: Some("Prepared for the weekly review.".to_string()),
+            tz: Tz::UTC,
             totals: Totals {
                 events: 3,
                 blocked: 2,
@@ -1703,6 +1763,7 @@ mod tests {
             actor: "admin@varman.local".to_string(),
             title: "<b>Quarterly</b> review".to_string(),
             footer_note: Some("<i>note</i>".to_string()),
+            tz: Tz::UTC,
             totals: Totals {
                 events: 0,
                 blocked: 0,

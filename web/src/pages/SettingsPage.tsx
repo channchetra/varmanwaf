@@ -74,6 +74,7 @@ import { passkeyKeys, passkeysApi } from '@/api/passkeys'
 import { apiProtectionApi, apiProtectionKeys } from '@/api/apiProtection'
 import { aiApi, aiKeys } from '@/api/ai'
 import { mcpApi, mcpKeys } from '@/api/mcp'
+import { displayApi, displayKeys } from '@/api/display'
 import { ipGroupKeys, ipGroupsApi } from '@/api/ipGroups'
 import { authApi } from '@/api/auth'
 import { systemApi } from '@/api/system'
@@ -86,7 +87,7 @@ import { UsersAdminCard } from '@/components/account/UsersAdminCard'
 import { useThemeStore, type ThemeMode } from '@/stores/themeStore'
 import { supportedLanguages } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { formatDateTime, formatRelative, fromLocalInputValue, toLocalInputValue } from '@/lib/format'
+import { formatDateTime, formatRelative, fromLocalInputValue, setDisplayTimeZone, toLocalInputValue } from '@/lib/format'
 import type {
   AiSettings,
   AiTestResult,
@@ -124,6 +125,7 @@ const PROJECT_URL = 'https://github.com/channchetra/varmanwaf'
  */
 const SETTINGS_NAV = [
   { id: 'appearance', labelKey: 'pages.settings.appearance' },
+  { id: 'display', labelKey: 'pages.settings.display' },
   { id: 'account', labelKey: 'pages.settings.account' },
   { id: 'users', labelKey: 'pages.settings.users' },
   { id: 'passkeys', labelKey: 'pages.settings.passkeys' },
@@ -174,6 +176,9 @@ export function SettingsPage() {
         <div className="flex min-w-0 max-w-4xl flex-1 flex-col gap-4">
           <section id="appearance" className="scroll-mt-6">
             <AppearanceCard themeOptions={themeOptions} mode={mode} setMode={setMode} i18n={i18n} />
+          </section>
+          <section id="display" className="scroll-mt-6">
+            <DisplayCard canWrite={canWrite} />
           </section>
           <section id="account" className="scroll-mt-6">
             <AccountCard />
@@ -269,6 +274,101 @@ function AdminOnlyCard({ title }: { title: string }) {
 }
 
 /* ── Appearance ─────────────────────────────────────────────────────── */
+
+/** Timezone options: the full IANA list when the browser exposes it, a
+ *  curated fallback otherwise. Static, so it is computed once at module
+ *  load instead of per render. */
+const TIMEZONE_OPTIONS: string[] = (() => {
+  const supported =
+    (
+      Intl as unknown as {
+        supportedValuesOf?: (key: string) => string[]
+      }
+    ).supportedValuesOf?.('timeZone') ?? []
+  if (supported.length > 0) {
+    return ['UTC', ...supported.filter((zone) => zone !== 'UTC')]
+  }
+  return [
+    'UTC',
+    'Asia/Phnom_Penh',
+    'Asia/Bangkok',
+    'Asia/Singapore',
+    'Asia/Shanghai',
+    'Asia/Tokyo',
+    'Asia/Kolkata',
+    'Asia/Dubai',
+    'Australia/Sydney',
+    'Europe/London',
+    'Europe/Paris',
+    'Europe/Berlin',
+    'Europe/Moscow',
+    'America/New_York',
+    'America/Chicago',
+    'America/Denver',
+    'America/Los_Angeles',
+    'America/Sao_Paulo',
+  ]
+})()
+
+function DisplayCard({ canWrite }: { canWrite: boolean }) {
+  const { t } = useTranslation()
+  const toast = useToast()
+  const queryClient = useQueryClient()
+
+  const settingsQuery = useQuery({
+    queryKey: displayKeys.settings(),
+    queryFn: () => displayApi.get(),
+  })
+  const [draft, setDraft] = useState<string | null>(null)
+  const value = draft ?? settingsQuery.data?.timezone ?? 'UTC'
+
+  const save = useMutation({
+    mutationFn: () => displayApi.save({ timezone: value }),
+    onSuccess: (saved) => {
+      setDraft(null)
+      setDisplayTimeZone(saved.timezone)
+      queryClient.setQueryData(displayKeys.settings(), saved)
+      toast.success(t('pages.settings.displaySaved'))
+    },
+    onError: (error) =>
+      toast.error(t('pages.settings.displaySaveFailed'), errorMessage(error)),
+  })
+
+  return (
+    <Card>
+      <CardHeader
+        title={t('pages.settings.display')}
+        description={t('pages.settings.displayHint')}
+      />
+      <CardBody className="flex flex-col gap-4">
+        <Select
+          className="max-w-md"
+          label={t('pages.settings.timezone')}
+          hint={t('pages.settings.timezoneHint')}
+          value={value}
+          disabled={!canWrite}
+          options={TIMEZONE_OPTIONS.map((zone) => ({
+            value: zone,
+            label: zone,
+          }))}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        {canWrite && (
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              loading={save.isPending}
+              disabled={draft === null || draft === settingsQuery.data?.timezone}
+              onClick={() => save.mutate()}
+            >
+              {t('common.save')}
+            </Button>
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
 
 function AppearanceCard({
   themeOptions,
