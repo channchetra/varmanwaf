@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -116,7 +116,13 @@ export function PolicyPage() {  const { t } = useTranslation()
     () => JSON.stringify(override.data?.config ?? {}, null, 2),
     [override.data],
   )
-  useEffect(() => setDraft(null), [savedJson])
+  // Render-phase reset when the saved value changes (the effect form trips
+  // the compiler's setState-in-effect rule).
+  const [savedSeen, setSavedSeen] = useState(savedJson)
+  if (savedSeen !== savedJson) {
+    setSavedSeen(savedJson)
+    if (draft !== null) setDraft(null)
+  }
   const shownJson = draft ?? savedJson
   const draftError = useMemo(() => {
     if (draft === null) return null
@@ -174,7 +180,7 @@ export function PolicyPage() {  const { t } = useTranslation()
   return (
     <div className="animate-slide-up space-y-4">
       {/* Assignment */}
-      <Card>
+      <Card id="policy-assignment" className="scroll-mt-6">
         <CardHeader
           title={t('pages.sitePolicy.assignmentTitle')}
           description={t('pages.sitePolicy.assignmentHint')}
@@ -225,7 +231,7 @@ export function PolicyPage() {  const { t } = useTranslation()
 
       {/* Overlay */}
       {current?.policy && (
-        <Card>
+        <Card id="policy-overrides" className="scroll-mt-6">
           <CardHeader
             title={t('pages.sitePolicy.overrideTitle')}
             description={t('pages.sitePolicy.overrideHint')}
@@ -294,7 +300,7 @@ export function PolicyPage() {  const { t } = useTranslation()
       )}
 
       {/* Effective configuration */}
-      <Card>
+      <Card id="policy-effective" className="scroll-mt-6">
         <CardHeader
           title={t('pages.sitePolicy.effectiveTitle')}
           description={t('pages.sitePolicy.effectiveHint')}
@@ -463,7 +469,7 @@ export function PolicyPage() {  const { t } = useTranslation()
 
       {/* Compiled rule plan */}
       {effectiveData && (
-        <Card>
+        <Card id="policy-plan" className="scroll-mt-6">
           <CardHeader
             title={t('pages.sitePolicy.planTitle')}
             description={t('pages.sitePolicy.planHint')}
@@ -500,7 +506,7 @@ export function PolicyPage() {  const { t } = useTranslation()
       )}
 
       {/* Apply status: published vs applied, per node. */}
-      <Card>
+      <Card id="policy-apply" className="scroll-mt-6">
         <CardHeader
           title={t('pages.sitePolicy.applyTitle')}
           description={t('pages.sitePolicy.applyHint')}

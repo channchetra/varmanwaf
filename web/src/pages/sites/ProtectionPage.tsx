@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Cloud, Gauge, Package, ShieldCheck, Stack, Warning } from '@phosphor-icons/react'
+import { Cloud, Gauge, ShieldCheck, Sliders, Stack, Warning } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Tabs } from '@/components/ui/Tabs'
 import { Switch } from '@/components/ui/Switch'
@@ -15,8 +15,7 @@ import { useCanWrite } from '@/hooks'
 import { ProtectionSettingsPanel } from './ProtectionSettingsPanel'
 import { WafRulesPanel } from './WafRulesPanel'
 import { CcPanel } from './CcPanel'
-import { PolicyPage } from './PolicyPage'
-import { ExclusionPackagesPanel } from './ExclusionPackagesPanel'
+import { PolicyTuningPage } from './PolicyTuningPage'
 import { ProtectionOverview } from './ProtectionOverview'
 
 type ProtectionTab =
@@ -24,19 +23,20 @@ type ProtectionTab =
   | 'settings'
   | 'rules'
   | 'cc'
-  | 'policy'
-  | 'exclusions'
+  | 'tuning'
 
 const PROTECTION_TABS: ProtectionTab[] = [
   'overview',
   'settings',
   'rules',
   'cc',
-  'policy',
-  'exclusions',
+  'tuning',
 ]
 
 function parseTab(value: string | null): ProtectionTab {
+  // `policy` and `exclusions` were separate tabs before the tuning surface
+  // merged them; old links keep working.
+  if (value === 'policy' || value === 'exclusions') return 'tuning'
   return PROTECTION_TABS.includes(value as ProtectionTab)
     ? (value as ProtectionTab)
     : 'overview'
@@ -193,19 +193,14 @@ export function ProtectionPage() {
             icon: <Cloud weight="duotone" className="h-4 w-4" />,
           },
           {
-            value: 'policy',
-            label: t('pages.protection.tabPolicy'),
-            icon: <Stack weight="duotone" className="h-4 w-4" />,
-          },
-          {
-            value: 'exclusions',
-            label: t('pages.protection.tabExclusions'),
-            icon: <Package weight="duotone" className="h-4 w-4" />,
+            value: 'tuning',
+            label: t('pages.protection.tabTuning'),
+            icon: <Sliders weight="duotone" className="h-4 w-4" />,
           },
         ]}
       />
 
-      {sitePolicy.data?.policy && tab !== 'policy' && tab !== 'overview' && (
+      {sitePolicy.data?.policy && tab !== 'tuning' && tab !== 'overview' && (
         <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand/10 px-4 py-3 text-[13px]">
           <Stack weight="duotone" className="h-4 w-4 text-brand" />
           <span className="text-fg-strong">
@@ -215,7 +210,7 @@ export function ProtectionPage() {
             })}
           </span>
           <Link
-            to="?tab=policy"
+            to="?tab=tuning"
             className="ml-auto font-medium text-link"
           >
             {t('pages.protection.policyBannerLink')}
@@ -229,8 +224,7 @@ export function ProtectionPage() {
       {tab === 'settings' && <ProtectionSettingsPanel />}
       {tab === 'rules' && <WafRulesPanel />}
       {tab === 'cc' && <CcPanel />}
-      {tab === 'policy' && <PolicyPage />}
-      {tab === 'exclusions' && <ExclusionPackagesPanel />}
+      {tab === 'tuning' && <PolicyTuningPage />}
 
       <ConfirmDialog
         open={confirmUnderAttack}
