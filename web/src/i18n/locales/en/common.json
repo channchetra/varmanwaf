@@ -2201,6 +2201,8 @@
       "mode": "Mode",
       "action": "Action when matched",
       "actionHint": "Applied to matching locations.",
+      "actionMonitor": "Monitor (record only)",
+      "actionMonitorHint": "Matches are recorded with the monitor action and the request continues - nothing is enforced.",
       "blockUnknown": "Block unknown locations",
       "blockUnknownHint": "Deny traffic whose location cannot be determined.",
       "countries": "Countries",
@@ -2753,6 +2755,23 @@
       "dashboardLine": "{{events}} interceptions · {{blocked}} blocked · top type {{type}}",
       "open": "Open reports",
       "none": "none"
+    },
+    "ipAnalysis": {
+      "title": "Analyze an IP",
+      "hint": "Resolve an address against this site's IP rules, IP groups and geo policy - the same configuration the edge compiles.",
+      "placeholder": "203.0.113.7",
+      "analyze": "Analyze",
+      "country": "Country",
+      "asn": "ASN",
+      "geo": "Geo policy",
+      "geoDisabled": "No geo policy is active for this site.",
+      "matchedRule": "Matched rule",
+      "noRule": "No IP rule matches this address.",
+      "groups": "IP groups",
+      "noGroup": "No group contains this address.",
+      "limitations": "What this cannot see",
+      "unknown": "unknown",
+      "observed": "Observation mode: recorded, not enforced"
     }
   },
   "challengeLevels": {
@@ -2792,5 +2811,14 @@
     "set_query_param": "Set query param",
     "remove_query_param": "Remove query param",
     "replace_body": "Replace body"
+  },
+  "ipVerdicts": {
+    "pass": "Would pass",
+    "allow": "Allowed",
+    "block": "Blocked",
+    "challenge": "Challenge",
+    "js_challenge": "JS challenge",
+    "basic_auth": "Basic auth",
+    "monitor": "Monitor (record only)"
   }
 }

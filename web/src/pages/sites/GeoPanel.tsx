@@ -46,6 +46,7 @@ import {
   GEO_MODES,
   type GeoConfig,
 } from '@/api/types'
+import { IpAnalysisCard } from './IpAnalysisCard'
 
 /** The geo restriction module of the site's access-control tab. */
 export function GeoPanel() {
@@ -220,11 +221,16 @@ export function GeoPanel() {
                     hint={
                       config.action === 'basic_auth'
                         ? t('pages.basicAuth.ruleActionHint')
-                        : t('pages.geo.actionHint')
+                        : config.action === 'log'
+                          ? t('pages.geo.actionMonitorHint')
+                          : t('pages.geo.actionHint')
                     }
                     options={GEO_ACTIONS.map((a) => ({
                       value: a,
-                      label: t(`actions.${a}`, a),
+                      label:
+                        a === 'log'
+                          ? t('pages.geo.actionMonitor')
+                          : t(`actions.${a}`, a),
                     }))}
                     onChange={(e) => patch({ action: e.target.value })}
                   />
@@ -335,6 +341,7 @@ export function GeoPanel() {
 
           {/* Stats sidebar */}
           <div className="flex flex-col gap-6">
+            <IpAnalysisCard />
             <Card>
               <CardHeader title={t('pages.geo.byCountry')} />
               <CardBody>

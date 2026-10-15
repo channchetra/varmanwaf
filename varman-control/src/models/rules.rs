@@ -18,9 +18,11 @@ pub mod action {
     /// Actions a custom WAF rule may take.
     pub const ALL: [&str; 5] = [BLOCK, LOG, CHALLENGE, JS_CHALLENGE, ALLOW];
 
-    /// Actions the geo policy accepts: `log` has no geo enforcement meaning
-    /// and `allow` would contradict the match itself, so neither is offered.
-    pub const GEO_ALL: [&str; 4] = [BLOCK, CHALLENGE, JS_CHALLENGE, BASIC_AUTH];
+    /// Actions the geo policy accepts: `allow` would contradict the match
+    /// itself, so it is not offered; `log` is the monitor action - the geo
+    /// decision is recorded but nothing is enforced.
+    pub const GEO_ALL: [&str; 5] =
+        [BLOCK, LOG, CHALLENGE, JS_CHALLENGE, BASIC_AUTH];
 
     pub fn is_valid(action: &str) -> bool {
         ALL.contains(&action)
@@ -271,13 +273,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_geo_policy_accepts_neither_log_nor_allow() {
+    fn the_geo_policy_accepts_monitor_but_not_allow() {
         for valid in action::GEO_ALL {
             assert!(action::is_valid_geo(valid));
         }
-        // The data plane has no geo outcome for either of these: `log` would
-        // behave as a block and `allow` would contradict the match.
-        assert!(!action::is_valid_geo(action::LOG));
+        // `log` is the monitor action: the edge records the geo decision
+        // without enforcing it. `allow` would contradict the match itself.
+        assert!(action::is_valid_geo(action::LOG));
+        assert_eq!(1, action::to_proto(action::LOG));
         assert!(!action::is_valid_geo(action::ALLOW));
     }
 

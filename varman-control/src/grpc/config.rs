@@ -236,7 +236,7 @@ async fn load_certificates(
         .await
 }
 
-async fn load_ip_access_rules(
+pub(crate) async fn load_ip_access_rules(
     db: &DatabaseConnection,
     site_id: Uuid,
 ) -> Result<Vec<ip_access_rules::Model>, sea_orm::DbErr> {
@@ -250,7 +250,7 @@ async fn load_ip_access_rules(
 
 /// Loads enabled IP groups that apply to a site: all global groups plus any
 /// non-global group explicitly linked to the site via `ip_group_sites`.
-async fn load_ip_groups(
+pub(crate) async fn load_ip_groups(
     db: &DatabaseConnection,
     site_id: Uuid,
 ) -> Result<Vec<ip_groups::Model>, sea_orm::DbErr> {

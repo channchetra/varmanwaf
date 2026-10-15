@@ -462,6 +462,8 @@ struct GeoRule {
     challenge: bool,
     /// The policy answers with a basic auth prompt instead of a block page.
     basic_auth: bool,
+    /// Monitor action (`log`): a match is recorded, never enforced.
+    monitor: bool,
 }
 
 /// Why a request was denied, and by which rule.
@@ -472,6 +474,9 @@ struct Denial {
     challenge: bool,
     /// The request must pass the site's basic auth gate to proceed.
     basic_auth: bool,
+    /// Monitor action: the caller records the denial and lets the request
+    /// continue (geo policy only).
+    monitor: bool,
 }
 
 /// What the access restrictions decided for one request.
@@ -560,6 +565,7 @@ impl AccessPolicy {
                         ),
                         challenge: false,
                         basic_auth: false,
+                        monitor: false,
                     }),
                     IpRuleAction::Challenge => PolicyOutcome::Denied(Denial {
                         rule_id: rule.id.clone(),
@@ -570,6 +576,7 @@ impl AccessPolicy {
                         ),
                         challenge: true,
                         basic_auth: false,
+                        monitor: false,
                     }),
                     IpRuleAction::BasicAuth => PolicyOutcome::Denied(Denial {
                         rule_id: rule.id.clone(),
@@ -580,6 +587,7 @@ impl AccessPolicy {
                         ),
                         challenge: false,
                         basic_auth: true,
+                        monitor: false,
                     }),
                 };
             }
@@ -622,6 +630,7 @@ impl AccessPolicy {
             },
             challenge: geo.challenge,
             basic_auth: geo.basic_auth,
+            monitor: geo.monitor,
         })
     }
 }
@@ -649,6 +658,7 @@ impl GeoRule {
                 CacheWafAction::Challenge | CacheWafAction::JsChallenge
             ),
             basic_auth: matches!(cfg.action, CacheWafAction::BasicAuth),
+            monitor: matches!(cfg.action, CacheWafAction::Log),
         }
     }
 }
@@ -795,6 +805,7 @@ impl BotPolicy {
             detail,
             challenge: self.action == BotAction::Challenge,
             basic_auth: false,
+            monitor: false,
         }
     }
 
@@ -900,6 +911,7 @@ impl BotPolicy {
                     ),
                     challenge: self.action == BotAction::Challenge,
                     basic_auth: false,
+                    monitor: false,
                 };
                 return match self.action {
                     BotAction::Log => BotDecision::LogOnly(denial),
@@ -915,6 +927,7 @@ impl BotPolicy {
                     ),
                     challenge: self.action == BotAction::Challenge,
                     basic_auth: false,
+                    monitor: false,
                 };
                 return match self.action {
                     BotAction::Log => BotDecision::LogOnly(denial),
@@ -930,6 +943,7 @@ impl BotPolicy {
                     ),
                     challenge: self.action == BotAction::Challenge,
                     basic_auth: false,
+                    monitor: false,
                 };
                 return match self.action {
                     BotAction::Log => BotDecision::LogOnly(denial),
@@ -950,6 +964,7 @@ impl BotPolicy {
             },
             challenge: self.action == BotAction::Challenge,
             basic_auth: false,
+            monitor: false,
         };
         match self.action {
             BotAction::Log => BotDecision::LogOnly(denial),
@@ -3039,13 +3054,19 @@ impl Plugin for WafPlugin {
             if let Some(denial) =
                 access.denial().filter(|denial| !denial.basic_auth)
             {
-                if observe {
+                if observe || denial.monitor {
+                    // Observation mode downgrades every protection; the geo
+                    // policy's monitor action downgrades only itself. Both
+                    // record without enforcing; the monitor action labels
+                    // the event as such.
                     Self::log_observed(
                         &site_id,
                         &request_id,
                         &host,
                         &request_data,
-                        if denial.challenge {
+                        if denial.monitor {
+                            WafAction::Monitor
+                        } else if denial.challenge {
                             WafAction::Challenge
                         } else {
                             WafAction::Block
@@ -5346,6 +5367,57 @@ advanced_mode = true
         let event = agent.client.pop_log().await.unwrap();
         assert_eq!(country, event.country_code);
         assert_eq!("geo_restriction", event.waf_rule_id);
+    }
+
+    /// The geo policy's monitor action records the decision without
+    /// enforcing: the request continues and the event carries `monitor`.
+    #[tokio::test]
+    async fn test_geo_rule_monitor_action_records_without_blocking() {
+        LazyLock::force(&GEO_DB);
+        let country = lookup_country_addr("8.8.8.8".parse().unwrap())
+            .expect("embedded db resolves 8.8.8.8");
+
+        let (_guard, agent, _dir) = install_test_agent().await;
+        agent
+            .rule_cache
+            .update_from_site_config(&proto::SiteConfig {
+                sites: vec![proto::Site {
+                    id: "site-1".to_string(),
+                    name: "example".to_string(),
+                    domain: "example.com".to_string(),
+                    alternate_domains: Vec::new(),
+                    status: 0,
+                    rules: Some(proto::RuleBundle {
+                        site_id: "site-1".to_string(),
+                        config_hash: "hash-1".to_string(),
+                        geo: Some(proto::GeoConfig {
+                            enabled: true,
+                            blocked_countries: vec![country.clone()],
+                            action: proto::WafAction::Log as i32,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                config_hash: "hash-1".to_string(),
+                updated_at: None,
+            })
+            .unwrap();
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            RequestPluginResult::Continue,
+            run_request(&plugin, "8.8.8.8").await
+        );
+
+        let event = agent.client.pop_log().await.unwrap();
+        assert_eq!(country, event.country_code);
+        assert_eq!("geo_restriction", event.waf_rule_id);
+        assert_eq!("monitor", event.waf_action);
     }
 
     #[tokio::test]

@@ -36,6 +36,7 @@ lettre = { workspace = true }
 jsonwebtoken = { workspace = true }
 # Parses the API allowlist entries (addresses and CIDR ranges).
 ipnet = { workspace = true }
+tor-geoip = { workspace = true }
 # Used to encode `RuleBundle`/`SiteConfig` so their bytes can be fingerprinted
 # into the `config_hash` agents compare for delta synchronisation.
 prost = { workspace = true }

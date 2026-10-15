@@ -1776,12 +1776,15 @@ export type GeoAction =
   | 'js_challenge'
   /** Requires the site's basic auth credentials for the matched countries. */
   | 'basic_auth'
+  /** Monitor: matches are recorded with the `monitor` action, never enforced. */
+  | 'log'
 
 export const GEO_ACTIONS: GeoAction[] = [
   'block',
   'challenge',
   'js_challenge',
   'basic_auth',
+  'log',
 ]
 
 export interface GeoConfig {

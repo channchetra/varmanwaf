@@ -25,6 +25,7 @@ pub mod display;
 pub mod error;
 pub mod error_pages;
 pub mod geo;
+pub mod ip_analysis;
 pub mod ip_groups;
 pub mod ip_lists;
 pub mod ip_rules;
@@ -104,6 +105,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(ip_groups::routes())
         .merge(blocked_ips::routes())
         .merge(geo::routes())
+        .merge(ip_analysis::routes())
         .merge(bot::routes())
         .merge(challenge::routes())
         .merge(waf_settings::routes())
