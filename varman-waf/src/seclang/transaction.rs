@@ -168,6 +168,9 @@ pub struct SecLangTransaction {
     force_request_body: bool,
     /// `ctl:ruleRemoveById` ids for the rest of the transaction.
     removed_rule_ids: BTreeSet<u64>,
+    /// `ctl:ruleRemoveById=<from>-<to>` ranges for the rest of the
+    /// transaction.
+    removed_rule_ranges: Vec<(u64, u64)>,
     /// `ctl:ruleRemoveByTag` tags for the rest of the transaction.
     removed_tags: BTreeSet<String>,
     /// `ctl:ruleRemoveTargetByTag` entries: `(tag, target)`.
@@ -352,6 +355,7 @@ impl SecLangTransaction {
             body_processor: body_processor.to_string(),
             force_request_body: false,
             removed_rule_ids: BTreeSet::new(),
+            removed_rule_ranges: Vec::new(),
             removed_tags: BTreeSet::new(),
             removed_targets: Vec::new(),
             removed_targets_by_id: Vec::new(),
@@ -442,6 +446,11 @@ impl SecLangTransaction {
         self.removed_rule_ids.insert(id);
     }
 
+    /// `ctl:ruleRemoveById=<from>-<to>`.
+    pub(crate) fn remove_rule_id_range(&mut self, from: u64, to: u64) {
+        self.removed_rule_ranges.push((from, to));
+    }
+
     /// `ctl:ruleRemoveByTag`.
     pub(crate) fn remove_rule_tag(&mut self, tag: &str) {
         self.removed_tags.insert(tag.to_string());
@@ -461,6 +470,10 @@ impl SecLangTransaction {
     /// `true` when `ctl:ruleRemoveById` disabled this rule.
     pub(crate) fn is_rule_removed(&self, id: u64) -> bool {
         self.removed_rule_ids.contains(&id)
+            || self
+                .removed_rule_ranges
+                .iter()
+                .any(|(from, to)| id >= *from && id <= *to)
     }
 
     /// `true` when `ctl:ruleRemoveByTag` disabled this tag.

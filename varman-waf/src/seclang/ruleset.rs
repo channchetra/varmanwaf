@@ -334,6 +334,8 @@ enum CtlOp {
     RuleEngine(CtlMode),
     BodyProcessor(String),
     RemoveById(u64),
+    /// `ctl:ruleRemoveById=<from>-<to>` - the plugin disable-switch form.
+    RemoveByIdRange(u64, u64),
     RemoveByTag(String),
     RemoveTargetByTag(String, String),
     /// `ctl:ruleRemoveTargetById=<id>;<target>` - the form the CRS
@@ -378,14 +380,34 @@ fn parse_ctl(spec: &str) -> Result<CtlOp, SecLangError> {
                 }),
             }
         },
-        "ruleremovebyid" => value
-            .parse::<u64>()
-            .map(CtlOp::RemoveById)
-            .map_err(|_| SecLangError {
-                reason: format!(
-                    "ctl:ruleRemoveById id {value:?} is not a number"
-                ),
-            }),
+        "ruleremovebyid" => {
+            if let Some((from, to)) = value.split_once('-') {
+                let from =
+                    from.trim().parse::<u64>().map_err(|_| SecLangError {
+                        reason: format!(
+                            "ctl:ruleRemoveById range {value:?} has a bad \
+                             start"
+                        ),
+                    })?;
+                let to =
+                    to.trim().parse::<u64>().map_err(|_| SecLangError {
+                        reason: format!(
+                            "ctl:ruleRemoveById range {value:?} has a bad \
+                                 end"
+                        ),
+                    })?;
+                return Ok(CtlOp::RemoveByIdRange(from, to));
+            }
+            value
+                .trim()
+                .parse::<u64>()
+                .map(CtlOp::RemoveById)
+                .map_err(|_| SecLangError {
+                    reason: format!(
+                        "ctl:ruleRemoveById id {value:?} is not a number"
+                    ),
+                })
+        },
         "ruleremovebytag" => Ok(CtlOp::RemoveByTag(value.to_string())),
         "ruleremovetargetbytag" => {
             let Some((tag, target)) = value.split_once(';') else {
@@ -826,6 +848,9 @@ impl SecRuleSet {
                         }
                     },
                     CtlOp::RemoveById(id) => txn.remove_rule_id(*id),
+                    CtlOp::RemoveByIdRange(from, to) => {
+                        txn.remove_rule_id_range(*from, *to)
+                    },
                     CtlOp::RemoveByTag(tag) => txn.remove_rule_tag(tag),
                     CtlOp::RemoveTargetByTag(tag, target) => {
                         txn.remove_rule_target(tag, target)
@@ -1549,6 +1574,46 @@ mod tests {
         )
         .expect_err("must fail");
         assert!(error.reason.contains("unsupported ctl option"), "{error}");
+    }
+
+    #[test]
+    fn ctl_remove_by_id_range_and_target_by_id() {
+        // The plugin disable-switch form: a range removes every rule in it.
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:99,ctl:ruleRemoveById=100-199\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:150,block\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:250,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        let ids: Vec<Option<u64>> =
+            hits.iter().flat_map(|hit| hit.rule_ids.clone()).collect();
+        assert!(ids.contains(&Some(250)), "outside the range still fires");
+        assert!(!ids.contains(&Some(150)), "inside the range is removed");
+
+        // The exclusion-plugin form: a target is removed for one rule id.
+        let ruleset = SecRuleSet::from_source(
+            "SecRule ARGS:a \"@streq 1\" \"id:1,ctl:ruleRemoveTargetById=2;ARGS:a\"\n\
+             SecRule ARGS:a \"@streq 1\" \"id:2,block\"\n\
+             SecRule ARGS:b \"@streq 1\" \"id:3,block\"\n",
+        )
+        .expect("compile");
+        let mut txn =
+            crate::seclang::transaction::SecLangTransaction::from_request(
+                &request("/?a=1&b=1"),
+            );
+        let hits = ruleset.evaluate(&mut txn);
+        let ids: Vec<Option<u64>> =
+            hits.iter().flat_map(|hit| hit.rule_ids.clone()).collect();
+        assert!(ids.contains(&Some(3)), "other rules still fire");
+        assert!(
+            !ids.contains(&Some(2)),
+            "rule 2 no longer sees the excluded target"
+        );
     }
 
     #[test]
