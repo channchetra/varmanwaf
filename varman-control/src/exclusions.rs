@@ -355,6 +355,10 @@ pub struct ImportReport {
 /// Scans an imported source: what it contains and which rule ids it
 /// addresses. Anything the parser rejects is refused at import time, so the
 /// report never has to claim "stored but not applied".
+///
+/// Lines are joined across `\` continuations first: the CRS plugins split
+/// one rule across many physical lines, and a per-line scan would miss the
+/// inline controls entirely.
 pub fn scan_seclang_report(source: &str) -> ImportReport {
     let mut report = ImportReport {
         directives: 0,
@@ -366,7 +370,7 @@ pub fn scan_seclang_report(source: &str) -> ImportReport {
         valid: false,
         version: None,
     };
-    for line in source.lines() {
+    for line in logical_lines(source) {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -432,6 +436,31 @@ pub fn scan_seclang_report(source: &str) -> ImportReport {
     }
     report.rule_ids.sort_unstable();
     report
+}
+
+/// Joins `\`-continued lines into logical lines (the shape the SecLang
+/// parser itself reads).
+fn logical_lines(source: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for raw in source.lines() {
+        let trimmed_end = raw.trim_end();
+        let continues = trimmed_end.ends_with('\\');
+        let part = trimmed_end.trim_end_matches('\\');
+        if current.is_empty() {
+            current.push_str(part);
+        } else {
+            current.push(' ');
+            current.push_str(part.trim_start());
+        }
+        if !continues {
+            lines.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 fn push_rule_id(ids: &mut Vec<u64>, id: u64) {
@@ -669,6 +698,17 @@ mod tests {
         // The comment form the CRS plugins actually use.
         let report = scan_seclang_report("# Plugin version: 1.2.0\n");
         assert_eq!(report.version.as_deref(), Some("1.2.0"));
+
+        // Continuation lines: one logical rule, its control on a later
+        // physical line.
+        let continued = "SecRule ARGS \"@rx x\" \\\n\
+                         \"id:9507001,phase:1,pass,nolog,\\\n\
+                         ctl:ruleRemoveTargetById=942100;ARGS:content\"\n";
+        let report = scan_seclang_report(continued);
+        assert_eq!(report.directives, 1, "one logical directive");
+        assert_eq!(report.rules, 1);
+        assert_eq!(report.exclusion_controls, 1);
+        assert_eq!(report.rule_ids, vec![942100]);
     }
 
     #[test]
