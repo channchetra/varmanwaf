@@ -336,6 +336,9 @@ enum CtlOp {
     RemoveById(u64),
     RemoveByTag(String),
     RemoveTargetByTag(String, String),
+    /// `ctl:ruleRemoveTargetById=<id>;<target>` - the form the CRS
+    /// rule-exclusion plugins use.
+    RemoveTargetById(u64, String),
     AuditEngine,
     ForceRequestBody,
 }
@@ -396,6 +399,22 @@ fn parse_ctl(spec: &str) -> Result<CtlOp, SecLangError> {
                 tag.trim().to_string(),
                 target.trim().to_string(),
             ))
+        },
+        "ruleremovetargetbyid" => {
+            let Some((id_raw, target)) = value.split_once(';') else {
+                return Err(SecLangError {
+                    reason: format!(
+                        "ctl:ruleRemoveTargetById needs 'id;target': {value:?}"
+                    ),
+                });
+            };
+            let id =
+                id_raw.trim().parse::<u64>().map_err(|_| SecLangError {
+                    reason: format!(
+                    "ctl:ruleRemoveTargetById id {id_raw:?} is not a number"
+                ),
+                })?;
+            Ok(CtlOp::RemoveTargetById(id, target.trim().to_string()))
         },
         "auditengine" => Ok(CtlOp::AuditEngine),
         "forcerequestbodyvariable" => Ok(CtlOp::ForceRequestBody),
@@ -811,6 +830,9 @@ impl SecRuleSet {
                     CtlOp::RemoveTargetByTag(tag, target) => {
                         txn.remove_rule_target(tag, target)
                     },
+                    CtlOp::RemoveTargetById(id, target) => {
+                        txn.remove_rule_target_by_id(*id, target)
+                    },
                     // Accepted and documented: there is no audit subsystem
                     // yet, and the raw body is always exposed as
                     // `REQUEST_BODY`.
@@ -862,7 +884,10 @@ fn evaluate_group(
         } else {
             previous.clone()
         });
-        let excluded = txn.removed_targets_for(&rule.tags());
+        let mut excluded = txn.removed_targets_for(&rule.tags());
+        if let Some(id) = rule.rule_id() {
+            excluded.extend(txn.removed_targets_for_id(id));
+        }
         let hits = rule.matches_excluding(txn, &excluded);
         if hits.is_empty() {
             return None;

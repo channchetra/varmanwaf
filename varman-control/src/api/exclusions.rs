@@ -7,7 +7,7 @@
 //! edge in the same call that stored it.
 
 use axum::extract::{Path, State};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
@@ -26,6 +26,11 @@ use crate::models::exclusion_packages;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/exclusion-packages", get(list).post(create))
+        .route("/exclusion-packages/import", post(import_package))
+        .route(
+            "/exclusion-packages/{key}",
+            axum::routing::delete(delete_package),
+        )
         .route(
             "/sites/{site_id}/exclusion-bindings",
             get(list_bindings).post(create_binding),
@@ -36,6 +41,9 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
+/// Largest upstream file the import accepts (2 MiB).
+const MAX_IMPORT_BYTES: usize = 2 * 1024 * 1024;
+
 #[derive(Debug, Serialize)]
 pub struct PackageView {
     id: Uuid,
@@ -45,8 +53,12 @@ pub struct PackageView {
     source_url: String,
     version: String,
     builtin: bool,
+    /// `entries` or `seclang`.
+    kind: String,
     /// Entries as stored (rule ids/selectors, targets, notes).
     entries: serde_json::Value,
+    /// The import report for `seclang` packages.
+    import_report: serde_json::Value,
     updated_at: DateTime<Utc>,
 }
 
@@ -115,7 +127,9 @@ async fn list(
             source_url: row.source_url,
             version: row.version,
             builtin: row.builtin,
+            kind: row.kind,
             entries: row.entries,
+            import_report: row.import_report.unwrap_or(serde_json::json!(null)),
             updated_at: row.updated_at,
         })
         .collect();
@@ -171,6 +185,9 @@ async fn create(
         version: Set(payload.version.trim().to_string()),
         entries: Set(payload.entries),
         builtin: Set(false),
+        kind: Set(crate::exclusions::KIND_ENTRIES.to_string()),
+        source: Set(None),
+        import_report: Set(None),
         created_at: Set(Utc::now()),
         updated_at: Set(Utc::now()),
     }
@@ -185,9 +202,184 @@ async fn create(
         source_url: row.source_url,
         version: row.version,
         builtin: row.builtin,
+        kind: row.kind,
         entries: row.entries,
+        import_report: row.import_report.unwrap_or(serde_json::json!(null)),
         updated_at: row.updated_at,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportRequest {
+    /// The upstream file (https only).
+    url: String,
+    /// Package key; derived from the URL's file name when omitted.
+    #[serde(default)]
+    key: Option<String>,
+    /// Display name; derived from the key when omitted.
+    #[serde(default)]
+    name: Option<String>,
+}
+
+/// `POST /api/v1/exclusion-packages/import` - administrators only.
+///
+/// Fetches an upstream SecLang exclusion file, refuses anything that does
+/// not parse as SecLang, and stores it as a `seclang` package whose source
+/// is appended to the site's virtual patches on attach (where
+/// `SecRuleUpdateTargetById` and `SecRuleRemoveById` are applied natively).
+/// The import report states what the file contains and what this build
+/// applies.
+async fn import_package(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Json(payload): Json<ImportRequest>,
+) -> Result<Json<PackageView>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
+
+    let url = payload.url.trim().to_string();
+    crate::subscription::validate_source_url(&url)
+        .map_err(ApiError::BadRequest)?;
+    let client = crate::subscription::subscription_client();
+    let response = client.get(&url).send().await.map_err(|err| {
+        ApiError::BadGateway(format!("could not fetch the source: {err}"))
+    })?;
+    if !response.status().is_success() {
+        return Err(ApiError::BadGateway(format!(
+            "the source answered with HTTP {}",
+            response.status()
+        )));
+    }
+    let source = response.text().await.map_err(|err| {
+        ApiError::BadGateway(format!("could not read the source: {err}"))
+    })?;
+    if source.len() > MAX_IMPORT_BYTES {
+        return Err(ApiError::BadRequest(format!(
+            "the file is larger than {} MiB",
+            MAX_IMPORT_BYTES / (1024 * 1024)
+        )));
+    }
+
+    // The file must parse before it can be stored: a package that cannot
+    // compile would silently disable the whole layer on the edge.
+    let mut report = exclusions::scan_seclang_report(&source);
+    match varman_waf::seclang::SecRuleSet::from_source(&source) {
+        Ok(_) => report.valid = true,
+        Err(error) => {
+            return Err(ApiError::BadRequest(format!(
+                "the file does not parse as SecLang: {}",
+                error.reason
+            )));
+        },
+    }
+
+    let key = payload
+        .key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_lowercase)
+        .unwrap_or_else(|| exclusions::key_from_url(&url));
+    if key.is_empty()
+        || key.len() > 64
+        || !key
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(ApiError::BadRequest(
+            "the key must be a lowercase slug (a-z, 0-9, '-')".to_string(),
+        ));
+    }
+    let exists = exclusion_packages::Entity::find()
+        .filter(exclusion_packages::Column::Key.eq(&key))
+        .one(&state.db)
+        .await?
+        .is_some();
+    if exists {
+        return Err(ApiError::Conflict(format!(
+            "a package with key '{key}' already exists; choose another key \
+             or remove the existing package"
+        )));
+    }
+    let name = payload
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("Imported {key}"));
+    let version = report
+        .version
+        .clone()
+        .unwrap_or_else(|| "imported".to_string());
+    let report_json =
+        serde_json::to_value(&report).unwrap_or(serde_json::json!({}));
+
+    let row = exclusion_packages::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        key: Set(key.clone()),
+        name: Set(name),
+        description: Set(format!(
+            "Imported from {url} - {} directive(s): {} rule(s), {} \
+             exclusion control(s), {} standalone retarget(s), {} removal(s), \
+             addressing {} rule id(s). SecLang packages run in the site's \
+             virtual patches and apply site-wide.",
+            report.directives,
+            report.rules,
+            report.exclusion_controls,
+            report.update_target_by_id,
+            report.remove_by_id,
+            report.rule_ids.len(),
+        )),
+        source_url: Set(url),
+        version: Set(version),
+        entries: Set(serde_json::json!([])),
+        builtin: Set(false),
+        kind: Set(exclusions::KIND_SECLANG.to_string()),
+        source: Set(Some(source)),
+        import_report: Set(Some(report_json)),
+        created_at: Set(Utc::now()),
+        updated_at: Set(Utc::now()),
+    }
+    .insert(&state.db)
+    .await?;
+
+    Ok(Json(PackageView {
+        id: row.id,
+        key: row.key,
+        name: row.name,
+        description: row.description,
+        source_url: row.source_url,
+        version: row.version,
+        builtin: row.builtin,
+        kind: row.kind,
+        entries: row.entries,
+        import_report: row.import_report.unwrap_or(serde_json::json!(null)),
+        updated_at: row.updated_at,
+    }))
+}
+
+/// `DELETE /api/v1/exclusion-packages/{key}` - administrators only.
+/// Built-in catalogue packages cannot be removed.
+async fn delete_package(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
+    let package = exclusion_packages::Entity::find()
+        .filter(exclusion_packages::Column::Key.eq(key.trim().to_lowercase()))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("package not found".to_string()))?;
+    if package.builtin {
+        return Err(ApiError::BadRequest(
+            "the curated catalogue cannot be removed".to_string(),
+        ));
+    }
+    exclusion_packages::Entity::delete_by_id(package.id)
+        .exec(&state.db)
+        .await?;
+    Ok(Json(serde_json::json!({ "deleted": package.key })))
 }
 
 /// `GET /api/v1/sites/{site_id}/exclusion-bindings`
@@ -226,9 +418,25 @@ async fn create_binding(
                 payload.package_key.trim()
             ))
         })?;
-    // The stored entries must parse before a binding can exist.
-    exclusions::parse_entries(&package.entries)
-        .map_err(ApiError::BadRequest)?;
+    // The stored entries must parse before a binding can exist; SecLang
+    // packages instead require their source and the root prefix (the
+    // directives are global to the ruleset).
+    if package.kind == exclusions::KIND_SECLANG {
+        if prefix != "/" {
+            return Err(ApiError::BadRequest(
+                "SecLang exclusion files apply site-wide; attach at /"
+                    .to_string(),
+            ));
+        }
+        if package.source.as_deref().unwrap_or("").trim().is_empty() {
+            return Err(ApiError::BadRequest(
+                "the package carries no SecLang source".to_string(),
+            ));
+        }
+    } else {
+        exclusions::parse_entries(&package.entries)
+            .map_err(ApiError::BadRequest)?;
+    }
 
     let duplicate = exclusion_packages::bindings::Entity::find()
         .filter(exclusion_packages::bindings::Column::SiteId.eq(id))

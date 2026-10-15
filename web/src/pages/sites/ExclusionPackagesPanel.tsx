@@ -8,6 +8,7 @@ import {
   Trash,
   WarningCircle,
   ArrowClockwise,
+  CloudArrowDown,
 } from '@phosphor-icons/react'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -23,6 +24,7 @@ import {
   exclusionsKeys,
   type ExclusionBinding,
   type ExclusionPackage,
+  type ImportReport,
 } from '@/api/exclusions'
 import { useCanWrite } from '@/hooks'
 import { formatDateTime } from '@/lib/format'
@@ -51,6 +53,8 @@ export function ExclusionPackagesPanel() {
   })
 
   const [prefixes, setPrefixes] = useState<Record<string, string>>({})
+  const [importUrl, setImportUrl] = useState('')
+  const [importReport, setImportReport] = useState<ImportReport | null>(null)
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: exclusionsKeys.all })
@@ -96,6 +100,31 @@ export function ExclusionPackagesPanel() {
     },
     onError: (error) =>
       toast.error(t('pages.exclusions.removeFailed'), errorMessage(error)),
+  })
+
+  const importPackage = useMutation({
+    mutationFn: () => exclusionsApi.importPackage(importUrl.trim()),
+    onSuccess: (pkg) => {
+      setImportReport(pkg.import_report)
+      setImportUrl('')
+      toast.success(t('pages.exclusions.importDone', { name: pkg.name }))
+      invalidate()
+    },
+    onError: (error) =>
+      toast.error(t('pages.exclusions.importFailed'), errorMessage(error)),
+  })
+
+  const removePackage = useMutation({
+    mutationFn: (key: string) => exclusionsApi.removePackage(key),
+    onSuccess: () => {
+      toast.success(t('pages.exclusions.packageRemoved'))
+      invalidate()
+    },
+    onError: (error) =>
+      toast.error(
+        t('pages.exclusions.packageRemoveFailed'),
+        errorMessage(error),
+      ),
   })
 
   if (packagesQuery.isError && !packagesQuery.data) {
@@ -153,6 +182,65 @@ export function ExclusionPackagesPanel() {
         </CardBody>
       </Card>
 
+      {/* Import an upstream SecLang exclusion file */}
+      <Card>
+        <CardHeader
+          title={t('pages.exclusions.import')}
+          description={t('pages.exclusions.importHint')}
+          action={
+            <CloudArrowDown
+              weight="duotone"
+              className="h-5 w-5 text-fg-subtle"
+            />
+          }
+        />
+        <CardBody className="flex flex-col gap-3">
+          <div className="flex items-end gap-2">
+            <Input
+              containerClassName="flex-1"
+              label={t('pages.exclusions.importUrl')}
+              placeholder="https://raw.githubusercontent.com/coreruleset/…/plugin.conf"
+              value={importUrl}
+              onChange={(event) => setImportUrl(event.target.value)}
+            />
+            {canWrite && (
+              <Button
+                variant="secondary"
+                icon={<Plus weight="bold" className="h-4 w-4" />}
+                loading={importPackage.isPending}
+                disabled={!importUrl.trim().startsWith('https://')}
+                onClick={() => importPackage.mutate()}
+              >
+                {t('pages.exclusions.importRun')}
+              </Button>
+            )}
+          </div>
+          {importReport && (
+            <div className="rounded-md border border-line bg-recessed/40 p-3 text-[12px]">
+              <p className="text-fg">
+                {t('pages.exclusions.importReport', {
+                  directives: importReport.directives,
+                  rules: importReport.rules,
+                  controls:
+                    importReport.exclusion_controls +
+                    importReport.update_target_by_id +
+                    importReport.remove_by_id,
+                })}
+              </p>
+              <p className="mt-1 text-fg-subtle">
+                {t('pages.exclusions.importRules', {
+                  count: importReport.rule_ids.length,
+                  version: importReport.version ?? 'imported',
+                })}
+              </p>
+            </div>
+          )}
+          <p className="text-[11px] text-fg-subtle">
+            {t('pages.exclusions.importNote')}
+          </p>
+        </CardBody>
+      </Card>
+
       {/* Catalogue */}
       <Card>
         <CardHeader
@@ -175,9 +263,17 @@ export function ExclusionPackagesPanel() {
               onAttach={() =>
                 attach.mutate({
                   key: pkg.key,
-                  prefix: prefixes[pkg.key] ?? '',
+                  prefix:
+                    pkg.kind === 'seclang'
+                      ? '/'
+                      : (prefixes[pkg.key] ?? ''),
                 })
               }
+              removing={
+                removePackage.isPending &&
+                removePackage.variables === pkg.key
+              }
+              onRemove={() => removePackage.mutate(pkg.key)}
             />
           ))}
           <p className="text-[11px] text-fg-subtle">
@@ -260,6 +356,8 @@ function CatalogueRow({
   onPrefixChange,
   attaching,
   onAttach,
+  removing,
+  onRemove,
 }: {
   pkg: ExclusionPackage
   canWrite: boolean
@@ -267,6 +365,8 @@ function CatalogueRow({
   onPrefixChange: (value: string) => void
   attaching: boolean
   onAttach: () => void
+  removing: boolean
+  onRemove: () => void
 }) {
   const { t } = useTranslation()
   return (
@@ -284,60 +384,106 @@ function CatalogueRow({
         </Badge>
       </div>
       <p className="mt-1 text-[12px] text-fg-subtle">{pkg.description}</p>
-      <ul className="mt-2 flex flex-col gap-1">
-        {pkg.entries.map((entry, index) => (
-          <li key={index} className="text-[12px] text-fg">
-            <span className="pw-mono font-medium">
-              {entry.rule_id
-                ? entry.rule_id
-                : `${t('pages.exclusions.selector')}: ${[
-                    ...(entry.tags ?? []),
-                    ...(entry.severity_min !== undefined
-                      ? [`severity>=${entry.severity_min}`]
-                      : []),
-                  ].join(', ')}`}
-            </span>
-            <span className="text-fg-subtle">
-              {' '}
-              — {t('pages.exclusions.excludes')}:{' '}
-              <span className="pw-mono">{entry.targets.join(', ')}</span>
-            </span>
-            {entry.note && (
-              <span className="block text-[11px] text-fg-subtle">
-                {entry.note}
+      {pkg.kind === 'seclang' ? (
+        <>
+          {pkg.source_url && (
+            <p className="mt-1 text-[11px] text-fg-subtle">
+              <a
+                href={pkg.source_url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-link hover:underline"
+              >
+                {pkg.source_url}
+              </a>
+            </p>
+          )}
+          {pkg.import_report && (
+            <p className="mt-1 text-[12px] text-fg">
+              {t('pages.exclusions.importReport', {
+                directives: pkg.import_report.directives,
+                rules: pkg.import_report.rules,
+                controls:
+                  pkg.import_report.exclusion_controls +
+                  pkg.import_report.update_target_by_id +
+                  pkg.import_report.remove_by_id,
+              })}
+            </p>
+          )}
+        </>
+      ) : (
+        <ul className="mt-2 flex flex-col gap-1">
+          {pkg.entries.map((entry, index) => (
+            <li key={index} className="text-[12px] text-fg">
+              <span className="pw-mono font-medium">
+                {entry.rule_id
+                  ? entry.rule_id
+                  : `${t('pages.exclusions.selector')}: ${[
+                      ...(entry.tags ?? []),
+                      ...(entry.severity_min !== undefined
+                        ? [`severity>=${entry.severity_min}`]
+                        : []),
+                    ].join(', ')}`}
               </span>
-            )}
-          </li>
-        ))}
-      </ul>
+              <span className="text-fg-subtle">
+                {' '}
+                — {t('pages.exclusions.excludes')}:{' '}
+                <span className="pw-mono">{entry.targets.join(', ')}</span>
+              </span>
+              {entry.note && (
+                <span className="block text-[11px] text-fg-subtle">
+                  {entry.note}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
       {canWrite && (
         <div className="mt-3 flex flex-wrap items-end gap-2">
-          <Input
-            containerClassName="w-64"
-            className="pw-mono"
-            label={t('pages.exclusions.pathPrefix')}
-            hint={t('pages.exclusions.pathPrefixHint')}
-            placeholder="/wp-admin"
-            value={prefix}
-            onChange={(event) => onPrefixChange(event.target.value)}
-          />
+          {pkg.kind === 'seclang' ? (
+            <p className="text-[11px] text-fg-subtle">
+              {t('pages.exclusions.seclangNote')}
+            </p>
+          ) : (
+            <Input
+              containerClassName="w-64"
+              className="pw-mono"
+              label={t('pages.exclusions.pathPrefix')}
+              hint={t('pages.exclusions.pathPrefixHint')}
+              placeholder="/wp-admin"
+              value={prefix}
+              onChange={(event) => onPrefixChange(event.target.value)}
+            />
+          )}
           <Button
             variant="secondary"
             icon={<Plus weight="bold" className="h-4 w-4" />}
             loading={attaching}
-            disabled={!prefix.trim().startsWith('/')}
+            disabled={pkg.kind !== 'seclang' && !prefix.trim().startsWith('/')}
             onClick={onAttach}
           >
             {t('pages.exclusions.attach')}
           </Button>
+          {!pkg.builtin && (
+            <Button
+              variant="ghost"
+              icon={<Trash weight="bold" className="h-4 w-4" />}
+              loading={removing}
+              onClick={onRemove}
+            >
+              {t('common.delete')}
+            </Button>
+          )}
         </div>
       )}
-      {pkg.entries.some((entry) => entry.note === undefined) && (
-        <p className="mt-2 flex items-center gap-1.5 text-[11px] text-fg-subtle">
-          <WarningCircle weight="duotone" className="h-3.5 w-3.5" />
-          {t('pages.exclusions.review')}
-        </p>
-      )}
+      {pkg.kind !== 'seclang' &&
+        pkg.entries.some((entry) => entry.note === undefined) && (
+          <p className="mt-2 flex items-center gap-1.5 text-[11px] text-fg-subtle">
+            <WarningCircle weight="duotone" className="h-3.5 w-3.5" />
+            {t('pages.exclusions.review')}
+          </p>
+        )}
     </div>
   )
 }

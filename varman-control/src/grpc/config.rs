@@ -1109,6 +1109,41 @@ fn ip_group_to_proto(row: &ip_groups::Model) -> IpAccessRule {
     }
 }
 
+/// The enabled SecLang exclusion packages' sources, in binding order.
+async fn seclang_package_sources(
+    db: &DatabaseConnection,
+    site_id: Uuid,
+) -> Result<Vec<String>, sea_orm::DbErr> {
+    let bindings = exclusion_packages::bindings::Entity::find()
+        .filter(exclusion_packages::bindings::Column::SiteId.eq(site_id))
+        .filter(exclusion_packages::bindings::Column::Enabled.eq(true))
+        .all(db)
+        .await?;
+    if bindings.is_empty() {
+        return Ok(Vec::new());
+    }
+    let package_ids: Vec<Uuid> =
+        bindings.iter().map(|binding| binding.package_id).collect();
+    let packages = exclusion_packages::Entity::find()
+        .filter(exclusion_packages::Column::Id.is_in(package_ids))
+        .filter(
+            exclusion_packages::Column::Kind
+                .eq(crate::exclusions::KIND_SECLANG),
+        )
+        .all(db)
+        .await?;
+    let by_id: HashMap<Uuid, &exclusion_packages::Model> = packages
+        .iter()
+        .map(|package| (package.id, package))
+        .collect();
+    Ok(bindings
+        .iter()
+        .filter_map(|binding| by_id.get(&binding.package_id))
+        .filter_map(|package| package.source.clone())
+        .filter(|source| !source.trim().is_empty())
+        .collect())
+}
+
 /// Expands the site's exclusion-package bindings into path-scoped target
 /// exclusions: each enabled binding's package entries are expanded against
 /// the managed catalogue and carried with the binding's path prefix.
@@ -1605,6 +1640,26 @@ pub async fn build_rule_bundle(
                 }
             }
         }
+    }
+
+    // SecLang exclusion packages: their source runs after the CRS import,
+    // where `SecRuleUpdateTargetById` / `SecRuleRemoveById` are applied
+    // natively by the SecLang evaluator.
+    let seclang_sources = seclang_package_sources(db, site_row.id).await?;
+    for source in &seclang_sources {
+        waf_config.virtual_patches =
+            if waf_config.virtual_patches.trim().is_empty() {
+                source.clone()
+            } else {
+                format!("{}\n{}", waf_config.virtual_patches, source)
+            };
+    }
+    if !seclang_sources.is_empty() {
+        tracing::info!(
+            site_id = %site_row.id,
+            packages = seclang_sources.len(),
+            "SecLang exclusion packages appended to the virtual patches"
+        );
     }
 
     let mut bundle = RuleBundle {

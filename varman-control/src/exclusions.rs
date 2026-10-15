@@ -200,6 +200,9 @@ pub async fn seed_catalogue(
                     version: Set(package.version.to_string()),
                     entries: Set(entries),
                     builtin: Set(true),
+                    kind: Set(KIND_ENTRIES.to_string()),
+                    source: Set(None),
+                    import_report: Set(None),
                     created_at: Set(Utc::now()),
                     updated_at: Set(Utc::now()),
                 }
@@ -317,6 +320,180 @@ pub fn expand(entries: &[Entry]) -> Vec<(String, Vec<String>)> {
         }
     }
     merged.into_iter().collect()
+}
+
+/// Package kinds.
+pub const KIND_ENTRIES: &str = "entries";
+pub const KIND_SECLANG: &str = "seclang";
+
+/// What an imported SecLang exclusion file contains.
+///
+/// The parse check is the gate: anything stored compiles. The report says
+/// what the file is made of - its own rules, the exclusion controls they
+/// carry, and which rule ids they address.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ImportReport {
+    /// Non-blank, non-comment lines.
+    pub directives: usize,
+    /// `SecRule` lines the file defines (the plugin's own rules).
+    pub rules: usize,
+    /// Standalone `SecRuleUpdateTargetById` directives.
+    pub update_target_by_id: usize,
+    /// Standalone `SecRuleRemoveById` directives.
+    pub remove_by_id: usize,
+    /// Inline exclusion controls: `ctl:ruleRemoveTargetById`,
+    /// `ctl:ruleRemoveTargetByTag`, `ctl:ruleRemoveById`.
+    pub exclusion_controls: usize,
+    /// Rule ids the file addresses (bounded, sorted).
+    pub rule_ids: Vec<u64>,
+    /// The source parses as SecLang.
+    pub valid: bool,
+    /// A version sniffed from a comment, when present.
+    pub version: Option<String>,
+}
+
+/// Scans an imported source: what it contains and which rule ids it
+/// addresses. Anything the parser rejects is refused at import time, so the
+/// report never has to claim "stored but not applied".
+pub fn scan_seclang_report(source: &str) -> ImportReport {
+    let mut report = ImportReport {
+        directives: 0,
+        rules: 0,
+        update_target_by_id: 0,
+        remove_by_id: 0,
+        exclusion_controls: 0,
+        rule_ids: Vec::new(),
+        valid: false,
+        version: None,
+    };
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(comment) = trimmed.strip_prefix('#') {
+            if report.version.is_none() {
+                report.version = sniff_version(comment);
+            }
+            continue;
+        }
+        report.directives += 1;
+        if let Some(rest) = trimmed.strip_prefix("SecRuleUpdateTargetById") {
+            report.update_target_by_id += 1;
+            if let Some(id) = rest
+                .trim()
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .find_map(|token| token.parse::<u64>().ok())
+            {
+                push_rule_id(&mut report.rule_ids, id);
+            }
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("SecRuleRemoveById") {
+            report.remove_by_id += 1;
+            for token in rest
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter(|token| !token.is_empty())
+            {
+                if let Ok(id) = token.parse::<u64>() {
+                    push_rule_id(&mut report.rule_ids, id);
+                }
+            }
+            continue;
+        }
+        if trimmed.starts_with("SecRule ") || trimmed.starts_with("SecAction ")
+        {
+            report.rules += 1;
+            for (pattern, id_after) in [
+                ("ctl:ruleRemoveTargetById=", true),
+                ("ctl:ruleRemoveById=", true),
+                ("ctl:ruleRemoveTargetByTag=", false),
+            ] {
+                let mut search = trimmed;
+                while let Some(index) = search.find(pattern) {
+                    report.exclusion_controls += 1;
+                    let rest = &search[index + pattern.len()..];
+                    if id_after {
+                        let id: String = rest
+                            .chars()
+                            .take_while(|c| c.is_ascii_digit())
+                            .collect();
+                        if let Ok(id) = id.parse::<u64>() {
+                            push_rule_id(&mut report.rule_ids, id);
+                        }
+                    }
+                    search = &rest[1.min(rest.len())..];
+                    if search.is_empty() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    report.rule_ids.sort_unstable();
+    report
+}
+
+fn push_rule_id(ids: &mut Vec<u64>, id: u64) {
+    if ids.len() < 50 && !ids.contains(&id) {
+        ids.push(id);
+    }
+}
+
+/// Finds a version like `v1.7.1` or `Plugin version: 1.2.0` in a comment.
+fn sniff_version(comment: &str) -> Option<String> {
+    let bytes = comment.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !bytes[index].is_ascii_digit() {
+            index += 1;
+            continue;
+        }
+        let run: String = comment[index..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        let digits = run.chars().filter(|c| c.is_ascii_digit()).count();
+        if digits >= 2 && run.contains('.') {
+            return Some(run.trim_end_matches('.').to_string());
+        }
+        index += run.len().max(1);
+    }
+    None
+}
+
+/// Derives a package key from an import URL's file name.
+pub fn key_from_url(url: &str) -> String {
+    let without_scheme =
+        url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
+    let path = without_scheme
+        .split_once('/')
+        .map(|(_, path)| path)
+        .unwrap_or("");
+    let file = path.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    let stem = file
+        .trim_end_matches(".conf")
+        .trim_end_matches(".txt")
+        .trim_end_matches(".config");
+    let mut key: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    while key.contains("--") {
+        key = key.replace("--", "-");
+    }
+    let key = key.trim_matches('-').to_string();
+    if key.is_empty() {
+        "imported".to_string()
+    } else {
+        key.chars().take(64).collect()
+    }
 }
 
 /// Validates a binding path prefix.
@@ -466,7 +643,46 @@ mod tests {
         }
 
         assert_eq!(validate_path_prefix("/wp-admin/").unwrap(), "/wp-admin");
+        assert_eq!(validate_path_prefix("/").unwrap(), "/");
+        assert_eq!(validate_path_prefix("///").unwrap(), "/");
         assert!(validate_path_prefix("wp-admin").is_err());
         assert!(validate_path_prefix("/a/../b").is_err());
+    }
+
+    #[test]
+    fn the_import_report_counts_what_it_sees() {
+        let source = "# wordpress rule exclusions v1.7.1\n\
+                      SecRuleUpdateTargetById 942100 \"!ARGS:content\"\n\
+                      SecRuleRemoveById 920300\n\
+                      SecRule ARGS \"@rx x\" \"id:9507001,phase:1,pass,nolog,ctl:ruleRemoveTargetById=942100;ARGS:content\"\n\
+                      SecRule REQUEST_COOKIES \"@rx y\" \"id:9507002,phase:1,pass,nolog,ctl:ruleRemoveTargetByTag=attack-xss;ARGS\"\n";
+        let report = scan_seclang_report(source);
+        assert_eq!(report.directives, 4);
+        assert_eq!(report.rules, 2);
+        assert_eq!(report.update_target_by_id, 1);
+        assert_eq!(report.remove_by_id, 1);
+        assert_eq!(report.exclusion_controls, 2);
+        assert_eq!(report.rule_ids, vec![920300, 942100]);
+        assert_eq!(report.version.as_deref(), Some("1.7.1"));
+        assert!(!report.valid, "validity is set after the parse check");
+
+        // The comment form the CRS plugins actually use.
+        let report = scan_seclang_report("# Plugin version: 1.2.0\n");
+        assert_eq!(report.version.as_deref(), Some("1.2.0"));
+    }
+
+    #[test]
+    fn keys_derive_from_the_url_file_name() {
+        assert_eq!(
+            key_from_url(
+                "https://raw.githubusercontent.com/coreruleset/wordpress-rule-exclusions-plugin/main/plugins/wordpress-rule-exclusions-before.conf"
+            ),
+            "wordpress-rule-exclusions-before"
+        );
+        assert_eq!(
+            key_from_url("https://example.com/files/my_exclusions.conf"),
+            "my-exclusions"
+        );
+        assert_eq!(key_from_url("https://example.com/"), "imported");
     }
 }

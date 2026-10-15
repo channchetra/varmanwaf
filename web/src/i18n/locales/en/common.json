@@ -2865,7 +2865,19 @@
       "reinstall": "Reinstall",
       "stale": "Update available",
       "review": "Review before attaching: an exclusion is a scoped blind spot for the listed rules.",
-      "targetsHint": "Entries may name a member - query:q, body:content, cookie:session, header:x-api-key - to exclude just that value from the addressed rule, or name a plain source to exclude all of it. Custom rule ids are addressable too."
+      "targetsHint": "Entries may name a member - query:q, body:content, cookie:session, header:x-api-key - to exclude just that value from the addressed rule, or name a plain source to exclude all of it. Custom rule ids are addressable too.",
+      "import": "Import upstream exclusions",
+      "importHint": "Fetch a SecLang exclusion file (for example a CRS rule-exclusion plugin), check that it parses, and store it as a package. Attached SecLang packages run in the site’s virtual patches, where SecRuleUpdateTargetById and SecRuleRemoveById apply natively.",
+      "importUrl": "Source URL (https)",
+      "importRun": "Import",
+      "importReport": "{{directives}} directive(s): {{rules}} rule(s) and {{controls}} exclusion control(s) (retargets, removals and inline ctl controls).",
+      "importRules": "Addresses {{count}} rule id(s); version {{version}}.",
+      "importNote": "Nothing is enforced until the package is attached. The file must parse as SecLang before it is stored, so what is stored is what the edge applies.",
+      "importDone": "Imported \"{{name}}\"",
+      "importFailed": "The import failed",
+      "seclangNote": "SecLang packages apply site-wide (the directives are global to the ruleset); attach at /.",
+      "packageRemoved": "Package removed",
+      "packageRemoveFailed": "Could not remove the package"
     },
     "tuning": {
       "quickNav": "On this page",

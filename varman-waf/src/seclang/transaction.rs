@@ -172,6 +172,8 @@ pub struct SecLangTransaction {
     removed_tags: BTreeSet<String>,
     /// `ctl:ruleRemoveTargetByTag` entries: `(tag, target)`.
     removed_targets: Vec<(String, String)>,
+    /// `ctl:ruleRemoveTargetById` entries: `(rule id, target)`.
+    removed_targets_by_id: Vec<(u64, String)>,
     /// Response state for phase-3/4 rules.
     response_status: Option<u16>,
     response_headers: Vec<(String, String)>,
@@ -352,6 +354,7 @@ impl SecLangTransaction {
             removed_rule_ids: BTreeSet::new(),
             removed_tags: BTreeSet::new(),
             removed_targets: Vec::new(),
+            removed_targets_by_id: Vec::new(),
             response_status: None,
             response_headers: Vec::new(),
             response_body: None,
@@ -450,6 +453,11 @@ impl SecLangTransaction {
             .push((tag.to_string(), target.to_string()));
     }
 
+    /// `ctl:ruleRemoveTargetById`.
+    pub(crate) fn remove_rule_target_by_id(&mut self, id: u64, target: &str) {
+        self.removed_targets_by_id.push((id, target.to_string()));
+    }
+
     /// `true` when `ctl:ruleRemoveById` disabled this rule.
     pub(crate) fn is_rule_removed(&self, id: u64) -> bool {
         self.removed_rule_ids.contains(&id)
@@ -466,6 +474,16 @@ impl SecLangTransaction {
         self.removed_targets
             .iter()
             .filter(|(tag, _)| tags.iter().any(|t| t == tag))
+            .map(|(_, target)| target.clone())
+            .collect()
+    }
+
+    /// Targets excluded from the rule with this id
+    /// (`ctl:ruleRemoveTargetById`).
+    pub(crate) fn removed_targets_for_id(&self, id: u64) -> Vec<String> {
+        self.removed_targets_by_id
+            .iter()
+            .filter(|(rule_id, _)| *rule_id == id)
             .map(|(_, target)| target.clone())
             .collect()
     }

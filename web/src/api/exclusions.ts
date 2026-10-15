@@ -17,8 +17,26 @@ export interface ExclusionPackage {
   source_url: string
   version: string
   builtin: boolean
+  /** `entries` (our target model) or `seclang` (an imported upstream file). */
+  kind: 'entries' | 'seclang'
   entries: ExclusionEntry[]
+  /** What an import recognised (seclang packages). */
+  import_report: ImportReport | null
   updated_at: string
+}
+
+export interface ImportReport {
+  directives: number
+  /** `SecRule` lines the file defines (the plugin's own rules). */
+  rules: number
+  update_target_by_id: number
+  remove_by_id: number
+  /** Inline `ctl:ruleRemoveTargetById` / `ByTag` / `ruleRemoveById` controls. */
+  exclusion_controls: number
+  /** Rule ids the file addresses (bounded). */
+  rule_ids: number[]
+  valid: boolean
+  version: string | null
 }
 
 export interface ExclusionBinding {
@@ -37,6 +55,18 @@ export interface ExclusionBinding {
 export const exclusionsApi = {
   packages: () =>
     apiClient.get<ExclusionPackage[]>('/exclusion-packages'),
+
+  importPackage: (url: string, key?: string, name?: string) =>
+    apiClient.post<ExclusionPackage>('/exclusion-packages/import', {
+      url,
+      key: key || undefined,
+      name: name || undefined,
+    }),
+
+  removePackage: (key: string) =>
+    apiClient.delete<{ deleted: string }>(
+      `/exclusion-packages/${encodeURIComponent(key)}`,
+    ),
 
   bindings: (siteId: string) =>
     apiClient.get<ExclusionBinding[]>(

@@ -30,6 +30,16 @@ pub struct Model {
     pub entries: Json,
     /// Seeded catalogue package (editable, not deletable).
     pub builtin: bool,
+    /// `entries` (our target-exclusion model) or `seclang` (an imported
+    /// upstream file compiled into the site's virtual patches).
+    #[sea_orm(default_value = "entries")]
+    pub kind: String,
+    /// The imported SecLang source; `None` for entry packages.
+    #[sea_orm(column_type = "Text")]
+    pub source: Option<String>,
+    /// What an import recognised (and what it did not).
+    #[sea_orm(column_type = "JsonBinary")]
+    pub import_report: Option<Json>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }
