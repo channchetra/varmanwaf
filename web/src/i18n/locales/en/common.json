@@ -2213,6 +2213,7 @@
       "noCountriesFound": "No countries match your search.",
       "blockedAsns": "Blocked ASNs",
       "blockedAsnsHint": "Deny entire autonomous systems.",
+      "asnNotEnforceable": "The embedded geo database carries country data only: these entries are stored but do not match. Country rules are unaffected.",
       "asn": "ASN",
       "noAsns": "No blocked ASNs",
       "invalidAsn": "Enter a valid ASN number.",

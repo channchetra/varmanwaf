@@ -643,7 +643,7 @@ impl GeoRule {
                 .filter(|code| !code.is_empty())
                 .collect()
         };
-        Self {
+        let rule = Self {
             enabled: cfg.enabled,
             blocked_countries: country_set(&cfg.blocked_countries),
             allowed_countries: country_set(&cfg.allowed_countries),
@@ -659,7 +659,17 @@ impl GeoRule {
             ),
             basic_auth: matches!(cfg.action, CacheWafAction::BasicAuth),
             monitor: matches!(cfg.action, CacheWafAction::Log),
+        };
+        // The embedded database carries country data only; an ASN list
+        // cannot match. Say so once per compiled site instead of letting
+        // the operator believe the list is enforced.
+        if !rule.blocked_asns.is_empty() {
+            warn!(
+                "geo blocked_asns configured but the embedded geo database \
+                 carries no ASN data; the list cannot match"
+            );
         }
+        rule
     }
 }
 

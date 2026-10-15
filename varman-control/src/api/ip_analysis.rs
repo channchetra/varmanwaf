@@ -201,6 +201,9 @@ async fn analyze(
             .is_some_and(|row| row.observation_mode);
 
     let mut limitations = vec![
+        "The embedded geo database carries country data only, so ASN \
+         lookups and ASN block lists cannot match."
+            .to_string(),
         "Policy-layer IP rules (Policies) are not simulated here; the \
          verdict covers this site's IP rules, IP groups and geo policy."
             .to_string(),

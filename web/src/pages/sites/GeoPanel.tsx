@@ -10,6 +10,7 @@ import {
   Check,
   Buildings,
   Minus,
+  WarningCircle,
 } from '@phosphor-icons/react'
 import {
   BarChart,
@@ -282,6 +283,15 @@ export function GeoPanel() {
                 }
               />
               <CardBody className="flex flex-col gap-4">
+                {config.blocked_asns.length > 0 && (
+                  <p className="flex items-start gap-1.5 rounded-md border border-line bg-recessed/40 px-3 py-2 text-[12px] text-fg-subtle">
+                    <WarningCircle
+                      weight="duotone"
+                      className="mt-0.5 h-4 w-4 shrink-0 text-fg-warning"
+                    />
+                    {t('pages.geo.asnNotEnforceable')}
+                  </p>
+                )}
                 {canWrite && (
                   <div className="flex flex-wrap items-end gap-2">
                     <Input
