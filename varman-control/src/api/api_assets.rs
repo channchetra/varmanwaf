@@ -8,18 +8,21 @@
 //! never called cannot appear as observed; the surfaces say so.
 
 use axum::extract::{Path, Query, State};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::common::{load_site_read, parse_uuid, query_all};
+use crate::api::common::{
+    load_site_read, load_site_write, parse_uuid, query_all,
+};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
+use crate::api_learn::{self, QueryParam, SchemaNode};
 use crate::auth::AuthUser;
-use crate::models::waf_settings;
+use crate::models::{api_learned_schemas, waf_settings};
 
 /// Longest window the inventory may cover.
 const MAX_WINDOW_DAYS: i64 = 30;
@@ -29,10 +32,19 @@ const DEFAULT_WINDOW_DAYS: i64 = 7;
 const MAX_OBSERVED_ROWS: i64 = 500;
 /// Default observed rows.
 const DEFAULT_LIMIT: i64 = 200;
+/// Most access-log rows one learn run scans.
+const MAX_LEARN_ROWS: i64 = 5000;
 
 /// Routes contributed to `/api/v1`.
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/sites/{site_id}/api-assets", get(list))
+    Router::new()
+        .route("/sites/{site_id}/api-assets", get(list))
+        .route("/sites/{site_id}/api-assets/learn", post(learn))
+        .route("/sites/{site_id}/api-assets/learned", get(learned))
+        .route(
+            "/sites/{site_id}/api-assets/openapi-draft",
+            get(openapi_draft),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -246,6 +258,229 @@ async fn list(
         spec_only,
         limitations,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LearnRequest {
+    /// Window in days (1-30, default 7).
+    #[serde(default)]
+    pub days: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LearnSummary {
+    window_days: i64,
+    /// Endpoints (method+path) the run touched.
+    endpoints: usize,
+    /// JSON bodies merged into the stored structures.
+    samples: u64,
+    /// Bodies skipped because the stored prefix is truncated.
+    skipped_truncated: u64,
+    /// Bodies skipped because they are not JSON.
+    skipped_non_json: u64,
+    rows_scanned: u64,
+    /// True when the scan hit its row cap; older traffic was not read.
+    truncated_scan: bool,
+}
+
+/// `POST /api/v1/sites/{site_id}/api-assets/learn` - writers only: merges
+/// the window's JSON bodies and query strings into the stored structures
+/// (keys, types and counts; values are never read).
+async fn learn(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+    Json(payload): Json<LearnRequest>,
+) -> Result<Json<LearnSummary>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    load_site_write(&state.db, id, &current).await?;
+
+    let window_days = payload
+        .days
+        .unwrap_or(DEFAULT_WINDOW_DAYS)
+        .clamp(1, MAX_WINDOW_DAYS);
+    let to = Utc::now();
+    let from = to - Duration::days(window_days);
+
+    let rows = query_all(
+        &state.db,
+        "SELECT method, path, query_string, request_body, \
+                request_body_truncated, timestamp \
+         FROM access_logs \
+         WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3 \
+           AND path IS NOT NULL AND path <> '' \
+         ORDER BY timestamp DESC LIMIT $4",
+        vec![id.into(), from.into(), to.into(), MAX_LEARN_ROWS.into()],
+    )
+    .await?;
+    let truncated_scan = rows.len() as i64 >= MAX_LEARN_ROWS;
+
+    struct Acc {
+        schema: SchemaNode,
+        params: std::collections::BTreeMap<String, QueryParam>,
+        samples: u64,
+        first: Option<DateTime<Utc>>,
+        last: Option<DateTime<Utc>>,
+    }
+    let mut acc: std::collections::BTreeMap<(String, String), Acc> =
+        std::collections::BTreeMap::new();
+    let mut skipped_truncated = 0u64;
+    let mut skipped_non_json = 0u64;
+    let mut samples = 0u64;
+
+    for row in &rows {
+        let method = row.try_get::<String>("", "method").unwrap_or_default();
+        let path = row.try_get::<String>("", "path").unwrap_or_default();
+        if method.is_empty() || path.is_empty() {
+            continue;
+        }
+        let timestamp = row.try_get::<DateTime<Utc>>("", "timestamp").ok();
+        let entry = acc.entry((method, path)).or_insert_with(|| Acc {
+            schema: SchemaNode::default(),
+            params: std::collections::BTreeMap::new(),
+            samples: 0,
+            first: None,
+            last: None,
+        });
+        if let Some(ts) = timestamp {
+            entry.first = Some(entry.first.map_or(ts, |first| first.min(ts)));
+            entry.last = Some(entry.last.map_or(ts, |last| last.max(ts)));
+        }
+        if let Ok(query) = row.try_get::<String>("", "query_string") {
+            if !query.is_empty() {
+                api_learn::learn_query(&query, &mut entry.params);
+            }
+        }
+        let truncated = row
+            .try_get::<bool>("", "request_body_truncated")
+            .unwrap_or(false);
+        match row.try_get::<String>("", "request_body") {
+            Ok(body) if !body.is_empty() && truncated => skipped_truncated += 1,
+            Ok(body) if !body.is_empty() => {
+                if api_learn::merge_body(&mut entry.schema, &body) {
+                    entry.samples += 1;
+                    samples += 1;
+                } else {
+                    skipped_non_json += 1;
+                }
+            },
+            _ => {},
+        }
+    }
+
+    for ((method, path), entry) in &acc {
+        // Each run replaces the endpoint's row with the window's aggregate,
+        // so the stored structure always reflects a stated window.
+        let request_schema = (entry.samples > 0).then(|| {
+            serde_json::to_value(&entry.schema).unwrap_or(serde_json::json!({}))
+        });
+        let query_schema = serde_json::to_value(&entry.params)
+            .unwrap_or(serde_json::json!({}));
+        let existing = api_learned_schemas::Entity::find()
+            .filter(api_learned_schemas::Column::SiteId.eq(id))
+            .filter(api_learned_schemas::Column::Method.eq(method))
+            .filter(api_learned_schemas::Column::Path.eq(path))
+            .one(&state.db)
+            .await?;
+        match existing {
+            Some(row) => {
+                let mut active: api_learned_schemas::ActiveModel = row.into();
+                active.request_schema = Set(request_schema);
+                active.query_schema = Set(query_schema);
+                active.sample_count = Set(entry.samples as i64);
+                active.first_seen = Set(entry.first);
+                active.last_seen = Set(entry.last);
+                active.updated_at = Set(Utc::now());
+                active.update(&state.db).await?;
+            },
+            None => {
+                api_learned_schemas::ActiveModel {
+                    id: Set(Uuid::new_v4()),
+                    site_id: Set(id),
+                    method: Set(method.clone()),
+                    path: Set(path.clone()),
+                    request_schema: Set(request_schema),
+                    query_schema: Set(query_schema),
+                    sample_count: Set(entry.samples as i64),
+                    first_seen: Set(entry.first),
+                    last_seen: Set(entry.last),
+                    updated_at: Set(Utc::now()),
+                }
+                .insert(&state.db)
+                .await?;
+            },
+        }
+    }
+
+    Ok(Json(LearnSummary {
+        window_days,
+        endpoints: acc.len(),
+        samples,
+        skipped_truncated,
+        skipped_non_json,
+        rows_scanned: rows.len() as u64,
+        truncated_scan,
+    }))
+}
+
+/// `GET /api/v1/sites/{site_id}/api-assets/learned`
+async fn learned(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+) -> Result<Json<Vec<api_learned_schemas::Model>>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    load_site_read(&state.db, id, &current).await?;
+    let rows = api_learned_schemas::Entity::find()
+        .filter(api_learned_schemas::Column::SiteId.eq(id))
+        .all(&state.db)
+        .await?;
+    Ok(Json(rows))
+}
+
+/// `GET /api/v1/sites/{site_id}/api-assets/openapi-draft`
+async fn openapi_draft(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path(site_id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let site = load_site_read(&state.db, id, &current).await?;
+    let rows = api_learned_schemas::Entity::find()
+        .filter(api_learned_schemas::Column::SiteId.eq(id))
+        .all(&state.db)
+        .await?;
+
+    // The window is derived from the learned rows' span, so the document
+    // states the real coverage instead of a guess.
+    let window_days = rows
+        .iter()
+        .filter_map(|row| row.first_seen)
+        .min()
+        .map(|first| (Utc::now() - first).num_days().max(1))
+        .unwrap_or(0);
+
+    let endpoints: Vec<api_learn::LearnedEndpoint> = rows
+        .iter()
+        .map(|row| api_learn::LearnedEndpoint {
+            method: row.method.clone(),
+            path: row.path.clone(),
+            request_schema: row.request_schema.clone().and_then(|value| {
+                serde_json::from_value::<SchemaNode>(value).ok()
+            }),
+            query_schema: serde_json::from_value::<
+                std::collections::BTreeMap<String, QueryParam>,
+            >(row.query_schema.clone())
+            .unwrap_or_default(),
+            sample_count: row.sample_count,
+        })
+        .collect();
+
+    Ok(Json(api_learn::openapi_draft(
+        &site.domain,
+        window_days,
+        &endpoints,
+    )))
 }
 
 /// Parses the OpenAPI document into declared operations.

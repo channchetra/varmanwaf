@@ -11,6 +11,7 @@
 pub mod ai;
 pub mod alerts;
 pub mod api;
+pub mod api_learn;
 pub mod auth;
 pub mod config;
 pub mod config_history;

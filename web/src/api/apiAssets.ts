@@ -38,15 +38,72 @@ export interface ApiAssets {
   limitations: string[]
 }
 
+/** One learned endpoint structure (keys, types and counts only). */
+export interface LearnedSchema {
+  id: string
+  site_id: string
+  method: string
+  path: string
+  request_schema: {
+    types?: string[]
+    keys?: Record<string, unknown>
+    items?: unknown
+    presence?: number
+  } | null
+  query_schema: Record<string, { types: string[]; count: number }>
+  sample_count: number
+  first_seen: string | null
+  last_seen: string | null
+  updated_at: string
+}
+
+export interface LearnSummary {
+  window_days: number
+  endpoints: number
+  samples: number
+  skipped_truncated: number
+  skipped_non_json: number
+  rows_scanned: number
+  truncated_scan: boolean
+}
+
 export const apiAssetsApi = {
   list: (siteId: string, days: number) =>
     apiClient.get<ApiAssets>(`/sites/${siteId}/api-assets?days=${days}`),
+
+  learn: (siteId: string, days: number) =>
+    apiClient.post<LearnSummary>(`/sites/${siteId}/api-assets/learn`, {
+      days,
+    }),
+
+  learned: (siteId: string) =>
+    apiClient.get<LearnedSchema[]>(`/sites/${siteId}/api-assets/learned`),
+
+  /** Fetches the draft with the caller's token and saves it as a file. */
+  downloadDraft: async (siteId: string, filename: string) => {
+    const draft = await apiClient.get<Record<string, unknown>>(
+      `/sites/${siteId}/api-assets/openapi-draft`,
+    )
+    const blob = new Blob([JSON.stringify(draft, null, 2)], {
+      type: 'application/json',
+    })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  },
 }
 
 export const apiAssetsKeys = {
   all: ['api-assets'] as const,
   list: (siteId: string, days: number) =>
     [...apiAssetsKeys.all, siteId, days] as const,
+  learned: (siteId: string) =>
+    [...apiAssetsKeys.all, 'learned', siteId] as const,
 }
 
 export default apiAssetsApi

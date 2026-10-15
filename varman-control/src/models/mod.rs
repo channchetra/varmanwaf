@@ -15,6 +15,7 @@ pub mod agent_metrics;
 pub mod agents;
 pub mod ai;
 pub mod alerts;
+pub mod api_learned_schemas;
 pub mod api_protection;
 pub mod bot_protection;
 pub mod cache_settings;

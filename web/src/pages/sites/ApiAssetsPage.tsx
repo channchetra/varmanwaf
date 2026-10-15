@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  Brain,
   BracketsCurly,
   CheckCircle,
+  DownloadSimple,
   Info,
   WarningCircle,
 } from '@phosphor-icons/react'
@@ -12,11 +14,15 @@ import { PageHeader } from '@/components/PageHeader'
 import { Callout } from '@/components/ui/Callout'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Select'
 import { SkeletonStat } from '@/components/ui/Skeleton'
 import { ErrorState } from '@/components/ErrorState'
+import { useToast } from '@/components/ui/Toast'
+import { errorMessage } from '@/api/errors'
 import { apiAssetsApi, apiAssetsKeys } from '@/api/apiAssets'
 import { formatDateTime, formatNumber } from '@/lib/format'
+import { useCanWrite } from '@/hooks'
 
 const WINDOW_OPTIONS = ['7', '14', '30']
 
@@ -28,13 +34,37 @@ const WINDOW_OPTIONS = ['7', '14', '30']
  */
 export function ApiAssetsPage() {
   const { t } = useTranslation()
+  const toast = useToast()
+  const queryClient = useQueryClient()
+  const canWrite = useCanWrite()
   const { siteId = '' } = useParams<{ siteId: string }>()
   const [days, setDays] = useState('7')
+  const [learnDays, setLearnDays] = useState('7')
 
   const query = useQuery({
     queryKey: apiAssetsKeys.list(siteId, Number(days)),
     queryFn: () => apiAssetsApi.list(siteId, Number(days)),
     enabled: Boolean(siteId),
+  })
+  const learnedQuery = useQuery({
+    queryKey: apiAssetsKeys.learned(siteId),
+    queryFn: () => apiAssetsApi.learned(siteId),
+    enabled: Boolean(siteId),
+  })
+
+  const learn = useMutation({
+    mutationFn: () => apiAssetsApi.learn(siteId, Number(learnDays)),
+    onSuccess: (summary) => {
+      toast.success(
+        t('pages.apiAssets.learnDone', {
+          endpoints: summary.endpoints,
+          samples: summary.samples,
+        }),
+      )
+      void queryClient.invalidateQueries({ queryKey: apiAssetsKeys.all })
+    },
+    onError: (error) =>
+      toast.error(t('pages.apiAssets.learnFailed'), errorMessage(error)),
   })
 
   const data = query.data
@@ -211,6 +241,140 @@ export function ApiAssetsPage() {
                   </table>
                 </div>
               )}
+            </CardBody>
+          </Card>
+
+          {/* Bounded learning: structures and counts, never values */}
+          <Card>
+            <CardHeader
+              title={t('pages.apiAssets.learn')}
+              description={t('pages.apiAssets.learnHint')}
+              action={
+                <div className="flex items-center gap-2">
+                  <Select
+                    containerClassName="w-36"
+                    value={learnDays}
+                    options={WINDOW_OPTIONS.map((value) => ({
+                      value,
+                      label: t('pages.apiAssets.windowDays', {
+                        count: Number(value),
+                      }),
+                    }))}
+                    onChange={(event) => setLearnDays(event.target.value)}
+                  />
+                  {canWrite && (
+                    <Button
+                      variant="secondary"
+                      icon={<Brain weight="bold" className="h-4 w-4" />}
+                      loading={learn.isPending}
+                      onClick={() => learn.mutate()}
+                    >
+                      {t('pages.apiAssets.learnRun')}
+                    </Button>
+                  )}
+                </div>
+              }
+            />
+            <CardBody className="flex flex-col gap-3">
+              {learn.data && (
+                <p className="text-[13px] text-fg">
+                  {t('pages.apiAssets.learnSummary', {
+                    endpoints: learn.data.endpoints,
+                    samples: learn.data.samples,
+                    skipped:
+                      learn.data.skipped_truncated +
+                      learn.data.skipped_non_json,
+                  })}
+                  {learn.data.truncated_scan && (
+                    <span className="ml-2 text-fg-warning">
+                      {t('pages.apiAssets.learnTruncated')}
+                    </span>
+                  )}
+                </p>
+              )}
+              {!learnedQuery.data || learnedQuery.data.length === 0 ? (
+                <p className="py-4 text-center text-sm text-fg-subtle">
+                  {t('pages.apiAssets.learnedEmpty')}
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-[13px]">
+                    <thead>
+                      <tr className="border-b border-line text-[11px] uppercase tracking-wide text-fg-subtle">
+                        <th className="py-2 pr-3 font-semibold">
+                          {t('pages.apiAssets.method')}
+                        </th>
+                        <th className="py-2 pr-3 font-semibold">
+                          {t('pages.apiAssets.path')}
+                        </th>
+                        <th className="py-2 pr-3 text-right font-semibold">
+                          {t('pages.apiAssets.learnSamples')}
+                        </th>
+                        <th className="py-2 pr-3 text-right font-semibold">
+                          {t('pages.apiAssets.learnKeys')}
+                        </th>
+                        <th className="py-2 font-semibold">
+                          {t('pages.apiAssets.lastSeen')}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {learnedQuery.data.map((row) => (
+                        <tr
+                          key={row.id}
+                          className="border-b border-line/60 last:border-0"
+                        >
+                          <td className="py-1.5 pr-3">
+                            <span className="pw-mono font-medium text-fg-strong">
+                              {row.method}
+                            </span>
+                          </td>
+                          <td className="py-1.5 pr-3">
+                            <span className="pw-mono text-fg">
+                              {row.path}
+                            </span>
+                          </td>
+                          <td className="py-1.5 pr-3 text-right tabular-nums text-fg">
+                            {formatNumber(row.sample_count)}
+                          </td>
+                          <td className="py-1.5 pr-3 text-right tabular-nums text-fg-subtle">
+                            {Object.keys(row.request_schema?.keys ?? {})
+                              .length +
+                              Object.keys(row.query_schema ?? {}).length}
+                          </td>
+                          <td className="py-1.5 text-fg-subtle">
+                            {row.last_seen ? formatDateTime(row.last_seen) : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="flex justify-end">
+                <Button
+                  variant="secondary"
+                  icon={
+                    <DownloadSimple weight="bold" className="h-4 w-4" />
+                  }
+                  disabled={!learnedQuery.data?.length}
+                  onClick={() =>
+                    apiAssetsApi
+                      .downloadDraft(siteId, `openapi-draft-${siteId}.json`)
+                      .catch((error) =>
+                        toast.error(
+                          t('pages.apiAssets.draftFailed'),
+                          errorMessage(error),
+                        ),
+                      )
+                  }
+                >
+                  {t('pages.apiAssets.downloadDraft')}
+                </Button>
+              </div>
+              <p className="text-[11px] text-fg-subtle">
+                {t('pages.apiAssets.learnNote')}
+              </p>
             </CardBody>
           </Card>
 
