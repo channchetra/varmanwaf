@@ -2917,6 +2917,7 @@
     "tuning": {
       "quickNav": "On this page",
       "summary": "Policy summary",
+      "posture": "Site posture",
       "summaryHint": "The posture the next bundle carries: engine state, enforcement mode, paranoia level and how the managed rules resolve.",
       "engineOn": "Engine: On",
       "engineOff": "Engine: Off",
@@ -2931,7 +2932,7 @@
       "overridden": "Site overrides",
       "exclusions": "{{count}} target exclusions",
       "bindings": "{{count}} package binding(s)",
-      "crs": "CRS protection & posture",
+      "crs": "Effective posture",
       "exceptions": "Rule exceptions",
       "packages": "Exclusion packages",
       "preview": "Preview and apply",

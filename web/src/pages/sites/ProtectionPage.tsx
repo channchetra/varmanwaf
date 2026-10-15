@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Cloud, Gauge, ShieldCheck, Sliders, Stack, Warning } from '@phosphor-icons/react'
+import { Cloud, ShieldCheck, Sliders, Stack, Warning } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Tabs } from '@/components/ui/Tabs'
 import { Switch } from '@/components/ui/Switch'
@@ -12,7 +12,6 @@ import { useToast } from '@/components/ui/Toast'
 import { challengeApi, challengeKeys } from '@/api/challenge'
 import { policiesApi, policyKeys } from '@/api/policies'
 import { useCanWrite } from '@/hooks'
-import { ProtectionSettingsPanel } from './ProtectionSettingsPanel'
 import { WafRulesPanel } from './WafRulesPanel'
 import { CcPanel } from './CcPanel'
 import { PolicyTuningPage } from './PolicyTuningPage'
@@ -20,23 +19,27 @@ import { ProtectionOverview } from './ProtectionOverview'
 
 type ProtectionTab =
   | 'overview'
-  | 'settings'
   | 'rules'
   | 'cc'
   | 'tuning'
 
 const PROTECTION_TABS: ProtectionTab[] = [
   'overview',
-  'settings',
   'rules',
   'cc',
   'tuning',
 ]
 
 function parseTab(value: string | null): ProtectionTab {
-  // `policy` and `exclusions` were separate tabs before the tuning surface
-  // merged them; old links keep working.
-  if (value === 'policy' || value === 'exclusions') return 'tuning'
+  // `policy`, `exclusions` and `settings` were separate tabs before the
+  // tuning surface absorbed them; old links keep working.
+  if (
+    value === 'policy' ||
+    value === 'exclusions' ||
+    value === 'settings'
+  ) {
+    return 'tuning'
+  }
   return PROTECTION_TABS.includes(value as ProtectionTab)
     ? (value as ProtectionTab)
     : 'overview'
@@ -178,11 +181,6 @@ export function ProtectionPage() {
             icon: <ShieldCheck weight="duotone" className="h-4 w-4" />,
           },
           {
-            value: 'settings',
-            label: t('pages.protection.tabSettings'),
-            icon: <Gauge weight="duotone" className="h-4 w-4" />,
-          },
-          {
             value: 'rules',
             label: t('pages.protection.tabRules'),
             icon: <ShieldCheck weight="duotone" className="h-4 w-4" />,
@@ -221,7 +219,6 @@ export function ProtectionPage() {
       {tab === 'overview' && (
         <ProtectionOverview onSelectTab={(next) => setTab(next)} />
       )}
-      {tab === 'settings' && <ProtectionSettingsPanel />}
       {tab === 'rules' && <WafRulesPanel />}
       {tab === 'cc' && <CcPanel />}
       {tab === 'tuning' && <PolicyTuningPage />}

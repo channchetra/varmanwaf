@@ -16,6 +16,7 @@ import { policiesApi, policyKeys } from '@/api/policies'
 import { exclusionsApi, exclusionsKeys } from '@/api/exclusions'
 import { PolicyPage } from './PolicyPage'
 import { ExclusionPackagesPanel } from './ExclusionPackagesPanel'
+import { ProtectionSettingsPanel } from './ProtectionSettingsPanel'
 
 /**
  * Policy tuning: one surface for the site's protection posture, learned from
@@ -42,6 +43,7 @@ export function PolicyTuningPage() {
 
   const sections = [
     { id: 'tuning-summary', label: t('pages.tuning.summary') },
+    { id: 'tuning-posture', label: t('pages.tuning.posture') },
     { id: 'policy-effective', label: t('pages.tuning.crs') },
     { id: 'policy-overrides', label: t('pages.tuning.exceptions') },
     { id: 'tuning-packages', label: t('pages.tuning.packages') },
@@ -59,6 +61,12 @@ export function PolicyTuningPage() {
             effective={effective.data}
             bindings={bindings.data?.length ?? 0}
           />
+        </section>
+
+        {/* The site's own posture knobs (the former Settings tab): they
+            apply until an assigned policy overrides them. */}
+        <section id="tuning-posture" className="scroll-mt-6">
+          <ProtectionSettingsPanel />
         </section>
 
         {/* Posture, rule exceptions, preview and apply keep their existing
