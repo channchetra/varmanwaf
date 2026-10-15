@@ -146,6 +146,7 @@ pub fn engine_config(
             .clone()
             .into_iter()
             .collect(),
+        path_target_exclusions: Vec::new(),
     }
 }
 

@@ -17,6 +17,7 @@ pub mod config_history;
 pub mod crs;
 pub mod defaults;
 pub mod es;
+pub mod exclusions;
 pub mod frontend;
 pub mod grpc;
 pub mod ip_lists;
@@ -369,6 +370,14 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
         tracing::warn!(
             error = %err,
             "failed to seed built-in IP group subscriptions"
+        );
+    }
+    // Seed the exclusion-package catalogue so the console offers the
+    // curated packages on a fresh install.
+    if let Err(err) = exclusions::seed_catalogue(&db).await {
+        tracing::warn!(
+            error = %err,
+            "failed to seed the exclusion-package catalogue"
         );
     }
     let _sync_handle =

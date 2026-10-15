@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Cloud, Gauge, ShieldCheck, Stack, Warning } from '@phosphor-icons/react'
+import { Cloud, Gauge, Package, ShieldCheck, Stack, Warning } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Tabs } from '@/components/ui/Tabs'
 import { Switch } from '@/components/ui/Switch'
@@ -16,9 +16,16 @@ import { ProtectionSettingsPanel } from './ProtectionSettingsPanel'
 import { WafRulesPanel } from './WafRulesPanel'
 import { CcPanel } from './CcPanel'
 import { PolicyPage } from './PolicyPage'
+import { ExclusionPackagesPanel } from './ExclusionPackagesPanel'
 import { ProtectionOverview } from './ProtectionOverview'
 
-type ProtectionTab = 'overview' | 'settings' | 'rules' | 'cc' | 'policy'
+type ProtectionTab =
+  | 'overview'
+  | 'settings'
+  | 'rules'
+  | 'cc'
+  | 'policy'
+  | 'exclusions'
 
 const PROTECTION_TABS: ProtectionTab[] = [
   'overview',
@@ -26,6 +33,7 @@ const PROTECTION_TABS: ProtectionTab[] = [
   'rules',
   'cc',
   'policy',
+  'exclusions',
 ]
 
 function parseTab(value: string | null): ProtectionTab {
@@ -189,6 +197,11 @@ export function ProtectionPage() {
             label: t('pages.protection.tabPolicy'),
             icon: <Stack weight="duotone" className="h-4 w-4" />,
           },
+          {
+            value: 'exclusions',
+            label: t('pages.protection.tabExclusions'),
+            icon: <Package weight="duotone" className="h-4 w-4" />,
+          },
         ]}
       />
 
@@ -217,6 +230,7 @@ export function ProtectionPage() {
       {tab === 'rules' && <WafRulesPanel />}
       {tab === 'cc' && <CcPanel />}
       {tab === 'policy' && <PolicyPage />}
+      {tab === 'exclusions' && <ExclusionPackagesPanel />}
 
       <ConfirmDialog
         open={confirmUnderAttack}

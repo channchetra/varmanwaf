@@ -356,6 +356,18 @@ pub struct WafConfig {
     /// Per-rule excluded request targets (`rule id -> targets`).
     #[serde(default)]
     pub rule_target_exclusions: std::collections::HashMap<String, Vec<String>>,
+    /// Path-scoped target exclusions (exclusion packages): active only
+    /// while the request path starts with `path_prefix`.
+    #[serde(default)]
+    pub path_target_exclusions: Vec<PathTargetExclusion>,
+}
+
+/// One path-scoped target exclusion from a package binding.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PathTargetExclusion {
+    pub rule_id: String,
+    pub targets: Vec<String>,
+    pub path_prefix: String,
 }
 
 /// Default for [`WafConfig::engine_mode`]: follow the process-wide
@@ -1901,6 +1913,16 @@ impl RuleCache {
                 .rule_target_exclusions
                 .iter()
                 .map(|entry| (entry.rule_id.clone(), entry.targets.clone()))
+                .collect(),
+            path_target_exclusions: w
+                .rule_target_exclusions
+                .iter()
+                .filter(|entry| !entry.path_prefix.is_empty())
+                .map(|entry| PathTargetExclusion {
+                    rule_id: entry.rule_id.clone(),
+                    targets: entry.targets.clone(),
+                    path_prefix: entry.path_prefix.clone(),
+                })
                 .collect(),
         }
     }

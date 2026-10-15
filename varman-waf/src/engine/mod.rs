@@ -113,6 +113,20 @@ pub struct WafEngineConfig {
     /// (`cf.waf.score.*`) are not request targets, so exclusions never
     /// suppress score-consumer rules.
     pub rule_target_exclusions: std::collections::HashMap<String, Vec<String>>,
+    /// Target exclusions scoped to a request-path prefix (exclusion
+    /// packages): they apply only while the request path starts with the
+    /// prefix, and merge with the site-wide exclusions above.
+    pub path_target_exclusions: Vec<PathTargetExclusion>,
+}
+
+/// One path-scoped target exclusion: a package's entry, active only under
+/// its path prefix.
+#[derive(Debug, Clone, Default)]
+pub struct PathTargetExclusion {
+    pub rule_id: String,
+    pub targets: Vec<String>,
+    /// Requests whose path starts with this prefix are affected.
+    pub path_prefix: String,
 }
 
 impl Default for WafEngineConfig {
@@ -134,6 +148,7 @@ impl Default for WafEngineConfig {
             disabled_rules: std::collections::HashSet::new(),
             rule_scores: std::collections::HashMap::new(),
             rule_target_exclusions: std::collections::HashMap::new(),
+            path_target_exclusions: Vec::new(),
         }
     }
 }
@@ -321,6 +336,7 @@ pub struct WafEngine {
     disabled_rules: std::collections::HashSet<String>,
     rule_scores: std::collections::HashMap<String, u32>,
     rule_target_exclusions: std::collections::HashMap<String, Vec<String>>,
+    path_target_exclusions: Vec<PathTargetExclusion>,
 }
 
 impl std::fmt::Debug for WafEngine {
@@ -369,6 +385,7 @@ impl WafEngine {
             disabled_rules: config.disabled_rules.clone(),
             rule_scores: config.rule_scores.clone(),
             rule_target_exclusions: config.rule_target_exclusions.clone(),
+            path_target_exclusions: config.path_target_exclusions.clone(),
         }
     }
 
@@ -1201,12 +1218,23 @@ impl WafEngine {
             // longer matches against the context with those targets
             // removed: a finding independent of the excluded source stays.
             if matched {
-                let targets = self
+                let mut targets: Vec<String> = self
                     .rule_target_exclusions
                     .get(rule.id.as_str())
-                    .filter(|targets| !targets.is_empty());
-                if let Some(targets) = targets {
-                    let filtered = FilteredCtx::new(*rule_ctx, targets);
+                    .cloned()
+                    .unwrap_or_default();
+                // Exclusion packages: path-scoped exclusions merge with the
+                // site-wide ones while the request path matches.
+                for exclusion in &self.path_target_exclusions {
+                    if exclusion.rule_id == rule.id
+                        && !exclusion.path_prefix.is_empty()
+                        && request.path.starts_with(&exclusion.path_prefix)
+                    {
+                        targets.extend(exclusion.targets.iter().cloned());
+                    }
+                }
+                if !targets.is_empty() {
+                    let filtered = FilteredCtx::new(*rule_ctx, &targets);
                     matched =
                         evaluate(&rule.expression, &filtered.as_ctx(*rule_ctx));
                 }

@@ -420,6 +420,9 @@ message WafConfig {
 message RuleTargetExclusions {
   string rule_id = 1;
   repeated string targets = 2;
+  // When set, the exclusion applies only while the request path starts
+  // with this prefix (exclusion packages); empty means site-wide.
+  string path_prefix = 3;
 }
 
 enum WafMode {

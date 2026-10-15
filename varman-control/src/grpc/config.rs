@@ -33,8 +33,8 @@ use crate::api::site_basic_auth as site_basic_auth_api;
 use crate::models::{
     acme_challenge, action, bot_protection, cache_rules, challenge_settings,
     characteristic, client_cert_status, defense_settings, error_pages,
-    geo_rules, ip_access_rules, ip_group_sites, ip_groups, mode,
-    mtls_client_certificate, rate_limit_rules, rewrite_rules, rule,
+    exclusion_packages, geo_rules, ip_access_rules, ip_group_sites, ip_groups,
+    mode, mtls_client_certificate, rate_limit_rules, rewrite_rules, rule,
     rule_groups, site, site_basic_auth, site_certificates, site_routes,
     site_ssl, site_status, site_upstream_pools, site_upstreams, waf_settings,
 };
@@ -850,7 +850,11 @@ fn waf_config_with_policy(
         config.rule_target_exclusions = effective
             .rule_target_exclusions
             .into_iter()
-            .map(|(rule_id, targets)| RuleTargetExclusions { rule_id, targets })
+            .map(|(rule_id, targets)| RuleTargetExclusions {
+                rule_id,
+                targets,
+                path_prefix: String::new(),
+            })
             .collect();
         config.engine_mode = effective.engine_mode;
         config.enabled = (effective.waf_enabled
@@ -1103,6 +1107,56 @@ fn ip_group_to_proto(row: &ip_groups::Model) -> IpAccessRule {
         note: row.description.clone().unwrap_or_default(),
         enabled: row.enabled,
     }
+}
+
+/// Expands the site's exclusion-package bindings into path-scoped target
+/// exclusions: each enabled binding's package entries are expanded against
+/// the managed catalogue and carried with the binding's path prefix.
+async fn exclusion_package_exclusions(
+    db: &DatabaseConnection,
+    site_id: Uuid,
+) -> Result<Vec<RuleTargetExclusions>, sea_orm::DbErr> {
+    let bindings = exclusion_packages::bindings::Entity::find()
+        .filter(exclusion_packages::bindings::Column::SiteId.eq(site_id))
+        .filter(exclusion_packages::bindings::Column::Enabled.eq(true))
+        .all(db)
+        .await?;
+    if bindings.is_empty() {
+        return Ok(Vec::new());
+    }
+    let package_ids: Vec<Uuid> =
+        bindings.iter().map(|binding| binding.package_id).collect();
+    let packages = exclusion_packages::Entity::find()
+        .filter(exclusion_packages::Column::Id.is_in(package_ids))
+        .all(db)
+        .await?;
+    let by_id: HashMap<Uuid, &exclusion_packages::Model> = packages
+        .iter()
+        .map(|package| (package.id, package))
+        .collect();
+
+    let mut exclusions = Vec::new();
+    for binding in &bindings {
+        let Some(package) = by_id.get(&binding.package_id) else {
+            continue;
+        };
+        let Ok(entries) = crate::exclusions::parse_entries(&package.entries)
+        else {
+            tracing::warn!(
+                package = %package.key,
+                "exclusion package entries are invalid; binding skipped"
+            );
+            continue;
+        };
+        for (rule_id, targets) in crate::exclusions::expand(&entries) {
+            exclusions.push(RuleTargetExclusions {
+                rule_id,
+                targets,
+                path_prefix: binding.path_prefix.clone(),
+            });
+        }
+    }
+    Ok(exclusions)
 }
 
 /// Converts stored geo rules into the protocol representation, resolving
@@ -1491,6 +1545,13 @@ pub async fn build_rule_bundle(
         waf_settings.as_ref(),
         Some(&policy_layers),
     );
+
+    // Exclusion packages: the site's enabled bindings expand against the
+    // managed catalogue into path-scoped target exclusions, merged with the
+    // policy's site-wide ones.
+    waf_config
+        .rule_target_exclusions
+        .extend(exclusion_package_exclusions(db, site_row.id).await?);
 
     // An imported CRS ruleset compiles into the same SecLang source the
     // edge evaluates as virtual patches; the explicit layer source, when

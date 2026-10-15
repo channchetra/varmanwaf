@@ -72,9 +72,9 @@ use varman_waf::rules::{
     EvalContext, Expression, evaluate as evaluate_expression, parse_expression,
 };
 use varman_waf::{
-    CategorySet, CompiledRule, RequestData, RuleAction, ScoreBreakdown,
-    StackSet, WafAction, WafEngine, WafEngineConfig, WafLevel, WafMode,
-    WafVerdict,
+    CategorySet, CompiledRule, PathTargetExclusion, RequestData, RuleAction,
+    ScoreBreakdown, StackSet, WafAction, WafEngine, WafEngineConfig, WafLevel,
+    WafMode, WafVerdict,
 };
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -2267,6 +2267,15 @@ fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        path_target_exclusions: cfg
+            .path_target_exclusions
+            .iter()
+            .map(|entry| PathTargetExclusion {
+                rule_id: entry.rule_id.clone(),
+                targets: entry.targets.clone(),
+                path_prefix: entry.path_prefix.clone(),
+            })
+            .collect(),
     };
     WafEngine::new(&engine_config)
 }
@@ -2615,6 +2624,7 @@ impl TryFrom<&PluginConf> for WafPlugin {
             disabled_rules: Default::default(),
             rule_scores: Default::default(),
             rule_target_exclusions: Default::default(),
+            path_target_exclusions: Default::default(),
         };
 
         Ok(Self {
@@ -4020,6 +4030,7 @@ ml_threshold = 0.75
             disabled_rules: Vec::new(),
             rule_scores: Default::default(),
             rule_target_exclusions: Default::default(),
+            path_target_exclusions: Default::default(),
         }
     }
 

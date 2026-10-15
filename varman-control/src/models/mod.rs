@@ -27,6 +27,7 @@ pub mod crs_rules;
 pub mod crs_rulesets;
 pub mod defense_settings;
 pub mod error_pages;
+pub mod exclusion_packages;
 pub mod geo_rules;
 pub mod host_samples;
 pub mod instance_settings;

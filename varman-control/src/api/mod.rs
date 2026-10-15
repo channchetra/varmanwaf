@@ -25,6 +25,7 @@ pub mod defense;
 pub mod display;
 pub mod error;
 pub mod error_pages;
+pub mod exclusions;
 pub mod geo;
 pub mod ip_analysis;
 pub mod ip_datasets;
@@ -109,6 +110,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(geo::routes())
         .merge(ip_analysis::routes())
         .merge(ip_datasets::routes())
+        .merge(exclusions::routes())
         .merge(api_assets::routes())
         .merge(bot::routes())
         .merge(challenge::routes())

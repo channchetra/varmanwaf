@@ -347,6 +347,7 @@ pub async fn refresh(
             disabled_rules: std::collections::HashSet::new(),
             rule_scores: std::collections::HashMap::new(),
             rule_target_exclusions: std::collections::HashMap::new(),
+            path_target_exclusions: Vec::new(),
             threshold: 40,
             paranoia_level: 2,
             max_decode_layers: 3,

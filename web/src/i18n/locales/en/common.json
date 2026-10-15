@@ -1195,6 +1195,7 @@
       "tabRules": "WAF Rules",
       "tabCc": "CC Protection",
       "tabPolicy": "Policy",
+      "tabExclusions": "Exclusions",
       "policyBanner": "This site follows policy {{name}} (rev {{n}}). The policy overrides the settings on this page; local deltas belong in the site overlay.",
       "policyBannerLink": "Open the policy tab",
       "advancedMode": "Advanced mode",
@@ -2828,6 +2829,28 @@
       "synced": "Synced {{count}} dataset(s), re-pushed {{sites}} site(s)",
       "syncFailed": "Could not sync the datasets",
       "note": "Enforcement uses these ranges only; country labels in logs and stats come from the built-in table."
+    },
+    "exclusions": {
+      "attachedTitle": "Attached packages",
+      "attachedHint": "Path-scoped exclusions the edge is enforcing for this site. Disable a binding to keep it configured but inactive.",
+      "noneAttached": "No exclusion package is attached to this site.",
+      "catalogue": "Package catalogue",
+      "catalogueHint": "Curated exclusion sets for well-known applications. Every entry states exactly what it excludes; attach one at the path prefix where it applies.",
+      "builtin": "Curated",
+      "custom": "Custom",
+      "selector": "Selector",
+      "excludes": "excludes",
+      "pathPrefix": "Path prefix",
+      "pathPrefixHint": "The exclusion applies only to requests under this path.",
+      "attach": "Attach",
+      "attached": "Attached \"{{name}}\" at {{prefix}}",
+      "attachFailed": "Could not attach the package",
+      "updateFailed": "Could not update the binding",
+      "removeFailed": "Could not remove the binding",
+      "removed": "Binding removed",
+      "reinstall": "Reinstall",
+      "stale": "Update available",
+      "review": "Review before attaching: an exclusion is a scoped blind spot for the listed rules."
     }
   },
   "challengeLevels": {
