@@ -7,6 +7,16 @@ centrally-controlled Web Application Firewall built on
 
 > Project home: [`README.md`](../README.md)
 
+**Release 1.0.0** — the current reference set:
+
+| Document | What you'll find |
+| --- | --- |
+| [features.md](./features.md) | The complete feature inventory: every console surface, how it works, its API, its honest limits |
+| [user-guide-km/index.html](./user-guide-km/index.html) | **ណែនាំអ្នកប្រើប្រាស់ (ភាសាខ្មែរ)** — the full Khmer user guide with screenshots of every feature |
+| [security-engine.md](./security-engine.md) | Pipeline, canonicalization, detectors, scoring, limits |
+| [benchmarks/v1.0.0.md](./benchmarks/v1.0.0.md) | The 1.0.0 performance benchmark report |
+| [releases/](./releases) | Per-release notes (digests, E2E evidence) |
+
 ## 🚀 Getting started
 
 | Document | What you'll find |
@@ -14,6 +24,7 @@ centrally-controlled Web Application Firewall built on
 | [quick-start.md](./quick-start.md) | From zero to your first protected site: prerequisites, install, first run |
 | [deployment.md](./deployment.md) | Docker Compose, binary + systemd, and distributed (server + agents) topologies |
 | [user-guide.md](./user-guide.md) | Dashboard walkthrough — sites, rules, policies, IP access, rate limiting |
+| [features.md](./features.md) | The current per-surface inventory (the guide above covers the core flows) |
 | [http-lifecycle.md](./http-lifecycle.md) | Where every feature acts in the request pipeline — the WAF check order, caching, error pages, and how to debug with it |
 | [api.md](./api.md) | REST API reference (base URL `https://<host>:9080/api/v1`) |
 | [profiling.md](./profiling.md) | Built-in profiling: `go tool pprof` captures, SVG flame graphs, memory snapshots |

@@ -9,6 +9,13 @@
 
 ## Status board
 
+> **1.0.0 (2026-10-16):** the first official release. All nine mandate phases
+> are complete, every round from 0.21 to 0.64 is absorbed, and the release is
+> verified by the full 40-script E2E sweep, the benchmark report
+> ([`benchmarks/v1.0.0.md`](./benchmarks/v1.0.0.md)) and the Khmer user guide
+> ([`user-guide-km/index.html`](./user-guide-km/index.html)). What remains
+> below is the post-1.0.0 candidate list, kept honest.
+
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Repository understanding | done (2026-10-06) |
@@ -583,7 +590,9 @@ API discovery, enterprise clustering (mandate §35).
 
 ---
 
-## Dashboard "Coming soon" backlog (implement these next)
+## Post-1.0.0 candidates (kept honest)
+
+### Dashboard "Coming soon" backlog
 
 Investigation results (2026-10-06):
 - `asn` / `country` rate-limit characteristics are **already implemented and

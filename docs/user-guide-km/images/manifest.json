@@ -1,0 +1,357 @@
+{
+  "base": "https://localhost:9080",
+  "site": "996841ea-f1c0-4ba2-be1e-34aca2e0439c",
+  "captured": [
+    {
+      "name": "01-login",
+      "route": "/login",
+      "auth": false,
+      "wait": 1200,
+      "file": "01-login.png",
+      "bytes": 77846
+    },
+    {
+      "name": "02-dashboard",
+      "route": "/dashboard",
+      "wait": 3000,
+      "file": "02-dashboard.png",
+      "bytes": 87452
+    },
+    {
+      "name": "03-sites",
+      "route": "/sites",
+      "wait": 1800,
+      "file": "03-sites.png",
+      "bytes": 61218
+    },
+    {
+      "name": "04-site-origin",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/origin",
+      "wait": 1800,
+      "file": "04-site-origin.png",
+      "bytes": 83552
+    },
+    {
+      "name": "05-site-protection-overview",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/protection",
+      "wait": 2200,
+      "file": "05-site-protection-overview.png",
+      "bytes": 123632
+    },
+    {
+      "name": "06-site-protection-rules",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/protection?tab=rules",
+      "wait": 2200,
+      "file": "06-site-protection-rules.png",
+      "bytes": 106539
+    },
+    {
+      "name": "07-site-protection-cc",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/protection?tab=cc",
+      "wait": 2200,
+      "file": "07-site-protection-cc.png",
+      "bytes": 108846
+    },
+    {
+      "name": "08-site-tuning-summary",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/protection?tab=tuning",
+      "wait": 2600,
+      "file": "08-site-tuning-summary.png",
+      "bytes": 128841
+    },
+    {
+      "name": "09-site-tuning-posture",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/protection?tab=tuning",
+      "scrollTo": "tuning-posture",
+      "wait": 1200,
+      "file": "09-site-tuning-posture.png",
+      "bytes": 101282
+    },
+    {
+      "name": "10-site-tuning-effective",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/protection?tab=tuning",
+      "scrollTo": "policy-effective",
+      "wait": 1200,
+      "file": "10-site-tuning-effective.png",
+      "bytes": 126542
+    },
+    {
+      "name": "11-site-tuning-exceptions",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/protection?tab=tuning",
+      "scrollTo": "policy-overrides",
+      "wait": 1200,
+      "file": "11-site-tuning-exceptions.png",
+      "bytes": 128841
+    },
+    {
+      "name": "12-site-tuning-packages",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/protection?tab=tuning",
+      "scrollTo": "tuning-packages",
+      "wait": 1200,
+      "file": "12-site-tuning-packages.png",
+      "bytes": 107589
+    },
+    {
+      "name": "13-site-tuning-preview",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/protection?tab=tuning",
+      "scrollTo": "policy-plan",
+      "wait": 1200,
+      "file": "13-site-tuning-preview.png",
+      "bytes": 144076
+    },
+    {
+      "name": "14-site-tuning-history",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/protection?tab=tuning",
+      "scrollTo": "tuning-history",
+      "wait": 1200,
+      "file": "14-site-tuning-history.png",
+      "bytes": 112353
+    },
+    {
+      "name": "15-site-rate-limiting",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/rate-limiting",
+      "wait": 1800,
+      "file": "15-site-rate-limiting.png",
+      "bytes": 82957
+    },
+    {
+      "name": "16-site-bot",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/bot",
+      "wait": 1800,
+      "file": "16-site-bot.png",
+      "bytes": 111919
+    },
+    {
+      "name": "17-site-access-ip",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/access?tab=ip",
+      "wait": 2000,
+      "file": "17-site-access-ip.png",
+      "bytes": 89915
+    },
+    {
+      "name": "18-site-access-geo",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/access?tab=geo",
+      "wait": 2200,
+      "file": "18-site-access-geo.png",
+      "bytes": 120449
+    },
+    {
+      "name": "19-site-access-basic-auth",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/access?tab=basic-auth",
+      "wait": 1800,
+      "file": "19-site-access-basic-auth.png",
+      "bytes": 117667
+    },
+    {
+      "name": "20-site-api-assets",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/security/api-assets",
+      "wait": 2600,
+      "file": "20-site-api-assets.png",
+      "bytes": 122044
+    },
+    {
+      "name": "21-site-caching",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/caching",
+      "wait": 1800,
+      "file": "21-site-caching.png",
+      "bytes": 116706
+    },
+    {
+      "name": "22-site-ssl",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/ssl",
+      "wait": 1800,
+      "file": "22-site-ssl.png",
+      "bytes": 98741
+    },
+    {
+      "name": "23-site-traffic",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/traffic",
+      "wait": 2800,
+      "file": "23-site-traffic.png",
+      "bytes": 96694
+    },
+    {
+      "name": "24-site-rewrite",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/rules/rewrite",
+      "wait": 1800,
+      "file": "24-site-rewrite.png",
+      "bytes": 67823
+    },
+    {
+      "name": "25-site-settings",
+      "route": "/sites/996841ea-f1c0-4ba2-be1e-34aca2e0439c/settings",
+      "wait": 1800,
+      "file": "25-site-settings.png",
+      "bytes": 78936
+    },
+    {
+      "name": "26-logs",
+      "route": "/logs",
+      "wait": 2600,
+      "file": "26-logs.png",
+      "bytes": 114104
+    },
+    {
+      "name": "27-alerts",
+      "route": "/alerts",
+      "wait": 2200,
+      "file": "27-alerts.png",
+      "bytes": 90131
+    },
+    {
+      "name": "28-alerts-channels",
+      "route": "/alerts",
+      "scrollTo": "channels",
+      "wait": 1200,
+      "file": "28-alerts-channels.png",
+      "bytes": 101494
+    },
+    {
+      "name": "29-alerts-security",
+      "route": "/alerts",
+      "scrollTo": "security",
+      "wait": 1200,
+      "file": "29-alerts-security.png",
+      "bytes": 118564
+    },
+    {
+      "name": "30-reports",
+      "route": "/reports",
+      "wait": 2200,
+      "file": "30-reports.png",
+      "bytes": 98595
+    },
+    {
+      "name": "31-policies",
+      "route": "/policies",
+      "wait": 2000,
+      "file": "31-policies.png",
+      "bytes": 61755
+    },
+    {
+      "name": "32-policy-detail",
+      "route": "/policies/490f0c32-7d56-46d4-ae24-d9f0db876cdc",
+      "wait": 2400,
+      "file": "32-policy-detail.png",
+      "bytes": 88294
+    },
+    {
+      "name": "33-crs",
+      "route": "/crs",
+      "wait": 2400,
+      "file": "33-crs.png",
+      "bytes": 64990
+    },
+    {
+      "name": "34-ip-groups",
+      "route": "/ip-groups",
+      "wait": 1800,
+      "file": "34-ip-groups.png",
+      "bytes": 81988
+    },
+    {
+      "name": "35-blocked-ips",
+      "route": "/blocked-ips",
+      "wait": 1800,
+      "file": "35-blocked-ips.png",
+      "bytes": 63898
+    },
+    {
+      "name": "36-agents",
+      "route": "/agents",
+      "wait": 1800,
+      "file": "36-agents.png",
+      "bytes": 70749
+    },
+    {
+      "name": "37-config-history",
+      "route": "/config-history",
+      "wait": 2000,
+      "file": "37-config-history.png",
+      "bytes": 138300
+    },
+    {
+      "name": "38-lifecycle",
+      "route": "/lifecycle",
+      "wait": 1800,
+      "file": "38-lifecycle.png",
+      "bytes": 122685
+    },
+    {
+      "name": "39-assistant",
+      "route": "/assistant",
+      "wait": 1800,
+      "file": "39-assistant.png",
+      "bytes": 55682
+    },
+    {
+      "name": "40-global-ssl",
+      "route": "/ssl",
+      "wait": 1800,
+      "file": "40-global-ssl.png",
+      "bytes": 72137
+    },
+    {
+      "name": "41-global-traffic",
+      "route": "/traffic",
+      "wait": 2800,
+      "file": "41-global-traffic.png",
+      "bytes": 84893
+    },
+    {
+      "name": "42-settings",
+      "route": "/settings",
+      "wait": 2200,
+      "file": "42-settings.png",
+      "bytes": 86362
+    },
+    {
+      "name": "43-settings-display",
+      "route": "/settings",
+      "scrollTo": "display",
+      "wait": 1200,
+      "file": "43-settings-display.png",
+      "bytes": 94870
+    },
+    {
+      "name": "44-settings-users",
+      "route": "/settings",
+      "scrollTo": "users",
+      "wait": 1200,
+      "file": "44-settings-users.png",
+      "bytes": 131722
+    },
+    {
+      "name": "45-settings-api-protection",
+      "route": "/settings",
+      "scrollTo": "api-protection",
+      "wait": 1200,
+      "file": "45-settings-api-protection.png",
+      "bytes": 100219
+    },
+    {
+      "name": "46-settings-log-retention",
+      "route": "/settings",
+      "scrollTo": "log-retention",
+      "wait": 1200,
+      "file": "46-settings-log-retention.png",
+      "bytes": 105208
+    },
+    {
+      "name": "47-settings-error-pages",
+      "route": "/settings",
+      "scrollTo": "error-pages",
+      "wait": 1200,
+      "file": "47-settings-error-pages.png",
+      "bytes": 105421
+    },
+    {
+      "name": "48-settings-api-keys",
+      "route": "/settings",
+      "scrollTo": "api-keys",
+      "wait": 1200,
+      "file": "48-settings-api-keys.png",
+      "bytes": 101697
+    }
+  ]
+}

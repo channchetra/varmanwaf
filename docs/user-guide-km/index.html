@@ -1,0 +1,1077 @@
+<!doctype html>
+<html lang="km">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VarmanWAF 1.0.0 — សៀវភៅណែនាំអ្នកប្រើប្រាស់</title>
+<style>
+  :root {
+    --brand: #ea580c;
+    --brand-soft: #fff1e7;
+    --ink: #1c1a22;
+    --ink-soft: #4b4657;
+    --line: #e6e2ee;
+    --bg: #faf9fc;
+    --code-bg: #f4f2f8;
+    --note: #f0f7ff;
+    --note-line: #b9d7f5;
+    --warn: #fff7ed;
+    --warn-line: #f5cfa0;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Noto Sans Khmer", "Khmer OS Siemreap", "Khmer OS", "Kantumruy Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 16px;
+    line-height: 1.95;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 22px 90px; }
+  header.cover {
+    background: linear-gradient(140deg, #7c2d12 0%, #c2410c 55%, #f97316 100%);
+    color: #fff;
+    padding: 74px 22px 60px;
+    text-align: center;
+  }
+  header.cover .kh { font-size: 44px; line-height: 1.5; font-weight: 700; }
+  header.cover .en { font-size: 15px; letter-spacing: .16em; text-transform: uppercase; opacity: .82; margin-top: 6px; }
+  header.cover p.sub { max-width: 640px; margin: 22px auto 0; opacity: .92; }
+  header.cover .badge {
+    display: inline-block; margin-top: 26px; padding: 7px 16px;
+    border: 1px solid rgba(255,255,255,.5); border-radius: 999px;
+    font-size: 14px; letter-spacing: .06em;
+  }
+  .toc {
+    background: #fff; border: 1px solid var(--line); border-radius: 14px;
+    padding: 26px 30px; margin: 40px 0 8px;
+  }
+  .toc h2 { margin: 0 0 12px; font-size: 20px; }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { margin: 3px 0; }
+  .toc a { color: var(--brand); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  section.card {
+    background: #fff; border: 1px solid var(--line); border-radius: 14px;
+    padding: 30px 32px 26px; margin: 30px 0;
+  }
+  h1.part {
+    margin: 58px 0 0; font-size: 26px; line-height: 1.6;
+    padding-bottom: 10px; border-bottom: 3px solid var(--brand);
+  }
+  h2 { font-size: 22px; margin: 30px 0 8px; line-height: 1.6; }
+  h3 { font-size: 18px; margin: 24px 0 6px; line-height: 1.6; color: #2f2a3c; }
+  p { margin: 10px 0; }
+  ul, ol { margin: 10px 0; padding-left: 26px; }
+  li { margin: 4px 0; }
+  code {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 1px 6px; font-family: "Cascadia Mono", Consolas, monospace; font-size: 14px;
+    direction: ltr; unicode-bidi: embed;
+  }
+  pre {
+    background: #211d2e; color: #ece9f4; border-radius: 10px; padding: 16px 18px;
+    overflow-x: auto; direction: ltr; text-align: left; font-size: 14px; line-height: 1.7;
+  }
+  pre code { background: none; border: none; color: inherit; padding: 0; }
+  figure { margin: 18px 0 22px; }
+  figure img {
+    width: 100%; border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 6px 24px rgba(124, 45, 18, .08);
+  }
+  figcaption { font-size: 14px; color: var(--ink-soft); margin-top: 8px; text-align: center; }
+  .note, .warn {
+    border-radius: 10px; padding: 14px 18px; margin: 16px 0; font-size: 15px;
+  }
+  .note { background: var(--note); border: 1px solid var(--note-line); }
+  .warn { background: var(--warn); border: 1px solid var(--warn-line); }
+  .note b, .warn b { display: block; margin-bottom: 2px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 15px; }
+  th, td { border: 1px solid var(--line); padding: 9px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--brand-soft); }
+  .steps { counter-reset: step; padding-left: 0; list-style: none; }
+  .steps > li {
+    counter-increment: step; position: relative; padding-left: 44px; margin: 12px 0;
+  }
+  .steps > li::before {
+    content: counter(step); position: absolute; left: 0; top: 3px;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--brand); color: #fff; text-align: center; line-height: 28px;
+    font-size: 14px; font-weight: 700;
+  }
+  .kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; padding: 0 7px; font-size: 14px; background: #fff; }
+  footer.doc { text-align: center; color: var(--ink-soft); font-size: 14px; margin-top: 60px; }
+  a { color: var(--brand); }
+  @media print {
+    header.cover { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    section.card { break-inside: avoid-page; }
+    figure img { box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="cover">
+  <div class="kh">វរ្ម័ន</div>
+  <div class="en">VarmanWAF 1.0.0</div>
+  <p class="sub">សៀវភៅណែនាំអ្នកប្រើប្រាស់ពេញលេញ — មុខងារទាំងអស់ មួយៗ ជាមួយជំហានលម្អិត និងរូបភាពពិតពីផ្ទាំងគ្រប់គ្រង។</p>
+  <div class="badge">កំណែ ១.០.០ · ឯកសារភាសាខ្មែរ</div>
+</header>
+
+<div class="wrap">
+
+<nav class="toc">
+  <h2>មាតិកា</h2>
+  <ol>
+    <li><a href="#p1">ការណែនាំអំពី VarmanWAF</a> — តើវាជាអ្វី, ស្ថាបត្យកម្ម, តម្រូវការ</li>
+    <li><a href="#p2">ការចាប់ផ្តើមប្រើប្រាស់</a> — ដំឡើង, ចូលប្រើ, ជំហានដំបូង</li>
+    <li><a href="#p3">ផ្ទាំងគ្រប់គ្រង (Dashboard)</a></li>
+    <li><a href="#p4">គេហទំព័រ (Sites)</a> — បញ្ជី, Origin, ការកំណត់, Cache, SSL, Traffic, Rewrite</li>
+    <li><a href="#p5">ការការពារ (Protection)</a> — Rules, CC, Policy tuning, Exclusions, Rate limiting, Bot</li>
+    <li><a href="#p6">ការគ្រប់គ្រងការចូលប្រើ (Access control)</a> — IP, Geo (ipverse), ការវិភាគ IP, Basic Auth</li>
+    <li><a href="#p7">API assets</a> — បញ្ជី API, ការរៀនសូត្រ, OpenAPI, Per-operation controls</li>
+    <li><a href="#p8">កំណត់ហេតុ (Logs)</a></li>
+    <li><a href="#p9">ការជូនដំណឹង (Alerts &amp; Notifications)</a> — ច្បាប់, ឆានែល, Telegram, Login security</li>
+    <li><a href="#p10">របាយការណ៍ (Reports)</a> — ការបង្កើត និងកាលវិភាគផ្ញើ</li>
+    <li><a href="#p11">គោលនយោបាយរួម (Policies)</a></li>
+    <li><a href="#p12">OWASP CRS</a></li>
+    <li><a href="#p13">IP Groups និង Blocked IPs</a></li>
+    <li><a href="#p14">បណ្តាញ (Fleet)</a> — Agents, Config history, Lifecycle</li>
+    <li><a href="#p15">ជំនួយការ AI (Assistant)</a></li>
+    <li><a href="#p16">SSL និងចរាចរណ៍រួម</a></li>
+    <li><a href="#p17">ការកំណត់ប្រព័ន្ធ (Settings)</a></li>
+    <li><a href="#p18">ម៉ាស៊ីនសុវត្ថិភាព ដំណើរការយ៉ាងដូចម្តេច?</a></li>
+    <li><a href="#p19">ប្រតិបត្តិការ និងការដោះស្រាយបញ្ហា</a></li>
+    <li><a href="#p20">ឧបសម្ព័ន្ធ — ពាក្យបច្ចេកទេស និងតារាងយោងរហ័ស</a></li>
+  </ol>
+</nav>
+
+<h1 class="part" id="p1">ជំពូកទី ១ — ការណែនាំអំពី VarmanWAF</h1>
+
+<section class="card">
+<h2 id="s1-1">១.១ តើ VarmanWAF ជាអ្វី?</h2>
+<p>VarmanWAF គឺជា <b>វេទិកាការពារគេហទំព័រ (Web Application Firewall)</b> ដែលអ្នកអាចដំណើរការដោយខ្លួនឯង (self-hosted)។ វាដាក់នៅពីមុខគេហទំព័រ ឬ API របស់អ្នក ដើម្បីពិនិត្យរាល់សំណើ (request) ដែលចូលមក — ប្រសិនបើសំណើនោះជាការវាយប្រហារ (SQL Injection, XSS, ការស្កេនរកចន្លោះប្រហោង ។ល។) វានឹងទប់ស្កាត់ ឬកត់ត្រាទុកមុនពេលទៅដល់ម៉ាស៊ីនមេពិតរបស់អ្នក។</p>
+<p>ប្រព័ន្ធមានពីរផ្នែកធំៗ៖</p>
+<ul>
+  <li><b>Control Plane (ផ្ទាំងគ្រប់គ្រងមជ្ឈមណ្ឌល)</b> — ផ្ទាំងបញ្ជា និង REST API នៅច្រក <code>9080</code> ព្រមទាំង gRPC នៅច្រក <code>9090</code>។ វាជាកន្លែងដែលអ្នកកំណត់អ្វីៗទាំងអស់ និងរក្សាទុកទិន្នន័យក្នុង PostgreSQL។</li>
+  <li><b>Edge Agent (ភ្នាក់ងារនៅគែមបណ្តាញ)</b> — ដំណើរការនៅជិតគេហទំព័រ ដោយប្រើ Pingora ជាម៉ាស៊ីនបញ្ជូនសំណើ។ វាទទួលច្បាប់ពី Control Plane ហើយអនុវត្តភ្លាមៗ។</li>
+</ul>
+<div class="note"><b>ចំណុចសំខាន់</b>
+Control Plane <b>មិនស្ថិតនៅក្នុងផ្លូវនៃសំណើទេ</b>។ បើវាបិទ ឬដាច់ គេហទំព័រនៅតែដំណើរការធម្មតា ព្រោះ Edge Agent រក្សាច្បាប់ចុងក្រោយទុកក្នុងម៉ាស៊ីនខ្លួនឯង។</div>
+
+<h2 id="s1-2">១.២ ស្ថាបត្យកម្មសង្ខេប</h2>
+<pre><code>              អ្នកប្រើប្រាស់ / អ្នកវាយប្រហារ
+                        │
+                        ▼
+        ┌──────────────────────────────┐
+        │   Varman Edge Agent          │  ច្រក 80 / 443
+        │   (Pingora + Varman Engine)  │
+        │   ត្រួតពិនិត្យ និងទប់ស្កាត់    │
+        └──────────────┬───────────────┘
+                       │  (សំណើដែលសុវត្ថិភាព)
+                       ▼
+              ម៉ាស៊ីនមេពិត (Origin) របស់អ្នក
+
+        Control Plane :9080 / gRPC :9090  ── ចេញច្បាប់ទៅ Edge
+        PostgreSQL                        ── រក្សាទុកការកំណត់ និងកំណត់ហេតុ</code></pre>
+
+<h2 id="s1-3">១.៣ តម្រូវការប្រព័ន្ធ</h2>
+<table>
+  <tr><th>ធាតុ</th><th>តម្រូវការ</th></tr>
+  <tr><td>Docker</td><td>Docker Engine + Docker Compose (សម្រាប់វិធីងាយស្រួលបំផុត)</td></tr>
+  <tr><td>OS</td><td>Linux (សម្រាប់ build ពី source); Docker អាចដំណើរការលើ Windows/macOS បានផងដែរ</td></tr>
+  <tr><td>Rust</td><td>Rust 1.96+ (បើ build ពី source)</td></tr>
+  <tr><td>ទិន្នន័យ</td><td>PostgreSQL (រួមមកជាមួយក្នុង compose)</td></tr>
+  <tr><td>ច្រកបណ្តាញ</td><td>80, 443 (ចរាចរណ៍គេហទំព័រ) · 9080 (ផ្ទាំងបញ្ជា) · 9090 (gRPC)</td></tr>
+</table>
+
+<h2 id="s1-4">១.៤ របៀបដំណើរការសុវត្ថិភាព (សង្ខេប)</h2>
+<p>រាល់សំណើមួយឆ្លងកាត់ដំណាក់កាលទាំងនេះនៅ Edge៖</p>
+<ol>
+  <li><b>Canonicalization</b> — ធ្វើឱ្យ URL និងទិន្នន័យមានទម្រង់តែមួយ (decode មានដែនកំណត់ បង្រួម path) ដើម្បីកុំឱ្យ <code>/open/../admin</code> បោកបញ្ឆោតប្រព័ន្ធបាន។</li>
+  <li><b>Signature Lane</b> — ស្កេនរកលំនាំវាយប្រហារដោយ Aho-Corasick។</li>
+  <li><b>Managed Rules (ច្បាប់គ្រប់គ្រង)</b> — ច្បាប់ ១៣ គ្រួសារ (SQLi, XSS, RCE, scanner ។ល។) ផ្តល់ពិន្ទុ anomaly។</li>
+  <li><b>Custom Rules (ច្បាប់ផ្ទាល់ខ្លួន)</b> — ច្បាប់ដែលអ្នកសរសេរខ្លួនឯង។</li>
+  <li><b>SecLang / CRS</b> — ច្បាប់ OWASP CRS 4.30.0 ដែលបាននាំចូល។</li>
+  <li><b>API Schema</b> — ផ្ទៀងផ្ទាត់សំណើ API តាម OpenAPI (បើបើក)។</li>
+  <li><b>Rate Limit / Bot / IP / Geo</b> — ដែនកំណត់អត្រា បុត និងបញ្ជី IP/ប្រទេស។</li>
+</ol>
+<p>លទ្ធផលចុងក្រោយគឺ <b>Allow</b> (អនុញ្ញាត), <b>Monitor</b> (កត់ត្រាតែប៉ុណ្ណោះ) ឬ <b>Block</b> (ទប់ស្កាត់)។ អ្នកអាចឃើញមូលហេតុនៃការសម្រេចចិត្តទាំងអស់នៅក្នុងទំព័រ <b>Logs</b> និង <b>Reports</b>។</p>
+</section>
+
+<h1 class="part" id="p2">ជំពូកទី ២ — ការចាប់ផ្តើមប្រើប្រាស់</h1>
+
+<section class="card">
+<h2 id="s2-1">២.១ ការដំឡើង</h2>
+<p>វិធីងាយស្រួលបំផុតគឺប្រើ Docker Compose៖</p>
+<pre><code>docker compose up -d</code></pre>
+<p>បន្ទាប់មកបើកផ្ទាំងបញ្ជានៅ <code>https://localhost:9080</code>។ វិញ្ញាបនបត្រ (certificate) ដំបូងជា self-signed ដូច្នេះ browser អាចព្រមាន — សុវត្ថិភាពគឺធម្មតាសម្រាប់ការដំឡើងក្នុងម៉ាស៊ីនផ្ទាល់ខ្លួន។ សម្រាប់ការប្រើប្រាស់ពិត សូមដំឡើងវិញ្ញាបនបត្រពិតតាមរយៈ <b>Settings → Control-plane TLS</b> ឬ ACME។</p>
+<div class="note"><b>គណនីដំបូង</b>
+អ៊ីមែល៖ <code>admin@varman.local</code> · ពាក្យសម្ងាត់៖ <code>varman123</code><br>
+សូមប្តូរពាក្យសម្ងាត់ភ្លាមៗបន្ទាប់ពីចូលលើកដំបូង (Settings → Account)។</div>
+
+<h2 id="s2-2">២.២ ការចូលប្រើ (Login)</h2>
+<ol class="steps">
+  <li>បើក browser ទៅ <code>https://localhost:9080</code>។</li>
+  <li>បញ្ចូលអ៊ីមែល និងពាក្យសម្ងាត់ រួចចុច <b>Sign in</b>។</li>
+  <li>ប្រសិនបើអ្នកបានចុះឈ្មោះ Passkey (WebAuthn) អ្នកអាចចុចប៊ូតុងចូលដោយ Passkey ជំនួសវិញបាន។</li>
+</ol>
+<figure>
+  <img src="images/01-login.png" alt="ផ្ទាំងចូលប្រើ">
+  <figcaption>រូបភាព ២.១ — ផ្ទាំងចូលប្រើ (Login) របស់ផ្ទាំងបញ្ជា</figcaption>
+</figure>
+<div class="warn"><b>ការការពារការសាកល្បងពាក្យសម្ងាត់</b>
+ប្រព័ន្ធអនុញ្ញាតឱ្យព្យាយាមចូលបានតែ <b>១០ ដងក្នុង ១ នាទី</b> ក្នុងមួយ IP។ បើលើស វានឹងឆ្លើយតបជាមួយលេខកូដ <code>429</code> និងតម្រូវឱ្យរង់ចាំបន្តិច។ នេះជាមុខងារការពារធម្មតា។</div>
+
+<h2 id="s2-3">២.៣ ជំហានដំបូងបន្ទាប់ពីចូល</h2>
+<ol class="steps">
+  <li><b>បង្កើតគេហទំព័រ (Site)</b> — ទៅ <b>Sites → Add site</b> បំពេញឈ្មោះ និងដែន (domain)។</li>
+  <li><b>កំណត់ Origin</b> — បញ្ចូលអាសយដ្ឋានម៉ាស៊ីនមេពិតរបស់អ្នក (ឧ. <code>http://10.0.0.5:8080</code>)។</li>
+  <li><b>ពិនិត្យសុវត្ថិភាព</b> — ទៅ <b>Protection</b> ដើម្បីមើលថា Engine ដំណើរការលើរបៀបណា (Varman / Legacy / Shadow)។</li>
+  <li><b>ភ្ជាប់ចរាចរណ៍</b> — បង្វែរ DNS នៃដែនរបស់អ្នកមកកាន់ម៉ាស៊ីនដែលដំណើរការ VarmanWAF។</li>
+  <li><b>តាមដានលទ្ធផល</b> — ទៅ <b>Logs</b> និង <b>Dashboard</b> ដើម្បីមើលចរាចរណ៍ និងការទប់ស្កាត់។</li>
+</ol>
+</section>
+
+<h1 class="part" id="p3">ជំពូកទី ៣ — ផ្ទាំងគ្រប់គ្រង (Dashboard)</h1>
+
+<section class="card">
+<h2 id="s3-1">៣.១ ទិដ្ឋភាពទូទៅ</h2>
+<p>Dashboard គឺជាផ្ទាំងសង្ខេបដំបូងដែលអ្នកឃើញបន្ទាប់ពីចូល។ វាបង្ហាញ៖</p>
+<ul>
+  <li><b>ស្ថានភាពបណ្តាញ (Fleet)</b> — ភ្នាក់ងារ (agent) ប៉ុន្មានកំពុងដំណើរការ / បិទ។</li>
+  <li><b>សង្ខេបចរាចរណ៍</b> — ចំនួនសំណើ ការទប់ស្កាត់ និងការតាមដានក្នុងរយៈពេលដែលបានជ្រើស។</li>
+  <li><b>ផែនទីពិភពលោក</b> — ប្រភពនៃចរាចរណ៍តាមប្រទេស។</li>
+  <li><b>ក្បួនពិនិត្យគ្របដណ្តប់ (Coverage)</b> — តើគេហទំព័រណាមួយកំពុងត្រូវបានការពារ និងច្បាប់ណាកំពុងសកម្ម។</li>
+</ul>
+<figure>
+  <img src="images/02-dashboard.png" alt="ផ្ទាំងគ្រប់គ្រង">
+  <figcaption>រូបភាព ៣.១ — ផ្ទាំងគ្រប់គ្រងសង្ខេប</figcaption>
+</figure>
+<div class="note"><b>ចំណាំ</b>
+Dashboard គឺជាផ្ទាំង <b>សង្ខេបតែប៉ុណ្ណោះ</b>។ បើអ្នកចង់បានរបាយការណ៍ពេញលេញ (ឧ. សម្រាប់ផ្ញើទៅថ្នាក់គ្រប់គ្រង) សូមបង្កើតវានៅទំព័រ <b>Reports</b> ដែលអាចទាញយកបានជាឯកសារ HTML។</div>
+
+<h2 id="s3-2">៣.២ របៀបប្រើប្រាស់</h2>
+<ol class="steps">
+  <li>ជ្រើសរយៈពេល (window) នៅជ្រុងខាងលើ ដើម្បីមើលស្ថិតិតាមកាលកំណត់ផ្សេងៗ។</li>
+  <li>ចុចលើចំនួនណាមួយ (ឧ. ការទប់ស្កាត់) ដើម្បីលោតទៅកំណត់ហេតុដែលពាក់ព័ន្ធ។</li>
+  <li>បើឃើញភ្នាក់ងារណាមួយពណ៌ក្រហម សូមពិនិត្យទំព័រ <b>Agents</b> និងការតភ្ជាប់បណ្តាញ។</li>
+</ol>
+</section>
+
+<h1 class="part" id="p4">ជំពូកទី ៤ — គេហទំព័រ (Sites)</h1>
+
+<section class="card">
+<h2 id="s4-1">៤.១ បញ្ជីគេហទំព័រ</h2>
+<p>ទំព័រ <b>Sites</b> បង្ហាញគេហទំព័រទាំងអស់ដែលអ្នកកំពុងការពារ។ សម្រាប់គេហទំព័រនីមួយៗ អ្នកនឹងឃើញ៖</p>
+<ul>
+  <li><b>ឈ្មោះ និងដែន (Domains)</b> — ដែនដែលចរាចរណ៍ត្រូវបានបញ្ជូនមកគេហទំព័រនេះ។</li>
+  <li><b>របៀប Engine</b> — <code>varman</code> (ម៉ាស៊ីនថ្មី កំពុងអនុវត្ត), <code>legacy</code> (ម៉ាស៊ីនចាស់) ឬ <code>shadow</code> (ដំណើរការទាំងពីរ ដើម្បីប្រៀបធៀបលទ្ធផល)។</li>
+  <li><b>ស្ថានភាព</b> — សកម្ម ឬផ្អាក។</li>
+  <li><b>ស្ថិតិរហ័ស</b> — ចំនួនសំណើ និងការទប់ស្កាត់ថ្មីៗ។</li>
+</ul>
+<figure>
+  <img src="images/03-sites.png" alt="បញ្ជីគេហទំព័រ">
+  <figcaption>រូបភាព ៤.១ — បញ្ជីគេហទំព័រ</figcaption>
+</figure>
+
+<h3>ការបង្កើតគេហទំព័រថ្មី</h3>
+<ol class="steps">
+  <li>ចុចប៊ូតុង <b>Add site</b> (បន្ថែមគេហទំព័រ)។</li>
+  <li>បំពេញ <b>ឈ្មោះ</b> (ឧ. «គេហទំព័រក្រុមហ៊ុន») និង <b>ដែន</b> (ឧ. <code>www.example.com</code>)។ អ្នកអាចបន្ថែមដែនច្រើនបាន។</li>
+  <li>ចុច <b>Save</b>។ គេហទំព័រថ្មីនឹងបង្ហាញក្នុងបញ្ជី។</li>
+  <li>ចូលទៅក្នុងគេហទំព័រ ដើម្បីកំណត់ <b>Origin</b> (ម៉ាស៊ីនមេពិត) នៅជំពូក ៤.៣។</li>
+</ol>
+<div class="note"><b>ចំណាំ</b>
+នៅពេលបង្កើតគេហទំព័រថ្មី ប្រសិនបើអ្នកប្រើរបៀប all-in-one (ទាំងអស់ក្នុង container តែមួយ) សូម restart container ម្តង ដើម្បីឱ្យ agent ចុះឈ្មោះជាមួយគេហទំព័រថ្មី។</div>
+
+<h2 id="s4-2">៤.២ បន្ទប់ធ្វើការរបស់គេហទំព័រ (Site workspace)</h2>
+<p>នៅពេលចុចលើគេហទំព័រណាមួយ អ្នកនឹងឃើញផ្ទាំងរងជាច្រើននៅខាងឆ្វេង ដែលបែងចែកជា៖</p>
+<table>
+  <tr><th>ផ្ទាំង</th><th>អ្វីដែលវាធ្វើ</th></tr>
+  <tr><td>Origin</td><td>កំណត់ម៉ាស៊ីនមេពិត និង failover</td></tr>
+  <tr><td>Protection</td><td>សុវត្ថិភាព៖ ច្បាប់, CC, ការលៃតម្រូវគោលនយោបាយ (ជំពូក ៥)</td></tr>
+  <tr><td>Rate limiting</td><td>ដែនកំណត់អត្រាសំណើ</td></tr>
+  <tr><td>Bot</td><td>ការគ្រប់គ្រងបុត</td></tr>
+  <tr><td>Access</td><td>IP, ភូមិសាស្ត្រ (Geo), Basic Auth</td></tr>
+  <tr><td>API assets</td><td>បញ្ជី API, OpenAPI, ការរៀនសូត្រ</td></tr>
+  <tr><td>Caching</td><td>ឃ្លាំងសម្ងាត់ (cache)</td></tr>
+  <tr><td>SSL</td><td>វិញ្ញាបនបត្រ និង ACME</td></tr>
+  <tr><td>Traffic</td><td>ស្ថិតិចរាចរណ៍</td></tr>
+  <tr><td>Rules → Rewrite</td><td>ការបង្វែរ និង rewrite URL</td></tr>
+  <tr><td>Settings</td><td>ការកំណត់គេហទំព័រ</td></tr>
+</table>
+
+<h2 id="s4-3">៤.៣ Origin — ម៉ាស៊ីនមេពិត (Upstream)</h2>
+<p><b>Origin</b> គឺជាកន្លែងដែលចរាចរណ៍សុវត្ថិភាពត្រូវបញ្ជូនទៅបន្ទាប់ពីឆ្លងកាត់ការពិនិត្យ។ វាអាចជាម៉ាស៊ីនមេតែមួយ ឬជាក្រុមម៉ាស៊ីនច្រើន (pool) ដែលចែកចាយបន្ទុក។</p>
+<figure>
+  <img src="images/04-site-origin.png" alt="ការកំណត់ Origin">
+  <figcaption>រូបភាព ៤.២ — ការកំណត់ Origin និង upstream pool</figcaption>
+</figure>
+<h3>អ្វីដែលអ្នកអាចកំណត់បាន</h3>
+<ul>
+  <li><b>អាសយដ្ឋាន</b> — ឧ. <code>http://10.0.0.5:8080</code> ឬ <code>https://backend.internal</code>។</li>
+  <li><b>TLS ទៅ Origin</b> — បើម៉ាស៊ីនមេពិតប្រើ HTTPS។</li>
+  <li><b>SNI / Host header</b> — ឈ្មោះដែនដែលត្រូវផ្ញើទៅ origin បើខុសពីដែនអ្នកប្រើ។</li>
+  <li><b>Health check</b> — ផ្លូវសម្រាប់ពិនិត្យសុខភាពម៉ាស៊ីនមេ។</li>
+  <li><b>Failover</b> — អ្វីដែលត្រូវធ្វើបើ pool ធ្លាក់៖ ប្តូរទៅ pool បម្រុង ឬឆ្លើយតបស្តង់ដារ។</li>
+</ul>
+<h3>ជំហានកំណត់ Origin</h3>
+<ol class="steps">
+  <li>ចូលគេហទំព័រ → ផ្ទាំង <b>Origin</b>។</li>
+  <li>ចុច <b>Add upstream</b> បំពេញអាសយដ្ឋានម៉ាស៊ីនមេពិត និងទម្ងន់ (weight) បើមានច្រើន។</li>
+  <li>កំណត់ TLS/SNI បើចាំបាច់។</li>
+  <li>ចុច <b>Save</b> — ការផ្លាស់ប្តូរនឹងត្រូវបញ្ជូនទៅ Edge ភ្លាមៗ។</li>
+</ol>
+
+<h2 id="s4-4">៤.៤ ការកំណត់គេហទំព័រ (Site settings)</h2>
+<figure>
+  <img src="images/25-site-settings.png" alt="ការកំណត់គេហទំព័រ">
+  <figcaption>រូបភាព ៤.៣ — ការកំណត់គេហទំព័រ</figcaption>
+</figure>
+<ul>
+  <li><b>ឈ្មោះ និងដែន</b> — កែសម្រួលព័ត៌មានមូលដ្ឋាន។</li>
+  <li><b>Engine mode</b> — ជ្រើសរវាង <code>varman</code>, <code>legacy</code> ឬ <code>shadow</code>។ ការផ្លាស់ប្តូរត្រូវបានបញ្ជូនទៅ Edge ភ្លាមៗ។</li>
+  <li><b>Advanced mode</b> និង <b>Custom layers</b> — បើក/បិទស្រទាប់សុវត្ថិភាពកម្រិតខ្ពស់។</li>
+  <li><b>Monitor lists</b> — បញ្ជីដែលគ្រាន់តែតាមដាន (មិនទប់ស្កាត់)។</li>
+  <li><b>Log options</b> — ជម្រើសកត់ត្រា។</li>
+</ul>
+
+<h2 id="s4-5">៤.៥ Caching — ឃ្លាំងសម្ងាត់</h2>
+<p>ឃ្លាំងសម្ងាត់ជួយឱ្យគេហទំព័រលឿនជាងមុន ដោយរក្សាទុកចម្លើយមួយចំនួននៅ Edge ដើម្បីមិនចាំបាច់ទៅដល់ម៉ាស៊ីនមេពិតរាល់ដង។</p>
+<figure>
+  <img src="images/21-site-caching.png" alt="ការកំណត់ Cache">
+  <figcaption>រូបភាព ៤.៤ — ការកំណត់ឃ្លាំងសម្ងាត់</figcaption>
+</figure>
+<ol class="steps">
+  <li>ចុច <b>Add rule</b> ដើម្បីបង្កើតច្បាប់ cache (តាម path ឬប្រភេទឯកសារ ឧ. <code>*.css</code>, <code>/images/*</code>)។</li>
+  <li>កំណត់ <b>TTL</b> (រយៈពេលរក្សាទុក) និងកូនសោ (key) បើចាំបាច់។</li>
+  <li>អាច <b>Purge</b> (សម្អាត) តាម path ឬ tag នៅពេលអ្នកធ្វើបច្ចុប្បន្នភាពខ្លឹមសារ។</li>
+</ol>
+<div class="note"><b>ចំណាំ</b>
+ប្រព័ន្ធ <b>មិនដែល</b> cache ចម្លើយដែលត្រូវបានទប់ស្កាត់ ឬចម្លើយផ្ទាល់ខ្លួន (personalised) ឡើយ។</div>
+
+<h2 id="s4-6">៤.៦ SSL — វិញ្ញាបនបត្រ</h2>
+<figure>
+  <img src="images/22-site-ssl.png" alt="ការកំណត់ SSL">
+  <figcaption>រូបភាព ៤.៥ — ការគ្រប់គ្រងវិញ្ញាបនបត្រ SSL របស់គេហទំព័រ</figcaption>
+</figure>
+<ol class="steps">
+  <li><b>វិធីទី ១ — ACME ស្វ័យប្រវត្តិ</b>៖ ចុច <b>Issue certificate</b> ជ្រើស Let's Encrypt និងវិធីផ្ទៀងផ្ទាត់ (HTTP-01 ឬ DNS-01)។ ប្រព័ន្ធនឹងចេញ និងបន្តអាយុវិញ្ញាបនបត្រដោយស្វ័យប្រវត្តិ។</li>
+  <li><b>វិធីទី ២ — បញ្ចូលដោយដៃ</b>៖ បិទភ្ជាប់ certificate និង private key (ទម្រង់ PEM)។</li>
+  <li>ពិនិត្យ <b>កាលបរិច្ឆេទផុតកំណត់</b> — ប្រព័ន្ធព្រមានជាមុន។</li>
+</ol>
+
+<h2 id="s4-7">៤.៧ Traffic — ស្ថិតិចរាចរណ៍</h2>
+<figure>
+  <img src="images/23-site-traffic.png" alt="ស្ថិតិចរាចរណ៍">
+  <figcaption>រូបភាព ៤.៦ — ស្ថិតិចរាចរណ៍របស់គេហទំព័រ</figcaption>
+</figure>
+<ul>
+  <li>ចំនួនសំណើ និងប្រភេទលេខកូដ (2xx, 3xx, 4xx, 5xx)។</li>
+  <li>បរិមាណទិន្នន័យ (bandwidth) និងផ្លូវដែលគេចូលច្រើនបំផុត (top paths)។</li>
+  <li>អត្រា cache hit និងប្រទេសដើមនៃចរាចរណ៍។</li>
+</ul>
+<p>ជ្រើសរយៈពេលខាងលើ ដើម្បីប្តូរទិដ្ឋភាព (ម៉ោង, ថ្ងៃ, សប្តាហ៍)។ កាលបរិច្ឆេទប្រើ <b>តំបន់ពេលវេលាដែលបានកំណត់ក្នុង Settings → Display</b>។</p>
+
+<h2 id="s4-8">៤.៨ Rewrite — ការបង្វែរ និងកែ URL</h2>
+<figure>
+  <img src="images/24-site-rewrite.png" alt="ច្បាប់ Rewrite">
+  <figcaption>រូបភាព ៤.៧ — ច្បាប់បង្វែរ (rewrite) និងផ្លូវ (routes)</figcaption>
+</figure>
+<ol class="steps">
+  <li>ចុច <b>Add rule</b>។ ជ្រើសប្រភេទ៖ <b>Route</b> (បញ្ជូនទៅ upstream ផ្សេង / redirect / ឆ្លើយតបស្តង់ដារ) ឬ <b>Rewrite</b> (ជំនួស URL)។</li>
+  <li>កំណត់លក្ខខណ្ឌ (host/path) និងសកម្មភាព។</li>
+  <li>ប្រើ <b>Preview</b> ដើម្បីសាកល្បងជាមួយ URL គំរូ មុនពេលរក្សាទុក។</li>
+  <li>ច្បាប់ត្រូវបានអនុវត្តតាមលំដាប់ពីលើចុះក្រោម។</li>
+</ol>
+</section>
+
+<h1 class="part" id="p5">ជំពូកទី ៥ — ការការពារ (Protection)</h1>
+
+<section class="card">
+<h2 id="s5-1">៥.១ ទិដ្ឋភាពទូទៅនៃផ្ទាំងការពារ</h2>
+<p>នេះគឺជាផ្ទាំងសំខាន់បំផុតនៅក្នុងប្រព័ន្ធ។ វាបង្រួមអ្វីៗពាក់ព័ន្ធសុវត្ថិភាពទាំងអស់របស់គេហទំព័រទៅជាផ្ទាំងតែមួយ ដែលមានផ្ទាំងរង ៤៖</p>
+<table>
+  <tr><th>ផ្ទាំងរង</th><th>មាតិកា</th></tr>
+  <tr><td><b>Overview</b></td><td>សង្ខេបស្ថានភាពការពារ និងអ្វីដែលកំពុងសកម្ម</td></tr>
+  <tr><td><b>Rules</b></td><td>ច្បាប់គ្រប់គ្រង (Managed) និងច្បាប់ផ្ទាល់ខ្លួន (Custom) + កម្មវិធីសាកល្បងច្បាប់</td></tr>
+  <tr><td><b>CC</b></td><td>ការប្រឈមមុខ (Challenge) និងរបៀប «កំពុងត្រូវវាយប្រហារ» (Under attack)</td></tr>
+  <tr><td><b>Policy tuning</b></td><td>ការលៃតម្រូវគោលនយោបាយយ៉ាងលម្អិត (ជំពូក ៥.៤)</td></tr>
+</table>
+<figure>
+  <img src="images/05-site-protection-overview.png" alt="ផ្ទាំង Protection — Overview">
+  <figcaption>រូបភាព ៥.១ — ផ្ទាំង Protection ផ្នែក Overview</figcaption>
+</figure>
+<div class="note"><b>តំណចាស់ៗនៅតែប្រើបាន</b>
+តំណចាស់ដូចជា <code>/security/waf</code> ឬ <code>/security/cc</code> នឹងបញ្ជូនអ្នកទៅផ្ទាំងរងដែលត្រូវគ្នាដោយស្វ័យប្រវត្តិ។</div>
+
+<h2 id="s5-2">៥.២ Rules — ច្បាប់សុវត្ថិភាព</h2>
+<figure>
+  <img src="images/06-site-protection-rules.png" alt="ផ្ទាំងច្បាប់">
+  <figcaption>រូបភាព ៥.២ — ច្បាប់គ្រប់គ្រង និងច្បាប់ផ្ទាល់ខ្លួន</figcaption>
+</figure>
+
+<h3>ច្បាប់គ្រប់គ្រង (Managed rules)</h3>
+<p>ប្រព័ន្ធមានច្បាប់គ្រប់គ្រង ១៣ គ្រួសារ (<code>VARMAN-1001..1061</code>) ដែលរាយការវាយប្រហារទូទៅ៖ SQL Injection, XSS, RCE (ការប្រតិបត្តិកូដពីចម្ងាយ), path traversal, កម្មវិធីស្កេន, ការស្វែងរកឯកសារសម្ងាត់ (dotfile), វិធីសាស្ត្រ HTTP គ្រោះថ្នាក់, ផ្លូវអ្នកគ្រប់គ្រង, ទំហំ payload ធំលើសកំណត់ ។ល។ ច្បាប់នីមួយៗមាន៖</p>
+<ul>
+  <li><b>កម្រិតគ្រោះថ្នាក់ (severity)</b> និងពិន្ទុ anomaly។</li>
+  <li><b>របៀប (mode)</b>៖ <code>off</code> (បិទ), <code>monitor</code> (តាមដានតែប៉ុណ្ណោះ), <code>block</code> (ទប់ស្កាត់)។</li>
+</ul>
+<ol class="steps">
+  <li>រកច្បាប់ដែលចង់កែ តាមការស្វែងរក ឬតាមគ្រួសារ។</li>
+  <li>ប្តូរ <b>mode</b> របស់វា។ ការកែតម្រូវនឹងត្រូវកត់ត្រាជា <b>override</b> ហើយមិនបាត់បង់នៅពេលបញ្ជូនច្បាប់ថ្មី។</li>
+  <li>ចង់ដឹងថាច្បាប់នេះបាញ់លើសំណើបែបណា? សាកល្បងនៅ <b>Rule tester</b> (ជំហានខាងក្រោម)។</li>
+</ol>
+
+<h3>ច្បាប់ផ្ទាល់ខ្លួន (Custom rules)</h3>
+<p>អ្នកអាចសរសេរច្បាប់ផ្ទាល់ខ្លួនជាភាសាសាមញ្ញ ដូចជា៖</p>
+<pre><code>http.request.uri.query contains "union select"
+cf.waf.score.sqli ge 30
+http.request.uri.path eq "/secret-admin"</code></pre>
+<ol class="steps">
+  <li>ចុច <b>Add rule</b> ក្នុងផ្នែក Custom rules។</li>
+  <li>បំពេញ <b>ឈ្មោះ</b>, <b>កន្សោម (expression)</b>, និង <b>សកម្មភាព</b> (block ឬ log) ព្រមទាំងពិន្ទុបើចាំបាច់។</li>
+  <li>ប្រើ <b>Rule tester</b> ដើម្បីសាកល្បងកន្សោមលើសំណើគំរូ — វានឹងបង្ហាញថាតើលក្ខខណ្ឌណាត្រូវ។</li>
+  <li>រក្សាទុក។ ច្បាប់ត្រូវបានបញ្ជូនទៅ Edge ភ្លាមៗ។</li>
+</ol>
+
+<h2 id="s5-3">៥.៣ CC — ការប្រឈមមុខ និង Under attack</h2>
+<figure>
+  <img src="images/07-site-protection-cc.png" alt="ផ្ទាំង CC">
+  <figcaption>រូបភាព ៥.៣ — ផ្ទាំង CC (Challenge / Under attack)</figcaption>
+</figure>
+<ul>
+  <li><b>JS Challenge</b> — បង្ខំឱ្យ browser ដំណើរការកូដ JavaScript ខ្លី ដើម្បីបញ្ជាក់ថាជាមនុស្សពិត។</li>
+  <li><b>Managed Challenge</b> — ប្រព័ន្ធសម្រេចចិត្តខ្លួនឯងថាតើគួរប្រឈមមុខ ឬអនុញ្ញាត។</li>
+  <li><b>Under attack mode</b> — បង្កើនកម្រិតការពារ និងពង្រឹងការត្រួតពិនិត្យ នៅពេលគេហទំព័រកំពុងត្រូវបានវាយប្រហារដោយចរាចរណ៍ច្រើន។</li>
+</ul>
+<p>រាល់ការសម្រេចចិត្តត្រូវបានកត់ត្រាជាព្រឹត្តិការណ៍ ជាមួយមូលហេតុ ដែលអាចមើលបាននៅ <b>Logs</b>។</p>
+
+<h2 id="s5-4">៥.៤ Policy tuning — ការលៃតម្រូវគោលនយោបាយ</h2>
+<p>នេះជាផ្នែកដែលមានអំណាចបំផុត។ វាមានផ្នែករងជាច្រើននៅផ្នែកខាងស្តាំ (rail) ដូចខាងក្រោម។</p>
+<figure>
+  <img src="images/08-site-tuning-summary.png" alt="Policy tuning — សង្ខេប">
+  <figcaption>រូបភាព ៥.៤ — ផ្នែកសង្ខេបគោលនយោបាយ (Policy summary)</figcaption>
+</figure>
+
+<h3>៥.៤.១ សង្ខេបគោលនយោបាយ (Policy summary)</h3>
+<p>បង្ហាញជា chip សម្រាប់ស្រទាប់ (layer) នីមួយៗ ដើម្បីឱ្យអ្នកឃើញភ្លាមថាអ្វីកំពុងសកម្ម និងអ្វីកំពុងបិទ។</p>
+
+<h3>៥.៤.២ ស្ថានភាពគេហទំព័រ (Site posture)</h3>
+<figure>
+  <img src="images/09-site-tuning-posture.png" alt="Site posture">
+  <figcaption>រូបភាព ៥.៥ — ការកំណត់ស្ថានភាពគេហទំព័រ</figcaption>
+</figure>
+<p>នៅទីនេះអ្នកកំណត់អ្វីដែលគេហទំព័រនេះដំណើរការ៖ <b>engine mode</b>, <b>advanced mode</b>, ស្រទាប់ផ្ទាល់ខ្លួន (custom layers) និង <b>បញ្ជីតាមដាន (monitor lists)</b>។</p>
+
+<h3>៥.៤.៣ ស្ថានភាពអនុវត្តជាក់ស្តែង (Effective posture)</h3>
+<figure>
+  <img src="images/10-site-tuning-effective.png" alt="Effective posture">
+  <figcaption>រូបភាព ៥.៦ — ស្រទាប់ណាឈ្នះនៅទីណា (Effective posture)</figcaption>
+</figure>
+<p>នេះជាផ្នែកសំខាន់សម្រាប់ភាពស្មោះត្រង់៖ វាបង្ហាញ <b>លទ្ធផលចុងក្រោយ</b> បន្ទាប់ពីបញ្ចូលគោលនយោបាយ (policy) ជាមួយការកំណត់ក្នុងគេហទំព័រ។ នៅពេលស្រទាប់ពីរនិយាយផ្ទុយគ្នា <b>ស្រទាប់ដែលតឹងរ៉ឹងជាងឈ្នះ</b>។ ដូច្នេះ «បានបោះផ្សាយ» មិនដូចគ្នានឹង «បានអនុវត្ត» — ហើយផ្ទាំងនេះបង្ហាញភាពខុសគ្នានោះឱ្យអ្នកឃើញផ្ទាល់ភ្នែក។</p>
+
+<h3>៥.៤.៤ ការលើកលែងច្បាប់ (Rule exceptions)</h3>
+<figure>
+  <img src="images/11-site-tuning-exceptions.png" alt="Rule exceptions">
+  <figcaption>រូបភាព ៥.៧ — ការលើកលែងច្បាប់តាមច្បាប់ និងតាម target</figcaption>
+</figure>
+<p>អ្នកអាចលៃតម្រូវច្បាប់ជាក់លាក់ដោយមិនបិទវាទាំងស្រុង៖</p>
+<ul>
+  <li><b>Disable</b> — បិទច្បាប់ទាំងស្រុង។</li>
+  <li><b>Monitor only</b> — កត់ត្រាតែប៉ុណ្ណោះ មិនទប់ស្កាត់។</li>
+  <li><b>Score adjustment</b> — បន្ថយ/បង្កើនពិន្ទុ anomaly របស់ច្បាប់។</li>
+  <li><b>Target exclusions</b> — លើកលែងតែផ្នែកជាក់លាក់នៃសំណើ (ឧ. parameter <code>q</code> ក្នុង query string) ដោយអាចកំណត់ទីតាំងតាម path និងឈ្មោះ target ដូចជា <code>query:q</code>, <code>body:content</code>, <code>cookie:x</code>, <code>header:x</code>។</li>
+</ul>
+<div class="note"><b>ចំណាំបច្ចេកទេស</b>
+ច្បាប់គ្រប់គ្រងដែលប្រើពិន្ទុ <code>cf.waf.score.*</code> មិនអាចលើកលែងតាម target បានទេ (ដំណាក់កាលទី ១ នៃ pipeline)។ ផ្ទាំងនឹងប្រាប់អ្នកផ្ទាល់ ជំនួសឱ្យការបង្ហាញថាបានសម្រេច ដោយប្រកាសមិនពិត។</div>
+
+<h3>៥.៤.៥ កញ្ចប់លើកលែង (Exclusion packages)</h3>
+<figure>
+  <img src="images/12-site-tuning-packages.png" alt="Exclusion packages">
+  <figcaption>រូបភាព ៥.៨ — កញ្ចប់លើកលែងសម្រាប់កម្មវិធីពេញនិយម</figcaption>
+</figure>
+<p>កញ្ចប់លើកលែងមានពីរប្រភេទ៖</p>
+<ol>
+  <li><b>entries</b> — កញ្ចប់សម្រាប់កម្មវិធីពេញនិយម (WordPress, Next.js, Nextcloud WebDAV, កម្មវិធីកែអត្ថបទ rich-text ។ល។)។ ធាតុនីមួយៗភ្ជាប់តាម path និងអាចកំណត់ target ជាក់លាក់ (ឧ. <code>query:q</code>) សម្រាប់ទាំងច្បាប់គ្រប់គ្រង និងច្បាប់ផ្ទាល់ខ្លួន។</li>
+  <li><b>seclang</b> — នាំចូលឯកសារ SecLang ពីខាងក្រៅ (ឧ. plugin លើកលែងរបស់ OWASP CRS)។ ប្រព័ន្ធនឹងទាញយក ពិនិត្យថាអានបាន រក្សាទុក <b>ជាមួយរបាយការណ៍នៃអ្វីដែលវាមាន</b> (ចំនួនតាមប្រភេទ directive — មិនមែនការប្រឌិត) ហើយចងក្រងចូលក្នុង virtual patches របស់គេហទំព័រ។</li>
+</ol>
+<ol class="steps">
+  <li>ជ្រើសកញ្ចប់ដែលចង់ប្រើ (ឧ. WordPress)។</li>
+  <li>ភ្ជាប់វាទៅ path prefix (ឧ. <code>/</code> ឬ <code>/blog</code>)។</li>
+  <li>ពិនិត្យ <b>របាយការណ៍នាំចូល</b> (ចំនួនធាតុ) មុនពេលអនុវត្ត។</li>
+  <li>ចុច <b>Preview and apply</b> ដើម្បីអនុវត្ត។</li>
+</ol>
+
+<h3>៥.៤.៦ មើលជាមុន និងអនុវត្ត (Preview and apply)</h3>
+<figure>
+  <img src="images/13-site-tuning-preview.png" alt="Preview and apply">
+  <figcaption>រូបភាព ៥.៩ — ការមើលជាមុននៃការផ្លាស់ប្តូរមុនពេលអនុវត្ត</figcaption>
+</figure>
+<p>មុនពេលអនុវត្ត ប្រព័ន្ធចងក្រង (compile) កញ្ចប់ថ្មី និងបង្ហាញ <b>ភាពខុសគ្នា (diff)</b> — ដូច្នេះអ្នកដឹងច្បាស់ថាអ្វីនឹងផ្លាស់ប្តូរ។ បន្ទាប់មកចុច <b>Apply</b> ដើម្បីបញ្ជូនទៅ Edge។</p>
+
+<h3>៥.៤.៧ ប្រវត្តិកំណែ (Version history)</h3>
+<figure>
+  <img src="images/14-site-tuning-history.png" alt="Version history">
+  <figcaption>រូបភាព ៥.១០ — ប្រវត្តិកំណែ និងការត្រឡប់ក្រោយ (rollback)</figcaption>
+</figure>
+<p>រាល់ការផ្លាស់ប្តូរត្រូវបានចុះកំណែ។ អ្នកអាចមើលកំណែចាស់ និង <b>ត្រឡប់ក្រោយ</b> ទៅកំណែណាមួយបានយ៉ាងងាយ។</p>
+
+<h2 id="s5-5">៥.៥ Rate limiting — ដែនកំណត់អត្រា</h2>
+<figure>
+  <img src="images/15-site-rate-limiting.png" alt="Rate limiting">
+  <figcaption>រូបភាព ៥.១១ — ដែនកំណត់អត្រាសំណើ</figcaption>
+</figure>
+<p>ការពារការប្រើប្រាស់លើសកម្រិត (ឧ. brute force ឬ scraping) ដោយកំណត់ចំនួនសំណើអនុញ្ញាតក្នុងមួយរយៈពេល៖</p>
+<ol class="steps">
+  <li>ចុច <b>Add limiter</b>។</li>
+  <li>ជ្រើស <b>កូនសោ</b> (key)៖ តាម IP, តាម header, តាម cookie ឬតាម path។</li>
+  <li>កំណត់ <b>window</b> (ឧ. 60 វិនាទី) និង <b>ចំនួនអនុញ្ញាត</b> (ឧ. 100) ព្រមទាំង <b>burst</b> បើចង់។</li>
+  <li>ជ្រើសសកម្មភាព៖ តាមដាន ឬទប់ស្កាត់ (ឆ្លើយតប <code>429</code>)។</li>
+  <li>ភ្ជាប់ limiter ទៅផ្លូវជាក់លាក់ ឬទាំងគេហទំព័រ។</li>
+</ol>
+
+<h2 id="s5-6">៥.៦ Bot protection — ការគ្រប់គ្រងបុត</h2>
+<figure>
+  <img src="images/16-site-bot.png" alt="Bot protection">
+  <figcaption>រូបភាព ៥.១២ — ការគ្រប់គ្រងបុត និងកម្មវិធីស្កេនដែលបានផ្ទៀងផ្ទាត់</figcaption>
+</figure>
+<ul>
+  <li><b>Bot posture</b> — ជ្រើសរបៀប៖ <code>off</code>, <code>monitor</code>, <code>challenge</code> ឬ <code>block</code>។</li>
+  <li><b>Verified bots</b> — បញ្ជីបុតល្បីៗ (ឧ. Googlebot) ដែលត្រូវបានផ្ទៀងផ្ទាត់ដោយ reverse DNS ដើម្បីមិនទប់ស្កាត់ខុស។</li>
+  <li><b>Heuristics</b> — ការវិភាគ user-agent និងសញ្ញាប្រូបាប៊ីលីតេផ្សេងៗ ដែលច្រោះទៅ CC។</li>
+</ul>
+</section>
+
+<h1 class="part" id="p6">ជំពូកទី ៦ — ការគ្រប់គ្រងការចូលប្រើ (Access control)</h1>
+
+<section class="card">
+<h2 id="s6-1">៦.១ ច្បាប់ IP (IP rules)</h2>
+<figure>
+  <img src="images/17-site-access-ip.png" alt="ច្បាប់ IP">
+  <figcaption>រូបភាព ៦.១ — បញ្ជីអនុញ្ញាត និងបញ្ជីទប់ស្កាត់ IP</figcaption>
+</figure>
+<p>ច្បាប់ IP ត្រូវបានពិនិត្យ <b>មុន</b> pipeline សុវត្ថិភាព។ វាអាចជា៖</p>
+<ul>
+  <li><b>Allow list</b> — អនុញ្ញាតតែ IP/CIDR ក្នុងបញ្ជី។</li>
+  <li><b>Deny list</b> — ទប់ស្កាត់ IP/CIDR ក្នុងបញ្ជី។</li>
+  <li><b>IP Groups</b> — យោងទៅក្រុម IP ដែលបានកំណត់រួច (ជំពូក ១៣) ដើម្បីប្រើឡើងវិញបានច្រើនគេហទំព័រ។</li>
+</ul>
+<ol class="steps">
+  <li>ចុច <b>Add rule</b>។</li>
+  <li>បំពេញ IP ឬ CIDR (ឧ. <code>203.0.113.0/24</code>) ឬជ្រើស IP Group។</li>
+  <li>ជ្រើសសកម្មភាព៖ <b>Allow</b> ឬ <b>Deny</b>។</li>
+  <li>រក្សាទុក — ច្បាប់អនុវត្តភ្លាម។</li>
+</ol>
+
+<h2 id="s6-2">៦.២ ភូមិសាស្ត្រ និង ASN (Geo policy)</h2>
+<figure>
+  <img src="images/18-site-access-geo.png" alt="គោលនយោបាយភូមិសាស្ត្រ">
+  <figcaption>រូបភាព ៦.២ — គោលនយោបាយតាមប្រទេស និង ASN</figcaption>
+</figure>
+<p>អ្នកអាចអនុញ្ញាត តាមដាន ឬទប់ស្កាត់ចរាចរណ៍តាម <b>ប្រទេស</b> ឬតាម <b>ASN</b> (លេខបណ្តាញរបស់អ្នកផ្តល់សេវា ឧ. Cloudflare = AS13335)។</p>
+<div class="note"><b>ប្រភពទិន្នន័យ</b>
+ទិន្នន័យភូមិសាស្ត្រ និង ASN ទាំងអស់មកពី <b>ipverse</b> តែមួយប៉ុណ្ណោះ៖ ជួរ IP តាមប្រទេសមកពី <code>rir-ip</code> និងជួរ ASN មកពី <code>as-ip-blocks</code>។ ប្រព័ន្ធមិនប្រើប្រភពផ្សេងទេ។</div>
+<ol class="steps">
+  <li>ជ្រើសជួរ (key) ដែលត្រូវការ ឧ. ប្រទេស <code>US</code> ឬ ASN <code>AS13335</code>។</li>
+  <li>ចុច <b>Sync</b> ដើម្បីទាញយកទិន្នន័យចុងក្រោយពី ipverse ចូល <code>ip_datasets</code>។ <b>ការធ្វើសមកាលកម្ម = ការអនុវត្ត</b> — ជួរដែល synced រួចត្រូវបានបញ្ជូនទៅ Edge ភ្លាម។</li>
+  <li>ជ្រើសសកម្មភាព៖ <code>off</code> / <code>monitor</code> (តាមដាន) / <code>block</code> (ទប់ស្កាត់)។</li>
+  <li>ពិនិត្យផ្នែក <b>missing_keys</b> — បើជួរណាមិនទាន់ synced វានឹងបង្ហាញច្បាស់ថា <b>មិនត្រូវបានអនុវត្ត</b>។ ប្រព័ន្ធមិនបង្ហាញថាសកម្ម បើវាមិនពិតទេ។</li>
+</ol>
+
+<h2 id="s6-3">៦.៣ ការវិភាគ IP អ្នកប្រើ (Client IP analysis)</h2>
+<p>ឧបករណ៍នេះជួយឆ្លើយសំណួរថា៖ «បើ IP នេះចូលមក តើ Edge នឹងសម្រេចចិត្តយ៉ាងណា?»។</p>
+<ol class="steps">
+  <li>បិទភ្ជាប់ IP ដែលចង់វិភាគ។</li>
+  <li>ប្រព័ន្ធប្រើ <b>loader ដូចគ្នាបេះបិទ</b> នឹង Edge ដើម្បីពិនិត្យ៖ តើ IP នេះចូលក្នុងជួរប្រទេស/ASN ណា? តើច្បាប់ណានឹងបាញ់? តើវាស្ថិតក្នុងបញ្ជីទប់ស្កាត់ឬទេ?</li>
+  <li>លទ្ធផលបង្ហាញច្បាស់ ដើម្បីឱ្យអ្នកជួសជុលគោលនយោបាយបានត្រឹមត្រូវ។</li>
+</ol>
+
+<h2 id="s6-4">៦.៤ Basic Auth</h2>
+<figure>
+  <img src="images/19-site-access-basic-auth.png" alt="Basic Auth">
+  <figcaption>រូបភាព ៦.៣ — ការការពារផ្លូវដោយ Basic Auth</figcaption>
+</figure>
+<p>អ្នកអាចការពារផ្លូវជាក់លាក់ (ឧ. <code>/staging</code> ឬ <code>/admin</code>) ដោយ username/password បែប HTTP Basic។</p>
+<ol class="steps">
+  <li>ចុច <b>Add credential</b> បំពេញឈ្មោះអ្នកប្រើ និងពាក្យសម្ងាត់។</li>
+  <li>កំណត់ path ដែលត្រូវការការពារ។</li>
+  <li>រក្សាទុក។ អ្នកប្រើដែលគ្មានសិទ្ធិនឹងទទួល <code>401</code>។</li>
+</ol>
+</section>
+
+<h1 class="part" id="p7">ជំពូកទី ៧ — API assets (ការគ្រប់គ្រង API)</h1>
+
+<section class="card">
+<h2 id="s7-1">៧.១ តើផ្ទាំងនេះធ្វើអ្វី?</h2>
+<p>សម្រាប់គេហទំព័រដែលមាន API ផ្ទាំងនេះជួយឱ្យអ្នកដឹងថា <b>API ពិតៗកំពុងត្រូវបានហៅបែបណា</b> និងផ្ទៀងផ្ទាត់សំណើទៅតាម <b>OpenAPI document</b> របស់អ្នក។</p>
+<figure>
+  <img src="images/20-site-api-assets.png" alt="API assets">
+  <figcaption>រូបភាព ៧.១ — បញ្ជី API ដែលបានសង្កេត ធៀបនឹង spec ដែលបានប្រកាស</figcaption>
+</figure>
+<ul>
+  <li><b>Observed inventory (បញ្ជីសង្កេត)</b> — ចំណុចចូល (endpoint) ដែលឃើញពីចរាចរណ៍ពិត ដោយបំលែងតម្លៃទៅជាទម្រង់៖ <code>/orders/42</code> → <code>/orders/{id}</code>។</li>
+  <li><b>Declared spec</b> — ឯកសារ OpenAPI ដែលអ្នកផ្ទុកឡើង។ ផ្ទាំងបង្ហាញភាពខុសគ្នារវាងអ្វីដែលបានប្រកាស និងអ្វីដែលពិតជាកើតឡើង។</li>
+</ul>
+
+<h2 id="s7-2">៧.២ ការរៀនសូត្រដែលមានដែនកំណត់ (Bounded learning)</h2>
+<p>ប្រព័ន្ធអាច «រៀន» រចនាសម្ព័ន្ធនៃសំណើ និងចម្លើយពីចរាចរណ៍ពិត — ប៉ុន្តែដោយគោរពគោលការណ៍សំខាន់៖</p>
+<ul>
+  <li>វារៀន <b>រចនាសម្ព័ន្ធ និងចំនួន</b> (ប្រភេទទិន្នន័យ, ឈ្មោះ key, តើ key ណាចាំបាច់តាមសង្កេត) — <b>មិនរៀនតម្លៃ</b> ទេ។</li>
+  <li>ការរៀនធ្វើឡើងតាម <b>ថ្នាក់លេខកូដ</b> (status class) សម្រាប់ចម្លើយ។</li>
+  <li>អាចនាំចេញ <b>សេចក្តីព្រាង OpenAPI</b> — ដោយគ្មានតម្លៃ និងគ្មានបញ្ជាក់ <code>required</code> (ព្រោះវាជាការសង្កេត មិនមែនការប្រកាស)។</li>
+</ul>
+<ol class="steps">
+  <li>ចុច <b>Learn</b> ដើម្បីឱ្យប្រព័ន្ធសង្កេតចរាចរណ៍ក្នុងរយៈពេលខ្លី។</li>
+  <li>មើល <b>Learned</b> ដើម្បីពិនិត្យលទ្ធផលដែលបានរៀន។</li>
+  <li>ចុច <b>Export draft</b> ដើម្បីទាញយកសេចក្តីព្រាង OpenAPI។</li>
+</ol>
+
+<h2 id="s7-3">៧.៣ ការគ្រប់គ្រងតាមប្រតិបត្តិការ (Per-operation controls)</h2>
+<p>រាល់ operation នៅក្នុង spec មានរបៀបបីជម្រើស៖</p>
+<table>
+  <tr><th>របៀប</th><th>អត្ថន័យ</th></tr>
+  <tr><td><code>Off</code></td><td>មិនពិនិត្យ operation នេះតាម OpenAPI ទេ</td></tr>
+  <tr><td><code>Observe</code></td><td>ពិនិត្យ និងកត់ត្រាតែប៉ុណ្ណោះ</td></tr>
+  <tr><td><code>Enforce</code></td><td>ពិនិត្យ និងទប់ស្កាត់សំណើដែលមិនត្រឹមត្រូវ</td></tr>
+</table>
+<div class="note"><b>ចំណាំបច្ចេកទេស</b>
+ការគ្រប់គ្រងនេះគ្រប់គ្រង <b>ស្រទាប់ផ្ទៀងផ្ទាត់ OpenAPI តែប៉ុណ្ណោះ</b> (មិនប៉ះពាល់ engine ដើម)។ ផ្លូវដូច <code>/orders/42</code> និង <code>/orders/99</code> ត្រូវបានបង្រួមជា operation តែមួយ (<code>/orders/{id}</code>)។ បើ operation ច្រើនត្រូវគ្នា <b>របៀបដែលតឹងរ៉ឹងជាងគេឈ្នះ</b>។ រាល់ការផ្លាស់ប្តូររបៀបត្រូវបានបញ្ជូនទៅ Edge ភ្លាម។</div>
+</section>
+
+<h1 class="part" id="p8">ជំពូកទី ៨ — កំណត់ហេតុ (Logs)</h1>
+
+<section class="card">
+<h2 id="s8-1">៨.១ ទិដ្ឋភាពទូទៅ</h2>
+<figure>
+  <img src="images/26-logs.png" alt="Logs">
+  <figcaption>រូបភាព ៨.១ — កំណត់ហេតុសុវត្ថិភាព និង access log</figcaption>
+</figure>
+<p>ប្រព័ន្ធមានប្រភេទកំណត់ហេតុពីរ៖</p>
+<ul>
+  <li><b>Security events (ព្រឹត្តិការណ៍សុវត្ថិភាព)</b> — រាល់សំណើដែល WAF បានសម្រេចចិត្ត (block/monitor) ជាមួយសំណើ canonical, ច្បាប់ដែលបានបាញ់ និងលទ្ធផល។</li>
+  <li><b>Access log</b> — រាល់សំណើដែល Edge បានឆ្លើយតប។</li>
+</ul>
+
+<h2 id="s8-2">៨.២ របៀបស្វែងរក</h2>
+<ol class="steps">
+  <li>ជ្រើសប្រភេទ (Security ឬ Access)។</li>
+  <li>ចម្រាញ់តាម៖ គេហទំព័រ, លេខកូដស្ថានភាព, លទ្ធផល (block/monitor), លេខច្បាប់, ផ្លូវ, IP និងរយៈពេល។</li>
+  <li>ចុចលើជួរណាមួយដើម្បីមើលលម្អិត រួមទាំង <b>«ហេតុអ្វី?» (why resolver)</b> ដែលពន្យល់មូលហេតុនៃការសម្រេចចិត្ត និង <b>body view</b> បង្ហាញខ្លឹមសារដែលបានពិនិត្យ។</li>
+</ol>
+<div class="warn"><b>ចំណាំសំខាន់</b>
+ចម្លើយ <code>5xx</code> ដែលកើតពីម៉ាស៊ីនមេពិត (pass-through) <b>មិនត្រូវបានកត់ត្រាជា access log</b> ទេ ប៉ុន្តែសំណើដែល WAF ឆ្លើយតបខ្លួនឯង (ឧ. 403) <b>ត្រូវបានកត់ត្រា</b>។</div>
+<p>រយៈពេលរក្សាទុកត្រូវបានកំណត់នៅ <b>Settings → Log retention</b>។ ការផ្ញើទៅ Elasticsearch គឺជាជម្រើសបន្ថែម (បិទតាមលំនាំដើម)។</p>
+</section>
+
+<h1 class="part" id="p9">ជំពូកទី ៩ — ការជូនដំណឹង (Alerts &amp; Notifications)</h1>
+
+<section class="card">
+<h2 id="s9-1">៩.១ ទិដ្ឋភាពទូទៅ</h2>
+<figure>
+  <img src="images/27-alerts.png" alt="ផ្ទាំង Alerts">
+  <figcaption>រូបភាព ៩.១ — ផ្ទាំងជូនដំណឹងទាំងមូល (ច្បាប់, ការបិទស្ងាត់, ឆានែល, ប្រវត្តិ)</figcaption>
+</figure>
+<p>ផ្ទាំងនេះប្រមូលអ្វីៗពាក់ព័ន្ធការជូនដំណឹងទាំងអស់នៅកន្លែងតែមួយ (ធ្លាប់ជាពីរផ្ទាំងដាច់ដោយឡែក)៖</p>
+<ul>
+  <li><b>Alert rules (ច្បាប់ជូនដំណឹង)</b> — លក្ខខណ្ឌ → កម្រិតសំខាន់ (severity)។</li>
+  <li><b>Silences (ការបិទស្ងាត់)</b> — ផ្អាកការជូនដំណឹងមួយរយៈ (ឧ. ពេលដឹងរឿងហើយ)។</li>
+  <li><b>Channels (ឆានែល)</b> — ផ្លូវផ្ញើ៖ អ៊ីមែល (SMTP), Webhook ឬ Telegram។</li>
+  <li><b>Delivery &amp; History</b> — ប្រវត្តិនៃការផ្ញើ និងលទ្ធផល។</li>
+  <li><b>Login security</b> — ការព្យាយាមចូលបរាជ័យ និងប្រវត្តិការចូលប្រើ។</li>
+</ul>
+
+<h2 id="s9-2">៩.២ ការកំណត់ឆានែល</h2>
+<figure>
+  <img src="images/28-alerts-channels.png" alt="ឆានែលជូនដំណឹង">
+  <figcaption>រូបភាព ៩.២ — ការកំណត់ឆានែលជូនដំណឹង (Email / Webhook / Telegram)</figcaption>
+</figure>
+<ol class="steps">
+  <li>ចូលផ្នែក <b>Channels</b> រួចចុច <b>Add channel</b>។</li>
+  <li>ជ្រើសប្រភេទ៖
+    <ul>
+      <li><b>Email</b> — បំពេញ SMTP server, ច្រក, username/password, និងអ្នកទទួល។</li>
+      <li><b>Webhook</b> — បំពេញ URL ដែលនឹងទទួល JSON POST។</li>
+      <li><b>Telegram</b> — បំពេញ Bot token និង Chat ID។</li>
+    </ul>
+  </li>
+  <li>ចុច <b>Test</b> ដើម្បីផ្ញើសារសាកល្បង។ បើបរាជ័យ ប្រព័ន្ធនឹងប្រាប់ច្បាស់ថាបរាជ័យ — វាមិនបង្ហាញ «ជោគជ័យ» ក្លែងក្លាយទេ។</li>
+  <li>ភ្ជាប់ឆានែលទៅច្បាប់ជូនដំណឹងដែលពាក់ព័ន្ធ។</li>
+</ol>
+
+<h2 id="s9-3">៩.៣ Login security</h2>
+<figure>
+  <img src="images/29-alerts-security.png" alt="Login security">
+  <figcaption>រូបភាព ៩.៣ — ប្រវត្តិសុវត្ថិភាពការចូលប្រើ</figcaption>
+</figure>
+<p>ផ្នែកនេះបង្ហាញការព្យាយាមចូលបរាជ័យ និងប្រវត្តិការចូលប្រើរបស់គណនី។ ប្រើវាដើម្បីរកឃើញការព្យាយាមសាកល្បងពាក្យសម្ងាត់។</p>
+</section>
+
+<h1 class="part" id="p10">ជំពូកទី ១០ — របាយការណ៍ (Reports)</h1>
+
+<section class="card">
+<h2 id="s10-1">១០.១ ទិដ្ឋភាពទូទៅ</h2>
+<figure>
+  <img src="images/30-reports.png" alt="ផ្ទាំង Reports">
+  <figcaption>រូបភាព ១០.១ — ការបង្កើតរបាយការណ៍ការទប់ស្កាត់</figcaption>
+</figure>
+<p>Dashboard ផ្តល់តែសង្ខេប — របាយការណ៍ពេញលេញត្រូវបាន <b>បង្កើត និងទាញយកតាមតម្រូវការ</b>។ របាយការណ៍ជាឯកសារ <b>HTML តែមួយឯកសារ</b> (គ្មាន JavaScript ខាងក្នុង) ដែលអាចផ្ញើ ឬរក្សាទុកបានយ៉ាងងាយ។</p>
+
+<h2 id="s10-2">១០.២ ការបង្កើតរបាយការណ៍</h2>
+<ol class="steps">
+  <li>ជ្រើស <b>គេហទំព័រ</b> (ឬទាំងអស់) និង <b>រយៈពេល</b> (ចាប់ពីថ្ងៃ ដល់ថ្ងៃ — អតិបរមា ៩២ ថ្ងៃ)។</li>
+  <li>ជ្រើសប្រភេទលទ្ធផលដែលចង់បញ្ចូល (block, monitor ។ល។)។</li>
+  <li>បើចង់ សរសេរ <b>ចំណងជើង</b> និង <b>footer</b> ផ្ទាល់ខ្លួន (ឧ. ឈ្មោះក្រុមហ៊ុន)។</li>
+  <li>ចុច <b>Preview</b> ដើម្បីមើលសង្ខេប រួចចុច <b>Generate</b> ដើម្បីទាញយក។</li>
+</ol>
+<div class="note"><b>តំបន់ពេលវេលា</b>
+កាលបរិច្ឆេទ (ថ្ងៃ) និងចំណែកប្រចាំថ្ងៃ (daily buckets) ក្នុងរបាយការណ៍ គោរពតាម <b>តំបន់ពេលវេលាដែលបានកំណត់ក្នុង Settings → Display</b>។</div>
+
+<h2 id="s10-3">១០.៣ ការផ្ញើតាមកាលវិភាគ (Schedules)</h2>
+<ol class="steps">
+  <li>ចូលផ្នែក <b>Schedules</b> រួចចុច <b>Add schedule</b>។</li>
+  <li>ជ្រើសរយៈពេល៖ ប្រចាំថ្ងៃ / ប្រចាំសប្តាហ៍ / ប្រចាំខែ។</li>
+  <li>ជ្រើសអ្នកទទួល (អ៊ីមែល) និងគេហទំព័រ។</li>
+  <li>ប្រើ <b>Send now</b> ដើម្បីសាកល្បងផ្ញើភ្លាមៗ។</li>
+</ol>
+</section>
+
+<h1 class="part" id="p11">ជំពូកទី ១១ — គោលនយោបាយរួម (Policies)</h1>
+
+<section class="card">
+<h2 id="s11-1">១១.១ តើគោលនយោបាយជាអ្វី?</h2>
+<figure>
+  <img src="images/31-policies.png" alt="បញ្ជីគោលនយោបាយ">
+  <figcaption>រូបភាព ១១.១ — បញ្ជីគោលនយោបាយរួម</figcaption>
+</figure>
+<p>គោលនយោបាយ (Policy) គឺជាឯកសារដែលមាន <b>ស្រទាប់ (layers)</b> ច្រើន ដូចជា៖ engine posture, CRS tuning, ច្បាប់ផ្ទាល់ខ្លួន, ការលើកលែងច្បាប់, virtual patches, API schema, rate limits, IP access, bot posture និង CRS import។ គេហទំព័រអាច <b>តាម (follow)</b> គោលនយោបាយមួយ ដើម្បីកុំកំណត់ដូចគ្នាម្តងហើយម្តងទៀត។</p>
+
+<h2 id="s11-2">១១.២ ទំព័រលម្អិតគោលនយោបាយ</h2>
+<figure>
+  <img src="images/32-policy-detail.png" alt="លម្អិតគោលនយោបាយ">
+  <figcaption>រូបភាព ១១.២ — ទំព័រលម្អិត៖ ស្រទាប់នីមួយៗ, ប្រវត្តិ និងការមើលជាមុន</figcaption>
+</figure>
+<ol class="steps">
+  <li>ចុចលើគោលនយោបាយណាមួយដើម្បីបើកទំព័រលម្អិត (<code>/policies/:policyId</code>)។</li>
+  <li>មើល <b>ស្រទាប់នីមួយៗ</b> — ចុច <b>Add layer</b> ដើម្បីបន្ថែមស្រទាប់ថ្មី (ឧ. rate limits ឬ IP access)។</li>
+  <li>មើល <b>ប្រវត្តិ (history)</b> និង <b>preview</b> នៃលទ្ធផលដែលចងក្រងរួច។</li>
+  <li>ដើម្បីឱ្យគេហទំព័រប្រើ សូមភ្ជាប់វានៅ <b>Protection → Policy tuning</b>។</li>
+</ol>
+<div class="note"><b>ភាពស្មោះត្រង់នៃស្ថានភាព</b>
+នៅពេលគោលនយោបាយ និងការកំណត់ក្នុងគេហទំព័រនិយាយផ្ទុយគ្នា លទ្ធផលពិតបង្ហាញនៅ <b>Effective posture</b>។ អ្នកអាចទុកចិត្តបានថាអ្វីដែលបង្ហាញជា «សកម្ម» គឺជាអ្វីដែល Edge កំពុងអនុវត្តពិត។</div>
+</section>
+
+<h1 class="part" id="p12">ជំពូកទី ១២ — OWASP CRS</h1>
+
+<section class="card">
+<h2 id="s12-1">១២.១ ទិដ្ឋភាពទូទៅ</h2>
+<figure>
+  <img src="images/33-crs.png" alt="ផ្ទាំង CRS">
+  <figcaption>រូបភាព ១២.១ — បណ្ណាល័យច្បាប់ OWASP CRS</figcaption>
+</figure>
+<p>VarmanWAF អាចនាំចូល <b>OWASP Core Rule Set (CRS)</b> ជាច្បាប់បន្ថែម។ កំណែដែលបាននាំចូលបច្ចុប្បន្នគឺ <b>CRS 4.30.0</b> (ច្បាប់ ៦៩៣)។</p>
+<ul>
+  <li><b>Categories</b> — មើលច្បាប់តាមប្រភេទ (SQLi, XSS, RCE ។ល។)។</li>
+  <li><b>Paranoia ceiling</b> — កម្រិត «ភាពប្រុងប្រយ័ត្ន» (១–៤)។ កម្រិតខ្ពស់ = ការពារខ្លាំង ប៉ុន្តែអាចបាញ់ខុសច្រើនជាង។ ចាប់ផ្តើមពីកម្រិតទាប រួចបង្កើនបន្តិចម្តងៗ។</li>
+  <li><b>Rule catalogue</b> — បញ្ជីច្បាប់ពេញលេញ និងកន្លែងដែលវាសកម្ម។</li>
+</ul>
+<div class="warn"><b>ការអនុវត្តជាក់ស្តែង</b>
+ច្បាប់ CRS ដំណើរការជា <b>virtual patches</b> នៅក្នុងគេហទំព័រ។ បើអ្នកចង់លើកលែងច្បាប់ CRS សូមប្រើកញ្ចប់លើកលែងប្រភេទ <b>seclang</b> (ជំពូក ៥.៤.៥)។</div>
+</section>
+
+<h1 class="part" id="p13">ជំពូកទី ១៣ — IP Groups និង Blocked IPs</h1>
+
+<section class="card">
+<h2 id="s13-1">១៣.១ ក្រុម IP (IP Groups)</h2>
+<figure>
+  <img src="images/34-ip-groups.png" alt="ក្រុម IP">
+  <figcaption>រូបភាព ១៣.១ — ក្រុម IP ដែលអាចប្រើឡើងវិញបាន</figcaption>
+</figure>
+<p>ក្រុម IP គឺជាបណ្តុំ IP/CIDR ដែលមានឈ្មោះ អាចយោងពីច្បាប់ IP និង rate limits នៅគ្រប់គេហទំព័រ។</p>
+<ol class="steps">
+  <li>ចុច <b>Add group</b> បំពេញឈ្មោះ (ឧ. «ការិយាល័យ») និងបញ្ជី IP/CIDR។</li>
+  <li>បន្ថែមធាតុថ្មីៗនៅពេលក្រោយបាន។</li>
+  <li>នៅពេលកែក្រុម ប្រព័ន្ធបញ្ជូនកញ្ចប់ថ្មីទៅគ្រប់គេហទំព័រដែលយោងវាភ្លាម។</li>
+</ol>
+
+<h2 id="s13-2">១៣.២ IP ដែលបានទប់ស្កាត់ (Blocked IPs)</h2>
+<figure>
+  <img src="images/35-blocked-ips.png" alt="IP ដែលបានទប់ស្កាត់">
+  <figcaption>រូបភាព ១៣.២ — បញ្ជី IP ដែលបានទប់ស្កាត់ដោយស្វ័យប្រវត្តិ និងដោយដៃ</figcaption>
+</figure>
+<p>នៅពេល WAF ទប់ស្កាត់សំណើពី IP ណាមួយ Edge នឹង <b>បដិសេធសំណើបន្តបន្ទាប់ពី IP នោះរយៈពេល ៦០០ វិនាទី (១០ នាទី)</b> ដោយមិនចាំបាច់ដំណើរការ engine ម្តងទៀត។</p>
+<ul>
+  <li><b>ប្រភព</b> — ដោយស្វ័យប្រវត្តិ (auto-block) ឬដោយដៃ (manual block)។</li>
+  <li><b>មូលហេតុ និងវិសាលភាព</b> — តាមគេហទំព័រ ឬទាំងប្រព័ន្ធ។</li>
+  <li><b>កាលបរិច្ឆេទផុតកំណត់</b> និងចំនួនប៉ះ។</li>
+</ul>
+<ol class="steps">
+  <li>រក IP ក្នុងបញ្ជី។</li>
+  <li>ចុច <b>Unblock</b> ដើម្បីដោះវាចេញ (ឧ. ពេលដឹងថាអតិថិជនពិតត្រូវបានបាញ់ខុស)។</li>
+  <li>អាច <b>Block</b> IP ដោយដៃបានផងដែរ។</li>
+</ol>
+</section>
+
+<h1 class="part" id="p14">ជំពូកទី ១៤ — បណ្តាញ (Fleet)</h1>
+
+<section class="card">
+<h2 id="s14-1">១៤.១ ភ្នាក់ងារ (Agents)</h2>
+<figure>
+  <img src="images/36-agents.png" alt="ភ្នាក់ងារ">
+  <figcaption>រូបភាព ១៤.១ — ភ្នាក់ងារនៅគែមបណ្តាញ និងស្ថានភាពរបស់ពួកវា</figcaption>
+</figure>
+<p>ភ្នាក់ងារ (agent) គឺជាកម្មវិធីដែលដំណើរការនៅម៉ាស៊ីនរបស់អ្នក (ឬ container) ទទួលច្បាប់ពី Control Plane និងអនុវត្ត។</p>
+<ul>
+  <li><b>ស្ថានភាព</b> — online / offline ព្រមទាំងពេលវេលាចុងក្រោយដែលឃើញ (heartbeat)។</li>
+  <li><b>បន្ទុក</b> — ស្ថិតិម៉ាស៊ីន និងកំណែកញ្ចប់ដែលបានទទួល។</li>
+  <li><b>ការចុះឈ្មោះ</b> — អាចបិទ (registration closed) ដើម្បីកុំឱ្យ agent ប្លែកចូលរួម។ អាចភ្ជាប់អត្តសញ្ញាណដោយ mTLS។</li>
+</ul>
+
+<h2 id="s14-2">១៤.២ ប្រវត្តិការកំណត់ (Config history)</h2>
+<figure>
+  <img src="images/37-config-history.png" alt="ប្រវត្តិការកំណត់">
+  <figcaption>រូបភាព ១៤.២ — ប្រវត្តិកំណែការកំណត់ និងការត្រឡប់ក្រោយ</figcaption>
+</figure>
+<p>រាល់ការផ្លាស់ប្តូរដែលបង្កើតកញ្ចប់ថ្មីត្រូវបានចុះកំណែ។ អ្នកអាចមើល៖</p>
+<ul>
+  <li>កំណែនីមួយៗ ជាមួយអ្នកធ្វើ និងពេលវេលា។</li>
+  <li><b>Diff</b> — អ្វីផ្លាស់ប្តូរពីកំណែមុន។</li>
+  <li><b>Rollback</b> — ត្រឡប់ទៅកំណែចាស់ ដែលនឹងបញ្ជូនកញ្ចប់នោះទៅ Edge វិញ។</li>
+</ul>
+
+<h2 id="s14-3">១៤.៣ វដ្តជីវិតគេហទំព័រ (Lifecycle)</h2>
+<figure>
+  <img src="images/38-lifecycle.png" alt="វដ្តជីវិត">
+  <figcaption>រូបភាព ១៤.៣ — វដ្តជីវិតគេហទំព័រ៖ ពីការបង្កើតដល់ការការពារពេញលេញ</figcaption>
+</figure>
+<p>ផ្ទាំងនេះជាបញ្ជីត្រួតពិនិត្យ (checklist) បង្ហាញថាគេហទំព័រនីមួយៗស្ថិតក្នុងដំណាក់ណា៖ បង្កើត → កំណត់រួច → ទទួលចរាចរណ៍ → ការពារពេញលេញ និងអ្វីដែលនៅខ្វះនៅដំណាក់នីមួយៗ។</p>
+</section>
+
+<h1 class="part" id="p15">ជំពូកទី ១៥ — ជំនួយការ AI (Assistant)</h1>
+
+<section class="card">
+<figure>
+  <img src="images/39-assistant.png" alt="ជំនួយការ AI">
+  <figcaption>រូបភាព ១៥.១ — ជំនួយការ AI សម្រាប់អ្នកប្រតិបត្តិការ</figcaption>
+</figure>
+<p>ជំនួយការ AI ជាជម្រើសបន្ថែម សម្រាប់៖</p>
+<ul>
+  <li>ពន្យល់ព្រឹត្តិការណ៍សុវត្ថិភាព (ហេតុអ្វីបានជាត្រូវទប់ស្កាត់)។</li>
+  <li>ជួយព្រាងច្បាប់ផ្ទាល់ខ្លួន។</li>
+</ul>
+<div class="warn"><b>ភាពឯកជន</b>
+ជំនួយការ <b>បិទតាមលំនាំដើម</b>។ គ្មានទិន្នន័យត្រូវបានផ្ញើទៅណាទេ លុះត្រាតែអ្នកកំណត់ provider និង key នៅ Settings → AI assistant។</div>
+</section>
+
+<h1 class="part" id="p16">ជំពូកទី ១៦ — SSL និងចរាចរណ៍រួម (Global SSL &amp; Traffic)</h1>
+
+<section class="card">
+<h2 id="s16-1">១៦.១ SSL រួម</h2>
+<figure>
+  <img src="images/40-global-ssl.png" alt="SSL រួម">
+  <figcaption>រូបភាព ១៦.១ — វិញ្ញាបនបត្រទាំងអស់ក្នុងបណ្តាញ</figcaption>
+</figure>
+<p>មើលវិញ្ញាបនបត្រទាំងអស់របស់គេហទំព័រក្នុងកន្លែងតែមួយ ព្រមទាំងការព្រមានកាលបរិច្ឆេទផុតកំណត់។ ប្រើវាដើម្បីកុំឱ្យវិញ្ញាបនបត្រណាមួយផុតកំណត់ដោយអចេតនា។</p>
+
+<h2 id="s16-2">១៦.២ ចរាចរណ៍រួម</h2>
+<figure>
+  <img src="images/41-global-traffic.png" alt="ចរាចរណ៍រួម">
+  <figcaption>រូបភាព ១៦.២ — ចរាចរណ៍ទាំងអស់ក្នុងបណ្តាញ</figcaption>
+</figure>
+<p>ស្ថិតិចរាចរណ៍រួមគ្នាសម្រាប់គ្រប់គេហទំព័រ៖ ចំនួនសំណើ, លេខកូដ, bandwidth, cache hit និងភូមិសាស្ត្រ — ជួយមើលទិដ្ឋភាពធំនៃប្រព័ន្ធទាំងមូល។</p>
+</section>
+
+<h1 class="part" id="p17">ជំពូកទី ១៧ — ការកំណត់ប្រព័ន្ធ (Settings)</h1>
+
+<section class="card">
+<h2 id="s17-1">១៧.១ ទិដ្ឋភាពទូទៅ</h2>
+<figure>
+  <img src="images/42-settings.png" alt="ការកំណត់ប្រព័ន្ធ">
+  <figcaption>រូបភាព ១៧.១ — ការកំណត់ប្រព័ន្ធ (ផ្នែកទីមួយ៖ Appearance)</figcaption>
+</figure>
+<p>ទំព័រការកំណត់រួមមានផ្នែកជាច្រើន ដែលរាយនៅខាងស្តាំ។ ខាងក្រោមនេះជាការពន្យល់ផ្នែកសំខាន់ៗ។</p>
+
+<h2 id="s17-2">១៧.២ Appearance (រូបរាង)</h2>
+<ul>
+  <li><b>Theme</b> — ភ្លឺ/ងងឹត។</li>
+  <li><b>Brand colour</b> — ពណ៌សម្គាល់របស់អង្គការ។</li>
+  <li><b>ភាសាផ្ទាំងបញ្ជា</b> — បច្ចុប្បន្នគាំទ្រ អង់គ្លេស/ខ្មែរ (តាមការកំណត់)។</li>
+</ul>
+
+<h2 id="s17-3">១៧.៣ Display &amp; Data timezone (តំបន់ពេលវេលា)</h2>
+<figure>
+  <img src="images/43-settings-display.png" alt="តំបន់ពេលវេលា">
+  <figcaption>រូបភាព ១៧.២ — ការកំណត់តំបន់ពេលវេលាសម្រាប់បង្ហាញ និងទិន្នន័យ</figcaption>
+</figure>
+<p>កំណត់តំបន់ពេលវេលា (ឧ. <code>Asia/Phnom_Penh</code>) ដែលប្រើសម្រាប់៖</p>
+<ul>
+  <li>ការបង្ហាញពេលវេលានៅគ្រប់ទំព័រ។</li>
+  <li>ព្រំដែនកាលបរិច្ឆេទ និងចំណែកប្រចាំថ្ងៃក្នុងរបាយការណ៍។</li>
+</ul>
+
+<h2 id="s17-4">១៧.៤ Account និង Users (គណនី និងអ្នកប្រើ)</h2>
+<figure>
+  <img src="images/44-settings-users.png" alt="អ្នកប្រើប្រាស់">
+  <figcaption>រូបភាព ១៧.៣ — ការគ្រប់គ្រងអ្នកប្រើផ្ទាំងបញ្ជា</figcaption>
+</figure>
+<ol class="steps">
+  <li><b>Account</b> — កែឈ្មោះ, ប្តូរពាក្យសម្ងាត់ (ត្រូវបញ្ជាក់ពាក្យសម្ងាត់បច្ចុប្បន្ន)។</li>
+  <li><b>Users</b> — ចុច <b>Add user</b> បង្កើតអ្នកប្រើថ្មីជាមួយតួនាទី (role)។ អាចបិទ/បើកគណនី ឬបង្ខំឱ្យប្តូរពាក្យសម្ងាត់លើកដំបូង។</li>
+  <li><b>Passkeys</b> — ចុះឈ្មោះ Passkey (WebAuthn) សម្រាប់ចូលដោយគ្មានពាក្យសម្ងាត់។</li>
+</ol>
+
+<h2 id="s17-5">១៧.៥ API protection (លំនាំដើមសម្រាប់ OpenAPI)</h2>
+<figure>
+  <img src="images/45-settings-api-protection.png" alt="API protection">
+  <figcaption>រូបភាព ១៧.៤ — ការកំណត់លំនាំដើមសម្រាប់ការផ្ទៀងផ្ទាត់ OpenAPI</figcaption>
+</figure>
+<p>កំណត់របៀបលំនាំដើម (Off / Observe / Enforce) សម្រាប់ស្រទាប់ផ្ទៀងផ្ទាត់ OpenAPI ដែលប្រើនៅពេលគ្មានការកំណត់ជាក់លាក់តាម operation។</p>
+
+<h2 id="s17-6">១៧.៦ Log retention (រយៈពេលរក្សាទុកកំណត់ហេតុ)</h2>
+<figure>
+  <img src="images/46-settings-log-retention.png" alt="Log retention">
+  <figcaption>រូបភាព ១៧.៥ — រយៈពេលរក្សាទុកកំណត់ហេតុ</figcaption>
+</figure>
+<p>កំណត់រយៈពេលរក្សាទុកព្រឹត្តិការណ៍សុវត្ថិភាព និង access log។ កំណត់តម្លៃសមស្របនឹងទំហំឌីស និងតម្រូវការត្រួតពិនិត្យរបស់អ្នក។</p>
+
+<h2 id="s17-7">១៧.៧ Custom error pages (ទំព័រកំហុសផ្ទាល់ខ្លួន)</h2>
+<figure>
+  <img src="images/47-settings-error-pages.png" alt="ទំព័រកំហុស">
+  <figcaption>រូបភាព ១៧.៦ — ទំព័របង្ហាញពេលទប់ស្កាត់ ឬប្រឈមមុខ</figcaption>
+</figure>
+<p>កែទំព័រដែលអ្នកប្រើឃើញនៅពេលត្រូវទប់ស្កាត់ (403) ឬប្រឈមមុខ (challenge) ដើម្បីឱ្យស៊ីនឹងម៉ាករបស់អ្នក។</p>
+
+<h2 id="s17-8">១៧.៨ API keys (កូនសោ API)</h2>
+<figure>
+  <img src="images/48-settings-api-keys.png" alt="API keys">
+  <figcaption>រូបភាព ១៧.៧ — កូនសោសម្រាប់ភ្ជាប់ជាមួយប្រព័ន្ធខាងក្រៅ</figcaption>
+</figure>
+<ol class="steps">
+  <li>ចុច <b>Create key</b> ដើម្បីបង្កើតកូនសោថ្មី។</li>
+  <li>ចម្លង និងរក្សាទុកវាយ៉ាងសុវត្ថិភាព — វាបង្ហាញតែម្តងគត់។</li>
+  <li>ប្រើវាសម្រាប់ការភ្ជាប់ពីប្រព័ន្ធខាងក្រៅ (SIEM, scripts ។ល។)។</li>
+</ol>
+<div class="note"><b>ផ្នែកផ្សេងទៀត</b>
+ការកំណត់ផ្សេងទៀតរួមមាន៖ Control-plane TLS (វិញ្ញាបនបត្រផ្ទាំងបញ្ជា), Observation mode (របៀបសង្កេតសកល — កត់ត្រាមិនទប់ស្កាត់), AI assistant, MCP (ភ្ជាប់ឧបករណ៍ជំនួយការ) និង Elasticsearch (បញ្ជូនកំណត់ហេតុបន្ថែម)។</div>
+</section>
+
+<h1 class="part" id="p18">ជំពូកទី ១៨ — ម៉ាស៊ីនសុវត្ថិភាព ដំណើរការយ៉ាងដូចម្តេច?</h1>
+
+<section class="card">
+<p>ជំពូកនេះពន្យល់លម្អិតអំពីអ្វីដែលកើតឡើងនៅពេលសំណើមួយមកដល់ Edge — ដើម្បីឱ្យអ្នកយល់ពីមូលហេតុនៃការសម្រេចចិត្ត និងរបៀបលៃតម្រូវប្រកបដោយទំនុកចិត្ត។</p>
+
+<h2 id="s18-1">១៨.១ លំដាប់នៃដំណាក់កាល</h2>
+<ol>
+  <li><b>ទទួលសំណើ</b> — Edge ទទួលសំណើ HTTP/HTTPS និងកំណត់អត្តសញ្ញាណគេហទំព័រតាមដែន (Host)។</li>
+  <li><b>Canonicalization</b> — URL, query, cookies និង headers ត្រូវបានធ្វើឱ្យមានទម្រង់តែមួយ។ ឧទាហរណ៍៖ <code>%2e%2e%2f</code> ត្រូវបាន decode, <code>/a/../b</code> ត្រូវបានបង្រួម។ នេះជាមូលដ្ឋានដ៏សំខាន់ ព្រោះអ្នកវាយប្រហារចូលចិត្តប្រើការសរសេរខុសៗគ្នា ដើម្បីបញ្ឆោតប្រព័ន្ធ។</li>
+  <li><b>ច្បាប់ IP និងបញ្ជីទប់ស្កាត់</b> — បើ IP ស្ថិតក្នុងបញ្ជីទប់ស្កាត់ (ឧ. auto-block) វាត្រូវបានបដិសេធភ្លាម <b>មុន engine</b>។</li>
+  <li><b>Signature Lane</b> — ស្កេនលំនាំដោយ Aho-Corasick៖ លំនាំកម្រិតទប់ស្កាត់ (payload ច្បាស់) និងលំនាំកម្រិតកត់ត្រា (ពាក្យសង្ស័យ)។</li>
+  <li><b>ច្បាប់គ្រប់គ្រង</b> — ច្បាប់ ១៣ គ្រួសារបន្ថែមពិន្ទុ anomaly។ បើពិន្ទុលើសកម្រិត → block។</li>
+  <li><b>ច្បាប់ផ្ទាល់ខ្លួន និង SecLang/CRS</b> — កន្សោមរបស់អ្នក និងច្បាប់ CRS ដែលបាននាំចូល។</li>
+  <li><b>API Schema</b> — បើបើក សំណើត្រូវបានផ្ទៀងផ្ទាត់តាម OpenAPI (តាមរបៀបរបស់ operation)។</li>
+  <li><b>Rate limit / Bot / Geo</b> — ដែនកំណត់អត្រា និងគោលនយោបាយបុត/ភូមិសាស្ត្រ។</li>
+  <li><b>ការលើកលែង (Exclusions)</b> — កញ្ចប់ និង target exclusions ត្រូវបានអនុវត្ត ដើម្បីកាត់បន្ថយការបាញ់ខុស។</li>
+  <li><b>សេចក្តីសម្រេច</b> — <b>Allow</b> (បន្តទៅ origin), <b>Monitor</b> (កត់ត្រា បន្តទៅ origin) ឬ <b>Block</b> (ឆ្លើយតបទំព័រកំហុស)។</li>
+</ol>
+
+<h2 id="s18-2">១៨.២ ការកត់ត្រា និងមូលហេតុ</h2>
+<p>រាល់ការសម្រេចចិត្តត្រូវបានកត់ត្រាជាមួយព័ត៌មានគ្រប់គ្រាន់ ដើម្បីឆ្លើយសំណួរ «ហេតុអ្វី?»៖ ច្បាប់ណាបាញ់, ពិន្ទុប៉ុន្មាន, ផ្នែកណានៃសំណើ (target) និងការលើកលែងណាត្រូវបានពិចារណា។ ប្រើ <b>Logs → why resolver</b> ដើម្បីមើលវា។</p>
+
+<h2 id="s18-3">១៨.៣ ដែនកំណត់ដែលចេះគ្រប់គ្រង (Bounded work)</h2>
+<ul>
+  <li>ចំនួនការរកឃើញក្នុងសំណើមួយមានដែនកំណត់។</li>
+  <li>ការត្រួតពិនិត្យ body មានថវិកា (budget) — មិនអានគ្មានទីបញ្ចប់។</li>
+  <li>នៅពេលលើសដែនកំណត់ ប្រព័ន្ធ <b>ចុះកម្រិតជារចនាសម្ព័ន្ធ (structured degradation)</b> ជំនួសការបរាជ័យទាំងស្រុង។</li>
+</ul>
+
+<h2 id="s18-4">១៨.៤ រូបភាពស្ថានភាព (Snapshots) និងភាពស៊ីសង្វាក់</h2>
+<p>រាល់គេហទំព័រមាន runtime snapshot ដែលជា <b>រូបភាពមិនអាចកែ</b> (immutable) នៅខាងក្រោយ <code>ArcSwap</code>។ ន័យថា៖ នៅពេលអ្នកអនុវត្តការផ្លាស់ប្តូរ សំណើដែលកំពុងដំណើរការនឹងបន្តប្រើ snapshot ចាស់រហូតដល់ចប់ — គ្មានសំណើណាមួយឃើញស្ថានភាព «ពាក់កណ្តាល» ឡើយ។</p>
+
+<h2 id="s18-5">១៨.៥ របៀប Shadow (ប្រៀបធៀបម៉ាស៊ីន)</h2>
+<p>នៅពេលអ្នកជ្រើស engine mode = <code>shadow</code> ម៉ាស៊ីនទាំងពីរ (ថ្មី និងចាស់) ដំណើរការជាមួយគ្នាលើសំណើដូចគ្នា ហើយលទ្ធផលត្រូវបានកត់ត្រាជា៖ «យល់ស្រប», «ម៉ាស៊ីនថ្មីតឹងជាង» ឬ «ម៉ាស៊ីនថ្មីធូរជាង»។ នេះជាវិធីសុវត្ថិភាពបំផុតក្នុងការផ្លាស់ប្តូរម៉ាស៊ីន៖ សង្កេតជាមុន រួចទើបប្តូរ។</p>
+</section>
+
+<h1 class="part" id="p19">ជំពូកទី ១៩ — ប្រតិបត្តិការ និងការដោះស្រាយបញ្ហា</h1>
+
+<section class="card">
+<h2 id="s19-1">១៩.១ ការបម្រុងទុក និងស្តារទិន្នន័យ (Backup / Restore)</h2>
+<p>ទិន្នន័យទាំងអស់ស្ថិតក្នុង PostgreSQL។ ការបម្រុងទុកសំខាន់បំផុតគឺ database៖</p>
+<pre><code>docker exec varman-postgres pg_dump -U varman varman | gzip &gt; varman-backup.sql.gz</code></pre>
+<p>ដើម្បីស្តារ៖ បង្កើត database ទទេម្តងទៀត រួច <code>gunzip -c varman-backup.sql.gz | docker exec -i varman-postgres psql -U varman varman</code> បន្ទាប់មក restart Control Plane។</p>
+
+<h2 id="s19-2">១៩.២ ការធ្វើបច្ចុប្បន្នភាព (Upgrade)</h2>
+<ol class="steps">
+  <li>បម្រុងទុក database ជាមុន (ខាងលើ)។</li>
+  <li>ទាញយក image ថ្មី៖ <code>docker pull sovichetra/varmanwaf:latest</code>។</li>
+  <li>ដំណើរការឡើងវិញ៖ <code>docker compose up -d</code>។</li>
+  <li>ពិនិត្យសុខភាព៖ បើក <code>https://&lt;host&gt;:9080/healthz</code> និងមើលកំណែនៅ Settings → About។</li>
+</ol>
+
+<h2 id="s19-3">១៩.៣ ការដោះស្រាយបញ្ហាទូទៅ</h2>
+<table>
+  <tr><th>រោគសញ្ញា</th><th>ដំណោះស្រាយ</th></tr>
+  <tr><td>ចូលមិនបាន <code>429</code></td><td>ការពារការសាកល្បងពាក្យសម្ងាត់ — រង់ចាំ ១ នាទី រួចព្យាយាមម្តងទៀត</td></tr>
+  <tr><td>គេហទំព័រឆ្លើយ <code>502/503</code></td><td>ម៉ាស៊ីនមេពិត (origin) មានបញ្ហា — ពិនិត្យនៅ Origin និងសុខភាព upstream</td></tr>
+  <tr><td>Agent បង្ហាញ offline</td><td>ពិនិត្យច្រក 9090, ការតភ្ជាប់ gRPC និង registration</td></tr>
+  <tr><td>ច្បាប់ថ្មីមិនបាញ់</td><td>ពិនិត្យ Effective posture — ប្រហែលជា policy មួយឈ្នះ; មើល Logs → why resolver</td></tr>
+  <tr><td>បាញ់ខុស (false positive)</td><td>ប្រើ Rule exceptions ឬ Exclusion packages ជំនួសការបិទច្បាប់ទាំងស្រុង</td></tr>
+  <tr><td>ភូមិសាស្ត្រមិនអនុវត្ត</td><td>ពិនិត្យ <code>missing_keys</code> — ត្រូវ Sync ជួរនោះពី ipverse ជាមុន</td></tr>
+</table>
+
+<h2 id="s19-4">១៩.៤ សំណួរញឹកញាប់ (FAQ)</h2>
+<p><b>តើ Control Plane ធ្លាក់នាំឱ្យគេហទំព័រឈប់ការពារទេ?</b> ទេ។ Edge បន្តប្រើច្បាប់ចុងក្រោយដែលបានទទួល។</p>
+<p><b>តើការរៀនសូត្រ API ផ្ញើតម្លៃទិន្នន័យរបស់អតិថិជនទេ?</b> ទេ។ វារៀនតែរចនាសម្ព័ន្ធ និងចំនួន — មិនរៀនតម្លៃ។</p>
+<p><b>តើខ្ញុំអាចប្តូរម៉ាស៊ីនសុវត្ថិភាពដោយគ្មានហានិភ័យដោយរបៀបណា?</b> ប្រើ <code>shadow</code> mode សង្កេតការប្រៀបធៀបមួយរយៈ រួចទើបប្តូរទៅ <code>varman</code>។</p>
+<p><b>តើរបាយការណ៍បង្ហាញលេខខុសពី Logs ទេ?</b> ពិនិត្យតំបន់ពេលវេលា (Settings → Display) និងរយៈពេលដែលជ្រើស។</p>
+</section>
+
+<h1 class="part" id="p20">ជំពូកទី ២០ — ឧបសម្ព័ន្ធ</h1>
+
+<section class="card">
+<h2 id="s20-1">២០.១ ពាក្យបច្ចេកទេសសំខាន់ៗ</h2>
+<table>
+  <tr><th>ពាក្យ</th><th>អត្ថន័យ</th></tr>
+  <tr><td>WAF</td><td>ជញ្ជាំងភ្លើងកម្មវិធីវេប — ការពារ SQLi, XSS ។ល។</td></tr>
+  <tr><td>Origin / Upstream</td><td>ម៉ាស៊ីនមេពិតដែលផ្ទុកគេហទំព័រ</td></tr>
+  <tr><td>Edge / Agent</td><td>កម្មវិធីនៅជិតអ្នកប្រើ ដែលត្រួតពិនិត្យ និងបញ្ជូនសំណើ</td></tr>
+  <tr><td>Control Plane</td><td>ផ្ទាំងបញ្ជា និង API មជ្ឈមណ្ឌល</td></tr>
+  <tr><td>Policy / Layer</td><td>គោលនយោបាយ / ស្រទាប់កំណត់ក្នុងគោលនយោបាយ</td></tr>
+  <tr><td>Exclusion</td><td>ការលើកលែងច្បាប់ចំពោះករណីជាក់លាក់</td></tr>
+  <tr><td>OpenAPI</td><td>ឯកសារពិពណ៌នា API (spec)</td></tr>
+  <tr><td>ASN</td><td>លេខសម្គាល់បណ្តាញរបស់អ្នកផ្តល់សេវា</td></tr>
+  <tr><td>ACME</td><td>ស្តង់ដារចេញវិញ្ញាបនបត្រដោយស្វ័យប្រវត្តិ (Let's Encrypt)</td></tr>
+  <tr><td>mTLS</td><td>TLS ទៅវិញទៅមក — ភាគីទាំងពីរផ្ទៀងផ្ទាត់គ្នា</td></tr>
+</table>
+
+<h2 id="s20-2">២០.២ តារាងយោងរហ័ស</h2>
+<table>
+  <tr><th>ខ្ញុំចង់…</th><th>ទៅកាន់</th></tr>
+  <tr><td>មើលស្ថានភាពទូទៅ</td><td>Dashboard</td></tr>
+  <tr><td>បន្ថែមគេហទំព័រ</td><td>Sites → Add site</td></tr>
+  <tr><td>កែច្បាប់ / បន្ថែមច្បាប់ផ្ទាល់ខ្លួន</td><td>Site → Protection → Rules</td></tr>
+  <tr><td>លើកលែងការបាញ់ខុស</td><td>Site → Protection → Policy tuning → Rule exceptions / Exclusion packages</td></tr>
+  <tr><td>ទប់ស្កាត់ប្រទេស</td><td>Site → Access → Geo</td></tr>
+  <tr><td>មើលថាហេតុអ្វីត្រូវទប់ស្កាត់</td><td>Logs → Security events → why resolver</td></tr>
+  <tr><td>ផ្ញើរបាយការណ៍ទៅថ្នាក់គ្រប់គ្រង</td><td>Reports</td></tr>
+  <tr><td>ទទួលការជូនដំណឹងតាម Telegram</td><td>Alerts → Channels → Telegram</td></tr>
+  <tr><td>កំណត់តំបន់ពេលវេលា</td><td>Settings → Display</td></tr>
+  <tr><td>បង្កើតកូនសោ API</td><td>Settings → API keys</td></tr>
+</table>
+
+<h2 id="s20-3">២០.៣ ឯកសារបន្ថែម</h2>
+<ul>
+  <li><b>docs/features.md</b> — បញ្ជីមុខងារពេញលេញ (អង់គ្លេស)។</li>
+  <li><b>docs/security-engine.md</b> — ព័ត៌មានលម្អិតនៃម៉ាស៊ីនសុវត្ថិភាព។</li>
+  <li><b>docs/deployment.md</b> — ការដាក់ដំណើរការ និងប្រតិបត្តិការ។</li>
+  <li><b>docs/benchmarks/v1.0.0.md</b> — របាយការណ៍ល្បឿន (benchmark)។</li>
+</ul>
+</section>
+
+<footer class="doc">
+  <p>VarmanWAF 1.0.0 — ឯកសារណែនាំអ្នកប្រើប្រាស់ភាសាខ្មែរ · រូបភាពទាំងអស់ថតចេញពីប្រព័ន្ធពិត (v1.0.0)</p>
+</footer>
+</div>
+</body>
+</html>
