@@ -24,6 +24,12 @@ pub struct Model {
     /// body was observed.
     #[sea_orm(column_type = "JsonBinary")]
     pub request_schema: Option<Json>,
+    /// Merged JSON structures of the response bodies, per status class
+    /// (`2xx`, `4xx`, `5xx`); `None` when none were captured.
+    #[sea_orm(column_type = "JsonBinary")]
+    pub response_schema: Option<Json>,
+    /// JSON response bodies merged into `response_schema`.
+    pub response_samples: i64,
     /// Query parameters: name -> { types, count }.
     #[sea_orm(column_type = "JsonBinary")]
     pub query_schema: Json,

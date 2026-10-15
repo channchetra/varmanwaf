@@ -282,6 +282,10 @@ pub struct LearnSummary {
     skipped_truncated: u64,
     /// Bodies skipped because they are not JSON.
     skipped_non_json: u64,
+    /// JSON response bodies merged into the response structures.
+    response_samples: u64,
+    /// Response bodies skipped (truncated or not JSON).
+    response_skipped: u64,
     rows_scanned: u64,
     /// True when the scan hit its row cap; older traffic was not read.
     truncated_scan: bool,
@@ -309,7 +313,8 @@ async fn learn(
     let rows = query_all(
         &state.db,
         "SELECT method, path, query_string, request_body, \
-                request_body_truncated, timestamp \
+                request_body_truncated, response_body, \
+                response_body_truncated, status_code, timestamp \
          FROM access_logs \
          WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3 \
            AND path IS NOT NULL AND path <> '' \
@@ -322,7 +327,10 @@ async fn learn(
     struct Acc {
         schema: SchemaNode,
         params: std::collections::BTreeMap<String, QueryParam>,
+        /// Response structures per status class.
+        responses: std::collections::BTreeMap<String, SchemaNode>,
         samples: u64,
+        response_samples: u64,
         first: Option<DateTime<Utc>>,
         last: Option<DateTime<Utc>>,
     }
@@ -331,6 +339,8 @@ async fn learn(
     let mut skipped_truncated = 0u64;
     let mut skipped_non_json = 0u64;
     let mut samples = 0u64;
+    let mut response_samples = 0u64;
+    let mut response_skipped = 0u64;
 
     for row in &rows {
         let method = row.try_get::<String>("", "method").unwrap_or_default();
@@ -342,7 +352,9 @@ async fn learn(
         let entry = acc.entry((method, path)).or_insert_with(|| Acc {
             schema: SchemaNode::default(),
             params: std::collections::BTreeMap::new(),
+            responses: std::collections::BTreeMap::new(),
             samples: 0,
+            response_samples: 0,
             first: None,
             last: None,
         });
@@ -370,6 +382,27 @@ async fn learn(
             },
             _ => {},
         }
+        // The response side: merged per status class, same discipline.
+        let status = row.try_get::<i32>("", "status_code").ok();
+        let response_truncated = row
+            .try_get::<bool>("", "response_body_truncated")
+            .unwrap_or(false);
+        match row.try_get::<String>("", "response_body") {
+            Ok(body) if !body.is_empty() && response_truncated => {
+                response_skipped += 1
+            },
+            Ok(body) if !body.is_empty() => {
+                let class = api_learn::status_class(status.unwrap_or(200));
+                let node = entry.responses.entry(class).or_default();
+                if api_learn::merge_body(node, &body) {
+                    entry.response_samples += 1;
+                    response_samples += 1;
+                } else {
+                    response_skipped += 1;
+                }
+            },
+            _ => {},
+        }
     }
 
     for ((method, path), entry) in &acc {
@@ -380,6 +413,10 @@ async fn learn(
         });
         let query_schema = serde_json::to_value(&entry.params)
             .unwrap_or(serde_json::json!({}));
+        let response_schema = (entry.response_samples > 0).then(|| {
+            serde_json::to_value(&entry.responses)
+                .unwrap_or(serde_json::json!({}))
+        });
         let existing = api_learned_schemas::Entity::find()
             .filter(api_learned_schemas::Column::SiteId.eq(id))
             .filter(api_learned_schemas::Column::Method.eq(method))
@@ -390,6 +427,8 @@ async fn learn(
             Some(row) => {
                 let mut active: api_learned_schemas::ActiveModel = row.into();
                 active.request_schema = Set(request_schema);
+                active.response_schema = Set(response_schema);
+                active.response_samples = Set(entry.response_samples as i64);
                 active.query_schema = Set(query_schema);
                 active.sample_count = Set(entry.samples as i64);
                 active.first_seen = Set(entry.first);
@@ -404,6 +443,8 @@ async fn learn(
                     method: Set(method.clone()),
                     path: Set(path.clone()),
                     request_schema: Set(request_schema),
+                    response_schema: Set(response_schema),
+                    response_samples: Set(entry.response_samples as i64),
                     query_schema: Set(query_schema),
                     sample_count: Set(entry.samples as i64),
                     // Learned endpoints start in observe: findings are
@@ -425,6 +466,8 @@ async fn learn(
         samples,
         skipped_truncated,
         skipped_non_json,
+        response_samples,
+        response_skipped,
         rows_scanned: rows.len() as u64,
         truncated_scan,
     }))
@@ -479,6 +522,17 @@ async fn openapi_draft(
                 std::collections::BTreeMap<String, QueryParam>,
             >(row.query_schema.clone())
             .unwrap_or_default(),
+            response_schemas: row
+                .response_schema
+                .clone()
+                .and_then(|value| {
+                    serde_json::from_value::<
+                        std::collections::BTreeMap<String, SchemaNode>,
+                    >(value)
+                    .ok()
+                })
+                .unwrap_or_default(),
+            response_samples: row.response_samples,
             sample_count: row.sample_count,
         })
         .collect();

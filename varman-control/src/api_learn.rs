@@ -179,6 +179,29 @@ pub fn merge_body(node: &mut SchemaNode, body: &str) -> bool {
     }
 }
 
+/// The status class of a response code (`2xx`, `4xx`, `5xx`; `1xx`/`3xx`
+/// included for completeness).
+pub fn status_class(status: i32) -> String {
+    match status / 100 {
+        1 => "1xx".to_string(),
+        2 => "2xx".to_string(),
+        3 => "3xx".to_string(),
+        4 => "4xx".to_string(),
+        _ => "5xx".to_string(),
+    }
+}
+
+/// The representative status code the OpenAPI draft uses for a class.
+pub fn class_status_code(class: &str) -> &'static str {
+    match class {
+        "1xx" => "100",
+        "2xx" => "200",
+        "3xx" => "300",
+        "4xx" => "400",
+        _ => "500",
+    }
+}
+
 /// Replaces numeric and uuid-like path segments with a single template
 /// parameter, so the draft is usable as a declaration.
 pub fn templatize_path(path: &str) -> String {
@@ -210,6 +233,10 @@ pub struct LearnedEndpoint {
     pub path: String,
     pub request_schema: Option<SchemaNode>,
     pub query_schema: BTreeMap<String, QueryParam>,
+    /// Response structures per status class (`2xx`, `4xx`, ...).
+    pub response_schemas: BTreeMap<String, SchemaNode>,
+    /// JSON response bodies merged into `response_schemas`.
+    pub response_samples: i64,
     pub sample_count: i64,
 }
 
@@ -287,11 +314,10 @@ pub fn openapi_draft(
 
         operation.insert(
             "responses".to_string(),
-            json!({
-                "default": {
-                    "description": "Observed traffic; response shapes are not learned yet.",
-                }
-            }),
+            response_section(
+                &endpoint.response_schemas,
+                endpoint.response_samples,
+            ),
         );
 
         let entry = paths.entry(template).or_insert_with(|| json!({}));
@@ -324,6 +350,44 @@ pub fn openapi_draft(
         },
         "paths": paths,
     })
+}
+
+/// The `responses` object of one operation: one entry per learned status
+/// class, or the honest default note when no JSON response body was
+/// captured.
+fn response_section(
+    schemas: &BTreeMap<String, SchemaNode>,
+    samples: i64,
+) -> Value {
+    if schemas.is_empty() {
+        return json!({
+            "default": {
+                "description": format!(
+                    "Observed traffic; no JSON response body was captured \
+                     ({samples} merged). Response shapes are learned only \
+                     when the agent captures response bodies."
+                ),
+            }
+        });
+    }
+    let mut responses = serde_json::Map::new();
+    for (class, node) in schemas {
+        responses.insert(
+            class_status_code(class).to_string(),
+            json!({
+                "description": format!(
+                    "Observed {class} responses (structure and counts only)."
+                ),
+                "x-observed-class": class,
+                "content": {
+                    "application/json": {
+                        "schema": node_to_json_schema(node),
+                    }
+                },
+            }),
+        );
+    }
+    Value::Object(responses)
 }
 
 /// Converts a learned node into a JSON-schema fragment.
@@ -475,6 +539,17 @@ mod tests {
                 path: "/orders/42".to_string(),
                 request_schema: Some(request),
                 query_schema: params,
+                response_schemas: {
+                    let mut schemas = BTreeMap::new();
+                    let mut ok = SchemaNode::default();
+                    assert!(merge_body(&mut ok, r#"{"id": "abc-123"}"#));
+                    schemas.insert("2xx".to_string(), ok);
+                    let mut bad = SchemaNode::default();
+                    assert!(merge_body(&mut bad, r#"{"error": "not found"}"#));
+                    schemas.insert("4xx".to_string(), bad);
+                    schemas
+                },
+                response_samples: 2,
                 sample_count: 3,
             }],
         );
@@ -492,5 +567,57 @@ mod tests {
         let serialized = serde_json::to_string(&draft).unwrap();
         assert!(!serialized.contains("\"required\":["));
         assert!(serialized.contains("x-observed-presence"));
+
+        // The response side: one entry per learned status class, structures
+        // only, and the class is stated.
+        let responses = &operation["responses"];
+        assert_eq!(responses["200"]["x-observed-class"], "2xx");
+        assert_eq!(responses["400"]["x-observed-class"], "4xx");
+        assert_eq!(
+            responses["200"]["content"]["application/json"]["schema"]
+                ["properties"]["id"]["type"],
+            "string"
+        );
+        for value in ["abc-123", "not found"] {
+            assert!(
+                !serialized.contains(value),
+                "response value {value} leaked into the draft"
+            );
+        }
+    }
+
+    #[test]
+    fn response_sections_state_when_nothing_was_captured() {
+        let draft = openapi_draft(
+            "example.com",
+            7,
+            &[LearnedEndpoint {
+                method: "GET".to_string(),
+                path: "/items".to_string(),
+                request_schema: None,
+                query_schema: BTreeMap::new(),
+                response_schemas: BTreeMap::new(),
+                response_samples: 0,
+                sample_count: 1,
+            }],
+        );
+        let description = draft["paths"]["/items"]["get"]["responses"]
+            ["default"]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            description.contains("no JSON response body was captured"),
+            "description: {description}"
+        );
+    }
+
+    #[test]
+    fn status_classes_group_codes() {
+        assert_eq!(status_class(204), "2xx");
+        assert_eq!(status_class(404), "4xx");
+        assert_eq!(status_class(503), "5xx");
+        assert_eq!(status_class(301), "3xx");
+        assert_eq!(class_status_code("4xx"), "400");
     }
 }

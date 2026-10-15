@@ -51,6 +51,10 @@ export interface LearnedSchema {
     presence?: number
   } | null
   query_schema: Record<string, { types: string[]; count: number }>
+  /** Response structures per status class (`2xx`, `4xx`, ...). */
+  response_schema: Record<string, unknown> | null
+  /** JSON response bodies merged into the response structures. */
+  response_samples: number
   sample_count: number
   /** Per-operation API control: `off`, `observe` or `enforce`. */
   mode: string
@@ -65,6 +69,10 @@ export interface LearnSummary {
   samples: number
   skipped_truncated: number
   skipped_non_json: number
+  /** JSON response bodies merged into the response structures. */
+  response_samples: number
+  /** Response bodies skipped (truncated or not JSON). */
+  response_skipped: number
   rows_scanned: number
   truncated_scan: boolean
 }

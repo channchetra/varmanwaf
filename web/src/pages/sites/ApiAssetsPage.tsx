@@ -300,6 +300,7 @@ export function ApiAssetsPage() {
                     skipped:
                       learn.data.skipped_truncated +
                       learn.data.skipped_non_json,
+                    responses: learn.data.response_samples,
                   })}
                   {learn.data.truncated_scan && (
                     <span className="ml-2 text-fg-warning">
@@ -328,6 +329,9 @@ export function ApiAssetsPage() {
                         </th>
                         <th className="py-2 pr-3 text-right font-semibold">
                           {t('pages.apiAssets.learnKeys')}
+                        </th>
+                        <th className="py-2 pr-3 text-right font-semibold">
+                          {t('pages.apiAssets.learnResponses')}
                         </th>
                         <th className="py-2 pr-3 font-semibold">
                           {t('pages.apiAssets.control')}
@@ -360,6 +364,14 @@ export function ApiAssetsPage() {
                             {Object.keys(row.request_schema?.keys ?? {})
                               .length +
                               Object.keys(row.query_schema ?? {}).length}
+                          </td>
+                          <td className="py-1.5 pr-3 text-right tabular-nums text-fg-subtle">
+                            {row.response_samples > 0
+                              ? `${formatNumber(row.response_samples)} (${
+                                  Object.keys(row.response_schema ?? {})
+                                    .join(', ')
+                                })`
+                              : '-'}
                           </td>
                           <td className="py-1.5 pr-3">
                             {canWrite ? (
