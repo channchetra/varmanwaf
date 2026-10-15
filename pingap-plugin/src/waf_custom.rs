@@ -182,8 +182,20 @@ impl OpenApiSpec {
         }
         // Base prefix: the spec's server path when present, otherwise the
         // longest leading segment run shared by every declared path.
-        let base_prefix = server_base_prefix(&value)
+        let server_prefix = server_base_prefix(&value);
+        let base_prefix = server_prefix
+            .clone()
             .unwrap_or_else(|| common_prefix(&operations));
+        // Declared paths are relative to the base prefix. A servers-based
+        // prefix never appears in the paths, but an inferred one does, so it
+        // is stripped from the operations to keep matching relative.
+        if server_prefix.is_none() && !base_prefix.is_empty() {
+            let prefix_segments = split_path(&base_prefix).len();
+            for operation in &mut operations {
+                let take = prefix_segments.min(operation.segments.len());
+                operation.segments.drain(..take);
+            }
+        }
         let schemas = value
             .get("components")
             .and_then(|components| components.get("schemas"))
@@ -692,6 +704,18 @@ fn common_prefix(operations: &[Operation]) -> String {
         }
     }
     let mut out = String::new();
+    // The prefix must never consume a path entirely: with a single declared
+    // path (or one path that prefixes the others) the shared run is the
+    // whole path, and stripping it would make every request read as an
+    // unknown operation.
+    let shortest = operations
+        .iter()
+        .map(|operation| operation.segments.len())
+        .min()
+        .unwrap_or(0);
+    if prefix.len() >= shortest {
+        prefix.truncate(shortest.saturating_sub(1));
+    }
     for value in prefix.into_iter().flatten() {
         out.push('/');
         out.push_str(value);
@@ -1039,6 +1063,42 @@ mod tests {
                 .evaluate(&canonical("/v1/items?page=1", "GET"), true)
                 .is_none()
         );
+    }
+
+    /// A spec with one declared path must not turn that path into its own
+    /// base prefix (which would make every request to it "unknown").
+    #[test]
+    fn a_single_declared_path_does_not_become_the_base_prefix() {
+        let spec = OpenApiSpec::parse(
+            r#"{"openapi":"3.0.0","info":{"title":"t","version":"1"},
+                "paths":{"/orders":{"get":{"parameters":[
+                  {"name":"page","in":"query","required":true}
+                ]}}}}"#,
+        )
+        .expect("spec");
+        assert!(
+            spec.base_prefix.is_empty(),
+            "base prefix: {:?}",
+            spec.base_prefix
+        );
+        let findings = spec.validate(&canonical("/orders", "GET"));
+        assert_eq!(findings[0].0, "api.missing_required_param");
+
+        // Two paths under a real prefix keep it.
+        let spec = OpenApiSpec::parse(
+            r#"{"openapi":"3.0.0","info":{"title":"t","version":"1"},
+                "paths":{"/api/orders":{"get":{}},"/api/items":{"get":{}}}}"#,
+        )
+        .expect("spec");
+        assert_eq!(spec.base_prefix, "/api");
+        assert!(spec.validate(&canonical("/api/orders", "GET")).is_empty());
+        // Inside the prefix but undeclared: unknown operation. Outside the
+        // prefix: out of scope, untouched.
+        assert_eq!(
+            spec.validate(&canonical("/api/unknown", "GET"))[0].0,
+            "api.unknown_operation"
+        );
+        assert!(spec.validate(&canonical("/elsewhere", "GET")).is_empty());
     }
 
     /// Per-operation controls: off skips the layer, observe records,
