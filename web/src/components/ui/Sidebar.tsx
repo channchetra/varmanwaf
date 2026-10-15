@@ -85,7 +85,8 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
       icon: Shield,
       children: [
         { to: '/policies', labelKey: 'nav.policies', icon: Stack },
-        { to: '/crs', labelKey: 'nav.crs', icon: Stack },
+        // CRS rulesets live as a tab inside Policies now; the /crs route
+        // stays for deep links.
         { to: '/alerts', labelKey: 'nav.alerts', icon: BellRinging },
         { to: '/ip-groups', labelKey: 'nav.ipGroups', icon: FunnelSimple },
         { to: '/blocked-ips', labelKey: 'nav.blockedIps', icon: Prohibit },

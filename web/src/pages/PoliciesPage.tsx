@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -19,6 +20,7 @@ import { PillMultiSelect, TagInput } from '@/components/ui/MultiSelect'
 import { Select } from '@/components/ui/Select'
 import { SkeletonCard } from '@/components/ui/Skeleton'
 import { Switch } from '@/components/ui/Switch'
+import { Tabs } from '@/components/ui/Tabs'
 import { Textarea } from '@/components/ui/Textarea'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
@@ -78,6 +80,7 @@ const LAYER_TABS: PolicyLayerKind[] = [
  */
 export function PoliciesPage() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const canWrite = useCanWrite()
   const toast = useToast()
   const queryClient = useQueryClient()
@@ -134,6 +137,17 @@ export function PoliciesPage() {
           </Button>
         )}
       </div>
+
+      <Tabs
+        items={[
+          { value: 'policies', label: t('pages.policies.title') },
+          { value: 'crs', label: t('pages.crs.title') },
+        ]}
+        value="policies"
+        onChange={(value) => {
+          if (value === 'crs') navigate('/crs')
+        }}
+      />
 
       <Callout
         tone="brand"

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { DownloadSimple, SealCheck, Trash } from '@phosphor-icons/react'
@@ -12,6 +13,7 @@ import { Input } from '@/components/ui/Input'
 import { Pagination } from '@/components/ui/Pagination'
 import { Select } from '@/components/ui/Select'
 import { SkeletonCard } from '@/components/ui/Skeleton'
+import { Tabs } from '@/components/ui/Tabs'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
 import { useCanWrite } from '@/hooks'
@@ -29,6 +31,7 @@ import {
  */
 export function CrsPage() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const canWrite = useCanWrite()
   const toast = useToast()
   const queryClient = useQueryClient()
@@ -87,6 +90,17 @@ export function CrsPage() {
           </Button>
         )}
       </div>
+
+      <Tabs
+        items={[
+          { value: 'policies', label: t('pages.policies.title') },
+          { value: 'crs', label: t('pages.crs.title') },
+        ]}
+        value="crs"
+        onChange={(value) => {
+          if (value === 'policies') navigate('/policies')
+        }}
+      />
 
       <Callout
         tone="brand"

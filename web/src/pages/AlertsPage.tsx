@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -358,6 +358,22 @@ export function AlertsPage() {
     },
   ]
 
+  const sections = useMemo(
+    () => [
+      { id: 'rules', label: t('pages.alerts.rulesTitle') },
+      { id: 'silences', label: t('pages.alerts.silencesTitle') },
+      { id: 'channels', label: t('pages.alerts.channelsTitle') },
+      ...(canWrite
+        ? [
+            { id: 'delivery', label: t('pages.alerts.deliverySection') },
+            { id: 'security', label: t('pages.alerts.securitySection') },
+            { id: 'history', label: t('pages.alerts.historySection') },
+          ]
+        : []),
+    ],
+    [t, canWrite],
+  )
+
   if (rules.isError && !rules.data) {
     return (
       <div className="animate-slide-up">
@@ -389,30 +405,7 @@ export function AlertsPage() {
         {t('pages.alerts.overview')}
       </Callout>
 
-      <SectionNav
-        items={[
-          { id: 'rules', label: t('pages.alerts.rulesTitle') },
-          { id: 'silences', label: t('pages.alerts.silencesTitle') },
-          { id: 'channels', label: t('pages.alerts.channelsTitle') },
-          ...(canWrite
-            ? [
-                {
-                  id: 'delivery',
-                  label: t('pages.alerts.deliverySection'),
-                },
-                {
-                  id: 'security',
-                  label: t('pages.alerts.securitySection'),
-                },
-                {
-                  id: 'history',
-                  label: t('pages.alerts.historySection'),
-                },
-              ]
-            : []),
-        ]}
-      />
-
+      <SectionNav items={sections} />
       {/* Rules */}
       <Card id="rules" className="scroll-mt-24">
         <CardHeader
@@ -1226,22 +1219,62 @@ function ChannelDialog({
   )
 }
 
-/** Section pills that smooth-scroll to each block of this page. */
+/** Section pills: deep-linkable anchors (`/alerts#delivery`) with scroll-spy. */
 function SectionNav({ items }: { items: { id: string; label: string }[] }) {
+  const [active, setActive] = useState(items[0]?.id ?? '')
+  const ids = items.map((item) => item.id).join('|')
+
+  // Deep link: /alerts#delivery scrolls to the section once it has painted.
+  useEffect(() => {
+    const hash = window.location.hash.replace('#', '')
+    if (!hash || !items.some((item) => item.id === hash)) return
+    const timer = window.setTimeout(() => {
+      document
+        .getElementById(hash)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 80)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids])
+
+  // Scroll-spy: the pill of the section in view lights up.
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) setActive(entry.target.id)
+        }
+      },
+      { rootMargin: '-25% 0px -65% 0px' },
+    )
+    for (const id of ids.split('|')) {
+      const element = document.getElementById(id)
+      if (element) observer.observe(element)
+    }
+    return () => observer.disconnect()
+  }, [ids])
+
+  const goTo = (id: string) => {
+    setActive(id)
+    // Keep the URL shareable without a router round-trip.
+    window.history.replaceState(null, '', `#${id}`)
+    document
+      .getElementById(id)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   return (
     <div className="sticky top-16 z-20 flex flex-wrap items-center gap-1.5 rounded-lg border border-line bg-elevated/90 px-2 py-1.5 backdrop-blur">
       {items.map((item) => (
         <button
           key={item.id}
           type="button"
-          onClick={() =>
-            document
-              .getElementById(item.id)
-              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          }
+          onClick={() => goTo(item.id)}
           className={cn(
-            'rounded-full border border-line px-3 py-1 text-[12px] font-medium',
-            'text-fg-subtle transition-colors hover:border-brand/40 hover:text-brand',
+            'rounded-full border px-3 py-1 text-[12px] font-medium transition-colors',
+            active === item.id
+              ? 'border-brand/40 bg-brand/12 text-brand'
+              : 'border-line text-fg-subtle hover:border-brand/40 hover:text-brand',
           )}
         >
           {item.label}

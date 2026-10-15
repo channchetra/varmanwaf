@@ -74,11 +74,21 @@ Settings
 ```
 \* shown only while a site is open.
 
-## Follow-ups (not this round)
+## Protection section (v0.50.0)
 
-- If Policies keeps growing, evaluate CRS-as-a-tab inside it.
-- A site tab-bar audit (13 tabs is its own consolidation candidate).
-- Deep-link anchors (`/alerts#delivery`) if operators ask for them.
+Applying the study's remaining conclusions:
+
+- **CRS rulesets folded under Policies**: the two pages now share a
+  **Policies | CRS rulesets** section tab strip (route-based, so both
+  `/policies` and `/crs` keep working for deep links), and the CRS entry
+  left the sidebar - one fewer menu item, the same reachability. The
+  "rules umbrella" question resolved itself: the policy editor already
+  carries a layer tab strip that includes the **crs**, **custom rules**
+  and **rule overrides** layers, so the rule surfaces are already grouped
+  where they are edited.
+- **`/alerts` is deep-linkable**: the section pills update the URL hash
+  (`/alerts#delivery`), an incoming hash scrolls to its section on load,
+  and a scroll-spy lights the pill of the section in view.
 
 ## Site level (v0.49.0)
 
