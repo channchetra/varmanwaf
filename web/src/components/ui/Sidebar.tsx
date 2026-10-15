@@ -24,6 +24,7 @@ import {
   Prohibit,
   ClockCounterClockwise,
   FileText,
+  Sliders,
   type Icon,
 } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
@@ -173,6 +174,16 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
                 to: site('traffic'),
                 labelKey: 'nav.traffic',
                 icon: ChartLine,
+              },
+              {
+                to: site('rules/rewrite'),
+                labelKey: 'pages.rewrite.title',
+                icon: Sliders,
+              },
+              {
+                to: site('settings'),
+                labelKey: 'nav.settings',
+                icon: Gear,
               },
             ],
           },

@@ -17,6 +17,8 @@ import {
   IdentificationCard,
   Network,
   Warning,
+  Gear,
+  type Icon,
 } from '@phosphor-icons/react'
 import { Link } from 'react-router-dom'
 import { cn } from '@/lib/utils'
@@ -68,28 +70,41 @@ export function SiteDetailPage() {
   const paused = site?.status === 'paused'
 
   const base = `/sites/${siteId}`
-  const tabs = [
-    { to: `${base}/origin`, label: t('nav.origin'), icon: Network },
-    {
-      to: `${base}/security/protection`,
-      label: t('nav.securityProtection'),
-      icon: Shield,
-    },
-    {
-      to: `${base}/security/rate-limiting`,
-      label: t('nav.securityRateLimiting'),
-      icon: Gauge,
-    },
-    { to: `${base}/security/bot`, label: t('nav.securityBot'), icon: Robot },
-    {
-      to: `${base}/security/access`,
-      label: t('nav.securityAccess'),
-      icon: IdentificationCard,
-    },
-    { to: `${base}/caching`, label: t('nav.caching'), icon: Lightning },
-    { to: `${base}/ssl`, label: t('nav.ssl'), icon: Lock },
-    { to: `${base}/traffic`, label: t('nav.traffic'), icon: ChartLine },
-    { to: `${base}/rules/rewrite`, label: t('pages.rewrite.title'), icon: Sliders },
+  // Grouped so the bar reads as scopes: delivery, security, traffic,
+  // rules & settings. Separators render between the groups.
+  const tabGroups: { to: string; label: string; icon: Icon }[][] = [
+    [{ to: `${base}/origin`, label: t('nav.origin'), icon: Network }],
+    [
+      {
+        to: `${base}/security/protection`,
+        label: t('nav.securityProtection'),
+        icon: Shield,
+      },
+      {
+        to: `${base}/security/rate-limiting`,
+        label: t('nav.securityRateLimiting'),
+        icon: Gauge,
+      },
+      { to: `${base}/security/bot`, label: t('nav.securityBot'), icon: Robot },
+      {
+        to: `${base}/security/access`,
+        label: t('nav.securityAccess'),
+        icon: IdentificationCard,
+      },
+    ],
+    [
+      { to: `${base}/caching`, label: t('nav.caching'), icon: Lightning },
+      { to: `${base}/ssl`, label: t('nav.ssl'), icon: Lock },
+      { to: `${base}/traffic`, label: t('nav.traffic'), icon: ChartLine },
+    ],
+    [
+      {
+        to: `${base}/rules/rewrite`,
+        label: t('pages.rewrite.title'),
+        icon: Sliders,
+      },
+      { to: `${base}/settings`, label: t('nav.settings'), icon: Gear },
+    ],
   ]
 
   // The server answers 404 for sites the caller may not see — surface that
@@ -206,28 +221,38 @@ export function SiteDetailPage() {
         </div>
       )}
 
-      {/* Tab nav */}
-      <div className="mb-6 flex gap-1 overflow-x-auto border-b border-line">
-        {tabs.map((tab) => {
-          const Icon = tab.icon
-          return (
-            <NavLink
-              key={tab.to}
-              to={tab.to}
-              className={({ isActive }) =>
-                cn(
-                  '-mb-px inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'border-brand text-fg-strong'
-                    : 'border-transparent text-fg-subtle hover:text-fg',
-                )
-              }
-            >
-              <Icon weight="duotone" className="h-4 w-4" />
-              {tab.label}
-            </NavLink>
-          )
-        })}
+      {/* Tab nav, grouped by scope */}
+      <div className="mb-6 flex items-center gap-1 overflow-x-auto border-b border-line">
+        {tabGroups.map((group, groupIndex) => (
+          <div key={groupIndex} className="flex items-center gap-1">
+            {groupIndex > 0 && (
+              <span
+                aria-hidden
+                className="mx-1.5 h-5 w-px shrink-0 bg-line"
+              />
+            )}
+            {group.map((tab) => {
+              const Icon = tab.icon
+              return (
+                <NavLink
+                  key={tab.to}
+                  to={tab.to}
+                  className={({ isActive }) =>
+                    cn(
+                      '-mb-px inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors',
+                      isActive
+                        ? 'border-brand text-fg-strong'
+                        : 'border-transparent text-fg-subtle hover:text-fg',
+                    )
+                  }
+                >
+                  <Icon weight="duotone" className="h-4 w-4" />
+                  {tab.label}
+                </NavLink>
+              )
+            })}
+          </div>
+        ))}
       </div>
 
       <Outlet />

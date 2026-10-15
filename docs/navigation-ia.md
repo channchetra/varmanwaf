@@ -79,3 +79,26 @@ Settings
 - If Policies keeps growing, evaluate CRS-as-a-tab inside it.
 - A site tab-bar audit (13 tabs is its own consolidation candidate).
 - Deep-link anchors (`/alerts#delivery`) if operators ask for them.
+
+## Site level (v0.49.0)
+
+Studying the site page showed most of it was already consolidated in
+earlier rounds: **Web Protection** is a tabbed hub (engine, rules, policy,
+CC) and **Access control** covers IP rules + geo, with every legacy path
+(`security/policy`, `security/waf`, `security/cc`, `security/ip-rules`,
+`security/geo`) redirecting into them.
+
+Two real findings were fixed:
+
+- **The site Settings page (failover) was orphaned** - routed at
+  `/sites/:id/settings` but linked from nowhere, so the disconnected-edge
+  failover policy was invisible in the UI. It is now a tab in the site bar
+  and an entry in the sidebar's "This site" group.
+- **The tab bar and the sidebar's "This site" group disagreed** (rewrite
+  missing from the sidebar; settings from both). They now list the same
+  nine destinations.
+
+The site tab bar is also grouped by scope with subtle separators -
+`Origin | Protection · Rate limiting · Bot · Access | Caching · SSL/TLS ·
+Traffic | Rewrite · Settings` - so the bar reads as sections rather than a
+flat list.
