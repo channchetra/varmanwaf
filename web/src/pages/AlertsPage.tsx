@@ -25,6 +25,8 @@ import { Table, type Column } from '@/components/ui/Table'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
 import { useCanWrite, useSitesList } from '@/hooks'
+import { cn } from '@/lib/utils'
+import { NotificationSettingsCard, LoginSecurityCard, AlertHistoryCard } from '@/components/alerts/DeliveryPanels'
 import {
   alertsApi,
   alertKeys,
@@ -37,7 +39,6 @@ import {
   notificationsApi,
   notificationsKeys,
   type NotificationChannel,
-  type NotificationEvent,
 } from '@/api/notifications'
 
 /**
@@ -82,12 +83,6 @@ export function AlertsPage() {
   const channels = useQuery({
     queryKey: notificationsKeys.channels(),
     queryFn: () => notificationsApi.channels(),
-  })
-  const events = useQuery({
-    queryKey: notificationsKeys.events(),
-    queryFn: () => notificationsApi.events(30),
-    enabled: canWrite,
-    retry: false,
   })
 
   const previewRule = useMutation({
@@ -394,8 +389,32 @@ export function AlertsPage() {
         {t('pages.alerts.overview')}
       </Callout>
 
+      <SectionNav
+        items={[
+          { id: 'rules', label: t('pages.alerts.rulesTitle') },
+          { id: 'silences', label: t('pages.alerts.silencesTitle') },
+          { id: 'channels', label: t('pages.alerts.channelsTitle') },
+          ...(canWrite
+            ? [
+                {
+                  id: 'delivery',
+                  label: t('pages.alerts.deliverySection'),
+                },
+                {
+                  id: 'security',
+                  label: t('pages.alerts.securitySection'),
+                },
+                {
+                  id: 'history',
+                  label: t('pages.alerts.historySection'),
+                },
+              ]
+            : []),
+        ]}
+      />
+
       {/* Rules */}
-      <Card>
+      <Card id="rules" className="scroll-mt-24">
         <CardHeader
           title={t('pages.alerts.rulesTitle')}
           description={t('pages.alerts.rulesHint')}
@@ -433,7 +452,7 @@ export function AlertsPage() {
       </Card>
 
       {/* Silences */}
-      <Card>
+      <Card id="silences" className="scroll-mt-24">
         <CardHeader
           title={t('pages.alerts.silencesTitle')}
           description={t('pages.alerts.silencesHint')}
@@ -468,7 +487,7 @@ export function AlertsPage() {
       </Card>
 
       {/* Channels */}
-      <Card>
+      <Card id="channels" className="scroll-mt-24">
         <CardHeader
           title={t('pages.alerts.channelsTitle')}
           description={t('pages.alerts.channelsHint')}
@@ -502,45 +521,32 @@ export function AlertsPage() {
         </CardBody>
       </Card>
 
-      {/* Recent notifications (admin only) */}
+      {/* Delivery: thresholds, per-event toggles and the master switch */}
       {canWrite && (
-        <Card>
-          <CardHeader
-            title={t('pages.alerts.historyTitle')}
-            description={t('pages.alerts.historyHint')}
+        <section id="delivery" className="scroll-mt-24">
+          <NotificationSettingsCard
+            canWrite={canWrite}
+            onSaved={() =>
+              void queryClient.invalidateQueries({
+                queryKey: ['notifications'],
+              })
+            }
           />
-          <CardBody>
-            {events.isLoading ? (
-              <SkeletonCard />
-            ) : (events.data ?? []).length === 0 ? (
-              <p className="text-[13px] text-fg-subtle">
-                {t('pages.alerts.noHistory')}
-              </p>
-            ) : (
-              <ul className="divide-y divide-line rounded-lg border border-line">
-                {(events.data ?? []).map((event: NotificationEvent) => (
-                  <li
-                    key={event.id}
-                    className="flex flex-wrap items-center gap-2 px-3 py-2 text-[13px]"
-                  >
-                    <Badge tone={SEVERITY_TONE[event.severity] ?? 'neutral'}>
-                      {event.severity}
-                    </Badge>
-                    <code className="text-xs text-fg-subtle">
-                      {event.event_type}
-                    </code>
-                    <span className="min-w-0 flex-1 truncate text-fg">
-                      {event.title}
-                    </span>
-                    <span className="text-[11px] text-fg-subtle">
-                      {new Date(event.created_at).toLocaleString()}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardBody>
-        </Card>
+        </section>
+      )}
+
+      {/* Login security: the anomaly baseline and the login audit */}
+      {canWrite && (
+        <section id="security" className="scroll-mt-24">
+          <LoginSecurityCard canWrite={canWrite} />
+        </section>
+      )}
+
+      {/* History: the paged, filterable alert history */}
+      {canWrite && (
+        <section id="history" className="scroll-mt-24">
+          <AlertHistoryCard canWrite={canWrite} />
+        </section>
       )}
 
       {ruleDialog.open && (
@@ -1217,6 +1223,31 @@ function ChannelDialog({
         </div>
       </div>
     </Dialog>
+  )
+}
+
+/** Section pills that smooth-scroll to each block of this page. */
+function SectionNav({ items }: { items: { id: string; label: string }[] }) {
+  return (
+    <div className="sticky top-16 z-20 flex flex-wrap items-center gap-1.5 rounded-lg border border-line bg-elevated/90 px-2 py-1.5 backdrop-blur">
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          onClick={() =>
+            document
+              .getElementById(item.id)
+              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+          className={cn(
+            'rounded-full border border-line px-3 py-1 text-[12px] font-medium',
+            'text-fg-subtle transition-colors hover:border-brand/40 hover:text-brand',
+          )}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
   )
 }
 

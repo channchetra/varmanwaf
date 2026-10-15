@@ -21,7 +21,6 @@ import {
   Sparkle,
   Stack,
   BellRinging,
-  Bell,
   Prohibit,
   ClockCounterClockwise,
   FileText,
@@ -69,7 +68,8 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
   const hasSiteContext = Boolean(siteId)
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
-    security: true,
+    protection: true,
+    thisSite: true,
   })
 
   const toggleGroup = (key: string) =>
@@ -78,50 +78,106 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
   const nav: NavEntry[] = [
     { kind: 'leaf', to: '/dashboard', labelKey: 'nav.dashboard', icon: House },
     { kind: 'leaf', to: '/sites', labelKey: 'nav.sites', icon: Globe },
-    { kind: 'leaf', to: '/policies', labelKey: 'nav.policies', icon: Stack },
-    { kind: 'leaf', to: '/crs', labelKey: 'nav.crs', icon: Stack },
-    { kind: 'leaf', to: '/alerts', labelKey: 'nav.alerts', icon: BellRinging },
     {
       kind: 'group',
-      labelKey: 'nav.security',
+      labelKey: 'nav.protection',
       icon: Shield,
       children: [
+        { to: '/policies', labelKey: 'nav.policies', icon: Stack },
+        { to: '/crs', labelKey: 'nav.crs', icon: Stack },
+        { to: '/alerts', labelKey: 'nav.alerts', icon: BellRinging },
+        { to: '/ip-groups', labelKey: 'nav.ipGroups', icon: FunnelSimple },
+        { to: '/blocked-ips', labelKey: 'nav.blockedIps', icon: Prohibit },
+      ],
+    },
+    {
+      kind: 'group',
+      labelKey: 'nav.trafficLogs',
+      icon: ChartLine,
+      children: [
+        { to: '/traffic', labelKey: 'nav.traffic', icon: ChartLine },
+        { to: '/logs', labelKey: 'nav.logs', icon: List },
+        { to: '/reports', labelKey: 'nav.reports', icon: FileText },
+      ],
+    },
+    {
+      kind: 'group',
+      labelKey: 'nav.fleet',
+      icon: Desktop,
+      children: [
+        { to: '/agents', labelKey: 'nav.agents', icon: Desktop },
+        // The global certificate and traffic surfaces; each site's own
+        // certificates and traffic live in that site's tab bar.
+        { to: '/ssl', labelKey: 'nav.ssl', icon: Lock },
         {
-          to: site('security/protection'),
-          labelKey: 'nav.securityProtection',
-          icon: Shield,
-          requiresSite: true,
-        },
-        {
-          to: site('security/rate-limiting'),
-          labelKey: 'nav.securityRateLimiting',
-          icon: Gauge,
-          requiresSite: true,
-        },
-        { to: site('security/bot'), labelKey: 'nav.securityBot', icon: Robot, requiresSite: true },
-        {
-          to: site('security/access'),
-          labelKey: 'nav.securityAccess',
-          icon: IdentificationCard,
-          requiresSite: true,
+          to: '/config-history',
+          labelKey: 'nav.configHistory',
+          icon: ClockCounterClockwise,
         },
       ],
     },
-    { kind: 'leaf', to: site('origin'), labelKey: 'nav.origin', icon: Network, requiresSite: true },
-    { kind: 'leaf', to: site('caching'), labelKey: 'nav.caching', icon: Lightning, requiresSite: true },
-    { kind: 'leaf', to: '/ip-groups', labelKey: 'nav.ipGroups', icon: FunnelSimple },
-    { kind: 'leaf', to: '/blocked-ips', labelKey: 'nav.blockedIps', icon: Prohibit },
-    { kind: 'leaf', to: '/notifications', labelKey: 'nav.notifications', icon: Bell },
-    // SSL/TLS and traffic in the sidebar are the *global* surfaces; each site's
-    // own certificates and traffic live in that site's tab bar.
-    { kind: 'leaf', to: '/ssl', labelKey: 'nav.ssl', icon: Lock },
-    { kind: 'leaf', to: '/traffic', labelKey: 'nav.traffic', icon: ChartLine },
-    { kind: 'leaf', to: '/logs', labelKey: 'nav.logs', icon: List },
-    { kind: 'leaf', to: '/assistant', labelKey: 'nav.assistant', icon: Sparkle },
-    { kind: 'leaf', to: '/agents', labelKey: 'nav.agents', icon: Desktop },
-    { kind: 'leaf', to: '/lifecycle', labelKey: 'nav.lifecycle', icon: FlowArrow },
-    { kind: 'leaf', to: '/config-history', labelKey: 'nav.configHistory', icon: ClockCounterClockwise },
-    { kind: 'leaf', to: '/reports', labelKey: 'nav.reports', icon: FileText },
+    {
+      kind: 'group',
+      labelKey: 'nav.tools',
+      icon: Sparkle,
+      children: [
+        { to: '/assistant', labelKey: 'nav.assistant', icon: Sparkle },
+        { to: '/lifecycle', labelKey: 'nav.lifecycle', icon: FlowArrow },
+      ],
+    },
+    // Contextual section: the active site's tabs, shown only inside a site.
+    // The site page itself carries the full tab bar; these are shortcuts.
+    ...(hasSiteContext
+      ? ([
+          {
+            kind: 'group',
+            labelKey: 'nav.thisSite',
+            icon: Network,
+            children: [
+              {
+                to: site('security/protection'),
+                labelKey: 'nav.securityProtection',
+                icon: Shield,
+              },
+              {
+                to: site('security/rate-limiting'),
+                labelKey: 'nav.securityRateLimiting',
+                icon: Gauge,
+              },
+              {
+                to: site('security/bot'),
+                labelKey: 'nav.securityBot',
+                icon: Robot,
+              },
+              {
+                to: site('security/access'),
+                labelKey: 'nav.securityAccess',
+                icon: IdentificationCard,
+              },
+              {
+                to: site('origin'),
+                labelKey: 'nav.origin',
+                icon: Network,
+              },
+              {
+                to: site('caching'),
+                labelKey: 'nav.caching',
+                icon: Lightning,
+              },
+              {
+                to: site('ssl'),
+                labelKey: 'nav.ssl',
+                icon: Lock,
+              },
+              {
+                to: site('traffic'),
+                labelKey: 'nav.traffic',
+                icon: ChartLine,
+              },
+            ],
+          },
+        ] satisfies NavEntry[])
+      : []),
     { kind: 'leaf', to: '/settings', labelKey: 'nav.settings', icon: Gear },
   ]
 

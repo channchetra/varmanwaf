@@ -38,7 +38,6 @@ import { PoliciesPage } from '@/pages/PoliciesPage'
 import { CrsPage } from '@/pages/CrsPage'
 import { AlertsPage } from '@/pages/AlertsPage'
 import { BlockedIpsPage } from '@/pages/BlockedIpsPage'
-import { NotificationsPage } from '@/pages/NotificationsPage'
 import { ConfigHistoryPage } from '@/pages/ConfigHistoryPage'
 import { ReportsPage } from '@/pages/ReportsPage'
 import { SiteSettingsPage } from '@/pages/sites/SiteSettingsPage'
@@ -136,7 +135,7 @@ export const router = createBrowserRouter([
       { path: 'policies', element: <PoliciesPage /> },
       { path: 'crs', element: <CrsPage /> },
       { path: 'alerts', element: <AlertsPage /> },
-      { path: 'notifications', element: <NotificationsPage /> },
+      { path: 'notifications', element: <Navigate to="/alerts" replace /> },
       { path: 'config-history', element: <ConfigHistoryPage /> },
       { path: 'reports', element: <ReportsPage /> },
       { path: 'lifecycle', element: <LifecyclePage /> },

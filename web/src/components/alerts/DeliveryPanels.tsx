@@ -1,9 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowClockwise, Bell, UploadSimple } from '@phosphor-icons/react'
-import { PageHeader } from '@/components/PageHeader'
-import { Callout } from '@/components/ui/Callout'
+import { ArrowClockwise, UploadSimple } from '@phosphor-icons/react'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -24,8 +22,14 @@ import {
   type LoginSecuritySettings,
   type LoginSecurityInput,
 } from '@/api/loginSecurity'
-import { useCanWrite } from '@/hooks'
 import { formatDateTime, formatRelative } from '@/lib/format'
+
+/**
+ * Delivery panels for the Alerts & notifications page: thresholds and
+ * per-event toggles, login security, and the paged alert history. Each
+ * panel owns its queries and gates itself on the administrator role, so
+ * the page can mount them as sections.
+ */
 
 const SEVERITY_TONE: Record<string, 'info' | 'warning' | 'danger'> = {
   info: 'info',
@@ -33,27 +37,36 @@ const SEVERITY_TONE: Record<string, 'info' | 'warning' | 'danger'> = {
   critical: 'danger',
 }
 
-export function NotificationsPage() {
-  const { t } = useTranslation()
-  const queryClient = useQueryClient()
-  const canWrite = useCanWrite()
-
-  const [eventTypeFilter, setEventTypeFilter] = useState('')
-  const [eventsOffset, setEventsOffset] = useState(0)
-
-  const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: notificationKeys.all })
-  }
-
-  // Settings and history are administrator-only server-side, so viewers get
-  // the overview instead of a wall of 403s. Channel CRUD lives on the Alerts
-  // page - one owner for delivery targets.
+/** Thresholds + per-event toggles; owns the settings query. */
+export function NotificationSettingsCard({
+  canWrite,
+  onSaved,
+}: {
+  canWrite: boolean
+  onSaved: () => void
+}) {
   const settingsQuery = useQuery({
     queryKey: notificationKeys.settings(),
     queryFn: () => notificationsApi.getSettings(),
     enabled: canWrite,
     retry: false,
   })
+  if (!canWrite || !settingsQuery.data) return null
+  return (
+    <SettingsCard
+      settings={settingsQuery.data}
+      canWrite={canWrite}
+      onSaved={onSaved}
+    />
+  )
+}
+
+/** The paged alert history with its event-type filter. */
+export function AlertHistoryCard({ canWrite }: { canWrite: boolean }) {
+  const { t } = useTranslation()
+
+  const [eventTypeFilter, setEventTypeFilter] = useState('')
+  const [eventsOffset, setEventsOffset] = useState(0)
 
   const eventsQuery = useQuery({
     queryKey: notificationKeys.events(eventsOffset),
@@ -66,135 +79,93 @@ export function NotificationsPage() {
     enabled: canWrite,
     retry: false,
   })
-
   const events = useMemo(() => eventsQuery.data ?? [], [eventsQuery.data])
 
   return (
-    <>
-      <PageHeader
-        title={t('pages.notifications.title')}
-        description={t('pages.notifications.description')}
-      />
-
-      <Callout
-        className="mb-4"
-        tone="brand"
-        icon={<Bell weight="duotone" className="h-5 w-5" />}
-        title={t('pages.notifications.overviewTitle')}
-      >
-        {t('pages.notifications.overview')}
-      </Callout>
-
-      {!canWrite ? (
-        <Callout
-          tone="neutral"
-          title={t('pages.notifications.adminOnlyTitle')}
-        >
-          {t('pages.notifications.adminOnly')}
-        </Callout>
-      ) : (
-        <div className="space-y-4">
-
-        {/* Threshold settings */}
-        {settingsQuery.data && (
-          <SettingsCard
-            settings={settingsQuery.data}
-            canWrite={canWrite}
-            onSaved={invalidate}
+    <Card>
+      <CardBody>
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <h3 className="text-base font-semibold text-fg">
+            {t('pages.notifications.historyTitle')}
+          </h3>
+          <Select
+            className="w-56"
+            value={eventTypeFilter}
+            onChange={(e) => {
+              setEventTypeFilter(e.target.value)
+              setEventsOffset(0)
+            }}
+            options={[
+              { value: '', label: t('pages.notifications.allEvents') },
+              ...NOTIFICATION_EVENT_TYPES.map((type) => ({
+                value: type,
+                label: t(`pages.notifications.event_${type.replace('.', '_')}`),
+              })),
+            ]}
           />
-        )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => eventsQuery.refetch()}
+          >
+            <ArrowClockwise className="h-4 w-4" />
+          </Button>
+        </div>
 
-        {/* Login security */}
-        <LoginSecurityCard canWrite={canWrite} />
-
-        {/* Alert history */}
-        <Card>
-          <CardBody>
-            <div className="mb-4 flex flex-wrap items-center gap-3">
-              <h3 className="text-base font-semibold text-fg">
-                {t('pages.notifications.historyTitle')}
-              </h3>
-              <Select
-                className="w-56"
-                value={eventTypeFilter}
-                onChange={(e) => {
-                  setEventTypeFilter(e.target.value)
-                  setEventsOffset(0)
-                }}
-                options={[
-                  { value: '', label: t('pages.notifications.allEvents') },
-                  ...NOTIFICATION_EVENT_TYPES.map((type) => ({
-                    value: type,
-                    label: t(`pages.notifications.event_${type.replace('.', '_')}`),
-                  })),
-                ]}
-              />
+        {eventsQuery.isLoading ? (
+          <SkeletonRows columns={4} rows={5} />
+        ) : eventsQuery.isError ? (
+          <ErrorState error={eventsQuery.error} onRetry={() => eventsQuery.refetch()} />
+        ) : events.length === 0 ? (
+          <EmptyState
+            title={t('pages.notifications.noEvents')}
+            description={t('pages.notifications.noEventsHint')}
+          />
+        ) : (
+          <>
+            <div className="divide-y divide-line">
+              {events.map((event) => (
+                <div key={event.id} className="flex items-start gap-3 py-2.5">
+                  <Badge tone={SEVERITY_TONE[event.severity] ?? 'neutral'}>
+                    {t(`pages.notifications.severity_${event.severity}`)}
+                  </Badge>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-fg" title={event.title}>
+                      {event.title}
+                    </p>
+                    <p className="truncate text-xs text-fg-subtle" title={event.message}>
+                      {event.message}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-xs text-fg-subtle" title={formatDateTime(event.created_at)}>
+                    {formatRelative(event.created_at)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
               <Button
                 size="sm"
                 variant="ghost"
-                className="ml-auto"
-                onClick={() => eventsQuery.refetch()}
+                disabled={eventsOffset === 0}
+                onClick={() => setEventsOffset((o) => Math.max(0, o - 50))}
               >
-                <ArrowClockwise className="h-4 w-4" />
+                {t('pagination.previous')}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={events.length < 50}
+                onClick={() => setEventsOffset((o) => o + 50)}
+              >
+                {t('pagination.next')}
               </Button>
             </div>
-
-            {eventsQuery.isLoading ? (
-              <SkeletonRows columns={4} rows={5} />
-            ) : eventsQuery.isError ? (
-              <ErrorState error={eventsQuery.error} onRetry={() => eventsQuery.refetch()} />
-            ) : events.length === 0 ? (
-              <EmptyState
-                title={t('pages.notifications.noEvents')}
-                description={t('pages.notifications.noEventsHint')}
-              />
-            ) : (
-              <>
-                <div className="divide-y divide-line">
-                  {events.map((event) => (
-                    <div key={event.id} className="flex items-start gap-3 py-2.5">
-                      <Badge tone={SEVERITY_TONE[event.severity] ?? 'neutral'}>
-                        {t(`pages.notifications.severity_${event.severity}`)}
-                      </Badge>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-fg" title={event.title}>
-                          {event.title}
-                        </p>
-                        <p className="truncate text-xs text-fg-subtle" title={event.message}>
-                          {event.message}
-                        </p>
-                      </div>
-                      <span className="shrink-0 text-xs text-fg-subtle" title={formatDateTime(event.created_at)}>
-                        {formatRelative(event.created_at)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-3 flex justify-end gap-2">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={eventsOffset === 0}
-                    onClick={() => setEventsOffset((o) => Math.max(0, o - 50))}
-                  >
-                    {t('pagination.previous')}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={events.length < 50}
-                    onClick={() => setEventsOffset((o) => o + 50)}
-                  >
-                    {t('pagination.next')}
-                  </Button>
-                </div>
-              </>
-            )}
-          </CardBody>
-        </Card>
-        </div>
-      )}
-    </>
+          </>
+        )}
+      </CardBody>
+    </Card>
   )
 }
 
@@ -371,7 +342,7 @@ function SettingsCard({
 
 /* ── Login security ─────────────────────────────────────────────── */
 
-function LoginSecurityCard({ canWrite }: { canWrite: boolean }) {
+export function LoginSecurityCard({ canWrite }: { canWrite: boolean }) {
   const { t } = useTranslation()
   const toast = useToast()
   const queryClient = useQueryClient()
