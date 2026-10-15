@@ -26,6 +26,7 @@ import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
 import { useCanWrite, useSitesList } from '@/hooks'
 import { cn } from '@/lib/utils'
+import { QuickNav } from '@/components/ui/QuickNav'
 import { NotificationSettingsCard, LoginSecurityCard, AlertHistoryCard } from '@/components/alerts/DeliveryPanels'
 import {
   alertsApi,
@@ -405,7 +406,15 @@ export function AlertsPage() {
         {t('pages.alerts.overview')}
       </Callout>
 
-      <SectionNav items={sections} />
+      <div className="flex items-start gap-8">
+        <QuickNav
+          ariaLabel={t('pages.alerts.sectionsNav')}
+          items={sections}
+        />
+        <div className="min-w-0 flex-1 space-y-5">
+          <div className="xl:hidden">
+            <SectionNav items={sections} />
+          </div>
       {/* Rules */}
       <Card id="rules" className="scroll-mt-24">
         <CardHeader
@@ -541,6 +550,8 @@ export function AlertsPage() {
           <AlertHistoryCard canWrite={canWrite} />
         </section>
       )}
+        </div>
+      </div>
 
       {ruleDialog.open && (
         <RuleDialog

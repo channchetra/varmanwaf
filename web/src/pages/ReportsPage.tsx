@@ -373,7 +373,7 @@ function ReportsWorkspace() {
           />
 
           <div className="border-t border-line pt-4">
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-wrap items-center gap-3">
               <Switch
                 checked={sched.enabled}
                 onCheckedChange={(enabled) =>
@@ -398,9 +398,9 @@ function ReportsWorkspace() {
                 </span>
               )}
             </div>
-            <div className="mt-4 flex flex-wrap items-end gap-3">
+
+            <div className="mt-4 grid grid-cols-2 items-end gap-3 sm:grid-cols-3 xl:grid-cols-6">
               <Select
-                containerClassName="w-36"
                 label={t('pages.reports.interval')}
                 value={sched.interval}
                 options={(['daily', 'weekly', 'monthly'] as const).map(
@@ -418,7 +418,6 @@ function ReportsWorkspace() {
                 }
               />
               <Input
-                containerClassName="w-24"
                 type="number"
                 min={0}
                 max={23}
@@ -435,7 +434,6 @@ function ReportsWorkspace() {
                 }
               />
               <Input
-                containerClassName="w-24"
                 type="number"
                 min={0}
                 max={59}
@@ -453,7 +451,6 @@ function ReportsWorkspace() {
               />
               {sched.interval === 'weekly' && (
                 <Select
-                  containerClassName="w-40"
                   label={t('pages.reports.day')}
                   value={String(sched.day)}
                   options={[0, 1, 2, 3, 4, 5, 6].map((day) => ({
@@ -467,7 +464,6 @@ function ReportsWorkspace() {
               )}
               {sched.interval === 'monthly' && (
                 <Input
-                  containerClassName="w-28"
                   type="number"
                   min={1}
                   max={28}
@@ -485,12 +481,10 @@ function ReportsWorkspace() {
                 />
               )}
               <Input
-                containerClassName="w-32"
                 type="number"
                 min={1}
                 max={92}
                 label={t('pages.reports.windowDays')}
-                hint={t('pages.reports.windowDaysHint')}
                 value={String(sched.window_days)}
                 onChange={(event) =>
                   setSchedDraft({
@@ -503,7 +497,6 @@ function ReportsWorkspace() {
                 }
               />
               <Select
-                containerClassName="w-56"
                 label={t('pages.reports.site')}
                 value={sched.site_id ?? ''}
                 options={[
@@ -521,7 +514,6 @@ function ReportsWorkspace() {
                 }
               />
               <Select
-                containerClassName="w-40"
                 label={t('pages.reports.action')}
                 value={sched.action ?? 'all'}
                 options={ACTION_FILTERS.map((value) => ({
@@ -536,7 +528,10 @@ function ReportsWorkspace() {
                 }
               />
             </div>
-            <p className="mt-3 text-[11px] text-fg-subtle">
+            <p className="mt-2 text-[11px] text-fg-subtle">
+              {t('pages.reports.windowDaysHint')}
+            </p>
+            <p className="mt-1 text-[11px] text-fg-subtle">
               {t('pages.reports.scheduleHint')}
             </p>
           </div>

@@ -178,6 +178,13 @@ export function SettingsPage() {
           <section id="account" className="scroll-mt-6">
             <AccountCard />
           </section>
+          <section id="users" className="scroll-mt-6">
+            {canWrite ? (
+              <UsersAdminCard />
+            ) : (
+              <AdminOnlyCard title={t('pages.settings.users')} />
+            )}
+          </section>
           <section id="passkeys" className="scroll-mt-6">
             <PasskeysCard />
           </section>
@@ -231,13 +238,6 @@ export function SettingsPage() {
               <ErrorPagesCard canWrite={canWrite} />
             ) : (
               <AdminOnlyCard title={t('pages.settings.errorPages')} />
-            )}
-          </section>
-          <section id="users" className="scroll-mt-6">
-            {canWrite ? (
-              <UsersAdminCard />
-            ) : (
-              <AdminOnlyCard title={t('pages.settings.users')} />
             )}
           </section>
           <section id="api-keys" className="scroll-mt-6">
