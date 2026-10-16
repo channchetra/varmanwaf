@@ -9,6 +9,11 @@
 
 ## Status board
 
+> **1.1.0 (2026-10-16):** the routing-topology round - a live flow view that
+> edits the site in place, all-layers policies, the config-history table fix,
+> and the documentation rebuild (architecture, modules, api, sizing, HA,
+> developer guide, deeper Khmer guide).
+>
 > **1.0.0 (2026-10-16):** the first official release. All nine mandate phases
 > are complete, every round from 0.21 to 0.64 is absorbed, and the release is
 > verified by the full 40-script E2E sweep, the benchmark report
@@ -658,6 +663,12 @@ capture (Pingora exposes no JA3).
   container; `cargo build --release` and `docker compose up -d` for phase exits).
 - Every significant task: read code → read reference → engineering note →
   smallest vertical change → tests → fmt/lint/test → docs (mandate §40).
+- **Every update updates its related documents in the same commit**:
+  the release notes, `features.md` for console/API behaviour,
+  `security-engine.md` for detection, `compatibility.md` for SecLang/CRS,
+  `architecture.md` for structure, the Khmer user guide for operator flows,
+  and the README feature table when a new surface appears. See
+  [`developer-guide.md`](./developer-guide.md) section 2.
 - Security claims only from measurements (`docs/security-engine.md` once the
   Varman engine exists; benchmarks only with methodology).
 - Never silently ignore configuration, unsupported SecLang, or malformed rules.

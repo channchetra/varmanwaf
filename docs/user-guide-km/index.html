@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VarmanWAF 1.0.0 — សៀវភៅណែនាំអ្នកប្រើប្រាស់</title>
 <style>
+  /* Google Sans for Latin text, Noto Sans Khmer for Khmer script (Google
+     Sans carries no Khmer glyphs, so the stack falls through per glyph).
+     Noto Sans Khmer is loaded from Google Fonts so the document renders the
+     same on machines that do not have the font installed. */
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Khmer:wght@400;500;600;700&display=swap');
+
   :root {
     --brand: #ea580c;
     --brand-soft: #fff1e7;
@@ -24,7 +30,7 @@
     margin: 0;
     background: var(--bg);
     color: var(--ink);
-    font-family: "Noto Sans Khmer", "Khmer OS Siemreap", "Khmer OS", "Kantumruy Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-family: "Google Sans", "Google Sans Text", "Product Sans", "Noto Sans Khmer", "Khmer OS Siemreap", "Khmer OS", "Kantumruy Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
     font-size: 16px;
     line-height: 1.95;
   }
@@ -143,7 +149,12 @@
     <li><a href="#p17">ការកំណត់ប្រព័ន្ធ (Settings)</a></li>
     <li><a href="#p18">ម៉ាស៊ីនសុវត្ថិភាព ដំណើរការយ៉ាងដូចម្តេច?</a></li>
     <li><a href="#p19">ប្រតិបត្តិការ និងការដោះស្រាយបញ្ហា</a></li>
-    <li><a href="#p20">ឧបសម្ព័ន្ធ — ពាក្យបច្ចេកទេស និងតារាងយោងរហ័ស</a></li>
+    <li><a href="#p21">ឃ្លាំងសម្ងាត់ (Caching) ស៊ីជម្រៅ</a> — របៀបដំណើរការ, ច្បាប់, ឧទាហរណ៍, purge</li>
+    <li><a href="#p22">SecLang</a> — ជាអ្វី, របៀបដំណើរការ, ឧទាហរណ៍, ការនាំចូល</li>
+    <li><a href="#p23">កន្សោម និង Regex</a> — ប្រតិបត្តិករ, វាល, ឧទាហរណ៍ពេញលេញ</li>
+    <li><a href="#p24">ដែនកំណត់អត្រា និងភូមិសាស្ត្រ ស៊ីជម្រៅ</a></li>
+    <li><a href="#p25">ទំព័របណ្តាញ (Routing topology)</a> — លំហូររស់, ការកែសម្រួលភ្លាមៗ</li>
+    <li><a href="#p26">ឧបសម្ព័ន្ធ — ពាក្យបច្ចេកទេស និងតារាងយោងរហ័ស</a></li>
   </ol>
 </nav>
 
@@ -1027,7 +1038,264 @@ http.request.uri.path eq "/secret-admin"</code></pre>
 <p><b>តើរបាយការណ៍បង្ហាញលេខខុសពី Logs ទេ?</b> ពិនិត្យតំបន់ពេលវេលា (Settings → Display) និងរយៈពេលដែលជ្រើស។</p>
 </section>
 
-<h1 class="part" id="p20">ជំពូកទី ២០ — ឧបសម្ព័ន្ធ</h1>
+<h1 class="part" id="p21">ជំពូកទី ២១ — ឃ្លាំងសម្ងាត់ (Caching) ស៊ីជម្រៅ</h1>
+
+<section class="card">
+<h2 id="s21-1">២១.១ វាដំណើរការយ៉ាងដូចម្តេច?</h2>
+<p>ឃ្លាំងសម្ងាត់រក្សាទុកចម្លើយនៅ Edge ដើម្បីកុំឱ្យសំណើដដែលៗត្រូវទៅដល់ម៉ាស៊ីនមេពិត។ លំដាប់ដំណើរការគឺ៖</p>
+<ol>
+  <li>សំណើចូលមកដល់ Edge → WAF ពិនិត្យ (ច្បាប់, IP, ភូមិសាស្ត្រ) <b>មុន</b>ឃ្លាំងសម្ងាត់។ ដូច្នេះចម្លើយដែលបានទប់ស្កាត់ មិនដែលត្រូវបានរក្សាទុក ឬបម្រើពីឃ្លាំងឡើយ។</li>
+  <li>បើជា <b>hit</b> (មានក្នុងឃ្លាំង) → Edge ឆ្លើយតបភ្លាម ដោយមិនប៉ះម៉ាស៊ីនមេពិត។</li>
+  <li>បើជា <b>miss</b> → Edge ទាញពីម៉ាស៊ីនមេពិត រក្សាទុកតាមច្បាប់ រួចបម្រើចម្លើយនោះ។</li>
+</ol>
+
+<h2 id="s21-2">២១.២ ច្បាប់ cache មួយមានអ្វីខ្លះ?</h2>
+<table>
+  <tr><th>វាល</th><th>អត្ថន័យ</th></tr>
+  <tr><td><b>name</b></td><td>ឈ្មោះច្បាប់ (សម្រាប់អ្នកស្គាល់វា)</td></tr>
+  <tr><td><b>match_expression</b></td><td>លក្ខខណ្ឌនៃសំណើដែលត្រូវអនុវត្តច្បាប់នេះ (សូមមើលឧទាហរណ៍ខាងក្រោម)</td></tr>
+  <tr><td><b>edge_ttl_seconds</b></td><td>រយៈពេលរក្សាទុកនៅ Edge (ឧ. 86400 = ១ ថ្ងៃ)</td></tr>
+  <tr><td><b>browser_ttl_seconds</b></td><td>រយៈពេលដែល browser អាចរក្សាទុកផ្ទាល់ខ្លួន</td></tr>
+  <tr><td><b>cache_eligible</b></td><td>បើក/បិទការរក្សាទុកសម្រាប់ច្បាប់នេះ</td></tr>
+  <tr><td><b>respect_origin</b></td><td>គោរពតាម header របស់ម៉ាស៊ីនមេពិត (<code>Cache-Control</code>, <code>Set-Cookie</code> ។ល។)</td></tr>
+  <tr><td><b>enabled</b></td><td>បើក/បិទច្បាប់</td></tr>
+</table>
+
+<h2 id="s21-3">២១.៣ តើគួរ cache អ្វី និងមិនគួរ cache អ្វី?</h2>
+<table>
+  <tr><th>គួរ cache</th><th>មិនគួរ cache</th></tr>
+  <tr><td>ឯកសារឋិតិវន្ត៖ CSS, JavaScript, រូបភាព, ពុម្ពអក្សរ</td><td>ទំព័រដែលមានទិន្នន័យផ្ទាល់ខ្លួន (dashboard, profile)</td></tr>
+  <tr><td>ទំព័រសាធារណៈដែលដូចគ្នាសម្រាប់គ្រប់គ្នា (landing page, blog post)</td><td>ចម្លើយ API ដែលអាស្រ័យលើ session/cookie</td></tr>
+  <tr><td>ចម្លើយ API សាធារណៈ <code>GET</code> ដែលមិនប្រែប្រួលញឹកញាប់</td><td>ផ្លូវអ្នកគ្រប់គ្រង (<code>/admin</code>) និងផ្លូវដែលការពារដោយ Basic Auth</td></tr>
+  <tr><td>ឯកសារ <code>/assets/*</code> ដែលមាន hash ក្នុងឈ្មោះឯកសារ</td><td>សំណើ <code>POST</code> / <code>PUT</code> / <code>DELETE</code> (មិនដែល cache ទេ)</td></tr>
+</table>
+
+<h2 id="s21-4">២១.៤ ឧទាហរណ៍ជាក់ស្តែង</h2>
+<pre><code># ឯកសារឋិតិវន្ត: cache យូរ ដោយគោរព origin
+name: "Static assets"
+match_expression: http.request.uri.path starts_with "/assets"
+edge_ttl_seconds: 86400        # ១ ថ្ងៃនៅ Edge
+browser_ttl_seconds: 3600      # ១ ម៉ោងនៅ browser
+respect_origin: true
+
+# រូបភាពតាមប្រភេទឯកសារ
+name: "Images"
+match_expression: http.request.uri.path matches "(?i)\.(png|jpe?g|webp|avif|gif|svg)$"
+edge_ttl_seconds: 604800       # ១ សប្តាហ៍
+
+# API សាធារណៈ: TTL ខ្លី + គោរព origin
+name: "Public API GET"
+match_expression: http.request.method eq "GET" and http.request.uri.path starts_with "/api/public"
+edge_ttl_seconds: 60
+respect_origin: true</code></pre>
+
+<h2 id="s21-5">២១.៥ ការសម្អាត (Purge) និងការប្តូរឈ្មោះឯកសារ (Cache busting)</h2>
+<ul>
+  <li><b>Purge</b> — សម្អាតចម្លើយដែលរក្សាទុកតាម path ឬ tag នៅពេលអ្នកបានធ្វើបច្ចុប្បន្នភាពខ្លឹមសារ។ ប្រើវាឱ្យបានតិចតួច ព្រោះវាធ្វើឱ្យចរាចរណ៍ទៅដល់ម៉ាស៊ីនមេពិតភ្លាមៗ។</li>
+  <li><b>Cache busting (វិធីដែលល្អបំផុត)</b> — នៅពេលអ្នកបញ្ចេញកំណែថ្មីនៃឯកសារ សូមប្តូរឈ្មោះឯកសារ (ឧ. <code>app.a1b2c3.js</code>)។ ដូច្នេះអ្នកប្រើទទួលបានកំណែថ្មីភ្លាម ដោយមិនចាំបាច់ purge ។</li>
+  <li><b>Quota</b> — គេហទំព័រមានកំណត់រយៈទំហំឃ្លាំង (ឧ. 1024 MB) ដែលចែករំលែករវាងដែនទាំងអស់របស់គេហទំព័រ។ ពេលពេញ ចម្លើយចាស់ៗត្រូវបានជំនួសដោយស្វ័យប្រវត្តិ។</li>
+</ul>
+<div class="warn"><b>ចំណាំសំខាន់</b>
+WAF និង Basic Auth ដំណើរការ <b>មុន</b>ឃ្លាំងសម្ងាត់ ដូច្នេះចម្លើយដែលត្រូវបានទប់ស្កាត់ ឬត្រូវការផ្ទៀងផ្ទាត់មិនដែលបម្រើពីឃ្លាំងទេ។</div>
+</section>
+
+<h1 class="part" id="p22">ជំពូកទី ២២ — SecLang ជាអ្វី និងប្រើវាយ៉ាងដូចម្តេច?</h1>
+
+<section class="card">
+<h2 id="s22-1">២២.១ SecLang ជាអ្វី?</h2>
+<p><b>SecLang</b> គឺជាភាសាសរសេរច្បាប់របស់ ModSecurity — ភាសាដែលគម្រោង <b>OWASP CRS</b> (Core Rule Set) ប្រើសរសេរច្បាប់ការពាររបស់វា។ VarmanWAF មានម៉ាស៊ីនអនុវត្ត SecLang ផ្ទាល់ខ្លួន (សរសេរក្នុង Rust) ដែលអាចអាន និងអនុវត្តច្បាប់ SecLang បានដោយផ្ទាល់ — មិនចាំបាច់ដំឡើង ModSecurity ទេ។</p>
+<p>ក្នុងប្រព័ន្ធរបស់យើង SecLang ប្រើនៅពីរកន្លែង៖</p>
+<ol>
+  <li><b>Virtual patches</b> — ច្បាប់ខ្លីៗដែលអ្នកសរសេរខ្លួនឯង ដើម្បីបិទចន្លោះប្រហោងជាក់លាក់ (ឧ. CVE ថ្មី) ដោយមិនចាំបាច់រង់ចាំកំណែថ្មី។</li>
+  <li><b>ការនាំចូល CRS</b> — ច្បាប់ OWASP CRS 4.30.0 (ច្បាប់ ៦៩៣) ត្រូវបាននាំចូល និងដំណើរការជា virtual patches របស់គេហទំព័រ។</li>
+</ol>
+
+<h2 id="s22-2">២២.២ រចនាសម្ព័ន្ធច្បាប់ SecLang</h2>
+<pre><code>SecRule &lt;ទិន្នន័យត្រូវពិនិត្យ&gt; "&lt;ប្រតិបត្តិករ&gt;" "id:&lt;លេខ&gt;,phase:&lt;ដំណាក់កាល&gt;,&lt;សកម្មភាព&gt;,msg:'&lt;សារ&gt;'"</code></pre>
+<ul>
+  <li><b>ទិន្នន័យត្រូវពិនិត្យ</b> — ឧ. <code>REQUEST_URI</code>, <code>ARGS</code>, <code>REQUEST_HEADERS</code>, <code>REQUEST_BODY</code>។</li>
+  <li><b>ប្រតិបត្តិករ</b> — ឧ. <code>@contains</code>, <code>@rx</code> (regex), <code>@eq</code>, <code>@streq</code>។</li>
+  <li><b>ដំណាក់កាល (phase)</b> — <code>1</code> = ក្បាលសំណើ, <code>2</code> = ខ្លឹមសារសំណើ, <code>3</code>/<code>4</code> = ចម្លើយ។</li>
+  <li><b>សកម្មភាព</b> — <code>block</code>, <code>deny</code>, <code>pass</code>, <code>log</code> ។ល។</li>
+</ul>
+
+<h2 id="s22-3">២២.៣ អ្វីដែលអ្នកអាចធ្វើបាន (ជាមួយឧទាហរណ៍)</h2>
+<pre><code># ១. បិទចន្លោះប្រហោងថ្មី (virtual patch) — ទប់ស្កាត់ផ្លូវគ្រោះថ្នាក់
+SecRule REQUEST_URI "@contains /cve-test" \
+  "id:900001,phase:1,block,msg:'CVE patch'"
+
+# ២. លើកលែង parameter មួយចេញពីច្បាប់ CRS 942100 (ការពារ false positive)
+SecRuleUpdateTargetById 942100 "!ARGS:comment"
+
+# ៣. បិទច្បាប់ដែលមិនសមស្របនឹងកម្មវិធីរបស់អ្នក
+SecRuleRemoveById 920350
+
+# ៤. លើកលែង target ក្នុងច្បាប់មួយ (តាម ctl)
+SecRule REQUEST_URI "@streq /api/notes" \
+  "id:900010,phase:2,pass,nolog,ctl:ruleRemoveTargetById=942100;ARGS:content"</code></pre>
+
+<h2 id="s22-4">២២.៤ ការនាំចូលច្បាប់ SecLang ពីខាងក្រៅ (Import)</h2>
+<p>នៅ <b>Protection → Policy tuning → Exclusion packages</b> អ្នកអាចបន្ថែមកញ្ចប់ប្រភេទ <b>seclang</b> ដោយផ្តល់ URL នៃឯកសារ SecLang (ឧ. plugin លើកលែងរបស់ CRS)។ ប្រព័ន្ធនឹង៖</p>
+<ol class="steps">
+  <li>ទាញយកឯកសារ។</li>
+  <li>ពិនិត្យថាវាអានបានជា SecLang (បើមិនអានបាន វាបដិសេធ — មិនបង្កើតអ្វីទាំងស្រុង)។</li>
+  <li>រក្សាទុក <b>ជាមួយរបាយការណ៍នៃអ្វីដែលវាមាន</b> (ចំនួន directive តាមប្រភេទ — មិនមែនការប្រឌិត)។</li>
+  <li>នៅពេលភ្ជាប់ វាត្រូវបានចងក្រងចូលក្នុង virtual patches របស់គេហទំព័រ។</li>
+</ol>
+
+<h2 id="s22-5">២២.៥ ដែនកំណត់ដែលគួរដឹង</h2>
+<ul>
+  <li>កញ្ចប់ seclang ធ្វើសកម្មភាព <b>តាម root prefix</b> និង <b>ទាំងគេហទំព័រ</b> (មិនមែនតាម path នីមួយៗទេ)។</li>
+  <li>ច្បាប់គ្រប់គ្រងដែលប្រើពិន្ទុ <code>cf.waf.score.*</code> មិនអាចលើកលែងតាម target បានទេ (ដំណាក់កាលទី ១)។</li>
+  <li>កម្រិតភាពស៊ីគ្នាជាមួយ CRS ត្រូវបានកត់ត្រានៅ <code>docs/compatibility.md</code>។</li>
+</ul>
+</section>
+
+<h1 class="part" id="p23">ជំពូកទី ២៣ — កន្សោម និង Regex (Expressions) ស៊ីជម្រៅ</h1>
+
+<section class="card">
+<h2 id="s23-1">២៣.១ កន្សោមប្រើនៅទីណា?</h2>
+<p>ភាសាកន្សោម (expression) តែមួយត្រូវបានប្រើនៅគ្រប់កន្លែង៖</p>
+<ul>
+  <li><b>ច្បាប់ផ្ទាល់ខ្លួន (Custom rules)</b> — លក្ខខណ្ឌនៃការទប់ស្កាត់។</li>
+  <li><b>ច្បាប់ cache</b> — សំណើណាដែលត្រូវរក្សាទុក។</li>
+  <li><b>ដែនកំណត់អត្រា</b> — សំណើណាដែលរាប់បញ្ចូល។</li>
+  <li><b>ច្បាប់បង្វែរ (rewrite)</b> — លក្ខខណ្ឌនៃការកែ URL។</li>
+</ul>
+
+<h2 id="s23-2">២៣.២ រចនាសម្ព័ន្ធ៖ វាល + ប្រតិបត្តិករ + តម្លៃ</h2>
+<table>
+  <tr><th>ប្រតិបត្តិករ</th><th>អត្ថន័យ</th><th>ឧទាហរណ៍</th></tr>
+  <tr><td><code>eq</code></td><td>ស្មើគ្នា</td><td><code>http.request.method eq "POST"</code></td></tr>
+  <tr><td><code>contains</code></td><td>មានអក្សរនេះ</td><td><code>http.request.uri.query contains "union select"</code></td></tr>
+  <tr><td><code>starts_with</code> / <code>ends_with</code></td><td>ចាប់ផ្តើម / បញ្ចប់ដោយ</td><td><code>http.request.uri.path starts_with "/api"</code></td></tr>
+  <tr><td><code>matches</code></td><td>regex</td><td><code>http.request.uri.path matches "(?i)/wp-login"</code></td></tr>
+  <tr><td><code>ge</code> / <code>le</code> / <code>gt</code> / <code>lt</code></td><td>ធំជាង/តូចជាង (លេខ)</td><td><code>cf.waf.score.sqli ge 40</code></td></tr>
+  <tr><td><code>and</code> / <code>or</code> / <code>not</code></td><td>បញ្ចូលលក្ខខណ្ឌ</td><td><code>http.request.method eq "POST" and http.request.uri.path starts_with "/api"</code></td></tr>
+</table>
+<p><b>វាលសំខាន់ៗ</b>៖ <code>http.request.uri.path</code>, <code>http.request.uri.query</code>, <code>http.request.method</code>, <code>http.request.headers.&lt;ឈ្មោះ&gt;</code>, <code>http.request.cookies.&lt;ឈ្មោះ&gt;</code>, <code>ip.src</code>, <code>geo.country</code>, <code>cf.waf.score.sqli</code> / <code>.xss</code> / <code>.rce</code> (ពិន្ទុ anomaly)។</p>
+
+<h2 id="s23-3">២៣.៣ Regex នៅក្នុង VarmanWAF</h2>
+<ul>
+  <li>ប្រើ <b>Rust regex</b> (ស្ទើរដូច RE2) — លឿន និងមិនអាចធ្វើការវាយប្រហារ DoS បានទេ (គ្មាន backtracking ធ្ងន់)។</li>
+  <li>មិនគាំទ្រ <b>backreference</b> (<code>\1</code>) ទេ — បើត្រូវការវា សូមប្រើលក្ខខណ្ឌពីរជំនួស។</li>
+  <li><code>(?i)</code> = មិនប្រកាន់អក្សរធំ-តូច។ <code>^</code>/<code>$</code> = ចាប់ផ្តើម/បញ្ចប់។</li>
+  <li>សម្រាប់ល្បឿន៖ ប្រើ <code>contains</code> ជំនួស regex នៅពេលអាច និងចាប់ផ្តើម regex ដោយអក្សរជាក់លាក់ (ឧ. <code>^/admin</code>)។</li>
+</ul>
+
+<h2 id="s23-4">២៣.៤ ឧទាហរណ៍ពេញលេញ</h2>
+<pre><code># ទប់ស្កាត់កម្មវិធីស្កេនដែលស្វែងរកផ្លូវគ្រប់គ្រង
+http.request.uri.path matches "(?i)/(wp-login|phpmyadmin|\.git|\.env)"
+
+# ទប់ស្កាត់ SQL Injection ដោយផ្ទាល់
+http.request.uri.query contains "union select"
+
+# ទប់ស្កាត់តាមពិន្ទុ anomaly របស់ម៉ាស៊ីន
+cf.waf.score.sqli ge 40
+
+# ការពារ API៖ តែ POST ទៅ /api ប៉ុណ្ណោះ
+http.request.method eq "POST" and http.request.uri.path starts_with "/api"
+
+# លើកលែង parameter "comment" ពីច្បាប់ XSS (ការពារ false positive)
+target exclusion: rule VARMAN-1042, target query:comment, path /blog/*</code></pre>
+
+<h2 id="s23-5">២៣.៥ ការសាកល្បង និងការពិនិត្យ</h2>
+<ol class="steps">
+  <li>ប្រើ <b>Rule tester</b> (Protection → Rules) ដើម្បីសាកល្បងកន្សោមលើសំណើគំរូ — វាបង្ហាញថាតើលក្ខខណ្ឌណាត្រូវ។</li>
+  <li>បន្ទាប់ពីដាក់ឱ្យដំណើរការ សូមពិនិត្យ <b>Logs → why resolver</b> ដើម្បីដឹងថាហេតុអ្វីសំណើពិតត្រូវទប់ស្កាត់ ឬអនុញ្ញាត។</li>
+  <li>តែងតែសាកល្បងជាមួយសំណើ <b>សុវត្ថិភាព</b> ផង (ឧ. ទំព័រធម្មតា) ដើម្បីបញ្ជាក់ថាគ្មានការបាញ់ខុស។</li>
+</ol>
+</section>
+
+<h1 class="part" id="p24">ជំពូកទី ២៤ — ដែនកំណត់អត្រា និងភូមិសាស្ត្រ ស៊ីជម្រៅ</h1>
+
+<section class="card">
+<h2 id="s24-1">២៤.១ ដែនកំណត់អត្រា (Rate limiting)</h2>
+<p>ដែនកំណត់អត្រាការពារការប្រើប្រាស់លើសកម្រិត៖ brute force, scraping, API abuse ។ល។</p>
+<table>
+  <tr><th>វាល</th><th>អត្ថន័យ</th></tr>
+  <tr><td><b>characteristics</b> (កូនសោ)</td><td>រាប់តាមអ្វី៖ <code>ip</code>, <code>asn</code>, <code>country</code>, <code>header</code>, <code>cookie</code>, <code>path</code> (អាចផ្សំច្រើន)</td></tr>
+  <tr><td><b>period_seconds</b></td><td>រយៈពេលវាស់ (ឧ. 60 វិនាទី)</td></tr>
+  <tr><td><b>threshold</b></td><td>ចំនួនសំណើអនុញ្ញាតក្នុងរយៈពេលនោះ</td></tr>
+  <tr><td><b>action</b></td><td><code>monitor</code> ឬ <code>block</code> (ឆ្លើយតប <code>429</code>)</td></tr>
+  <tr><td><b>mitigation_timeout_seconds</b></td><td>រយៈពេលបន្តទប់ស្កាត់បន្ទាប់ពីលើសកំណត់</td></tr>
+</table>
+<pre><code># ការពារ Login ពីការសាកល្បងពាក្យសម្ងាត់
+name: "Login brute force"
+characteristics: ip
+period_seconds: 60
+threshold: 10
+action: block
+
+# API ប្រចាំអតិថិជន (តាម header API key)
+name: "API per key"
+characteristics: header          # ឈ្មោះ header កំណត់ក្នុងកន្សោម
+period_seconds: 60
+threshold: 1000
+action: block</code></pre>
+<div class="note"><b>ចំណាំ</b>
+នៅពេល WAF ទប់ស្កាត់សំណើ អាសយដ្ឋាន IP នោះត្រូវបានបដិសេធនៅ Edge រយៈពេល <b>៦០០ វិនាទី</b> (មុន engine)។ អ្នកអាចដោះនៅ <b>Blocked IPs → Unblock</b> បើវាបាញ់ខុស។</div>
+
+<h2 id="s24-2">២៤.២ ភូមិសាស្ត្រ និង ASN</h2>
+<ul>
+  <li><b>mode</b> — <code>block_list</code> (ទប់ស្កាត់ប្រទេសក្នុងបញ្ជី) ឬ <code>allow_list</code> (អនុញ្ញាតតែប្រទេសក្នុងបញ្ជី)។</li>
+  <li><b>countries</b> — បញ្ជីលេខកូដប្រទេស (ឧ. <code>US</code>, <code>KH</code>)។</li>
+  <li><b>blocked_asns</b> — បញ្ជី ASN (ឧ. <code>AS13335</code> = Cloudflare)។</li>
+  <li><b>block_unknown</b> — បើបើក សំណើដែល IP មិនស្គាល់ប្រទេសក៏ត្រូវទប់ស្កាត់ដែរ (ប្រុងប្រយ័ត្ន!)។</li>
+  <li><b>action</b> — <code>monitor</code> (តាមដាន) ឬ <code>block</code> (ទប់ស្កាត់)។</li>
+</ul>
+<pre><code># ឧទាហរណ៍៖ អនុញ្ញាតតែប្រទេសក្នុងតំបន់ និងតាមដាន Cloudflare
+mode: allow_list
+countries: [KH, TH, VN, LA]
+action: block
+blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</code></pre>
+<div class="warn"><b>ទិន្នន័យមកពីណា?</b>
+ទិន្នន័យជួរ IP ទាំងអស់មកពី <b>ipverse</b> តែមួយប៉ុណ្ណោះ។ ជួរដែលមិនទាន់ sync នឹងបង្ហាញថា <b>មិនត្រូវបានអនុវត្ត</b> (<code>missing_keys</code>) — ប្រព័ន្ធមិនបង្ហាញថាសកម្ម បើវាមិនពិតទេ។</div>
+</section>
+
+<h1 class="part" id="p25">ជំពូកទី ២៥ — ទំព័របណ្តាញ (Routing topology)</h1>
+
+<section class="card">
+<h2 id="s25-1">២៥.១ ទំព័រនេះជាអ្វី?</h2>
+<p>ទំព័រ <b>Routing topology</b> បង្ហាញលំហូរពិតនៃសំណើរបស់គេហទំព័រអ្នក ជាដ្យាក្រាមរស់៖</p>
+<pre><code>អ្នកប្រើ → គេហទំព័រ → ការការពារ (WAF) → ស្រទាប់សុវត្ថិភាព → ផ្លូវ (Routes) → ក្រុម origin → គោលដៅ (Targets)</code></pre>
+<figure>
+  <img src="images/49-topology-site.png" alt="Routing topology">
+  <figcaption>រូបភាព ២៥.១ — លំហូរពិតរបស់គេហទំព័រ នៅទំព័រ Routing topology</figcaption>
+</figure>
+<ul>
+  <li><b>គ្រប់ខ្សែតភ្ជាប់មានចលនា (animation)</b> — ដើម្បីបង្ហាញទិសដៅលំហូរ។</li>
+  <li><b>ក្រុម (groups)</b> — ស្រទាប់សុវត្ថិភាពទាំង ១០ ស្ថិតក្នុងក្រុមតែមួយ; ក្រុម origin នីមួយៗផ្ទុកគោលដៅរបស់វា។</li>
+  <li><b>Placeholder</b> — បើផ្នែកណាមួយទទេ (ឧ. គ្មាន origin) វាបង្ហាញប្រអប់ដាច់ៗ "No origin pool yet" ជំនួសឱ្យការបាត់ — ដូច្នេះអ្នកឃើញលំហូរពេញលេញជានិច្ច។</li>
+</ul>
+
+<h2 id="s25-2">២៥.២ ការប្រើប្រាស់</h2>
+<ol class="steps">
+  <li><b>អូសដាក់វិញ (drag)</b> — អូស node ណាមួយដើម្បីរៀបចំទិដ្ឋភាព។ ការរៀបចំត្រូវបានចងចាំតាមគេហទំព័រ (per site)។</li>
+  <li><b>Auto layout</b> — ត្រឡប់ទៅការរៀបចំស្វ័យប្រវត្តិវិញ។</li>
+  <li><b>បន្ថែមធាតុថ្មី</b> — អូសធាតុពីផ្ទាំង <b>Add to the flow</b> (Upstream, Origin pool, Route, Rate limit, IP rule, Cache rule) ទៅលើផ្ទាំង។ ទម្រង់បំពេញនឹងបើក — <b>គ្មានអ្វីត្រូវបានបង្កើត</b> រហូតដល់អ្នកចុច Save។</li>
+  <li><b>កែសម្រួលភ្លាមៗ</b> — ចុចលើ node ណាមួយ (ឧ. Web Protection) ដើម្បីកែនៅខាងស្តាំ ដោយមិនចាំបាច់ចាកចេញពីទំព័រ។</li>
+</ol>
+<figure>
+  <img src="images/50-topology-panel.png" alt="ការកែសម្រួលក្នុងទំព័របណ្តាញ">
+  <figcaption>រូបភាព ២៥.២ — ចុចលើ node ដើម្បីកែសម្រួលភ្លាមៗ (ឧ. របៀបអនុវត្ត, engine, paranoia)</figcaption>
+</figure>
+
+<h2 id="s25-3">២៥.៣ អ្វីដែលអ្នកកែបានក្នុងទំព័រនេះ</h2>
+<table>
+  <tr><th>Node</th><th>ការកែសម្រួល</th></tr>
+  <tr><td>គេហទំព័រ</td><td>ឈ្មោះ, ដែនមេ, ដែនបន្ថែម</td></tr>
+  <tr><td>Web Protection</td><td>បើក/បិទ WAF, របៀប (block/monitor), engine (varman/legacy/shadow), paranoia level</td></tr>
+  <tr><td>ស្រទាប់សុវត្ថិភាព</td><td>Rate limit (បន្ថែម/លុប), IP rule (បន្ថែម/លុប), Cache rule (បន្ថែម/លុប), Basic auth (បន្ថែមគណនី), Bot, Geo — និងតំណទៅទំព័រពេញសម្រាប់ច្បាប់/API schema/SSL</td></tr>
+  <tr><td>ផ្លូវ (Routes)</td><td>បន្ថែម/កែ/លុប ផ្លូវ ជាមួយ match type និង origin pool</td></tr>
+  <tr><td>ក្រុម Origin</td><td>ឈ្មោះ, វិធីចែកបន្ទុក (round robin / hash)</td></tr>
+  <tr><td>គោលដៅ (Upstream)</td><td>អាសយដ្ឋាន, ទម្ងន់, TLS, ក្រុម</td></tr>
+</table>
+<div class="note"><b>ភាពស្មោះត្រង់</b>
+ដ្យាក្រាមត្រូវបានសង់ចេញពីការកំណត់ពិត — មិនមែនគូរដោយដៃទេ។ រាល់ការកែសម្រួលនៅទីនេះគឺជាការកែការកំណត់ពិត ដែលត្រូវបានបញ្ជូនទៅ Edge ភ្លាមៗ។</div>
+</section>
+
+<h1 class="part" id="p26">ជំពូកទី ២៦ — ឧបសម្ព័ន្ធ</h1>
 
 <section class="card">
 <h2 id="s20-1">២០.១ ពាក្យបច្ចេកទេសសំខាន់ៗ</h2>
@@ -1049,6 +1317,7 @@ http.request.uri.path eq "/secret-admin"</code></pre>
 <table>
   <tr><th>ខ្ញុំចង់…</th><th>ទៅកាន់</th></tr>
   <tr><td>មើលស្ថានភាពទូទៅ</td><td>Dashboard</td></tr>
+  <tr><td>មើលលំហូរពិតរបស់គេហទំព័រ</td><td>Routing topology</td></tr>
   <tr><td>បន្ថែមគេហទំព័រ</td><td>Sites → Add site</td></tr>
   <tr><td>កែច្បាប់ / បន្ថែមច្បាប់ផ្ទាល់ខ្លួន</td><td>Site → Protection → Rules</td></tr>
   <tr><td>លើកលែងការបាញ់ខុស</td><td>Site → Protection → Policy tuning → Rule exceptions / Exclusion packages</td></tr>

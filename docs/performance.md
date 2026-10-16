@@ -3,6 +3,12 @@
 > **Truthfulness rule** (mandate §36): every number here is reproducible with
 > the command in [Methodology](#methodology), measured on the recorded
 > hardware, with the caveats stated. No extrapolated or estimated figures.
+>
+> **Release benchmark**: the end-to-end figures for the shipped build
+> (pass-through throughput, block verdicts, the refusal lane, control-plane
+> API latency) live in [`benchmarks/v1.0.0.md`](./benchmarks/v1.0.0.md);
+> server sizing guidance in [`sizing.md`](./sizing.md). This page is the
+> in-process lane-cost report - what each engine lane costs per request.
 
 ## Lane-cost report (2026-10-07)
 

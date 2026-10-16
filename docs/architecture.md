@@ -1,212 +1,218 @@
 # VarmanWAF Architecture
 
-> **Truthfulness rule**: this document describes what is actually implemented in
-> this repository at the referenced state, not planned marketing features. It is
-> updated in the same change as any behavioural change (mandate §36).
+> **Truthfulness rule**: this document describes what is actually implemented
+> in this repository, not planned marketing features. It is updated in the
+> same change as any behavioural change.
 >
-> Current state: **imported PingWAF v0.20.0 baseline** (see
-> `docs/upstream-pingwaf-map.md` for the source map). The Varman security engine
-> described in the mandate is not implemented yet; this document describes the
-> inherited platform, which remains the foundation.
+> Current state: **v1.1.0** - the native engine enforces, the console carries
+> the full operator surface, and the platform is verified by the full E2E
+> sweep and the benchmark report ([`benchmarks/v1.0.0.md`](./benchmarks/v1.0.0.md)).
 
 ## 1. System shape
 
-VarmanWAF is a self-hosted distributed WAF platform with the same architecture as
-the imported PingWAF base:
-
 ```text
-                 VarmanWAF Control Plane
-                 ───────────────────────
-                    Dashboard / API          :9080   (axum, HTTPS by default)
-                    PostgreSQL                       (SeaORM, authoritative store)
-                    gRPC control protocol    :9090
-                          │
-                          │ gRPC (registration, heartbeat, config/rule sync,
-                          │       log/metric/cert-event shipping)
-              ┌───────────┴───────────┐
-              │                       │
-       Varman Edge Agent       Varman Edge Agent
-              │                       │
-              ▼                       ▼
-          Pingora Edge            Pingora Edge       :80 / :443
-              │                       │
-         Varman WAF Core          Varman WAF Core
-              │                       │
-              ▼                       ▼
-           Origins                 Origins
+        Visitors / attackers / APIs
+                  │
+                  ▼
+   ┌─────────────────────────────────────────────┐
+   │  Varman Edge (Pingora + Varman engine)      │   :80 / :443
+   │  canonicalise → evaluate → decide → proxy   │
+   └───────────────┬─────────────────────────────┘
+                   │ (allowed requests only)
+                   ▼
+        Origin pools → your servers
+
+   ┌─────────────────────────────────────────────┐
+   │  VarmanWAF Control Plane                    │
+   │  REST API + console            :9080 (TLS)  │
+   │  gRPC control protocol         :9090        │
+   │  PostgreSQL (authoritative store)           │
+   └─────────────────────────────────────────────┘
+             ▲ gRPC: registration, heartbeat,
+             │       config sync, log/metric/
+             │       certificate shipping
+             └────────── Edge agents (one per node)
 ```
 
 Deployment modes:
 
-- **all-in-one** (default Compose): control plane, proxy and agent in one process.
-- **server + agent(s)**: control plane process plus remote data-plane processes.
-- The minimum installation is **VarmanWAF + PostgreSQL** (no Kafka/Redis/ES/etc.;
-  Elasticsearch log shipping is optional and disabled by default).
+- **all-in-one** (default Compose): control plane, proxy and agent in one
+  process.
+- **server + agent(s)**: control plane process plus one data-plane process per
+  node; agents may run behind a load balancer or on separate machines.
+- The minimum installation is **VarmanWAF + PostgreSQL**. No Kafka, Redis or
+  Elasticsearch required (Elasticsearch log shipping is optional).
 
-## 2. Hard invariants (inherited and enforced)
+## 2. Hard invariants
 
-1. **The control plane is never in the request path.** User traffic is served by
-   the edge proxy from local configuration and cache. Losing the control plane
+1. **The control plane is never in the request path.** User traffic is served
+   by the edge from local, persisted configuration. Losing the control plane
    does not stop traffic.
 2. **Edge autonomy.** The agent persists site bundles, blocked IPs and config
-   hashes to disk (default `./data/cache`) and restarts from them; it reconnects
-   with exponential backoff.
+   hashes to disk and restarts from them; it reconnects with backoff.
 3. **PostgreSQL is the single authoritative store** for control-plane state.
-4. **Configuration reaches the data plane as versioned bundles** (`RuleBundle`
-   per site, identified by `config_hash`), applied without a proxy restart.
+4. **Configuration reaches the data plane as versioned bundles** (per site,
+   identified by `config_hash`), applied without a proxy restart.
 5. **Secrets never enter logs** (access-log body capture is bounded and
    configurable).
 6. **No per-request database access** on the edge.
+7. **Policy surfaces never lie.** A setting the operator saved is either
+   applied (and pushed) or reported as not applied - never silently dropped.
 
-## 3. Data plane (Pingora proxy)
+## 3. Data plane: the request path
 
-- Engine: Cloudflare **Pingora** (crates.io `0.9.0`, features `lb`, `cache`;
-  TLS via `openssl` or `rustls` build features).
-- Lifecycle (`pingap-proxy/src/server.rs`): `early_request_filter → request_filter
-  → proxy_upstream_filter → upstream_request_filter → upstream_response_filter →
-  logging`.
-- Plugins attach to one step; the security-relevant chain per location is:
+Every request walks the same path; the WAF decides, the proxy delivers:
 
 ```text
-[host/path routing, ~ form: host + location match]
-   │
-   ▼
-WAF plugin (EarlyRequest)  ← single security enforcement point today
-   ├─ site basic auth
-   ├─ IP access rules (CIDR, actions incl. block/challenge/allow/basic-auth)
-   ├─ geo rules (country/ASN, tor-geoip embedded DB)
-   ├─ bot protection (UA classification + whitelist)
-   ├─ rate limiting (per-rule characteristics: ip, ip-nat, host, path,
-   │   header, cookie, query, asn, country, ja3; in-process counters)
-   ├─ mTLS policy per site (require cert, org pinning, revocations)
-   ├─ WAF engine verdict (see §4)
-   └─ emits access logs + security events (non-blocking, batched)
-   │
-   ▼
-challenge plugin  → JS challenge / clearance cookie / block pages
-rewrite / error_page / cache plugins
-   │
-   ▼
-upstream (per-site pools; round-robin / hash / least-conn / random)
+   request (HTTP/HTTPS, site resolved by Host)
+     │
+     ▼
+   1. Canonicalisation        one normalization shared by every detector:
+                              bounded percent decoding, HTML entities, path
+                              collapse, query/cookie parsing, authority handling
+     │
+     ▼
+   2. IP / blocked-IP gate    IP rules and groups; auto-block refusal window
+                              (600s after a block verdict, before the engine)
+     │
+     ▼
+   3. WAF engine (varman)     ┌ signature lane (Aho-Corasick: block-tier payload
+      [or legacy / shadow]    │ syntax, log-tier ambiguous tokens)
+                              ├ managed rules (13 families, anomaly scoring)
+                              ├ custom rules (operator expressions)
+                              ├ SecLang virtual patches + imported CRS 4.30.0
+                              ├ API schema validation (per-operation Off/
+                              │   Observe/Enforce)
+                              ├ exclusions (path-scoped target exclusions,
+                              │   curated packages, imported SecLang packages)
+                              └ rate limits, geo/ASN (ipverse ranges), bot
+                                posture, challenges
+     │
+     ▼
+   4. Verdict                 Allow → proxy   Monitor → proxy + record
+                              Block → 403 block page (+ auto-block)
+                              Challenge → 503 challenge page
+     │
+     ▼
+   5. Delivery                rewrite / cache / compression → origin pool →
+                              target; access log + security events shipped
 ```
 
-- Runtime configuration is generated from the agent rule cache
-  (`src/varman.rs::cached_rules_to_pingap_config`): sites → locations, origin
-  pools → upstreams, SSL config → certificates, security plugins. Pingap applies
-  it through `--autoreload` (hot) or `--autorestart` (fresh listeners) semantics.
+The engine runs from an **immutable per-site runtime snapshot** behind an
+atomic `ArcSwap`: in-flight requests keep the snapshot they started on, so a
+push never exposes a half-applied configuration. Work is bounded (finding
+caps, body inspection budgets) and degrades in a structured way instead of
+erroring.
 
-## 4. Current detection engine (`varman-waf`)
+Details: [`security-engine.md`](./security-engine.md).
 
-A single-crate, signature-first engine with anomaly scoring:
+## 4. Security engine (`varman-waf`)
 
-```text
-RequestData
-  │
-  ▼ normalize_request: URL percent multi-decode (bounded layers),
-  │   HTML entity decode, path collapse, query/cookie parsing;
-  │   strict mode adds \xHH / \uHHHH escape decoding
-  ▼
-Stage 1: Aho-Corasick signatures (~113 needles) + libinjection-style
-         SQLi/XSS + shape checks per decoded value
-  │
-  ├─ critical hit → early Block (fast path)
-  ▼
-Stage 2: compiled expression rules (built-in managed ruleset + custom rules
-         from the control plane; Cloudflare-like field/operator/value DSL)
-  │
-  ▼
-Anomaly scoring (severity/category points; threshold default 40;
-  paranoia 1–4; Normal/Strict levels; per-site monitor categories and
-  backend stacks downgrade to non-blocking; site-wide observation mode)
-  │
-  ▼
-Verdict: Pass | Monitor | Block | Challenge   (Off / Monitor / Block modes)
-```
+| Layer | What it does |
+| --- | --- |
+| Canonical model | One normalization truth for every detector |
+| Signature lane | Aho-Corasick tiers + SQLi/XSS shape checks |
+| Managed rules | 13 families (`VARMAN-1001..1061`) with anomaly scores and per-rule modes |
+| Custom rules | Operator expressions (`http.request.uri.query contains "…"`, `cf.waf.score.sqli ge 30`), modes and score actions |
+| SecLang / CRS | Virtual patches, CRS 4.30.0 import, `SecRuleUpdateTargetById` / `SecRuleRemoveById` incl. the `ctl:` controls plugins use |
+| API schema | OpenAPI request validation with per-operation Off / Observe / Enforce |
+| Access | IP rules/groups, geo & ASN from **ipverse** (`rir-ip`, `as-ip-blocks`) |
+| Bots / CC | Bot posture, verified bots (reverse DNS), challenges, under-attack |
+| Exclusions | Path-scoped named-member target exclusions, curated per-application packages, upstream SecLang imports with an import report |
 
-Known limitations are documented by upstream's own review
-(`docs/waf-engine-review.md`) and drive the Varman engine roadmap: no semantic
-lane, no SecLang/CRS, limited body handling, no response inspection. The mandate's
-target architecture (Lanes 0–3 + semantic detectors + SecLang) is planned in
-`docs/roadmap.md`, executed **behind shadow mode** so the existing engine keeps
-serving until parity is proven.
+Engine mode per site: `varman` (native, enforcing), `legacy` (imported
+signature engine), `shadow` (both run, verdicts compared, enforcement
+unchanged).
 
 ## 5. Control plane
 
-- **HTTP REST** (`/api/v1`, axum): auth (JWT, passkeys), sites/domains, SSL/mTLS,
-  agents, rules & policies (WAF settings, rate limits, IP groups/rules, geo,
-  bot, challenge, rewrite, error pages), logs/analytics, settings, self-protection,
-  AI assistant, MCP endpoint `/mcp`.
+- **HTTP REST** (`/api/v1`, axum): 48 route modules - auth/passkeys/users/keys,
+  sites/upstreams/pools/routes/rewrite/cache/SSL/TLS, protection (rules,
+  policies, CRS, exclusions, challenge, bot, rate limits, IP rules/groups/geo/
+  ipverse datasets, API assets), observability (logs, analytics, alerts,
+  notifications, reports, blocked IPs, retention), integrations (AI, MCP),
+  system (self-protection, debug).
 - **gRPC** (`:9090`, tonic): `RegisterAgent`, bidi `Heartbeat` (+ server
   commands), `SyncRules`, `GetSiteConfig`, `ShipLogs`, `ShipCertEvents`,
   `ShipMetrics`.
-- **Dashboard**: React SPA embedded in the binary (rust-embed), served over HTTPS
-  (self-signed on first boot; replaceable from Settings).
+- **Console**: React SPA embedded in the binary at build time, served over
+  HTTPS (self-signed on first boot; replaceable from Settings). The
+  **routing topology** page renders the site's real flow and edits it in
+  place.
 - **Migrations**: SeaORM, applied automatically at boot.
 - **Self-protection**: the control plane guards its own admin surface with an
-  in-process `WafEngine` instance, an IP allowlist and its own access log.
-- **Optional**: Elasticsearch log shipping, AI assistant (LLM provider), webhooks.
+  in-process engine instance, an IP allowlist and its own access log.
+- **Login protection**: 10 attempts/minute/IP on login, 5/hour on
+  registration, 30/min refresh, 10/min password change.
 
 ## 6. Edge agent
 
-- Registers with the control plane (API key, host facts) and receives a JWT.
-- Maintains a persisted `RuleCache`: sites keyed by domain, each with its full
-  `RuleBundle`; blocked-IP ledger with expiry; `config_hash` for delta sync.
-- Ships heartbeats (health, metrics, host samples, site status incl. cache and
-  certificate state, blocked IPs), batched logs, cert events and metrics.
-- Exposes a fast read API to the proxy plugins:
+- Registers with the control plane (API key, host facts) and receives a JWT;
+  registration can be closed and agents can be pinned with mutual TLS.
+- Maintains a persisted `RuleCache`: sites keyed by domain with their full
+  bundle, the blocked-IP ledger with expiry, and the `config_hash` for delta
+  sync.
+- Ships heartbeats (health, metrics, host samples, site status incl. cache
+  and certificate state, blocked IPs), batched logs, certificate events and
+  metrics.
+- Exposes a lock-light read API to the proxy plugins:
   `get_rules_for_domain`, `is_ip_blocked`, `block_ip`, `log_security_event`,
-  `log_access` — all lock-light and non-blocking on the request path.
+  `log_access`.
 
 ## 7. Data and configuration flow
 
 ```text
-Dashboard/API edit ──► PostgreSQL (authoritative)
-                            │
-                   config/rule assembly (per-site RuleBundle)
-                            │
-        SyncRules stream / GetSiteConfig ◄─────────────┐
-                            │                          │
-                            ▼                          │
-                   agent RuleCache (disk)              │
-                            │                          │
-        cached_rules_to_pingap_config()                │
-                            │                          │
-                  Pingap hot reload                    │
-                            │                          │
-        proxy serves traffic from immutable-ish config │
-                            │                          │
-      security events + access logs + metrics ─────────┘
+Console/API edit ──► PostgreSQL (authoritative)
+                          │
+                 bundle compilation (per site, versioned)
+                          │
+      SyncRules stream / GetSiteConfig ◄─────────────┐
+                          │                          │
+                          ▼                          │
+                 agent RuleCache (disk)              │
+                          │                          │
+             Pingap config assembly                  │
+                          │                          │
+                 hot reload (no restart)             │
+                          │                          │
+      proxy serves from the local bundle             │
+                          │                          │
+   security events + access logs + metrics ──────────┘
 ```
 
-## 8. Failure semantics (inherited; to be hardened per mandate §38)
+Every change that produces a bundle is recorded in **config history** with a
+diff summary, actor and time; a version can be previewed and rolled back,
+which re-pushes it to the affected agents.
 
-| Failure | Current behaviour |
-|---|---|
+## 8. Failure semantics
+
+| Failure | Behaviour |
+| --- | --- |
 | Control plane unreachable | Edge serves from cached bundles; reconnect with backoff |
-| Agent registration fails at boot | Agent keeps cached rules; `fail_open` config decides traffic handling |
-| Config/rule compilation fails on edge | Invalid bundle is rejected; previous cache is kept (persisted last-good) |
-| Log shipping unavailable | Entries accumulate in a bounded channel; bounded loss, never blocks requests |
+| Agent registration fails at boot | Agent keeps cached rules; the site keeps serving |
+| Bundle compilation fails on the edge | Invalid bundle rejected; last-good cache kept |
+| Log shipping unavailable | Bounded channel; bounded loss, never blocks requests |
 | Elasticsearch down | Log shipping degrades; PostgreSQL-only operation unaffected |
-| Certificate expired | Reported via heartbeat; edge keeps serving (clients see TLS error) |
+| Certificate expired | Reported via heartbeat; the edge keeps serving (clients see the TLS error) |
+| Origin pool fully down | Failover policy: secondary pool or a static response |
+| Auto-block misfire | Unblock from Blocked IPs (or the API) revokes it immediately |
 
-## 9. Repository layout (current)
+## 9. Repository layout
 
 ```text
 VarmanWAF/
 ├── Cargo.toml                  # workspace, dual root binary (pingap + varman)
 ├── src/                        # root binary: cli, varman mode assembly, admin plugin
-├── pingap-*/                   # proxy foundation crates (names retained for now)
-├── varman-control/             # control plane (renamed from pingwaf-server)
-├── varman-agent/               # edge agent (renamed from pingwaf-agent)
-├── varman-waf/                 # current engine (renamed from pingwaf-waf)
-├── varman-protocol/            # gRPC protocol (renamed from pingwaf-proto)
-├── varman-challenge/           # challenges (renamed from pingwaf-challenge)
-├── varman-pprof/               # profiling (renamed from pingwaf-pprof)
+├── varman-control/             # control plane (REST + gRPC + migrations + embedded console)
+├── varman-agent/               # edge agent (cache, sync, shipping)
+├── varman-waf/                 # the security engine (pipeline, detectors, seclang, corpora)
+├── varman-protocol/            # gRPC protocol definitions (single source: .proto)
+├── varman-challenge/           # challenge engine (JS shield, PoW, clearance cookies)
+├── varman-pprof/               # profiling
+├── pingap-*/                   # proxy foundation crates (Pingora proxy, plugins, cache, …)
 ├── web/                        # console (Vite/React), embedded at build time
-├── migrations/                 # (SeaORM migrations live in varman-control/src/migration)
-├── tests/                      # (added by Varman phases; see roadmap)
 ├── docs/                       # this documentation set
-└── docker-compose.yml, Dockerfile, varman.toml, varman.service, ...
+└── docker-compose.yml, Dockerfile, Dockerfile.runtime, varman.toml, varman.service
 ```
 
 ## 10. Build and run
@@ -217,26 +223,37 @@ cargo build --release                          # default: openssl TLS
 cargo build --no-default-features --features tls-rustls,full
 
 # Run a full local stack
-docker compose up -d                           # dashboard: https://localhost:9080
+docker compose up -d                           # console: https://localhost:9080
 
-# Tests and lint (CI gates)
-make lint && make test
+# The local gate (CI is local in this fork)
+cargo fmt --all -- --check
+cargo test --workspace --features full
+cargo clippy --features full --all-targets -- -D warnings
+cd web && npx tsc -b && npx eslint . && npx vitest run && npx vite build
 ```
 
-Development on Windows hosts is supported through any Linux environment (WSL2 or
-the provided Docker dev container); the produced artifacts are Linux binaries.
+Development on Windows hosts is supported through a Linux environment (WSL2
+or the provided Docker dev container); the produced artifacts are Linux
+binaries. The E2E sweep (`build-artifacts/run-e2e-all.ps1` next to the
+repository) verifies a deployed stack.
 
-## 11. What the Varman evolution changes
+## 11. Capacity and scale
 
-The following are **planned, not implemented** (see `docs/roadmap.md`):
+Measured numbers, methodology and caveats live in
+[`benchmarks/v1.0.0.md`](./benchmarks/v1.0.0.md); server sizing guidance in
+[`sizing.md`](./sizing.md); high availability in [`ha.md`](./ha.md). Headline
+figures on a development desktop (single all-in-one container): ~5.8k req/s
+pass-through at 25 connections, ~1 ms engine block verdicts, ~9.8k req/s on
+the auto-block refusal lane.
 
-- Canonical request model shared by every detector (one normalization truth).
-- Multi-lane security pipeline (fast signatures → structured extraction →
-  semantic detectors → SecLang/CRS) with shadow-mode rollout.
-- Immutable per-site security runtime behind an atomic snapshot swap.
-- Streaming, bounded body inspection; response inspection.
-- Config versioning with desired/active/last-good tracking and acknowledgements.
-- Independent test corpora (benign/attack/bypass), CRS conformance, fuzzing.
+## 12. Where to look next
 
-Until those land, the platform’s runtime behaviour is exactly the imported
-baseline described above.
+| Question | Document |
+| --- | --- |
+| What does every console surface do? | [`features.md`](./features.md) |
+| How does the engine decide? | [`security-engine.md`](./security-engine.md) |
+| Where in the request path does a feature act? | [`http-lifecycle.md`](./http-lifecycle.md) |
+| How do I deploy, back up, upgrade? | [`deployment.md`](./deployment.md) |
+| How big should the server be? | [`sizing.md`](./sizing.md) |
+| How do I run this highly available? | [`ha.md`](./ha.md) |
+| How do I build, test and ship changes? | [`developer-guide.md`](./developer-guide.md) |

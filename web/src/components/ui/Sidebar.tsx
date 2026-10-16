@@ -123,6 +123,7 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
       labelKey: 'nav.tools',
       icon: Sparkle,
       children: [
+        { to: '/topology', labelKey: 'nav.topology', icon: FlowArrow },
         { to: '/assistant', labelKey: 'nav.assistant', icon: Sparkle },
         { to: '/lifecycle', labelKey: 'nav.lifecycle', icon: FlowArrow },
       ],
@@ -180,6 +181,11 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
                 to: site('rules/rewrite'),
                 labelKey: 'pages.rewrite.title',
                 icon: Sliders,
+              },
+              {
+                to: site('topology'),
+                labelKey: 'nav.topology',
+                icon: FlowArrow,
               },
               {
                 to: site('settings'),

@@ -21,6 +21,9 @@ export function defaultWafSettings(): WafSettings {
   return {
     id: '',
     site_id: '',
+    waf_enabled: true,
+    mode: 'block',
+    paranoia_level: 1,
     advanced_mode: false,
     engine_mode: 'inherit',
     virtual_patches: '',

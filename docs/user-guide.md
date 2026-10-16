@@ -1,5 +1,11 @@
 # VarmanWAF User Guide
 
+> **Where this fits**: the current per-surface inventory is
+> [`features.md`](./features.md) and the deepest walkthrough (with screenshots
+> of every feature) is the Khmer guide
+> ([`user-guide-km/index.html`](./user-guide-km/index.html)). This English
+> guide covers the same core flows end to end.
+
 ## Getting Started
 
 ### First Login

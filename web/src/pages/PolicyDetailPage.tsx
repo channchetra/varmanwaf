@@ -6,7 +6,6 @@ import {
   CaretLeft,
   ClockCounterClockwise,
   Play,
-  Plus,
   Stack,
 } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
@@ -14,13 +13,12 @@ import { Callout } from '@/components/ui/Callout'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { Select } from '@/components/ui/Select'
 import { SkeletonCard } from '@/components/ui/Skeleton'
 import { QuickNav } from '@/components/ui/QuickNav'
 import { ErrorState } from '@/components/ErrorState'
 import { PolicyTesterDialog } from '@/components/PolicyTesterDialog'
 import { useCanWrite } from '@/hooks'
-import { policiesApi, policyKeys, type PolicyLayerKind } from '@/api/policies'
+import { policiesApi, policyKeys } from '@/api/policies'
 import {
   LAYER_TABS,
   LayerEditor,
@@ -40,7 +38,6 @@ export function PolicyDetailPage() {
   const queryClient = useQueryClient()
   const [historyOpen, setHistoryOpen] = useState(false)
   const [testOpen, setTestOpen] = useState(false)
-  const [adding, setAdding] = useState<PolicyLayerKind | ''>('')
 
   const detail = useQuery({
     queryKey: policyKeys.detail(policyId),
@@ -78,12 +75,9 @@ export function PolicyDetailPage() {
   const present = LAYER_TABS.filter((kind) =>
     policy.layer_kinds.includes(kind),
   )
-  const missing = LAYER_TABS.filter(
-    (kind) => !policy.layer_kinds.includes(kind),
-  )
   const sections = [
     { id: 'policy-overview', label: t('pages.policies.sections.overview') },
-    ...present.map((kind) => ({
+    ...LAYER_TABS.map((kind) => ({
       id: `policy-layer-${kind}`,
       label: t(`pages.policies.layers.${kind}`),
     })),
@@ -180,77 +174,54 @@ export function PolicyDetailPage() {
             </Card>
           </section>
 
-          {/* One section per layer the policy carries. */}
-          {present.map((kind) => (
-            <section
-              key={kind}
-              id={`policy-layer-${kind}`}
-              className="scroll-mt-6"
-            >
-              <Card>
-                <CardHeader
-                  title={t(`pages.policies.layers.${kind}`)}
-                  description={t(
-                    `pages.policies.layerHints.${kind}`,
-                    '',
-                  )}
-                />
-                <CardBody>
-                  <LayerEditor
-                    policy={policy}
-                    tab={kind}
-                    canWrite={canWrite}
-                    onStored={invalidate}
-                  />
-                </CardBody>
-              </Card>
-            </section>
-          ))}
-
-          {/* Add a layer the policy does not carry yet. */}
-          {canWrite && missing.length > 0 && (
-            <section id="policy-add-layer" className="scroll-mt-6">
-              <Card>
-                <CardHeader
-                  title={t('pages.policies.addLayer')}
-                  description={t('pages.policies.addLayerHint')}
-                />
-                <CardBody className="flex flex-col gap-4">
-                  <Select
-                    containerClassName="w-64"
-                    label={t('pages.policies.addLayerKind')}
-                    value={adding}
-                    options={missing.map((kind) => ({
-                      value: kind,
-                      label: t(`pages.policies.layers.${kind}`),
-                    }))}
-                    onChange={(event) =>
-                      setAdding(event.target.value as PolicyLayerKind)
+          {/* One section per layer kind, always all of them: configured
+              layers open with their values, unconfigured ones show the same
+              editor empty - saving creates the layer, so nothing is hidden
+              behind an add-one-by-one flow. */}
+          {LAYER_TABS.map((kind) => {
+            const isPresent = present.includes(kind)
+            return (
+              <section
+                key={kind}
+                id={`policy-layer-${kind}`}
+                className="scroll-mt-6"
+              >
+                <Card>
+                  <CardHeader
+                    title={t(`pages.policies.layers.${kind}`)}
+                    description={t(
+                      `pages.policies.layerHints.${kind}`,
+                      '',
+                    )}
+                    action={
+                      isPresent ? (
+                        <Badge tone="success" dot>
+                          {t('pages.policies.layerConfigured')}
+                        </Badge>
+                      ) : (
+                        <Badge tone="neutral">
+                          {t('pages.policies.layerNotConfigured')}
+                        </Badge>
+                      )
                     }
                   />
-                  {adding !== '' && (
-                    <div className="rounded-md border border-line bg-recessed/40 p-3">
-                      <LayerEditor
-                        policy={policy}
-                        tab={adding}
-                        canWrite={canWrite}
-                        onStored={() => {
-                          setAdding('')
-                          invalidate()
-                        }}
-                      />
-                    </div>
-                  )}
-                  {adding === '' && (
-                    <p className="flex items-center gap-1.5 text-[12px] text-fg-subtle">
-                      <Plus weight="bold" className="h-3.5 w-3.5" />
-                      {t('pages.policies.addLayerPick')}
-                    </p>
-                  )}
-                </CardBody>
-              </Card>
-            </section>
-          )}
+                  <CardBody>
+                    {!isPresent && (
+                      <p className="mb-3 text-[12px] text-fg-subtle">
+                        {t('pages.policies.layerNotConfiguredHint')}
+                      </p>
+                    )}
+                    <LayerEditor
+                      policy={policy}
+                      tab={kind}
+                      canWrite={canWrite}
+                      onStored={invalidate}
+                    />
+                  </CardBody>
+                </Card>
+              </section>
+            )
+          })}
 
           {/* History and preview as their own sections. */}
           <section id="policy-history" className="scroll-mt-6">

@@ -439,6 +439,11 @@ export const WAF_STACKS: WafStack[] = ['java', 'php', 'python', 'node']
 export interface WafSettings {
   id: string
   site_id: string
+  /** Site-wide WAF switch; the edge still evaluates when off but never blocks. */
+  waf_enabled: boolean
+  /** `block` enforces verdicts, `monitor` records them without blocking. */
+  mode: string | null
+  paranoia_level: number
   advanced_mode: boolean
   engine_mode: WafEngineMode | string
   virtual_patches: string
@@ -457,6 +462,9 @@ export const WAF_ENGINE_MODES: WafEngineMode[] = ['inherit', 'legacy', 'shadow',
 
 /** Patch semantics: omitted fields keep their current value. */
 export interface UpdateWafSettingsRequest {
+  waf_enabled?: boolean
+  mode?: string
+  paranoia_level?: number
   advanced_mode?: boolean
   engine_mode?: WafEngineMode | string
   virtual_patches?: string

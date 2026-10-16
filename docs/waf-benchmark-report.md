@@ -1,3 +1,9 @@
+> **Historical record (2026-10-04, Chinese).** This is the early engine
+> measurement round from the fork's first days. It is kept for the record -
+> the detection rates below predate the semantic lane, the corpora and the
+> 1.0.0 verification. For current figures see
+> [`benchmarks/v1.0.0.md`](./benchmarks/v1.0.0.md) and
+> [`performance.md`](./performance.md).
 # VarmanWAF 数据面 WAF 实测评估报告（基于 blazehttp 攻击样本）
 
 - 测试日期：2026-10-04

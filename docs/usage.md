@@ -1,5 +1,11 @@
 # Using VarmanWAF
 
+> **Where this fits**: this is the core-flows walkthrough with screenshots.
+> The per-surface inventory (every page, API and honest limit) is
+> [`features.md`](./features.md); the deepest step-by-step guide is the Khmer
+> user guide ([`user-guide-km/index.html`](./user-guide-km/index.html)); the
+> routing-topology page is described in both.
+
 A practical guide with screenshots: how to sign in, add a site, tune Web
 Protection, read security events and use the REST API. All examples assume the
 default all-in-one deployment (`docker compose up -d`).

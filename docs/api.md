@@ -2787,3 +2787,370 @@ The control plane's own access log has its own window,
 `access_log_retention_days` on `GET/PUT /settings/api-protection` (default
 `30` days). The scheduled sweep enforces it; an ad-hoc `DELETE /logs/purge`
 without `site_id` trims it with the same `older_than_days` as the site logs.
+
+## Full route table (generated from `varman-control/src/api/`)
+
+The reference sections above cover the original surfaces in depth; this table is the complete current route list, kept in step with the code (48 modules). Regenerate by reading the `.route(...)` declarations in each module.
+
+### agents
+
+- `/agents`
+- `/agents/enroll`
+- `/agents/{agent_id}`
+- `/agents/{agent_id}/samples`
+- `/agents/{agent_id}/metrics`
+- `/agents/{agent_id}/commands`
+
+### ai
+
+- `/settings/ai`
+- `/settings/ai/test`
+- `/ai/conversations`
+- `/ai/conversations/{id}`
+- `/ai/conversations/{id}/messages`
+
+### alerts
+
+- `/alerts/rules`
+- `/alerts/rules/{id}`
+- `/alerts/rules/{id}/preview`
+- `/alerts/silences`
+- `/alerts/silences/{id}`
+
+### analytics
+
+- `/analytics/summary`
+- `/analytics/requests-over-time`
+- `/analytics/traffic`
+- `/analytics/sites-over-time`
+- `/analytics/top-rules`
+- `/analytics/top-ips`
+- `/analytics/top-paths`
+- `/analytics/status-codes`
+- `/analytics/sites`
+
+### api_assets
+
+- `/sites/{site_id}/api-assets`
+- `/sites/{site_id}/api-assets/learn`
+- `/sites/{site_id}/api-assets/learned`
+- `/sites/{site_id}/api-assets/learned/{row_id}/mode`
+- `/sites/{site_id}/api-assets/openapi-draft`
+- `/users`
+- `/users/{id}`
+- `/users/42`
+- `/users/42/orders`
+- `/users/`
+
+### api_protection
+
+- `/settings/api-protection`
+- `/logs/control-plane`
+
+### auth
+
+- `/auth/status`
+- `/auth/login`
+- `/auth/register`
+- `/auth/refresh`
+- `/auth/me`
+- `/auth/password`
+
+### blocked_ips
+
+- `/sites/{site_id}/blocked-ips`
+- `/sites/{site_id}/blocked-ips/unblock`
+- `/blocked-ips`
+- `/blocked-ips/block`
+
+### bot
+
+- `/sites/{site_id}/bot-protection`
+
+### cache_settings
+
+- `/settings/cache`
+
+### cache
+
+- `/sites/{site_id}/cache-rules`
+- `/sites/{site_id}/cache-rules/{rule_id}`
+- `/sites/{site_id}/cache/defaults`
+- `/sites/{site_id}/cache-settings`
+- `/cache/status`
+- `/cache/status/{site_id}`
+- `/cache/purge`
+- `/cache/rules`
+- `/cache/rules/{rule_id}`
+- `/a`
+- `/b`
+- `/c`
+- `/x`
+
+### challenge
+
+- `/sites/{site_id}/challenge`
+
+### config_versions
+
+- `/config-versions`
+- `/config-versions/{version_id}`
+- `/config-versions/{version_id}/rollback`
+
+### crs
+
+- `/crs/releases`
+- `/crs/import`
+- `/crs/rulesets`
+- `/crs/rulesets/{id}`
+
+### debug
+
+- `/debug/pprof/profile`
+- `/debug/pprof/flamegraph`
+- `/debug/pprof/memory`
+
+### defense
+
+- `/settings/defense`
+
+### display
+
+- `/settings/display`
+
+### error_pages
+
+- `/error-pages`
+- `/error-pages/{page_id}`
+
+### exclusions
+
+- `/exclusion-packages`
+- `/exclusion-packages/import`
+- `/exclusion-packages/{key}`
+- `/sites/{site_id}/exclusion-bindings`
+- `/sites/{site_id}/exclusion-bindings/{binding_id}`
+
+### geo
+
+- `/sites/{site_id}/geo`
+- `/sites/{site_id}/geo/stats`
+- `/geo/global-stats`
+
+### ip_analysis
+
+- `/sites/{site_id}/ip-analysis`
+
+### ip_datasets
+
+- `/ip-datasets`
+- `/ip-datasets/sync`
+- `/ip-datasets/sync-referenced`
+
+### ip_groups
+
+- `/ip-groups`
+- `/ip-groups/{group_id}`
+- `/ip-groups/{group_id}/sites`
+- `/ip-groups/{group_id}/sync`
+
+### ip_lists
+
+- `/ip-lists/catalog`
+- `/ip-lists/import`
+
+### ip_rules
+
+- `/sites/{site_id}/ip-rules`
+- `/sites/{site_id}/ip-rules/{rule_id}`
+- `/sites/{site_id}/ip-rules/bulk`
+
+### keys
+
+- `/keys`
+- `/keys/{key_id}`
+
+### log_retention
+
+- `/settings/log-retention`
+
+### login_security
+
+- `/login-security`
+- `/login-security/geoip`
+- `/login-history`
+
+### logs
+
+- `/logs/security`
+- `/logs/access`
+- `/logs/purge`
+- `/security-events/{event_id}/why`
+
+### mcp
+
+- `/settings/mcp`
+- `/mcp`
+
+### mod
+
+- `/api/v1`
+- `/health`
+- `/version`
+- `/healthz`
+- `/api/v1/health`
+- `/api/v1/sites?page=2`
+- `/api/v1/sites`
+- `/healthz/extra`
+- `/dashboard`
+
+### mtls
+
+- `/sites/{site_id}/mtls/cas`
+- `/sites/{site_id}/mtls/cas/{ca_id}`
+- `/sites/{site_id}/mtls/certificates`
+- `/sites/{site_id}/mtls/certificates/{cert_id}`
+- `/sites/{site_id}/mtls/certificates/{cert_id}/revoke`
+- `/sites/{site_id}/mtls/certificates/{cert_id}/download`
+
+### notifications
+
+- `/notifications/channels`
+- `/notifications/channels/{channel_id}`
+- `/notifications/channels/{channel_id}/test`
+- `/notifications/settings`
+- `/notifications/events`
+- `/notifications/event-types`
+
+### passkeys
+
+- `/auth/passkeys`
+- `/auth/passkeys/{id}`
+- `/auth/passkey/register/begin`
+- `/auth/passkey/register/finish`
+- `/auth/passkey/login/begin`
+- `/auth/passkey/login/finish`
+- `/settings/passkeys`
+
+### policies
+
+- `/policies`
+- `/policies/preview`
+- `/policies/test`
+- `/policies/templates`
+- `/policies/recipes`
+- `/policies/from-template`
+- `/policies/{id}/recipes`
+- `/policies/{id}`
+- `/policies/{id}/layers/{kind}`
+- `/policies/{id}/versions`
+- `/policies/{id}/versions/diff`
+- `/policies/{id}/versions/{version_id}`
+- `/policies/{id}/rollback`
+- `/sites/{site_id}/policy`
+- `/sites/{site_id}/policy-override`
+- `/sites/{site_id}/effective-config`
+- `/sites/{site_id}/apply-status`
+
+### rate_limit
+
+- `/auth/login`
+- `/auth/passkey/login/begin`
+- `/auth/passkey/login/finish`
+- `/auth/register`
+- `/auth/refresh`
+- `/auth/password`
+- `/auth/status`
+- `/auth/me`
+- `/auth/passkey/register/begin`
+- `/auth/passkey/register/finish`
+- `/auth/other`
+- `/auth/password/reset`
+- `/api/v1`
+- `/api/v1/auth/login`
+- `/api/v1/auth/status`
+
+### rate_limiting
+
+- `/sites/{site_id}/rate-limit-rules`
+- `/sites/{site_id}/rate-limit-rules/{rule_id}`
+
+### reports
+
+- `/reports/summary`
+- `/reports/interception`
+- `/reports/settings`
+- `/reports/send-now`
+
+### rewrite
+
+- `/sites/{site_id}/rewrite-rules`
+- `/sites/{site_id}/rewrite-rules/{rule_id}`
+
+### rules
+
+- `/sites/{site_id}/rule-groups`
+- `/sites/{site_id}/rule-groups/{group_id}`
+- `/sites/{site_id}/rules`
+- `/sites/{site_id}/rules/{rule_id}`
+- `/sites/{site_id}/waf/defaults`
+
+### settings
+
+- `/settings/elasticsearch`
+- `/settings/elasticsearch/test`
+
+### site_basic_auth
+
+- `/sites/{site_id}/basic-auth`
+
+### site_failover
+
+- `/sites/{site_id}/failover`
+
+### sites
+
+- `/sites`
+- `/sites/{site_id}`
+- `/sites/{site_id}/upstreams`
+- `/sites/{site_id}/upstreams/{upstream_id}`
+- `/sites/{site_id}/upstream-pools`
+- `/sites/{site_id}/upstream-pools/{pool_id}`
+- `/sites/{site_id}/routes`
+- `/sites/{site_id}/routes/{route_id}`
+- `/sites/{site_id}/ssl`
+- `/healthz`
+- `/a b`
+- `/a?b=1`
+
+### ssl
+
+- `/sites/{site_id}/certificates`
+- `/sites/{site_id}/certificates/{cert_id}`
+- `/sites/{site_id}/certificates/{cert_id}/renew`
+- `/sites/{site_id}/ssl-settings`
+- `/certificates`
+- `/certificates/summary`
+- `/certificates/{cert_id}`
+- `/certificates/{cert_id}/renew`
+- `/certificates/{cert_id}/events`
+- `/ssl-events`
+
+### system_tls
+
+- `/system/tls`
+- `/system/tls/certificate`
+- `/system/tls/certificate/self-signed`
+
+### users
+
+- `/users`
+- `/users/{user_id}`
+- `/users/{user_id}/reset-password`
+
+### waf_settings
+
+- `/sites/{site_id}/waf/settings`
+- `/sites/{site_id}/waf/posture`
+- `/managed-rules`
+

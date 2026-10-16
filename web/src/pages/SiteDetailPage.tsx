@@ -19,6 +19,7 @@ import {
   Warning,
   Gear,
   BracketsCurly,
+  FlowArrow,
   type Icon,
 } from '@phosphor-icons/react'
 import { Link } from 'react-router-dom'
@@ -102,6 +103,7 @@ export function SiteDetailPage() {
       { to: `${base}/caching`, label: t('nav.caching'), icon: Lightning },
       { to: `${base}/ssl`, label: t('nav.ssl'), icon: Lock },
       { to: `${base}/traffic`, label: t('nav.traffic'), icon: ChartLine },
+      { to: `${base}/topology`, label: t('nav.topology'), icon: FlowArrow },
     ],
     [
       {

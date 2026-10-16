@@ -14,9 +14,14 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // The console serves TLS on 9080 by default; proxying over plain HTTP
+      // makes the server answer 308 to https://, and the browser drops the
+      // Authorization header across that cross-origin redirect. Proxy to the
+      // TLS endpoint directly (self-signed in dev, so verification is off).
       '/api': {
-        target: 'http://localhost:9080',
+        target: 'https://localhost:9080',
         changeOrigin: true,
+        secure: false,
       },
     },
   },

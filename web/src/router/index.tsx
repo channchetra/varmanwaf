@@ -43,6 +43,7 @@ import { BlockedIpsPage } from '@/pages/BlockedIpsPage'
 import { ConfigHistoryPage } from '@/pages/ConfigHistoryPage'
 import { ReportsPage } from '@/pages/ReportsPage'
 import { SiteSettingsPage } from '@/pages/sites/SiteSettingsPage'
+import { TopologyPage } from '@/pages/TopologyPage'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Button } from '@/components/ui/Button'
 
@@ -128,6 +129,7 @@ export const router = createBrowserRouter([
           { path: 'traffic', element: <TrafficPage /> },
           { path: 'rules/rewrite', element: <RewritePage /> },
           { path: 'settings', element: <SiteSettingsPage /> },
+          { path: 'topology', element: <TopologyPage /> },
         ],
       },
       { path: 'logs', element: <LogsPage /> },
@@ -137,6 +139,7 @@ export const router = createBrowserRouter([
       { path: 'blocked-ips', element: <BlockedIpsPage /> },
       { path: 'policies', element: <PoliciesPage /> },
       { path: 'policies/:policyId', element: <PolicyDetailPage /> },
+      { path: 'topology', element: <TopologyPage /> },
       { path: 'crs', element: <CrsPage /> },
       { path: 'alerts', element: <AlertsPage /> },
       { path: 'notifications', element: <Navigate to="/alerts" replace /> },

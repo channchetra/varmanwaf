@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowClockwise,
+  ArrowCounterClockwise,
   ClockCounterClockwise,
+  Info,
 } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Callout } from '@/components/ui/Callout'
@@ -129,7 +131,7 @@ function ConfigHistoryWorkspace() {
         header: t('pages.configHistory.colVersion'),
         accessor: (row) => row.id,
         sortable: true,
-        width: '1%',
+        width: '86px',
         cell: (row) => (
           <span className="pw-mono text-[13px] font-medium text-fg-strong">
             #{row.id}
@@ -160,7 +162,7 @@ function ConfigHistoryWorkspace() {
         key: 'source',
         header: t('pages.configHistory.colSource'),
         accessor: (row) => row.source,
-        width: '1%',
+        width: '104px',
         cell: (row) => (
           <Badge tone={SOURCE_TONE[row.source] ?? 'neutral'}>
             {t(`pages.configHistory.source_${row.source}`, row.source)}
@@ -171,6 +173,8 @@ function ConfigHistoryWorkspace() {
         key: 'actor',
         header: t('pages.configHistory.colActor'),
         accessor: (row) => row.actor ?? '',
+        width: '220px',
+        className: 'truncate',
         cell: (row) =>
           row.actor ? (
             <span className="text-[13px] text-fg">{row.actor}</span>
@@ -183,7 +187,8 @@ function ConfigHistoryWorkspace() {
         header: t('pages.configHistory.colSummary'),
         accessor: (row) => summaryTotals(row.summary).rows,
         sortable: true,
-        width: '1%',
+        width: '150px',
+        className: 'whitespace-nowrap',
         cell: (row) => {
           const totals = summaryTotals(row.summary)
           return (
@@ -201,7 +206,8 @@ function ConfigHistoryWorkspace() {
         header: t('pages.configHistory.colRecorded'),
         accessor: (row) => row.created_at,
         sortable: true,
-        width: '1%',
+        width: '186px',
+        className: 'whitespace-nowrap',
         cell: (row) => (
           <div className="min-w-0">
             <p
@@ -218,14 +224,16 @@ function ConfigHistoryWorkspace() {
       },
       {
         key: 'actions',
-        header: '',
+        header: t('pages.configHistory.colActions'),
         align: 'right',
-        width: '1%',
+        width: '196px',
+        className: 'whitespace-nowrap',
         cell: (row) => (
-          <div className="flex items-center justify-end gap-1">
+          <div className="flex items-center justify-end gap-1.5">
             <Button
               size="sm"
               variant="secondary"
+              icon={<Info className="h-4 w-4" />}
               onClick={() => setDetailId(row.id)}
             >
               {t('pages.configHistory.detail')}
@@ -234,6 +242,12 @@ function ConfigHistoryWorkspace() {
               size="sm"
               variant="ghost"
               disabled={rollback.isPending}
+              icon={
+                <ArrowCounterClockwise
+                  weight="bold"
+                  className="h-4 w-4 text-warning"
+                />
+              }
               onClick={() => setPendingRollback(row)}
             >
               {t('pages.configHistory.rollback')}
@@ -307,6 +321,7 @@ function ConfigHistoryWorkspace() {
               data={versions}
               rowKey={(row) => String(row.id)}
               dense
+              fixed
             />
           )}
         </CardBody>

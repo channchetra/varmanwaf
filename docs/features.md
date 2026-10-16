@@ -213,8 +213,34 @@ Conventions used below:
   verified-bot lists (known good crawlers by reverse DNS), user-agent
   heuristics and reputation signals feeding the CC layer.
 
-### 3.7 API assets
+### 2.4 Routing topology (the flow view)
 
+- **Where** — `/topology` (fleet-wide, with a site selector) and
+  `/sites/:siteId/topology` (site-scoped; also a tab in the site workspace).
+- **API** — composes existing endpoints (site detail, WAF settings, routes,
+  pools, upstreams, rate limits, IP rules, cache rules, basic auth, bot, geo,
+  SSL, rewrites, custom rules, exclusion bindings); edits go through the same
+  endpoints the feature pages use.
+- **How it works** — a live ReactFlow graph of the real request path:
+  **Internet → Site → Web Protection → Security layers → Routing → Origin
+  pools → Targets**. Every link is animated; security layers are grouped in
+  one box and each origin pool groups its targets. Nodes are draggable and
+  the arrangement is remembered per site; `Auto layout` restores the computed
+  layout.
+- **Editing in place** — clicking a node opens an editor: site identity,
+  WAF posture (enabled/mode/engine/paranoia), rate limits, IP rules, cache
+  rules, basic auth credentials, bot posture, geo policy, routes, pools and
+  upstreams. Components whose editors are pages of their own (rule authoring,
+  API schema, exclusions, SSL issuance) open from the panel.
+- **Drag to add** — palette items (Upstream, Origin pool, Route, Rate limit,
+  IP rule, Cache rule) are dragged onto the canvas; the create form opens and
+  **nothing is written until it is saved**.
+- **Honest by construction** — the graph is built from configuration, never
+  hand-drawn; empty sections render explicit placeholder nodes ("No origin
+  pool yet"), so a site with nothing configured still shows the complete flow
+  instead of a single lonely node.
+
+### 3.7 API assets
 - **Where** — `/sites/:siteId/security/api-assets`.
 - **API** — `api_assets.rs`, `api_protection.rs`.
 - **How it works** —

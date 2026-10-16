@@ -28,6 +28,12 @@ export interface TableProps<T> {
   pageSize?: number
   className?: string
   dense?: boolean
+  /**
+   * Fixed layout: declared column widths are respected exactly and columns
+   * without a width share the remaining space equally. Without it the browser
+   * distributes leftover space by content, which stretches sparse columns.
+   */
+  fixed?: boolean
 }
 
 type SortDir = 'asc' | 'desc'
@@ -48,6 +54,7 @@ export function Table<T>({
   pageSize = 0,
   className,
   dense = false,
+  fixed = false,
 }: TableProps<T>) {
   const { t } = useTranslation()
   const [sort, setSort] = useState<{ key: string; dir: SortDir } | null>(null)
@@ -94,7 +101,14 @@ export function Table<T>({
   return (
     <div className={cn('w-full', className)}>
       <div className="overflow-x-auto rounded-lg border border-line">
-        <table className="w-full border-collapse text-sm">
+        <table className={cn('w-full border-collapse text-sm', fixed && 'table-fixed')}>
+          {fixed && (
+            <colgroup>
+              {columns.map((col) => (
+                <col key={col.key} style={col.width ? { width: col.width } : undefined} />
+              ))}
+            </colgroup>
+          )}
           <thead>
             <tr className="bg-recessed">
               {columns.map((col) => {

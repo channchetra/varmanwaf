@@ -243,6 +243,13 @@ are listed against it below; the dash in a table entry means the setting has no
 
 ## Deployment Modes
 
+> **Production topologies, HA and sizing** live in dedicated documents:
+> [`ha.md`](./ha.md) covers edge fleets, control-plane standby, database HA,
+> pointing domains at the fleet and how nodes stay in sync;
+> [`sizing.md`](./sizing.md) covers server requirements and the measured
+> capacity data. The modes below are the building blocks those documents
+> arrange.
+
 ### All-in-One Mode
 
 Runs both control plane and data plane in a single process. Best for single-server setups.
