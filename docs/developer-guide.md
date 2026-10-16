@@ -68,8 +68,31 @@ after deploying that the served `index.html` asset hash matches the newest
   deployed stack, paced for the login limiter (10 attempts/min/IP - the
   limiter is part of the product). A new feature round adds one script.
 
-## 5. Release workflow
+## 5. The website
 
+`website/` publishes the public site: a landing page plus **every document in
+`docs/`**, rendered at build time from the same markdown, so the website can
+never drift from the repository.
+
+```bash
+cd website
+npm install            # marked + mermaid (build-time only)
+npm run build          # docs/ -> website/dist (landing, docs, releases, khmer)
+
+docker build -f website/Dockerfile -t varmanwaf-website website/
+docker run --rm -p 8080:8080 varmanwaf-website     # http://localhost:8080
+```
+
+- The image is `scratch` + a static musl binary + the site files (a few MB);
+  the server (`website/server/server.rs`) is standard library only - no
+  crates, no shell in the image. **It is built locally and never published to
+  Docker Hub.**
+- New documents must be added to the catalogue in `website/build.mjs`
+  (`GROUPS`); releases are discovered automatically from `docs/releases/`.
+- Mermaid fences in the docs render as live diagrams (the runtime is bundled
+  into `dist/assets/`).
+
+## 6. Release workflow
 1. **Bump the version line-scoped**: the workspace `version =` and the
    `pingap-*` path dependencies only (20 internal entries). External crates
    that share the string must stay untouched - known traps: `tor-geoip`
@@ -86,7 +109,7 @@ after deploying that the served `index.html` asset hash matches the newest
 7. **Commit/tag/push**: one feature commit per round (plus doc commits),
    annotated tag, then update `docs/roadmap.md`.
 
-## 6. Debugging
+## 7. Debugging
 
 | Symptom | Where to look |
 | --- | --- |
@@ -97,7 +120,7 @@ after deploying that the served `index.html` asset hash matches the newest
 | Slow requests | `docs/profiling.md` (built-in profiling), analytics latency tiles |
 | Config history | `/config-history` - every bundle with diff and rollback |
 
-## 7. Working agreements
+## 8. Working agreements
 
 - Never fake a success: if a surface cannot apply something, it says so.
 - Never invent shapes or values: learning reads structures and counts.

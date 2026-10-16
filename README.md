@@ -192,6 +192,12 @@ cargo fmt --all -- --check
 
 ## Documentation
 
+The documentation is also published as a website: [`website/`](./website)
+renders every document below into a static site (landing, docs, releases and
+the Khmer guide), served from a `scratch` image by a dependency-free Rust
+static server. Build it with `cd website && npm install && npm run build`
+(see [`website/README.md`](./website/README.md)).
+
 | Document | Contents |
 | --- | --- |
 | [`docs/features.md`](./docs/features.md) | The complete feature inventory: every surface, how it works, its API |

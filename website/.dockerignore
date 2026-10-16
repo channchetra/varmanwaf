@@ -1,0 +1,5 @@
+# The site is generated before the image build; the container only needs the
+# built files and the server source.
+node_modules/
+package-lock.json
+README.md

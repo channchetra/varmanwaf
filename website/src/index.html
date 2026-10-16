@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VarmanWAF - Self-hosted, distributed Web Application Firewall</title>
+<meta name="description" content="VarmanWAF is a self-hosted, distributed WAF: a central control plane, lightweight edge agents and a native Rust security engine. Managed rules, OWASP CRS 4.30.0, ipverse geo/ASN, policy tuning, routing topology, reports and a full E2E-verified release process.">
+<meta name="keywords" content="WAF, Web Application Firewall, Rust, Pingora, self-hosted, OWASP CRS, SecLang, ipverse">
+<meta name="theme-color" content="#0b0b0f">
+<meta property="og:title" content="VarmanWAF - Self-hosted, distributed Web Application Firewall">
+<meta property="og:description" content="Control plane + edge agents + native Rust engine. Managed rules, CRS 4.30.0, policy tuning, fleet topology.">
+<meta property="og:type" content="website">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+
+<header class="nav" id="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <span class="brand-mark">វ</span>
+      <span class="brand-name">VarmanWAF</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#engine">Security engine</a>
+      <a href="#performance">Performance</a>
+      <a href="/docs/">Docs</a>
+      <a href="/khmer/index.html">ខ្មែរ</a>
+    </nav>
+    <div class="nav-actions">
+      <a class="btn btn-ghost" href="https://github.com/channchetra/varmanwaf" rel="noopener">GitHub</a>
+      <a class="btn btn-primary" href="#quick-start">Quick start</a>
+    </div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="hero-inner">
+    <span class="badge"><span class="badge-dot"></span> v1.1.1 · self-hosted · Apache-2.0</span>
+    <h1>
+      <span class="hero-line">One control plane.</span>
+      <span class="hero-line hero-gradient">A fleet of edges. Full protection.</span>
+    </h1>
+    <p class="hero-lead">
+      VarmanWAF is a distributed Web Application Firewall you run yourself:
+      a central control plane, lightweight edge agents on Cloudflare Pingora,
+      and a native security engine written in Rust. Every change is versioned,
+      pushed to the edges, and verified by a 41-script end-to-end sweep.
+    </p>
+    <div class="hero-actions">
+      <a class="btn btn-primary btn-lg" href="#quick-start">Deploy in one command</a>
+      <a class="btn btn-secondary btn-lg" href="/docs/">Read the documentation</a>
+    </div>
+    <dl class="stats">
+      <div><dt>5,835 req/s</dt><dd>pass-through at 25 connections (measured)</dd></div>
+      <div><dt>0.85 ms</dt><dd>median block verdict through the engine</dd></div>
+      <div><dt>14 + 693</dt><dd>built-in managed rules + imported OWASP CRS rules</dd></div>
+      <div><dt>41/41</dt><dd>E2E scripts passing on the released build</dd></div>
+      <div><dt>2.0 KB</dt><dd>measured storage per access-log row</dd></div>
+    </dl>
+  </div>
+</section>
+
+<section class="section" id="features">
+  <div class="section-inner">
+    <p class="kicker">What it does</p>
+    <h2>Everything an operator needs, in one console</h2>
+    <p class="section-lead">
+      The console is the product: every surface is honest about what is
+      published, what is applied, and what is deliberately not supported.
+    </p>
+    <div class="grid grid-3">
+      <article class="card">
+        <h3>Protection</h3>
+        <ul>
+          <li>14 built-in managed rules with anomaly scoring, paranoia gating and per-rule modes</li>
+          <li>Custom rules in a readable expression language, with a rule tester</li>
+          <li>Native SecLang: virtual patches, OWASP CRS 4.30.0 import, <code>SecRuleUpdateTargetById</code> / <code>SecRuleRemoveById</code></li>
+          <li>Exclusion packages: curated per-app sets + upstream SecLang imports with an import report</li>
+          <li>API schema validation with per-operation Off / Observe / Enforce</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h3>Access &amp; abuse control</h3>
+        <ul>
+          <li>IP rules and reusable IP groups</li>
+          <li>Geo and ASN policy from <strong>ipverse only</strong> - unsynced keys are shown as not enforced</li>
+          <li>Client IP analysis: what the edge would decide, using the same loaders</li>
+          <li>Rate limiting by IP, header, cookie, path, ASN or country</li>
+          <li>Bot posture, verified bots, challenges, under-attack mode</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h3>Fleet &amp; delivery</h3>
+        <ul>
+          <li>Control plane + edge agents; the control plane is never in the request path</li>
+          <li>Versioned config bundles, config history with diff and rollback</li>
+          <li>Revisioned policies sites follow, with effective-posture resolution</li>
+          <li>Routing topology: the real request path as a live, editable graph</li>
+          <li>Agents, mTLS pinning, closed registration</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h3>Observability</h3>
+        <ul>
+          <li>Security events with a <em>why resolver</em>: rules, scores, exclusions</li>
+          <li>Access logs, analytics, top rules / IPs / paths</li>
+          <li>Alerts: rules, silences, email / webhook / Telegram delivery</li>
+          <li>Reports on demand with custom heading/footer and schedules</li>
+          <li>Auto-block ledger with immediate revocation</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h3>Console experience</h3>
+        <ul>
+          <li>Policy tuning surface: summary, site posture, effective posture, exceptions, packages, preview, history</li>
+          <li>API assets: observed inventory vs declared spec, bounded learning, OpenAPI draft</li>
+          <li>Display &amp; data timezone honoured by reports and charts</li>
+          <li>Custom error pages, passkeys, API keys, dashboard users</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h3>Operations</h3>
+        <ul>
+          <li>High availability: edge fleets, control-plane standby, database HA</li>
+          <li>Sizing from measured numbers, with the storage-growth math</li>
+          <li>Backup / restore / rolling upgrade runbooks</li>
+          <li>Optional Elasticsearch log shipping</li>
+          <li>Everything documented - the website is generated from the repository docs</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" id="architecture">
+  <div class="section-inner">
+    <p class="kicker">Architecture</p>
+    <h2>The control plane is never in the request path</h2>
+    <p class="section-lead">
+      Traffic is served by the edges from local, persisted configuration.
+      Losing the control plane or the database stops <em>changes</em> - never traffic.
+    </p>
+    <div class="arch">
+      <pre class="arch-diagram">        Visitors / attackers / APIs
+                  │
+                  ▼
+   ┌─────────────────────────────────────────────┐
+   │  Varman Edge (Pingora + Varman engine)      │   :80 / :443
+   │  canonicalise → evaluate → decide → proxy   │
+   └───────────────┬─────────────────────────────┘
+                   │ (allowed requests only)
+                   ▼
+        Origin pools → your servers
+
+   ┌─────────────────────────────────────────────┐
+   │  Control plane                              │
+   │  REST API + console            :9080 (TLS)  │
+   │  gRPC control protocol         :9090        │
+   │  PostgreSQL (authoritative store)           │
+   └─────────────────────────────────────────────┘
+             ▲ gRPC: registration, heartbeat,
+             │       config sync, log/metric/
+             │       certificate shipping</pre>
+      <div class="arch-notes">
+        <div class="note">
+          <h3>Edge autonomy</h3>
+          <p>Bundles, blocked IPs and config hashes persist on disk. An edge
+          restarts from its last-good configuration and reconnects with backoff.</p>
+        </div>
+        <div class="note">
+          <h3>Versioned delivery</h3>
+          <p>Every change compiles a bundle with a config hash, applies hot
+          (no restart), and lands in config history with a diff and rollback.</p>
+        </div>
+        <div class="note">
+          <h3>Immutable snapshots</h3>
+          <p>Per-site runtimes swap atomically behind <code>ArcSwap</code>:
+          in-flight requests keep the snapshot they started on.</p>
+        </div>
+        <div class="note">
+          <h3>Deploy how you want</h3>
+          <p>All-in-one for single servers, or control plane plus one agent per
+          edge node behind your load balancer, DNS round-robin or anycast.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="engine">
+  <div class="section-inner">
+    <p class="kicker">Security engine</p>
+    <h2>One normalization. Many lanes. Honest verdicts.</h2>
+    <div class="pipeline">
+      <span>canonicalise</span><span>signature lane</span><span>managed rules</span><span>custom rules</span><span>SecLang / CRS</span><span>API schema</span><span>rate · bot · geo</span><span>exclusions</span><span>verdict</span>
+    </div>
+    <div class="grid grid-2">
+      <article class="card">
+        <h3>Built-in managed rules</h3>
+        <p>14 rules (<code>VARMAN-1001..1061</code>; 13 at Normal, one Strict-only)
+        written in the same expression language as custom rules. Anomaly gates
+        (SQLi / XSS / aggregate / RCE), recon and backup probes, scanner user
+        agents, method policy, admin paths, Log4Shell.</p>
+        <ul class="tight">
+          <li>Scoring: severity points; family sub-score <code>×12</code> - one critical hit = 60</li>
+          <li>Gates: rule paranoia ≤ site paranoia, stack scope, monitor lists</li>
+          <li>Advanced mode (Strict) tightens gates 60→50 / 80→70 and adds the RCE gate</li>
+        </ul>
+        <a class="link" href="/docs/features.html">Rule-by-rule detail →</a>
+      </article>
+      <article class="card">
+        <h3>OWASP CRS 4.30.0, natively</h3>
+        <p>693 imported rules run on the built-in SecLang engine - no ModSecurity
+        required. Rules the parser cannot compile stay visible with their error;
+        nothing is dropped silently.</p>
+        <ul class="tight">
+          <li><strong>Paranoia ceiling</strong>: rules above it are not sent to the edge; unset keeps every compiled rule</li>
+          <li>Bind rulesets to policies; exclusion packages adjust them with <code>SecRuleUpdateTargetById</code></li>
+          <li>Two separate knobs: site paranoia (managed rules) vs CRS ceiling (imported rules)</li>
+        </ul>
+        <a class="link" href="/docs/features.html">CRS &amp; ceiling detail →</a>
+      </article>
+    </div>
+    <div class="honest">
+      <h3>What it deliberately does not do</h3>
+      <ul>
+        <li>No invented success: an unsynced geo/ASN key, an uncompilable CRS rule, a not-applied setting is <strong>shown as such</strong>.</li>
+        <li>No value collection in learning: API learning reads structures and counts, never values.</li>
+        <li>No silent drops: pass-through 5xx is not access-logged; WAF answers are - and the docs say which is which.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" id="performance">
+  <div class="section-inner">
+    <p class="kicker">Performance</p>
+    <h2>Measured, with the caveats written down</h2>
+    <p class="section-lead">
+      From the published 1.0.0 benchmark on a Windows dev desktop running Docker
+      Desktop (single all-in-one container, shared CPU, no tuning). The shape
+      carries over; the absolute numbers are relative.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Lane</th><th>Throughput</th><th>p50</th><th>p95</th><th>p99</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Pass-through <code>GET /</code> (1 conn)</td><td>1,450 req/s</td><td>0.62 ms</td><td>0.91 ms</td><td>1.49 ms</td></tr>
+          <tr><td>Pass-through <code>GET /</code> (25 conn)</td><td><strong>5,835 req/s</strong></td><td>4.10 ms</td><td>6.20 ms</td><td>8.53 ms</td></tr>
+          <tr><td>Pass-through <code>GET /</code> (100 conn)</td><td>5,485 req/s</td><td>16.96 ms</td><td>22.56 ms</td><td>71.28 ms</td></tr>
+          <tr><td>Block verdict, dotfile probe (engine path)</td><td>-</td><td><strong>1.17 ms</strong></td><td>1.29 ms</td><td>2.02 ms</td></tr>
+          <tr><td>Block verdict, SQLi payload (engine path)</td><td>-</td><td><strong>0.85 ms</strong></td><td>1.00 ms</td><td>1.04 ms</td></tr>
+          <tr><td>Auto-block refusal lane (600 s window)</td><td>9,836 req/s</td><td>2.01 ms</td><td>4.99 ms</td><td>10.21 ms</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="section-note">
+      Control plane: 0.5 ms p50 for <code>/version</code>, 1.1 ms for site lists,
+      1.8 ms for security events, 18.6 ms for the analytics summary.
+      Full methodology, the per-lane breakdown and the storage-growth math live in
+      <a href="/docs/benchmarks-v1.0.0.html">the benchmark report</a> and
+      <a href="/docs/sizing.html">the sizing guide</a>.
+    </p>
+  </div>
+</section>
+
+<section class="section" id="quick-start">
+  <div class="section-inner">
+    <p class="kicker">Quick start</p>
+    <h2>One command to a protected site</h2>
+    <div class="quick">
+      <pre class="code">docker compose up -d
+# console:  https://localhost:9080   (self-signed on first boot)
+# traffic:  :80 / :443   ·   gRPC control: :9090
+# login:    admin@varman.local / varman123   (change it immediately)</pre>
+      <ol class="steps">
+        <li>Create a site and point it at your origin.</li>
+        <li>Point DNS at the edge and issue a certificate (ACME or upload).</li>
+        <li>Watch security events, tune with policies, and export a report.</li>
+      </ol>
+      <div class="quick-actions">
+        <a class="btn btn-primary" href="/docs/quick-start.html">Quick start guide</a>
+        <a class="btn btn-secondary" href="/docs/deployment.html">Deployment guide</a>
+        <a class="btn btn-ghost" href="/docs/features.html">Feature inventory</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" id="docs">
+  <div class="section-inner">
+    <p class="kicker">Documentation</p>
+    <h2>The whole documentation set, on this site</h2>
+    <p class="section-lead">
+      These pages are generated from the repository's <code>docs/</code> at
+      build time, so the website can never drift from what ships.
+    </p>
+    <div class="grid grid-3">
+      <a class="doc-tile" href="/docs/quick-start.html"><h3>Quick start</h3><p>Zero to a protected site.</p></a>
+      <a class="doc-tile" href="/docs/features.html"><h3>Feature inventory</h3><p>Every surface, API and limit.</p></a>
+      <a class="doc-tile" href="/docs/security-engine.html"><h3>Security engine</h3><p>Pipeline, detectors, scoring, limits.</p></a>
+      <a class="doc-tile" href="/docs/architecture.html"><h3>Architecture</h3><p>Request path, invariants, failure semantics.</p></a>
+      <a class="doc-tile" href="/docs/ha.html"><h3>High availability</h3><p>Edge fleets, standby, DNS, node sync.</p></a>
+      <a class="doc-tile" href="/docs/sizing.html"><h3>Sizing &amp; capacity</h3><p>How much server, and why.</p></a>
+      <a class="doc-tile" href="/docs/api.html"><h3>REST API</h3><p>The full route table, generated from code.</p></a>
+      <a class="doc-tile" href="/docs/developer-guide.html"><h3>Developer guide</h3><p>Build, test, release workflow.</p></a>
+      <a class="doc-tile" href="/khmer/index.html"><h3>ណែនាំអ្នកប្រើប្រាស់</h3><p>Khmer guide with screenshots of every feature.</p></a>
+    </div>
+    <div class="cta-row">
+      <a class="btn btn-secondary" href="/docs/">All documents</a>
+      <a class="btn btn-ghost" href="/releases/">Release notes</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <span class="brand-mark">វ</span>
+      <div>
+        <p class="footer-name">VarmanWAF</p>
+        <p class="footer-note">Self-hosted, distributed Web Application Firewall. Apache-2.0.</p>
+      </div>
+    </div>
+    <div class="footer-cols">
+      <div>
+        <p class="footer-col-title">Product</p>
+        <a href="#features">Features</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#engine">Security engine</a>
+        <a href="#performance">Performance</a>
+        <a href="#quick-start">Quick start</a>
+      </div>
+      <div>
+        <p class="footer-col-title">Documentation</p>
+        <a href="/docs/">All documents</a>
+        <a href="/docs/features.html">Feature inventory</a>
+        <a href="/docs/security-engine.html">Security engine</a>
+        <a href="/khmer/index.html">ណែនាំអ្នកប្រើប្រាស់ (ខ្មែរ)</a>
+      </div>
+      <div>
+        <p class="footer-col-title">Operations</p>
+        <a href="/docs/ha.html">High availability</a>
+        <a href="/docs/sizing.html">Sizing &amp; capacity</a>
+        <a href="/docs/benchmarks-v1.0.0.html">Benchmark report</a>
+        <a href="/releases/">Release notes</a>
+      </div>
+      <div>
+        <p class="footer-col-title">Project</p>
+        <a href="https://github.com/channchetra/varmanwaf" rel="noopener">GitHub</a>
+        <a href="https://hub.docker.com/r/sovichetra/varmanwaf" rel="noopener">Docker Hub</a>
+        <a href="/docs/developer-guide.html">Developer guide</a>
+        <a href="/docs/roadmap.html">Roadmap</a>
+      </div>
+    </div>
+  </div>
+  <p class="footer-legal">VarmanWAF is built on PingWAF / Pingap / Pingora. Geo and ASN data from ipverse. OWASP CRS is Apache-2.0.</p>
+</footer>
+
+<script src="/assets/site.js" defer></script>
+</body>
+</html>
