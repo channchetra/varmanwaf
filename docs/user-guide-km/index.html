@@ -154,7 +154,9 @@
     <li><a href="#p23">កន្សោម និង Regex</a> — ប្រតិបត្តិករ, វាល, ឧទាហរណ៍ពេញលេញ</li>
     <li><a href="#p24">ដែនកំណត់អត្រា និងភូមិសាស្ត្រ ស៊ីជម្រៅ</a></li>
     <li><a href="#p25">ទំព័របណ្តាញ (Routing topology)</a> — លំហូររស់, ការកែសម្រួលភ្លាមៗ</li>
-    <li><a href="#p26">ឧបសម្ព័ន្ធ — ពាក្យបច្ចេកទេស និងតារាងយោងរហ័ស</a></li>
+    <li><a href="#p26">ច្បាប់គ្រប់គ្រងភ្ជាប់មកជាមួយ (Built-in managed rules)</a> — ច្បាប់ទាំង ១៤, ពិន្ទុ, ការលៃតម្រូវ</li>
+    <li><a href="#p27">OWASP CRS និង Paranoia Ceiling</a> — ការនាំចូល, ceiling, រូបមន្តជាក់ស្តែង</li>
+    <li><a href="#p28">ឧបសម្ព័ន្ធ — ពាក្យបច្ចេកទេស និងតារាងយោងរហ័ស</a></li>
   </ol>
 </nav>
 
@@ -425,7 +427,8 @@ Dashboard គឺជាផ្ទាំង <b>សង្ខេបតែប៉ុណ
 </figure>
 
 <h3>ច្បាប់គ្រប់គ្រង (Managed rules)</h3>
-<p>ប្រព័ន្ធមានច្បាប់គ្រប់គ្រង ១៣ គ្រួសារ (<code>VARMAN-1001..1061</code>) ដែលរាយការវាយប្រហារទូទៅ៖ SQL Injection, XSS, RCE (ការប្រតិបត្តិកូដពីចម្ងាយ), path traversal, កម្មវិធីស្កេន, ការស្វែងរកឯកសារសម្ងាត់ (dotfile), វិធីសាស្ត្រ HTTP គ្រោះថ្នាក់, ផ្លូវអ្នកគ្រប់គ្រង, ទំហំ payload ធំលើសកំណត់ ។ល។ ច្បាប់នីមួយៗមាន៖</p>
+<p>ប្រព័ន្ធមានច្បាប់គ្រប់គ្រង <b>១៤</b> (<code>VARMAN-1001..1061</code>) ដែលរាយការវាយប្រហារទូទៅ៖ SQL Injection, XSS, RCE (ការប្រតិបត្តិកូដពីចម្ងាយ), path traversal, កម្មវិធីស្កេន, ការស្វែងរកឯកសារសម្ងាត់ (dotfile), វិធីសាស្ត្រ HTTP គ្រោះថ្នាក់, ផ្លូវអ្នកគ្រប់គ្រង, ទំហំ payload ធំលើសកំណត់ ។ល។ ច្បាប់នីមួយៗមាន៖</p>
+<p class="note"><b>ព័ត៌មានលម្អិត</b> សូមមើល <a href="#p26">ជំពូកទី ២៦ — ច្បាប់គ្រប់គ្រងភ្ជាប់មកជាមួយ</a> សម្រាប់តារាងច្បាប់ទាំង ១៤, ពិន្ទុ, ច្រកទ្វារ paranoia និងការលៃតម្រូវ។</p>
 <ul>
   <li><b>កម្រិតគ្រោះថ្នាក់ (severity)</b> និងពិន្ទុ anomaly។</li>
   <li><b>របៀប (mode)</b>៖ <code>off</code> (បិទ), <code>monitor</code> (តាមដានតែប៉ុណ្ណោះ), <code>block</code> (ទប់ស្កាត់)។</li>
@@ -783,6 +786,7 @@ http.request.uri.path eq "/secret-admin"</code></pre>
   <figcaption>រូបភាព ១២.១ — បណ្ណាល័យច្បាប់ OWASP CRS</figcaption>
 </figure>
 <p>VarmanWAF អាចនាំចូល <b>OWASP Core Rule Set (CRS)</b> ជាច្បាប់បន្ថែម។ កំណែដែលបាននាំចូលបច្ចុប្បន្នគឺ <b>CRS 4.30.0</b> (ច្បាប់ ៦៩៣)។</p>
+<p class="note"><b>ព័ត៌មានលម្អិត</b> សូមមើល <a href="#p27">ជំពូកទី ២៧ — OWASP CRS និង Paranoia Ceiling</a> សម្រាប់ការនាំចូល, របៀបច្បាប់ទៅដល់ Edge និងអត្ថន័យនៃ paranoia ceiling។</p>
 <ul>
   <li><b>Categories</b> — មើលច្បាប់តាមប្រភេទ (SQLi, XSS, RCE ។ល។)។</li>
   <li><b>Paranoia ceiling</b> — កម្រិត «ភាពប្រុងប្រយ័ត្ន» (១–៤)។ កម្រិតខ្ពស់ = ការពារខ្លាំង ប៉ុន្តែអាចបាញ់ខុសច្រើនជាង។ ចាប់ផ្តើមពីកម្រិតទាប រួចបង្កើនបន្តិចម្តងៗ។</li>
@@ -1306,7 +1310,170 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
 ដ្យាក្រាមត្រូវបានសង់ចេញពីការកំណត់ពិត — មិនមែនគូរដោយដៃទេ។ រាល់ការកែសម្រួលនៅទីនេះគឺជាការកែការកំណត់ពិត ដែលត្រូវបានបញ្ជូនទៅ Edge ភ្លាមៗ។</div>
 </section>
 
-<h1 class="part" id="p26">ជំពូកទី ២៦ — ឧបសម្ព័ន្ធ</h1>
+<h1 class="part" id="p26">ជំពូកទី ២៦ — ច្បាប់គ្រប់គ្រងដែលភ្ជាប់មកជាមួយ (Built-in managed rules)</h1>
+
+<section class="card">
+<h2 id="s26-1">២៦.១ តើច្បាប់ទាំងនេះជាអ្វី?</h2>
+<p>ម៉ាស៊ីន Varman មាន <b>ច្បាប់គ្រប់គ្រង ១៤</b> ភ្ជាប់មកជាមួយ (លេខ <code>VARMAN-1001</code> ដល់ <code>VARMAN-1061</code>)។ ក្នុងចំណោមនោះ <b>១៣</b> ដំណើរការនៅកម្រិត <b>Normal</b> ហើយ <b>១</b> (<code>VARMAN-1061</code>) បន្ថែមតែនៅកម្រិត <b>Strict</b> (ពេលបើក <b>Advanced mode</b>)។</p>
+<p>ពួកវាសរសេរដោយភាសាកន្សោមដូចគ្នានឹងច្បាប់ផ្ទាល់ខ្លួនរបស់អ្នក — ដូច្នេះអ្នកអាចមើល និងលៃតម្រូវវាបានដូចច្បាប់ធម្មតា។ ពួកវាជា <b>គំរូដើមបែប OWASP</b> មិនមែនជាការគ្របដណ្តប់ពេញលេញទេ — នៅក្នុងប្រព័ន្ធពិត អ្នកនឹងបន្ថែម <b>OWASP CRS</b> (ជំពូក ២៧) និងច្បាប់ផ្ទាល់ខ្លួនបន្ថែមទៀត។</p>
+
+<h2 id="s26-2">២៦.២ ពួកវាដំណើរការយ៉ាងដូចម្តេច?</h2>
+<p>ច្បាប់គ្រប់គ្រងដំណើរការនៅ <b>ដំណាក់កាលទី ២</b> (បន្ទាប់ពីស្រទាប់ signature ស្កេនលំនាំ)។ មុនពេលច្បាប់មួយត្រូវបានវាយតម្លៃ ម៉ាស៊ីនពិនិត្យច្រកទ្វារទាំងនេះ៖</p>
+<table>
+  <tr><th>ច្រកទ្វារ</th><th>អត្ថន័យ</th></tr>
+  <tr><td><b>បើក/បិទ</b></td><td>ច្បាប់ដែលត្រូវបានបិទ មិនដំណើរការទេ</td></tr>
+  <tr><td><b>Paranoia level របស់ច្បាប់</b></td><td>ច្បាប់ដំណើរការតែពេល <code>PL របស់ច្បាប់ ≤ PL របស់គេហទំព័រ</code> (ឧ. គេហទំព័រ PL 2 → ច្បាប់ PL 1–2 ដំណើរការ; ច្បាប់ PL 3–4 មិនដំណើរការ)</td></tr>
+  <tr><td><b>Stacks (បច្ចេកវិទ្យា backend)</b></td><td>ច្បាប់ <code>GENERIC</code> ដំណើរការ <b>ជានិច្ច</b>; ច្បាប់តាមភាសា (ឧ. Log4Shell → Java) ដំណើរការពេល stack នោះបើក (លំនាំដើម៖ បើកទាំងអស់)</td></tr>
+  <tr><td><b>Monitor lists</b></td><td>ច្បាប់ដែលត្រូវបានដាក់ក្នុងបញ្ជីតាមដាន គ្រាន់តែកត់ត្រា មិនទប់ស្កាត់</td></tr>
+  <tr><td><b>Target exclusions</b></td><td>ការលើកលែងតាមផ្នែកនៃសំណើ (ឧ. parameter ជាក់លាក់) — លើកលែងបានតែចំពោះច្បាប់ដែលអានតម្លៃផ្ទាល់ (មិនមែនច្បាប់ពិន្ទុ — សូមមើល ២៦.៧)</td></tr>
+</table>
+<div class="note"><b>ចំណាំបច្ចេកទេស</b>
+ច្បាប់គ្រប់គ្រងវាយតម្លៃលើ <b>ពិន្ទុដែលទប់ស្កាត់តែប៉ុណ្ណោះ</b> (blocking score) — ការរកឃើញដែលត្រូវបាន downgrade ជា monitor មិនជួយឱ្យច្បាប់ឆ្លងកាត់ច្រកទ្វាររបស់វាទេ។ លើសពីនេះ ការរកឃើញ <b>ធ្ងន់ធ្ងរបំផុត (critical)</b> នៅដំណាក់កាលទី ១ អាចទប់ស្កាត់ភ្លាមៗ មុនច្បាប់គ្រប់គ្រងទាំងអស់។</div>
+
+<h2 id="s26-3">២៦.៣ ពិន្ទុដែលច្បាប់ទាំងនេះប្រើ</h2>
+<ul>
+  <li>រាល់ការរកឃើញបន្ថែមពិន្ទុ = <b>កម្រិតធ្ងន់ធ្ងរ (severity 1–5)</b>។</li>
+  <li>ការរកឃើញតាមគ្រួសារវាយប្រហារ បន្ថែម <code>ពិន្ទុ × 12</code> ទៅ sub-score របស់គ្រួសារនោះ → <b>ការរកឃើញ critical មួយ = ៦០ ពិន្ទុ</b> ក្នុង <code>cf.waf.score.sqli/xss/rce</code>។</li>
+  <li><code>cf.waf.score</code> គឺពិន្ទុសរុប; ច្បាប់ពិន្ទុអាន <b>ពិន្ទុដែលទប់ស្កាត់</b> (មិនរាប់ការរកឃើញ monitor)។</li>
+  <li>កម្រិតទប់ស្កាត់សរុបរបស់ម៉ាស៊ីន = <b>៤០</b> (លំនាំដើម); ច្បាប់ពិន្ទុខាងក្រោមជាច្រកទ្វារបន្ថែមតាមគ្រួសារ។</li>
+  <li><b>Normal → Strict</b> (Advanced mode)៖ ច្រកទ្វារគ្រួសារ <b>៦០ → ៥០</b>; ច្រកទ្វារសរុប <b>៨០ → ៧០</b>; បន្ថែម <code>VARMAN-1061</code> (RCE ≥ 40)។</li>
+</ul>
+
+<h2 id="s26-4">២៦.៤ តារាងច្បាប់ទាំង ១៤</h2>
+<h3>ក. ច្រកទ្វារពិន្ទុ (Anomaly gates)</h3>
+<table>
+  <tr><th>លេខ</th><th>ឈ្មោះ</th><th>សកម្មភាព</th><th>Sev</th><th>PL</th><th>លក្ខខណ្ឌ</th></tr>
+  <tr><td><code>VARMAN-1002</code></td><td>Block known SQL injection anomaly scores</td><td>Block</td><td>5</td><td>1</td><td><code>cf.waf.score.sqli ≥ 60</code> (Strict 50)</td></tr>
+  <tr><td><code>VARMAN-1003</code></td><td>Block known XSS anomaly scores</td><td>Block</td><td>5</td><td>1</td><td><code>cf.waf.score.xss ≥ 60</code> (Strict 50)</td></tr>
+  <tr><td><code>VARMAN-1004</code></td><td>Block requests with high aggregate WAF score</td><td>Block</td><td>5</td><td>1</td><td><code>cf.waf.score ≥ 80</code> (Strict 70) — ចាប់សំណើដែលមានសញ្ញាច្រើនប្រភេទបញ្ចូលគ្នា</td></tr>
+  <tr><td><code>VARMAN-1061</code></td><td>Block requests with a high RCE sub-score</td><td>Block</td><td>5</td><td>1</td><td><code>cf.waf.score.rce ≥ 40</code> — <b>Strict តែប៉ុណ្ណោះ</b></td></tr>
+</table>
+
+<h3>ខ. ការស្វែងរករកចន្លោះប្រហោង (Recon / probes)</h3>
+<table>
+  <tr><th>លេខ</th><th>ឈ្មោះ</th><th>សកម្មភាព</th><th>Sev</th><th>PL</th><th>លក្ខខណ្ឌ</th></tr>
+  <tr><td><code>VARMAN-1020</code></td><td>Block sensitive dotfile probes</td><td>Block</td><td>5</td><td>1</td><td>ផ្លូវ <code>/.git</code>, <code>/.env</code>, <code>/.svn</code>, <code>/.aws</code>, <code>/.kube</code>, <code>/.ssh</code>, <code>/.docker</code></td></tr>
+  <tr><td><code>VARMAN-1021</code></td><td>Block common backup-file probes</td><td>Block</td><td>4</td><td>2</td><td>ផ្លូវបញ្ចប់ដោយ <code>.bak</code>, <code>.backup</code>, <code>.old</code>, <code>.swp</code>, <code>.sql</code> (មិនរាប់ <code>.zip</code>/<code>.tar.gz</code> ព្រោះជាការទាញយកធម្មតា)</td></tr>
+  <tr><td><code>VARMAN-1040</code></td><td>Block phpMyAdmin / wp-admin probes on non-PHP apps</td><td><b>Challenge</b></td><td>3</td><td>2</td><td><code>/phpmyadmin</code>, <code>/pma</code>, <code>/wp-admin</code>, <code>/wp-login.php</code>, <code>/xmlrpc.php</code>, <code>/administrator</code> — ប្រឈមមុខ ព្រោះ CMS ពិតប្រើផ្លូវទាំងនេះដែរ</td></tr>
+</table>
+
+<h3>គ. User-Agent</h3>
+<table>
+  <tr><th>លេខ</th><th>ឈ្មោះ</th><th>សកម្មភាព</th><th>Sev</th><th>PL</th><th>លក្ខខណ្ឌ</th></tr>
+  <tr><td><code>VARMAN-1010</code></td><td>Block common scanner user agents</td><td>Block</td><td>4</td><td>2</td><td>មានឈ្មោះ <code>nikto</code>, <code>sqlmap</code>, <code>nmap</code>, <code>masscan</code>, <code>acunetix</code>, <code>nessus</code>, <code>openvas</code>, <code>wpscan</code>, <code>dirbuster</code>, <code>gobuster</code>, <code>zgrab</code></td></tr>
+  <tr><td><code>VARMAN-1011</code></td><td>Block empty user agents on non-HEAD requests</td><td><b>Challenge</b></td><td>2</td><td>3</td><td>User-Agent ទទេ លើសំណើមិនមែន HEAD — PL 3 ព្រោះ script ធម្មតាក៏អាចខ្វះវាដែរ</td></tr>
+</table>
+
+<h3>ឃ. វិធីសាស្ត្រ (Methods)</h3>
+<table>
+  <tr><th>លេខ</th><th>ឈ្មោះ</th><th>សកម្មភាព</th><th>Sev</th><th>PL</th><th>លក្ខខណ្ឌ</th></tr>
+  <tr><td><code>VARMAN-1030</code></td><td>Block HTTP method TRACE / TRACK</td><td>Block</td><td>3</td><td>1</td><td><code>TRACE</code> ឬ <code>TRACK</code> (cross-site tracing — គ្មានការប្រើប្រាស់សម័យថ្មី)</td></tr>
+  <tr><td><code>VARMAN-1031</code></td><td>Log unusual HTTP methods</td><td><b>Log</b></td><td>1</td><td>2</td><td>វិធីសាស្ត្រក្រៅពី <code>GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS</code> — កត់ត្រាតែប៉ុណ្ណោះ</td></tr>
+</table>
+
+<h3>ង. ផ្លូវ និងសិទ្ធិ</h3>
+<table>
+  <tr><th>លេខ</th><th>ឈ្មោះ</th><th>សកម្មភាព</th><th>Sev</th><th>PL</th><th>លក្ខខណ្ឌ</th></tr>
+  <tr><td><code>VARMAN-1001</code></td><td>Block admin paths from non-trusted networks</td><td><b>Challenge</b></td><td>3</td><td>1</td><td>ផ្លូវចាប់ផ្តើម <code>/admin</code> និង IP ក្រៅបណ្តាញទុកចិត្ត (<code>10/8</code>, <code>172.16/12</code>, <code>192.168/16</code>, <code>127/8</code>) — ការិយាល័យ/VPN របស់អ្នកមិនប៉ះពាល់</td></tr>
+</table>
+
+<h3>ច. Payload តាមបច្ចេកវិទ្យា</h3>
+<table>
+  <tr><th>លេខ</th><th>ឈ្មោះ</th><th>សកម្មភាព</th><th>Sev</th><th>PL</th><th>Stacks</th><th>លក្ខខណ្ឌ</th></tr>
+  <tr><td><code>VARMAN-1050</code></td><td>Block Log4Shell JNDI lookups</td><td>Block</td><td>5</td><td>1</td><td><b>Java</b></td><td>មាន <code>${jndi:</code> (ក្នុង User-Agent)</td></tr>
+  <tr><td><code>VARMAN-1051</code></td><td>Block requests with very long URIs</td><td><b>Log</b></td><td>3</td><td>3</td><td>Generic</td><td>URI ≥ 4096 តួអក្សរ — កត់ត្រាតែប៉ុណ្ណោះ ព្រោះផ្លូវវែងអាចស្របច្បាប់ (ការរកឃើញពិតនៅតែគិតពិន្ទុតាម signature)</td></tr>
+</table>
+
+<h2 id="s26-5">២៦.៥ ការលៃតម្រូវ (តាមគេហទំព័រ ឬតាមគោលនយោបាយ)</h2>
+<ol class="steps">
+  <li><b>តាមដានច្បាប់មួយ</b> — ដាក់លេខច្បាប់ក្នុង <b>បញ្ជីតាមដាន</b> (monitor managed rules)។</li>
+  <li><b>តាមដានគ្រួសារ/stack</b> — <code>monitor_categories</code> (<code>sqli</code>/<code>xss</code>/<code>rce</code>) និង <code>monitor_stacks</code>; ច្បាប់ <code>GENERIC</code> មិនត្រូវបាន downgrade ដោយ stack ទេ។</li>
+  <li><b>បិទ ឬកែពិន្ទុ</b> — តាម <b>Rule exceptions</b> (Policy tuning): disable / monitor only / score override។</li>
+  <li><b>លើកលែងតាម target</b> — តាម <b>Exclusion packages</b> (ឧ. លើកលែង parameter <code>comment</code> ចេញពីច្បាប់ XSS)។</li>
+</ol>
+
+<h2 id="s26-6">២៦.៦ សកម្មភាពរបស់ច្បាប់ មិនដូចគ្នានឹងស្ថានភាពគេហទំព័រទេ</h2>
+<p>ច្បាប់មួយចង់ <b>Block</b> តែគេហទំព័រអាចកំពុងដំណើរការជា <b>monitor</b> — ពេលនោះការរកឃើញនឹងត្រូវកត់ត្រាដោយមិនទប់ស្កាត់។ ដូច្នេះត្រូវពិនិត្យទាំងពីរ៖ សកម្មភាពច្បាប់ (ក្នុងតារាងខាងលើ) និង <b>ស្ថានភាពអនុវត្តជាក់ស្តែង</b> (Effective posture)។</p>
+
+<h2 id="s26-7">២៦.៧ ដែនកំណត់ដែលគួរដឹង</h2>
+<ul>
+  <li>ច្បាប់ទាំងនេះ <b>មិនទូលំទូលាយ</b>ទេ — ជាមូលដ្ឋានសម្រាប់ការចាប់ផ្តើម; CRS និងច្បាប់ផ្ទាល់ខ្លួនបន្ថែមភាពគ្របដណ្តប់។</li>
+  <li>ច្បាប់ពិន្ទុ (<code>1002</code>, <code>1003</code>, <code>1004</code>, <code>1061</code>) <b>មិនអាចលើកលែងតាម target</b>បានទេ ព្រោះវាអានពិន្ទុពីដំណាក់កាលទី ១ — ត្រូវលៃតម្រូវដោយ disable/monitor ឬកែច្រកទ្វារ។</li>
+  <li>ច្បាប់ដែលបង្ហាញក្នុងផ្ទាំង Rules គឺដូចគ្នាបេះបិទនឹងអ្វីដែលម៉ាស៊ីនចងក្រង (អានពី <code>GET /api/v1/managed-rules</code>)។</li>
+</ul>
+</section>
+
+<h1 class="part" id="p27">ជំពូកទី ២៧ — OWASP CRS និង Paranoia Ceiling</h1>
+
+<section class="card">
+<h2 id="s27-1">២៧.១ CRS ជាអ្វី?</h2>
+<p><b>OWASP CRS (Core Rule Set)</b> គឺជាបណ្ណាល័យច្បាប់ការពារដ៏ធំ និងល្បីល្បាញបំផុតសម្រាប់ម៉ាស៊ីន WAF បែប ModSecurity — សរសេរដោយសហគមន៍ OWASP។ វាបន្ថែមភាពគ្របដណ្តប់យ៉ាងទូលំទូលាយ (ការវាយប្រហារតាមពិធីការ, PHP/Java/Node injection, session fixation, SSRF ។ល។) លើសពីច្បាប់គ្រប់គ្រងភ្ជាប់មកជាមួយរបស់យើង។</p>
+<p>VarmanWAF បាននាំចូល <b>CRS 4.30.0</b> (ច្បាប់ <b>៦៩៣</b>) ហើយអនុវត្តវាដោយ <b>ម៉ាស៊ីន SecLang ផ្ទាល់ខ្លួន</b> — គ្មាន ModSecurity ដំឡើងបន្ថែម។</p>
+
+<h2 id="s27-2">២៧.២ ការនាំចូល (Import)</h2>
+<ol class="steps">
+  <li>ចូលទំព័រ <b>CRS</b> រួចចុច <b>Import ruleset</b>។</li>
+  <li>ជ្រើសប្រភព៖ <b>GitHub release</b> (ជ្រើស tag ថ្មីៗពី <code>coreruleset/coreruleset</code>), <b>Archive URL</b> ឬឯកសារផ្ទុកឡើង។</li>
+  <li>ប្រព័ន្ធញែកឯកសារដោយ <b>ម៉ាស៊ីនញែក SecLang ផ្ទាល់ខ្លួន</b>។ ច្បាប់ដែលញែកបាន = <b>compiled</b>; ច្បាប់ដែលញែកមិនបាន នៅតែបង្ហាញជាមួយ <b>កំហុសញែក</b>របស់វា — <b>គ្មានអ្វីត្រូវបានទម្លាក់ដោយស្ងាត់</b>ទេ។</li>
+  <li>បញ្ជី ruleset បង្ហាញចំនួន <b>compiled</b> និង <b>unsupported</b> — ហើយច្បាប់ទាំងអស់អាចរកមើលបាន (category / paranoia / phase / severity / keyword)។</li>
+</ol>
+
+<h2 id="s27-3">២៧.៣ ច្បាប់ CRS ទៅដល់ Edge យ៉ាងដូចម្តេច?</h2>
+<ol class="steps">
+  <li>បង្កើត/កែ <b>គោលនយោបាយ</b> (Policies) ហើយបន្ថែមស្រទាប់ <b>CRS ruleset</b> (<code>crs_import</code>)។</li>
+  <li>ជ្រើស <b>ruleset</b>, <b>Paranoia level ceiling</b> និង (បើចង់) <b>categories</b> ដើម្បីដំណើរការតែប្រភេទជាក់លាក់។</li>
+  <li>នៅពេលភ្ជាប់គោលនយោបាយទៅគេហទំព័រ ម៉ាស៊ីនចងក្រងច្បាប់ដែលជ្រើស ចូលជា <b>virtual patches</b> (SecLang) របស់គេហទំព័រ។</li>
+  <li>កញ្ចប់លើកលែងប្រភេទ <b>seclang</b> ដំណើរការ <b>បន្ទាប់</b>ពី CRS — ដូច្នេះ <code>SecRuleUpdateTargetById</code> / <code>SecRuleRemoveById</code> អាចលៃតម្រូវច្បាប់ CRS បាន (សូមមើលជំពូក ២២.៣–២២.៤)។</li>
+</ol>
+
+<h2 id="s27-4">២៧.៤ Paranoia Level Ceiling ជាអ្វី?</h2>
+<p>ច្បាប់ CRS នីមួយៗមាន <b>កម្រិត paranoia (PL1–PL4)</b> ឬគ្មានកម្រិត (ដំណើរការជានិច្ច)។ <b>Ceiling</b> គឺជា <b>កម្រិតខ្ពស់បំផុតដែលត្រូវបានអនុញ្ញាត</b>៖</p>
+<ul>
+  <li>ច្បាប់ដែលមាន PL <b>ខ្ពស់ជាង ceiling</b> → <b>មិនត្រូវបានបញ្ជូនទៅ Edge</b> ទេ (មិនដំណើរការ)។</li>
+  <li>ច្បាប់ដែលគ្មានកម្រិត → រួមបញ្ចូលជានិច្ច។</li>
+  <li>មិនកំណត់ ceiling → រួមបញ្ចូល <b>គ្រប់ច្បាប់ដែលញែកបាន</b>។</li>
+</ul>
+<table>
+  <tr><th>កម្រិត</th><th>អត្ថន័យ</th><th>ការណែនាំ</th></tr>
+  <tr><td><b>PL 1</b></td><td>មូលដ្ឋាន — ការរកឃើញដែលមានទំនុកចិត្តខ្ពស់, false positive ទាបបំផុត</td><td>ចាប់ផ្តើមទីនេះ</td></tr>
+  <tr><td><b>PL 2</b></td><td>ពង្រឹងបន្ថែម — ការពារខ្លាំងជាង ប៉ុន្តែត្រូវការការលៃតម្រូវបន្តិច</td><td>កម្រិតផលិតកម្មដែលណែនាំ (បន្ទាប់ពីសាកល្បង)</td></tr>
+  <tr><td><b>PL 3</b></td><td>តឹងរ៉ឹង — false positive ច្រើនឡើងគួរឱ្យកត់សម្គាល់</td><td>សម្រាប់កម្មវិធីដែលគ្រប់គ្រងច្បាស់</td></tr>
+  <tr><td><b>PL 4</b></td><td>ប្រុងប្រយ័ត្នបំផុត — FP ច្រើន; ត្រូវការលើកលែងច្រើន</td><td>កម្រប្រើ — សម្រាប់តែបរិស្ថានពិសេស</td></tr>
+</table>
+<div class="warn"><b>កុំច្រឡំច្រកទ្វារពីរ</b>
+<b>Paranoia level របស់គេហទំព័រ</b> (Site posture, 1–4) គ្រប់គ្រង <b>ច្បាប់គ្រប់គ្រងភ្ជាប់មកជាមួយ</b> (ជំពូក ២៦) និងឥរិយាបថម៉ាស៊ីន។
+<b>Paranoia level ceiling</b> (ស្រទាប់ CRS ruleset ក្នុងគោលនយោបាយ) គ្រប់គ្រង <b>ច្បាប់ CRS ដែលនាំចូល</b> — ច្បាប់ខាងលើ ceiling មិនត្រូវបានបញ្ជូនទៅ Edge។ ពួកវាជា <b>កម្មវិធីកំណត់ដាច់ដោយឡែកពីគ្នា</b> — ត្រូវកំណត់ទាំងពីរដោយចេតនា។</div>
+
+<h2 id="s27-5">២៧.៥ រូបមន្តជាក់ស្តែង (Recipes)</h2>
+<pre><code># ១. ចាប់ផ្តើមប្រកបដោយសុវត្ថិភាព
+Site posture:  Paranoia level = 2,  Advanced mode = បិទ,  Mode = monitor
+CRS layer:     Paranoia level ceiling = 1
+→ សង្កេតរយៈពេលខ្លី រួចពិនិត្យ Logs (why resolver)
+
+# ២. ពង្រឹងបន្តិចម្តងៗ
+CRS layer:     Paranoia level ceiling = 2
+→ បើឃើញ false positive: បន្ថែមកញ្ចប់លើកលែង (seclang):
+   SecRuleUpdateTargetById 942100 "!ARGS:comment"
+
+# ៣. ដំណើរការតែប្រភេទជាក់លាក់
+CRS layer:     categories = [attack-sqli, attack-xss]
+→ បញ្ចូលតែច្បាប់ក្នុងប្រភេទទាំងនោះ
+
+# ៤. ត្រឡប់ក្រោយ
+Policy history → ជ្រើសកំណែចាស់ → Restore (បង្កើត revision ថ្មី)</code></pre>
+<div class="note"><b>បោះផ្សាយ = អនុវត្ត</b>
+ការកែ ceiling ឬការភ្ជាប់ ruleset បង្កើត <b>revision ថ្មី</b> ហើយបញ្ជូន bundle ទៅ Edge ភ្លាមៗ។ អ្នកអាចផ្ទៀងផ្ទាត់នៅ <b>Effective posture</b> និង <b>Version history</b>។</div>
+
+<h2 id="s27-6">២៧.៦ ដែនកំណត់ដែលគួរដឹង</h2>
+<ul>
+  <li>ច្បាប់ដែលញែកមិនបាន (unsupported) នៅតែ <b>មើលឃើញ</b>ជាមួយកំហុស ប៉ុន្តែ <b>មិនអាចអនុវត្តបាន</b> — ប្រព័ន្ធប្រាប់ត្រង់ៗ។</li>
+  <li>CRS ដំណើរការជា virtual patches៖ <b>root prefix</b> និង <b>ទាំងគេហទំព័រ</b> (មិនតាម path នីមួយៗ)។</li>
+  <li>ច្បាប់គ្រប់គ្រងដែលអានពិន្ទុ <code>cf.waf.score.*</code> មិនអាចលើកលែងតាម target បាន (ដំណាក់កាលទី ១)។</li>
+  <li>កម្រិតភាពស៊ីគ្នាត្រូវបានកត់ត្រានៅ <code>docs/compatibility.md</code>។</li>
+</ul>
+</section>
+
+<h1 class="part" id="p28">ជំពូកទី ២៨ — ឧបសម្ព័ន្ធ</h1>
 
 <section class="card">
 <h2 id="s20-1">២០.១ ពាក្យបច្ចេកទេសសំខាន់ៗ</h2>

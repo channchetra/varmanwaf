@@ -114,13 +114,40 @@ Conventions used below:
 
 #### Managed rules
 
-- **How it works** — 13 managed rule families (`VARMAN-1001..1061`) ship in
-  the engine: SQLi, XSS, RCE, path traversal, scanners, dotfile probes,
-  dangerous methods, admin paths, protocol anomalies, oversized payloads,
-  upload abuse, SSRF and generic payload syntax. Each rule has a severity,
-  an anomaly score contribution and a mode (off / monitor / block). Rules
-  are grouped by family; disabling a rule records an override that survives
-  bundle pushes.
+- **How it works** — 14 managed rules ship in the engine
+  (`VARMAN-1001..1061`; 13 at the Normal level, `VARMAN-1061` strict-only).
+  They are OWASP-flavoured defaults written in the same expression language
+  as custom rules, so they can be inspected and tuned like any rule. The set:
+  - **Anomaly gates**: `1002` SQLi sub-score ≥ 60 (Strict 50), `1003` XSS
+    sub-score ≥ 60 (Strict 50), `1004` aggregate ≥ 80 (Strict 70), `1061`
+    RCE sub-score ≥ 40 (**Strict only**).
+  - **Recon/probes**: `1020` dotfile probes (`/.git`, `/.env`, …),
+    `1021` backup-file probes (`.bak`/`.sql`/… — deliberately not `.zip`),
+    `1040` phpMyAdmin/wp-admin probes (**challenge**).
+  - **User agents**: `1010` scanner UAs (nikto, sqlmap, …), `1011` empty UA
+    on non-HEAD (**challenge**, PL 3).
+  - **Methods**: `1030` TRACE/TRACK, `1031` unusual methods (**log only**).
+  - **Paths**: `1001` `/admin*` from non-trusted networks (**challenge**;
+    office/VPN ranges are excluded).
+  - **Payloads**: `1050` Log4Shell `${jndi:` (Java stack), `1051` very long
+    URIs (**log only**, PL 3).
+- **Gating** — a rule runs only when enabled, when `rule paranoia_level ≤
+  site paranoia`, when the site's stacks include the rule's stacks
+  (`GENERIC` always runs; language rules need their stack — default all),
+  and when no monitor list downgrades it. Managed rules evaluate against the
+  blocking-only score snapshot; a critical Stage-1 hit can still block on the
+  fast path.
+- **Scoring** — hits contribute their severity (1–5) to the aggregate; family
+  hits add `severity × 12` to the family sub-score (one critical hit = 60).
+  The engine's aggregate threshold is 40; **Advanced mode (Strict)** tightens
+  the family gate 60→50, the aggregate gate 80→70 and adds `1061`.
+- **Tuning** — monitor a rule id, a category (`sqli`/`xss`/`rce`) or a stack;
+  disable/monitor/re-score through rule overrides; suppress per target via
+  exclusion packages. Score-consuming rules (`1002/1003/1004/1061`) are
+  **not** target-suppressible (Stage-1 pipeline) — the UI says so.
+- **Honest limits** — this set is a baseline, not exhaustive coverage;
+  imported CRS (section 4.2) and custom rules extend it. A rule's action is
+  its intent — the site's posture (off/monitor/block) decides enforcement.
 
 #### Custom rules
 
@@ -328,13 +355,31 @@ Conventions used below:
 
 ### 4.2 CRS
 
-- **Where** — `/crs`.
-- **API** — `crs.rs`.
-- **How it works** — Import OWASP CRS rulesets (4.30.0 imported: 693
-  rules), browse categories, set the paranoia ceiling per policy, inspect
-  the rule catalogue, and see which rules are active where. Imported rules
-  live as virtual patches in the site's bundle; the compatibility tracker is
-  in [`compatibility.md`](./compatibility.md).
+- **Where** — `/crs` (import + catalogue) and the policy detail page's
+  **CRS ruleset** layer (binding + paranoia ceiling).
+- **API** — `crs.rs` (`/crs/releases`, `/crs/import`, `/crs/rulesets`,
+  `/crs/rulesets/:id/rules` with category/paranoia/phase/severity/keyword/
+  supported filters).
+- **How it works** — Import an OWASP CRS archive (GitHub release tag picker,
+  archive URL, or upload). The archive is parsed by the native SecLang
+  parser: compilable rules are stored as enforceable rules; rules it cannot
+  compile **stay visible with their parser error** — nothing is dropped
+  silently (the ruleset list shows compiled vs unsupported counts). Binding
+  a ruleset happens on a policy's `crs_import` layer: the compiler selects
+  supported rules, applies the **paranoia ceiling** and optional category
+  filter, and joins them into the site's **virtual patches** (SecLang);
+  seclang exclusion packages run after, so `SecRuleUpdateTargetById` /
+  `SecRuleRemoveById` can adjust the imported rules.
+- **Paranoia level ceiling** — each CRS rule carries a paranoia level
+  (PL1–PL4) or none (always-on). The ceiling is the **highest level
+  included**: rules above it are **not sent to the edge**; unset includes
+  every compiled rule. This is a *different knob* from the site's paranoia
+  level (which gates the built-in managed rules) — set both deliberately.
+  Recommended: ceiling 1 while observing, then 2 with exclusions.
+- **Honest limits** — unsupported rules are visible but not enforceable;
+  imported rules act site-wide at the root prefix; managed rules consuming
+  `cf.waf.score.*` are not target-suppressible (Stage-1 pipeline). The
+  compatibility tracker is in [`compatibility.md`](./compatibility.md).
 
 ### 4.3 Alerts and notifications
 
@@ -414,7 +459,7 @@ Full detail in [`security-engine.md`](./security-engine.md). Summary:
 | --- | --- |
 | Canonicalisation | One normalization for every detector (bounded percent decoding, path collapse, query/cookie parsing) |
 | Signature lane | Aho-Corasick scan: block-tier payload syntax, log-tier ambiguous tokens |
-| Managed rules | 13 families with anomaly scores and per-rule modes |
+| Managed rules | 14 rules (13 at Normal, `VARMAN-1061` strict-only) with anomaly scores and per-rule modes |
 | Custom rules | Operator expressions with modes and score actions |
 | SecLang / CRS | Virtual patches, CRS 4.30.0 import, `SecRuleUpdateTargetById` / `SecRuleRemoveById` incl. the `ctl:` controls plugins use |
 | API schema layer | OpenAPI validation with per-operation Off / Observe / Enforce |
