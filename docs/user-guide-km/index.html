@@ -428,7 +428,7 @@ Dashboard គឺជាផ្ទាំង <b>សង្ខេបតែប៉ុណ
 
 <h3>ច្បាប់គ្រប់គ្រង (Managed rules)</h3>
 <p>ប្រព័ន្ធមានច្បាប់គ្រប់គ្រង <b>១៤</b> (<code>VARMAN-1001..1061</code>) ដែលរាយការវាយប្រហារទូទៅ៖ SQL Injection, XSS, RCE (ការប្រតិបត្តិកូដពីចម្ងាយ), path traversal, កម្មវិធីស្កេន, ការស្វែងរកឯកសារសម្ងាត់ (dotfile), វិធីសាស្ត្រ HTTP គ្រោះថ្នាក់, ផ្លូវអ្នកគ្រប់គ្រង, ទំហំ payload ធំលើសកំណត់ ។ល។ ច្បាប់នីមួយៗមាន៖</p>
-<p class="note"><b>ព័ត៌មានលម្អិត</b> សូមមើល <a href="#p26">ជំពូកទី ២៦ — ច្បាប់គ្រប់គ្រងភ្ជាប់មកជាមួយ</a> សម្រាប់តារាងច្បាប់ទាំង ១៤, ពិន្ទុ, ច្រកទ្វារ paranoia និងការលៃតម្រូវ។</p>
+<p class="note"><b>ព័ត៌មានលម្អិត</b> សូមមើល <a href="#p26">ជំពូកទី ២៥ — ច្បាប់គ្រប់គ្រងភ្ជាប់មកជាមួយ</a> សម្រាប់តារាងច្បាប់ទាំង ១៤, ពិន្ទុ, ច្រកទ្វារ paranoia និងការលៃតម្រូវ។</p>
 <ul>
   <li><b>កម្រិតគ្រោះថ្នាក់ (severity)</b> និងពិន្ទុ anomaly។</li>
   <li><b>របៀប (mode)</b>៖ <code>off</code> (បិទ), <code>monitor</code> (តាមដានតែប៉ុណ្ណោះ), <code>block</code> (ទប់ស្កាត់)។</li>
@@ -786,7 +786,7 @@ http.request.uri.path eq "/secret-admin"</code></pre>
   <figcaption>រូបភាព ១២.១ — បណ្ណាល័យច្បាប់ OWASP CRS</figcaption>
 </figure>
 <p>VarmanWAF អាចនាំចូល <b>OWASP Core Rule Set (CRS)</b> ជាច្បាប់បន្ថែម។ កំណែដែលបាននាំចូលបច្ចុប្បន្នគឺ <b>CRS 4.30.0</b> (ច្បាប់ ៦៩៣)។</p>
-<p class="note"><b>ព័ត៌មានលម្អិត</b> សូមមើល <a href="#p27">ជំពូកទី ២៧ — OWASP CRS និង Paranoia Ceiling</a> សម្រាប់ការនាំចូល, របៀបច្បាប់ទៅដល់ Edge និងអត្ថន័យនៃ paranoia ceiling។</p>
+<p class="note"><b>ព័ត៌មានលម្អិត</b> សូមមើល <a href="#p27">ជំពូកទី ២៦ — OWASP CRS និង Paranoia Ceiling</a> សម្រាប់ការនាំចូល, របៀបច្បាប់ទៅដល់ Edge និងអត្ថន័យនៃ paranoia ceiling។</p>
 <ul>
   <li><b>Categories</b> — មើលច្បាប់តាមប្រភេទ (SQLi, XSS, RCE ។ល។)។</li>
   <li><b>Paranoia ceiling</b> — កម្រិត «ភាពប្រុងប្រយ័ត្ន» (១–៤)។ កម្រិតខ្ពស់ = ការពារខ្លាំង ប៉ុន្តែអាចបាញ់ខុសច្រើនជាង។ ចាប់ផ្តើមពីកម្រិតទាប រួចបង្កើនបន្តិចម្តងៗ។</li>
@@ -1042,10 +1042,10 @@ http.request.uri.path eq "/secret-admin"</code></pre>
 <p><b>តើរបាយការណ៍បង្ហាញលេខខុសពី Logs ទេ?</b> ពិនិត្យតំបន់ពេលវេលា (Settings → Display) និងរយៈពេលដែលជ្រើស។</p>
 </section>
 
-<h1 class="part" id="p21">ជំពូកទី ២១ — ឃ្លាំងសម្ងាត់ (Caching) ស៊ីជម្រៅ</h1>
+<h1 class="part" id="p21">ជំពូកទី ២០ — ឃ្លាំងសម្ងាត់ (Caching) ស៊ីជម្រៅ</h1>
 
 <section class="card">
-<h2 id="s21-1">២១.១ វាដំណើរការយ៉ាងដូចម្តេច?</h2>
+<h2 id="s21-1">២០.១ វាដំណើរការយ៉ាងដូចម្តេច?</h2>
 <p>ឃ្លាំងសម្ងាត់រក្សាទុកចម្លើយនៅ Edge ដើម្បីកុំឱ្យសំណើដដែលៗត្រូវទៅដល់ម៉ាស៊ីនមេពិត។ លំដាប់ដំណើរការគឺ៖</p>
 <ol>
   <li>សំណើចូលមកដល់ Edge → WAF ពិនិត្យ (ច្បាប់, IP, ភូមិសាស្ត្រ) <b>មុន</b>ឃ្លាំងសម្ងាត់។ ដូច្នេះចម្លើយដែលបានទប់ស្កាត់ មិនដែលត្រូវបានរក្សាទុក ឬបម្រើពីឃ្លាំងឡើយ។</li>
@@ -1053,7 +1053,7 @@ http.request.uri.path eq "/secret-admin"</code></pre>
   <li>បើជា <b>miss</b> → Edge ទាញពីម៉ាស៊ីនមេពិត រក្សាទុកតាមច្បាប់ រួចបម្រើចម្លើយនោះ។</li>
 </ol>
 
-<h2 id="s21-2">២១.២ ច្បាប់ cache មួយមានអ្វីខ្លះ?</h2>
+<h2 id="s21-2">២០.២ ច្បាប់ cache មួយមានអ្វីខ្លះ?</h2>
 <table>
   <tr><th>វាល</th><th>អត្ថន័យ</th></tr>
   <tr><td><b>name</b></td><td>ឈ្មោះច្បាប់ (សម្រាប់អ្នកស្គាល់វា)</td></tr>
@@ -1065,7 +1065,7 @@ http.request.uri.path eq "/secret-admin"</code></pre>
   <tr><td><b>enabled</b></td><td>បើក/បិទច្បាប់</td></tr>
 </table>
 
-<h2 id="s21-3">២១.៣ តើគួរ cache អ្វី និងមិនគួរ cache អ្វី?</h2>
+<h2 id="s21-3">២០.៣ តើគួរ cache អ្វី និងមិនគួរ cache អ្វី?</h2>
 <table>
   <tr><th>គួរ cache</th><th>មិនគួរ cache</th></tr>
   <tr><td>ឯកសារឋិតិវន្ត៖ CSS, JavaScript, រូបភាព, ពុម្ពអក្សរ</td><td>ទំព័រដែលមានទិន្នន័យផ្ទាល់ខ្លួន (dashboard, profile)</td></tr>
@@ -1074,7 +1074,7 @@ http.request.uri.path eq "/secret-admin"</code></pre>
   <tr><td>ឯកសារ <code>/assets/*</code> ដែលមាន hash ក្នុងឈ្មោះឯកសារ</td><td>សំណើ <code>POST</code> / <code>PUT</code> / <code>DELETE</code> (មិនដែល cache ទេ)</td></tr>
 </table>
 
-<h2 id="s21-4">២១.៤ ឧទាហរណ៍ជាក់ស្តែង</h2>
+<h2 id="s21-4">២០.៤ ឧទាហរណ៍ជាក់ស្តែង</h2>
 <pre><code># ឯកសារឋិតិវន្ត: cache យូរ ដោយគោរព origin
 name: "Static assets"
 match_expression: http.request.uri.path starts_with "/assets"
@@ -1093,7 +1093,7 @@ match_expression: http.request.method eq "GET" and http.request.uri.path starts_
 edge_ttl_seconds: 60
 respect_origin: true</code></pre>
 
-<h2 id="s21-5">២១.៥ ការសម្អាត (Purge) និងការប្តូរឈ្មោះឯកសារ (Cache busting)</h2>
+<h2 id="s21-5">២០.៥ ការសម្អាត (Purge) និងការប្តូរឈ្មោះឯកសារ (Cache busting)</h2>
 <ul>
   <li><b>Purge</b> — សម្អាតចម្លើយដែលរក្សាទុកតាម path ឬ tag នៅពេលអ្នកបានធ្វើបច្ចុប្បន្នភាពខ្លឹមសារ។ ប្រើវាឱ្យបានតិចតួច ព្រោះវាធ្វើឱ្យចរាចរណ៍ទៅដល់ម៉ាស៊ីនមេពិតភ្លាមៗ។</li>
   <li><b>Cache busting (វិធីដែលល្អបំផុត)</b> — នៅពេលអ្នកបញ្ចេញកំណែថ្មីនៃឯកសារ សូមប្តូរឈ្មោះឯកសារ (ឧ. <code>app.a1b2c3.js</code>)។ ដូច្នេះអ្នកប្រើទទួលបានកំណែថ្មីភ្លាម ដោយមិនចាំបាច់ purge ។</li>
@@ -1103,10 +1103,10 @@ respect_origin: true</code></pre>
 WAF និង Basic Auth ដំណើរការ <b>មុន</b>ឃ្លាំងសម្ងាត់ ដូច្នេះចម្លើយដែលត្រូវបានទប់ស្កាត់ ឬត្រូវការផ្ទៀងផ្ទាត់មិនដែលបម្រើពីឃ្លាំងទេ។</div>
 </section>
 
-<h1 class="part" id="p22">ជំពូកទី ២២ — SecLang ជាអ្វី និងប្រើវាយ៉ាងដូចម្តេច?</h1>
+<h1 class="part" id="p22">ជំពូកទី ២១ — SecLang ជាអ្វី និងប្រើវាយ៉ាងដូចម្តេច?</h1>
 
 <section class="card">
-<h2 id="s22-1">២២.១ SecLang ជាអ្វី?</h2>
+<h2 id="s22-1">២១.១ SecLang ជាអ្វី?</h2>
 <p><b>SecLang</b> គឺជាភាសាសរសេរច្បាប់របស់ ModSecurity — ភាសាដែលគម្រោង <b>OWASP CRS</b> (Core Rule Set) ប្រើសរសេរច្បាប់ការពាររបស់វា។ VarmanWAF មានម៉ាស៊ីនអនុវត្ត SecLang ផ្ទាល់ខ្លួន (សរសេរក្នុង Rust) ដែលអាចអាន និងអនុវត្តច្បាប់ SecLang បានដោយផ្ទាល់ — មិនចាំបាច់ដំឡើង ModSecurity ទេ។</p>
 <p>ក្នុងប្រព័ន្ធរបស់យើង SecLang ប្រើនៅពីរកន្លែង៖</p>
 <ol>
@@ -1114,7 +1114,7 @@ WAF និង Basic Auth ដំណើរការ <b>មុន</b>ឃ្លា�
   <li><b>ការនាំចូល CRS</b> — ច្បាប់ OWASP CRS 4.30.0 (ច្បាប់ ៦៩៣) ត្រូវបាននាំចូល និងដំណើរការជា virtual patches របស់គេហទំព័រ។</li>
 </ol>
 
-<h2 id="s22-2">២២.២ រចនាសម្ព័ន្ធច្បាប់ SecLang</h2>
+<h2 id="s22-2">២១.២ រចនាសម្ព័ន្ធច្បាប់ SecLang</h2>
 <pre><code>SecRule &lt;ទិន្នន័យត្រូវពិនិត្យ&gt; "&lt;ប្រតិបត្តិករ&gt;" "id:&lt;លេខ&gt;,phase:&lt;ដំណាក់កាល&gt;,&lt;សកម្មភាព&gt;,msg:'&lt;សារ&gt;'"</code></pre>
 <ul>
   <li><b>ទិន្នន័យត្រូវពិនិត្យ</b> — ឧ. <code>REQUEST_URI</code>, <code>ARGS</code>, <code>REQUEST_HEADERS</code>, <code>REQUEST_BODY</code>។</li>
@@ -1123,7 +1123,7 @@ WAF និង Basic Auth ដំណើរការ <b>មុន</b>ឃ្លា�
   <li><b>សកម្មភាព</b> — <code>block</code>, <code>deny</code>, <code>pass</code>, <code>log</code> ។ល។</li>
 </ul>
 
-<h2 id="s22-3">២២.៣ អ្វីដែលអ្នកអាចធ្វើបាន (ជាមួយឧទាហរណ៍)</h2>
+<h2 id="s22-3">២១.៣ អ្វីដែលអ្នកអាចធ្វើបាន (ជាមួយឧទាហរណ៍)</h2>
 <pre><code># ១. បិទចន្លោះប្រហោងថ្មី (virtual patch) — ទប់ស្កាត់ផ្លូវគ្រោះថ្នាក់
 SecRule REQUEST_URI "@contains /cve-test" \
   "id:900001,phase:1,block,msg:'CVE patch'"
@@ -1138,7 +1138,7 @@ SecRuleRemoveById 920350
 SecRule REQUEST_URI "@streq /api/notes" \
   "id:900010,phase:2,pass,nolog,ctl:ruleRemoveTargetById=942100;ARGS:content"</code></pre>
 
-<h2 id="s22-4">២២.៤ ការនាំចូលច្បាប់ SecLang ពីខាងក្រៅ (Import)</h2>
+<h2 id="s22-4">២១.៤ ការនាំចូលច្បាប់ SecLang ពីខាងក្រៅ (Import)</h2>
 <p>នៅ <b>Protection → Policy tuning → Exclusion packages</b> អ្នកអាចបន្ថែមកញ្ចប់ប្រភេទ <b>seclang</b> ដោយផ្តល់ URL នៃឯកសារ SecLang (ឧ. plugin លើកលែងរបស់ CRS)។ ប្រព័ន្ធនឹង៖</p>
 <ol class="steps">
   <li>ទាញយកឯកសារ។</li>
@@ -1147,7 +1147,7 @@ SecRule REQUEST_URI "@streq /api/notes" \
   <li>នៅពេលភ្ជាប់ វាត្រូវបានចងក្រងចូលក្នុង virtual patches របស់គេហទំព័រ។</li>
 </ol>
 
-<h2 id="s22-5">២២.៥ ដែនកំណត់ដែលគួរដឹង</h2>
+<h2 id="s22-5">២១.៥ ដែនកំណត់ដែលគួរដឹង</h2>
 <ul>
   <li>កញ្ចប់ seclang ធ្វើសកម្មភាព <b>តាម root prefix</b> និង <b>ទាំងគេហទំព័រ</b> (មិនមែនតាម path នីមួយៗទេ)។</li>
   <li>ច្បាប់គ្រប់គ្រងដែលប្រើពិន្ទុ <code>cf.waf.score.*</code> មិនអាចលើកលែងតាម target បានទេ (ដំណាក់កាលទី ១)។</li>
@@ -1155,10 +1155,10 @@ SecRule REQUEST_URI "@streq /api/notes" \
 </ul>
 </section>
 
-<h1 class="part" id="p23">ជំពូកទី ២៣ — កន្សោម និង Regex (Expressions) ស៊ីជម្រៅ</h1>
+<h1 class="part" id="p23">ជំពូកទី ២២ — កន្សោម និង Regex (Expressions) ស៊ីជម្រៅ</h1>
 
 <section class="card">
-<h2 id="s23-1">២៣.១ កន្សោមប្រើនៅទីណា?</h2>
+<h2 id="s23-1">២២.១ កន្សោមប្រើនៅទីណា?</h2>
 <p>ភាសាកន្សោម (expression) តែមួយត្រូវបានប្រើនៅគ្រប់កន្លែង៖</p>
 <ul>
   <li><b>ច្បាប់ផ្ទាល់ខ្លួន (Custom rules)</b> — លក្ខខណ្ឌនៃការទប់ស្កាត់។</li>
@@ -1167,7 +1167,7 @@ SecRule REQUEST_URI "@streq /api/notes" \
   <li><b>ច្បាប់បង្វែរ (rewrite)</b> — លក្ខខណ្ឌនៃការកែ URL។</li>
 </ul>
 
-<h2 id="s23-2">២៣.២ រចនាសម្ព័ន្ធ៖ វាល + ប្រតិបត្តិករ + តម្លៃ</h2>
+<h2 id="s23-2">២២.២ រចនាសម្ព័ន្ធ៖ វាល + ប្រតិបត្តិករ + តម្លៃ</h2>
 <table>
   <tr><th>ប្រតិបត្តិករ</th><th>អត្ថន័យ</th><th>ឧទាហរណ៍</th></tr>
   <tr><td><code>eq</code></td><td>ស្មើគ្នា</td><td><code>http.request.method eq "POST"</code></td></tr>
@@ -1179,7 +1179,7 @@ SecRule REQUEST_URI "@streq /api/notes" \
 </table>
 <p><b>វាលសំខាន់ៗ</b>៖ <code>http.request.uri.path</code>, <code>http.request.uri.query</code>, <code>http.request.method</code>, <code>http.request.headers.&lt;ឈ្មោះ&gt;</code>, <code>http.request.cookies.&lt;ឈ្មោះ&gt;</code>, <code>ip.src</code>, <code>geo.country</code>, <code>cf.waf.score.sqli</code> / <code>.xss</code> / <code>.rce</code> (ពិន្ទុ anomaly)។</p>
 
-<h2 id="s23-3">២៣.៣ Regex នៅក្នុង VarmanWAF</h2>
+<h2 id="s23-3">២២.៣ Regex នៅក្នុង VarmanWAF</h2>
 <ul>
   <li>ប្រើ <b>Rust regex</b> (ស្ទើរដូច RE2) — លឿន និងមិនអាចធ្វើការវាយប្រហារ DoS បានទេ (គ្មាន backtracking ធ្ងន់)។</li>
   <li>មិនគាំទ្រ <b>backreference</b> (<code>\1</code>) ទេ — បើត្រូវការវា សូមប្រើលក្ខខណ្ឌពីរជំនួស។</li>
@@ -1187,7 +1187,7 @@ SecRule REQUEST_URI "@streq /api/notes" \
   <li>សម្រាប់ល្បឿន៖ ប្រើ <code>contains</code> ជំនួស regex នៅពេលអាច និងចាប់ផ្តើម regex ដោយអក្សរជាក់លាក់ (ឧ. <code>^/admin</code>)។</li>
 </ul>
 
-<h2 id="s23-4">២៣.៤ ឧទាហរណ៍ពេញលេញ</h2>
+<h2 id="s23-4">២២.៤ ឧទាហរណ៍ពេញលេញ</h2>
 <pre><code># ទប់ស្កាត់កម្មវិធីស្កេនដែលស្វែងរកផ្លូវគ្រប់គ្រង
 http.request.uri.path matches "(?i)/(wp-login|phpmyadmin|\.git|\.env)"
 
@@ -1203,7 +1203,7 @@ http.request.method eq "POST" and http.request.uri.path starts_with "/api"
 # លើកលែង parameter "comment" ពីច្បាប់ XSS (ការពារ false positive)
 target exclusion: rule VARMAN-1042, target query:comment, path /blog/*</code></pre>
 
-<h2 id="s23-5">២៣.៥ ការសាកល្បង និងការពិនិត្យ</h2>
+<h2 id="s23-5">២២.៥ ការសាកល្បង និងការពិនិត្យ</h2>
 <ol class="steps">
   <li>ប្រើ <b>Rule tester</b> (Protection → Rules) ដើម្បីសាកល្បងកន្សោមលើសំណើគំរូ — វាបង្ហាញថាតើលក្ខខណ្ឌណាត្រូវ។</li>
   <li>បន្ទាប់ពីដាក់ឱ្យដំណើរការ សូមពិនិត្យ <b>Logs → why resolver</b> ដើម្បីដឹងថាហេតុអ្វីសំណើពិតត្រូវទប់ស្កាត់ ឬអនុញ្ញាត។</li>
@@ -1211,10 +1211,10 @@ target exclusion: rule VARMAN-1042, target query:comment, path /blog/*</code></p
 </ol>
 </section>
 
-<h1 class="part" id="p24">ជំពូកទី ២៤ — ដែនកំណត់អត្រា និងភូមិសាស្ត្រ ស៊ីជម្រៅ</h1>
+<h1 class="part" id="p24">ជំពូកទី ២៣ — ដែនកំណត់អត្រា និងភូមិសាស្ត្រ ស៊ីជម្រៅ</h1>
 
 <section class="card">
-<h2 id="s24-1">២៤.១ ដែនកំណត់អត្រា (Rate limiting)</h2>
+<h2 id="s24-1">២៣.១ ដែនកំណត់អត្រា (Rate limiting)</h2>
 <p>ដែនកំណត់អត្រាការពារការប្រើប្រាស់លើសកម្រិត៖ brute force, scraping, API abuse ។ល។</p>
 <table>
   <tr><th>វាល</th><th>អត្ថន័យ</th></tr>
@@ -1240,7 +1240,7 @@ action: block</code></pre>
 <div class="note"><b>ចំណាំ</b>
 នៅពេល WAF ទប់ស្កាត់សំណើ អាសយដ្ឋាន IP នោះត្រូវបានបដិសេធនៅ Edge រយៈពេល <b>៦០០ វិនាទី</b> (មុន engine)។ អ្នកអាចដោះនៅ <b>Blocked IPs → Unblock</b> បើវាបាញ់ខុស។</div>
 
-<h2 id="s24-2">២៤.២ ភូមិសាស្ត្រ និង ASN</h2>
+<h2 id="s24-2">២៣.២ ភូមិសាស្ត្រ និង ASN</h2>
 <ul>
   <li><b>mode</b> — <code>block_list</code> (ទប់ស្កាត់ប្រទេសក្នុងបញ្ជី) ឬ <code>allow_list</code> (អនុញ្ញាតតែប្រទេសក្នុងបញ្ជី)។</li>
   <li><b>countries</b> — បញ្ជីលេខកូដប្រទេស (ឧ. <code>US</code>, <code>KH</code>)។</li>
@@ -1257,15 +1257,15 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
 ទិន្នន័យជួរ IP ទាំងអស់មកពី <b>ipverse</b> តែមួយប៉ុណ្ណោះ។ ជួរដែលមិនទាន់ sync នឹងបង្ហាញថា <b>មិនត្រូវបានអនុវត្ត</b> (<code>missing_keys</code>) — ប្រព័ន្ធមិនបង្ហាញថាសកម្ម បើវាមិនពិតទេ។</div>
 </section>
 
-<h1 class="part" id="p25">ជំពូកទី ២៥ — ទំព័របណ្តាញ (Routing topology)</h1>
+<h1 class="part" id="p25">ជំពូកទី ២៤ — ទំព័របណ្តាញ (Routing topology)</h1>
 
 <section class="card">
-<h2 id="s25-1">២៥.១ ទំព័រនេះជាអ្វី?</h2>
+<h2 id="s25-1">២៤.១ ទំព័រនេះជាអ្វី?</h2>
 <p>ទំព័រ <b>Routing topology</b> បង្ហាញលំហូរពិតនៃសំណើរបស់គេហទំព័រអ្នក ជាដ្យាក្រាមរស់៖</p>
 <pre><code>អ្នកប្រើ → គេហទំព័រ → ការការពារ (WAF) → ស្រទាប់សុវត្ថិភាព → ផ្លូវ (Routes) → ក្រុម origin → គោលដៅ (Targets)</code></pre>
 <figure>
   <img src="images/49-topology-site.png" alt="Routing topology">
-  <figcaption>រូបភាព ២៥.២ — លំហូរពិតរបស់គេហទំព័រ នៅទំព័រ Routing topology</figcaption>
+  <figcaption>រូបភាព ២៤.២ — លំហូរពិតរបស់គេហទំព័រ នៅទំព័រ Routing topology</figcaption>
 </figure>
 <ul>
   <li><b>គ្រប់ខ្សែតភ្ជាប់មានចលនា (animation)</b> — ដើម្បីបង្ហាញទិសដៅលំហូរ។</li>
@@ -1273,7 +1273,7 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
   <li><b>Placeholder</b> — បើផ្នែកណាមួយទទេ (ឧ. គ្មាន origin) វាបង្ហាញប្រអប់ដាច់ៗ "No origin pool yet" ជំនួសឱ្យការបាត់ — ដូច្នេះអ្នកឃើញលំហូរពេញលេញជានិច្ច។</li>
 </ul>
 
-<h2 id="s25-2">២៥.២ ទិដ្ឋភាពទាំងពីរ៖ បណ្តាញទូទៅ និងបណ្តាញគេហទំព័រ</h2>
+<h2 id="s25-2">២៤.២ ទិដ្ឋភាពទាំងពីរ៖ បណ្តាញទូទៅ និងបណ្តាញគេហទំព័រ</h2>
 <p>ទំព័រនេះមានពីរទិដ្ឋភាព៖</p>
 <ul>
   <li><b>Fleet topology</b> (<code>/topology</code>) — បង្ហាញ <b>គេហទំព័រទាំងអស់ ភ្នាក់ងារទាំងអស់ និង Control Plane</b> ក្នុងទិដ្ឋភាពតែមួយ៖ Control Plane → ភ្នាក់ងារ (edge) → គេហទំព័រ។ ចុចលើគេហទំព័រណាមួយ ដើម្បីបើកបណ្តាញពេញលេញរបស់វា។</li>
@@ -1281,10 +1281,10 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
 </ul>
 <figure>
   <img src="images/51-topology-fleet.png" alt="Fleet topology">
-  <figcaption>រូបភាព ២៥.១ — បណ្តាញទូទៅ៖ Control Plane, ភ្នាក់ងារ និងគេហទំព័រទាំងអស់ក្នុងទិដ្ឋភាពតែមួយ</figcaption>
+  <figcaption>រូបភាព ២៤.១ — បណ្តាញទូទៅ៖ Control Plane, ភ្នាក់ងារ និងគេហទំព័រទាំងអស់ក្នុងទិដ្ឋភាពតែមួយ</figcaption>
 </figure>
 
-<h2 id="s25-3">២៥.៣ ការប្រើប្រាស់ (Site topology)</h2>
+<h2 id="s25-3">២៤.៣ ការប្រើប្រាស់ (Site topology)</h2>
 <ol class="steps">
   <li><b>អូសដាក់វិញ (drag)</b> — អូស node ណាមួយដើម្បីរៀបចំទិដ្ឋភាព។ ការរៀបចំត្រូវបានចងចាំតាមគេហទំព័រ (per site)។</li>
   <li><b>Auto layout</b> — ត្រឡប់ទៅការរៀបចំស្វ័យប្រវត្តិវិញ។</li>
@@ -1293,10 +1293,10 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
 </ol>
 <figure>
   <img src="images/50-topology-panel.png" alt="ការកែសម្រួលក្នុងទំព័របណ្តាញ">
-  <figcaption>រូបភាព ២៥.៣ — ចុចលើ node ដើម្បីកែសម្រួលភ្លាមៗ (ឧ. របៀបអនុវត្ត, engine, paranoia)</figcaption>
+  <figcaption>រូបភាព ២៤.៣ — ចុចលើ node ដើម្បីកែសម្រួលភ្លាមៗ (ឧ. របៀបអនុវត្ត, engine, paranoia)</figcaption>
 </figure>
 
-<h2 id="s25-3">២៥.៣ អ្វីដែលអ្នកកែបានក្នុងទំព័រនេះ</h2>
+<h2 id="s25-3">២៤.៣ អ្វីដែលអ្នកកែបានក្នុងទំព័រនេះ</h2>
 <table>
   <tr><th>Node</th><th>ការកែសម្រួល</th></tr>
   <tr><td>គេហទំព័រ</td><td>ឈ្មោះ, ដែនមេ, ដែនបន្ថែម</td></tr>
@@ -1310,14 +1310,14 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
 ដ្យាក្រាមត្រូវបានសង់ចេញពីការកំណត់ពិត — មិនមែនគូរដោយដៃទេ។ រាល់ការកែសម្រួលនៅទីនេះគឺជាការកែការកំណត់ពិត ដែលត្រូវបានបញ្ជូនទៅ Edge ភ្លាមៗ។</div>
 </section>
 
-<h1 class="part" id="p26">ជំពូកទី ២៦ — ច្បាប់គ្រប់គ្រងដែលភ្ជាប់មកជាមួយ (Built-in managed rules)</h1>
+<h1 class="part" id="p26">ជំពូកទី ២៥ — ច្បាប់គ្រប់គ្រងដែលភ្ជាប់មកជាមួយ (Built-in managed rules)</h1>
 
 <section class="card">
-<h2 id="s26-1">២៦.១ តើច្បាប់ទាំងនេះជាអ្វី?</h2>
+<h2 id="s26-1">២៥.១ តើច្បាប់ទាំងនេះជាអ្វី?</h2>
 <p>ម៉ាស៊ីន Varman មាន <b>ច្បាប់គ្រប់គ្រង ១៤</b> ភ្ជាប់មកជាមួយ (លេខ <code>VARMAN-1001</code> ដល់ <code>VARMAN-1061</code>)។ ក្នុងចំណោមនោះ <b>១៣</b> ដំណើរការនៅកម្រិត <b>Normal</b> ហើយ <b>១</b> (<code>VARMAN-1061</code>) បន្ថែមតែនៅកម្រិត <b>Strict</b> (ពេលបើក <b>Advanced mode</b>)។</p>
-<p>ពួកវាសរសេរដោយភាសាកន្សោមដូចគ្នានឹងច្បាប់ផ្ទាល់ខ្លួនរបស់អ្នក — ដូច្នេះអ្នកអាចមើល និងលៃតម្រូវវាបានដូចច្បាប់ធម្មតា។ ពួកវាជា <b>គំរូដើមបែប OWASP</b> មិនមែនជាការគ្របដណ្តប់ពេញលេញទេ — នៅក្នុងប្រព័ន្ធពិត អ្នកនឹងបន្ថែម <b>OWASP CRS</b> (ជំពូក ២៧) និងច្បាប់ផ្ទាល់ខ្លួនបន្ថែមទៀត។</p>
+<p>ពួកវាសរសេរដោយភាសាកន្សោមដូចគ្នានឹងច្បាប់ផ្ទាល់ខ្លួនរបស់អ្នក — ដូច្នេះអ្នកអាចមើល និងលៃតម្រូវវាបានដូចច្បាប់ធម្មតា។ ពួកវាជា <b>គំរូដើមបែប OWASP</b> មិនមែនជាការគ្របដណ្តប់ពេញលេញទេ — នៅក្នុងប្រព័ន្ធពិត អ្នកនឹងបន្ថែម <b>OWASP CRS</b> (ជំពូក ២៦) និងច្បាប់ផ្ទាល់ខ្លួនបន្ថែមទៀត។</p>
 
-<h2 id="s26-2">២៦.២ ពួកវាដំណើរការយ៉ាងដូចម្តេច?</h2>
+<h2 id="s26-2">២៥.២ ពួកវាដំណើរការយ៉ាងដូចម្តេច?</h2>
 <p>ច្បាប់គ្រប់គ្រងដំណើរការនៅ <b>ដំណាក់កាលទី ២</b> (បន្ទាប់ពីស្រទាប់ signature ស្កេនលំនាំ)។ មុនពេលច្បាប់មួយត្រូវបានវាយតម្លៃ ម៉ាស៊ីនពិនិត្យច្រកទ្វារទាំងនេះ៖</p>
 <table>
   <tr><th>ច្រកទ្វារ</th><th>អត្ថន័យ</th></tr>
@@ -1325,12 +1325,12 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
   <tr><td><b>Paranoia level របស់ច្បាប់</b></td><td>ច្បាប់ដំណើរការតែពេល <code>PL របស់ច្បាប់ ≤ PL របស់គេហទំព័រ</code> (ឧ. គេហទំព័រ PL 2 → ច្បាប់ PL 1–2 ដំណើរការ; ច្បាប់ PL 3–4 មិនដំណើរការ)</td></tr>
   <tr><td><b>Stacks (បច្ចេកវិទ្យា backend)</b></td><td>ច្បាប់ <code>GENERIC</code> ដំណើរការ <b>ជានិច្ច</b>; ច្បាប់តាមភាសា (ឧ. Log4Shell → Java) ដំណើរការពេល stack នោះបើក (លំនាំដើម៖ បើកទាំងអស់)</td></tr>
   <tr><td><b>Monitor lists</b></td><td>ច្បាប់ដែលត្រូវបានដាក់ក្នុងបញ្ជីតាមដាន គ្រាន់តែកត់ត្រា មិនទប់ស្កាត់</td></tr>
-  <tr><td><b>Target exclusions</b></td><td>ការលើកលែងតាមផ្នែកនៃសំណើ (ឧ. parameter ជាក់លាក់) — លើកលែងបានតែចំពោះច្បាប់ដែលអានតម្លៃផ្ទាល់ (មិនមែនច្បាប់ពិន្ទុ — សូមមើល ២៦.៧)</td></tr>
+  <tr><td><b>Target exclusions</b></td><td>ការលើកលែងតាមផ្នែកនៃសំណើ (ឧ. parameter ជាក់លាក់) — លើកលែងបានតែចំពោះច្បាប់ដែលអានតម្លៃផ្ទាល់ (មិនមែនច្បាប់ពិន្ទុ — សូមមើល ២៥.៧)</td></tr>
 </table>
 <div class="note"><b>ចំណាំបច្ចេកទេស</b>
 ច្បាប់គ្រប់គ្រងវាយតម្លៃលើ <b>ពិន្ទុដែលទប់ស្កាត់តែប៉ុណ្ណោះ</b> (blocking score) — ការរកឃើញដែលត្រូវបាន downgrade ជា monitor មិនជួយឱ្យច្បាប់ឆ្លងកាត់ច្រកទ្វាររបស់វាទេ។ លើសពីនេះ ការរកឃើញ <b>ធ្ងន់ធ្ងរបំផុត (critical)</b> នៅដំណាក់កាលទី ១ អាចទប់ស្កាត់ភ្លាមៗ មុនច្បាប់គ្រប់គ្រងទាំងអស់។</div>
 
-<h2 id="s26-3">២៦.៣ ពិន្ទុដែលច្បាប់ទាំងនេះប្រើ</h2>
+<h2 id="s26-3">២៥.៣ ពិន្ទុដែលច្បាប់ទាំងនេះប្រើ</h2>
 <ul>
   <li>រាល់ការរកឃើញបន្ថែមពិន្ទុ = <b>កម្រិតធ្ងន់ធ្ងរ (severity 1–5)</b>។</li>
   <li>ការរកឃើញតាមគ្រួសារវាយប្រហារ បន្ថែម <code>ពិន្ទុ × 12</code> ទៅ sub-score របស់គ្រួសារនោះ → <b>ការរកឃើញ critical មួយ = ៦០ ពិន្ទុ</b> ក្នុង <code>cf.waf.score.sqli/xss/rce</code>។</li>
@@ -1339,7 +1339,7 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
   <li><b>Normal → Strict</b> (Advanced mode)៖ ច្រកទ្វារគ្រួសារ <b>៦០ → ៥០</b>; ច្រកទ្វារសរុប <b>៨០ → ៧០</b>; បន្ថែម <code>VARMAN-1061</code> (RCE ≥ 40)។</li>
 </ul>
 
-<h2 id="s26-4">២៦.៤ តារាងច្បាប់ទាំង ១៤</h2>
+<h2 id="s26-4">២៥.៤ តារាងច្បាប់ទាំង ១៤</h2>
 <h3>ក. ច្រកទ្វារពិន្ទុ (Anomaly gates)</h3>
 <table>
   <tr><th>លេខ</th><th>ឈ្មោះ</th><th>សកម្មភាព</th><th>Sev</th><th>PL</th><th>លក្ខខណ្ឌ</th></tr>
@@ -1384,7 +1384,7 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
   <tr><td><code>VARMAN-1051</code></td><td>Block requests with very long URIs</td><td><b>Log</b></td><td>3</td><td>3</td><td>Generic</td><td>URI ≥ 4096 តួអក្សរ — កត់ត្រាតែប៉ុណ្ណោះ ព្រោះផ្លូវវែងអាចស្របច្បាប់ (ការរកឃើញពិតនៅតែគិតពិន្ទុតាម signature)</td></tr>
 </table>
 
-<h2 id="s26-5">២៦.៥ ការលៃតម្រូវ (តាមគេហទំព័រ ឬតាមគោលនយោបាយ)</h2>
+<h2 id="s26-5">២៥.៥ ការលៃតម្រូវ (តាមគេហទំព័រ ឬតាមគោលនយោបាយ)</h2>
 <ol class="steps">
   <li><b>តាមដានច្បាប់មួយ</b> — ដាក់លេខច្បាប់ក្នុង <b>បញ្ជីតាមដាន</b> (monitor managed rules)។</li>
   <li><b>តាមដានគ្រួសារ/stack</b> — <code>monitor_categories</code> (<code>sqli</code>/<code>xss</code>/<code>rce</code>) និង <code>monitor_stacks</code>; ច្បាប់ <code>GENERIC</code> មិនត្រូវបាន downgrade ដោយ stack ទេ។</li>
@@ -1392,10 +1392,10 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
   <li><b>លើកលែងតាម target</b> — តាម <b>Exclusion packages</b> (ឧ. លើកលែង parameter <code>comment</code> ចេញពីច្បាប់ XSS)។</li>
 </ol>
 
-<h2 id="s26-6">២៦.៦ សកម្មភាពរបស់ច្បាប់ មិនដូចគ្នានឹងស្ថានភាពគេហទំព័រទេ</h2>
+<h2 id="s26-6">២៥.៦ សកម្មភាពរបស់ច្បាប់ មិនដូចគ្នានឹងស្ថានភាពគេហទំព័រទេ</h2>
 <p>ច្បាប់មួយចង់ <b>Block</b> តែគេហទំព័រអាចកំពុងដំណើរការជា <b>monitor</b> — ពេលនោះការរកឃើញនឹងត្រូវកត់ត្រាដោយមិនទប់ស្កាត់។ ដូច្នេះត្រូវពិនិត្យទាំងពីរ៖ សកម្មភាពច្បាប់ (ក្នុងតារាងខាងលើ) និង <b>ស្ថានភាពអនុវត្តជាក់ស្តែង</b> (Effective posture)។</p>
 
-<h2 id="s26-7">២៦.៧ ដែនកំណត់ដែលគួរដឹង</h2>
+<h2 id="s26-7">២៥.៧ ដែនកំណត់ដែលគួរដឹង</h2>
 <ul>
   <li>ច្បាប់ទាំងនេះ <b>មិនទូលំទូលាយ</b>ទេ — ជាមូលដ្ឋានសម្រាប់ការចាប់ផ្តើម; CRS និងច្បាប់ផ្ទាល់ខ្លួនបន្ថែមភាពគ្របដណ្តប់។</li>
   <li>ច្បាប់ពិន្ទុ (<code>1002</code>, <code>1003</code>, <code>1004</code>, <code>1061</code>) <b>មិនអាចលើកលែងតាម target</b>បានទេ ព្រោះវាអានពិន្ទុពីដំណាក់កាលទី ១ — ត្រូវលៃតម្រូវដោយ disable/monitor ឬកែច្រកទ្វារ។</li>
@@ -1403,14 +1403,14 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
 </ul>
 </section>
 
-<h1 class="part" id="p27">ជំពូកទី ២៧ — OWASP CRS និង Paranoia Ceiling</h1>
+<h1 class="part" id="p27">ជំពូកទី ២៦ — OWASP CRS និង Paranoia Ceiling</h1>
 
 <section class="card">
-<h2 id="s27-1">២៧.១ CRS ជាអ្វី?</h2>
+<h2 id="s27-1">២៦.១ CRS ជាអ្វី?</h2>
 <p><b>OWASP CRS (Core Rule Set)</b> គឺជាបណ្ណាល័យច្បាប់ការពារដ៏ធំ និងល្បីល្បាញបំផុតសម្រាប់ម៉ាស៊ីន WAF បែប ModSecurity — សរសេរដោយសហគមន៍ OWASP។ វាបន្ថែមភាពគ្របដណ្តប់យ៉ាងទូលំទូលាយ (ការវាយប្រហារតាមពិធីការ, PHP/Java/Node injection, session fixation, SSRF ។ល។) លើសពីច្បាប់គ្រប់គ្រងភ្ជាប់មកជាមួយរបស់យើង។</p>
 <p>VarmanWAF បាននាំចូល <b>CRS 4.30.0</b> (ច្បាប់ <b>៦៩៣</b>) ហើយអនុវត្តវាដោយ <b>ម៉ាស៊ីន SecLang ផ្ទាល់ខ្លួន</b> — គ្មាន ModSecurity ដំឡើងបន្ថែម។</p>
 
-<h2 id="s27-2">២៧.២ ការនាំចូល (Import)</h2>
+<h2 id="s27-2">២៦.២ ការនាំចូល (Import)</h2>
 <ol class="steps">
   <li>ចូលទំព័រ <b>CRS</b> រួចចុច <b>Import ruleset</b>។</li>
   <li>ជ្រើសប្រភព៖ <b>GitHub release</b> (ជ្រើស tag ថ្មីៗពី <code>coreruleset/coreruleset</code>), <b>Archive URL</b> ឬឯកសារផ្ទុកឡើង។</li>
@@ -1418,15 +1418,15 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
   <li>បញ្ជី ruleset បង្ហាញចំនួន <b>compiled</b> និង <b>unsupported</b> — ហើយច្បាប់ទាំងអស់អាចរកមើលបាន (category / paranoia / phase / severity / keyword)។</li>
 </ol>
 
-<h2 id="s27-3">២៧.៣ ច្បាប់ CRS ទៅដល់ Edge យ៉ាងដូចម្តេច?</h2>
+<h2 id="s27-3">២៦.៣ ច្បាប់ CRS ទៅដល់ Edge យ៉ាងដូចម្តេច?</h2>
 <ol class="steps">
   <li>បង្កើត/កែ <b>គោលនយោបាយ</b> (Policies) ហើយបន្ថែមស្រទាប់ <b>CRS ruleset</b> (<code>crs_import</code>)។</li>
   <li>ជ្រើស <b>ruleset</b>, <b>Paranoia level ceiling</b> និង (បើចង់) <b>categories</b> ដើម្បីដំណើរការតែប្រភេទជាក់លាក់។</li>
   <li>នៅពេលភ្ជាប់គោលនយោបាយទៅគេហទំព័រ ម៉ាស៊ីនចងក្រងច្បាប់ដែលជ្រើស ចូលជា <b>virtual patches</b> (SecLang) របស់គេហទំព័រ។</li>
-  <li>កញ្ចប់លើកលែងប្រភេទ <b>seclang</b> ដំណើរការ <b>បន្ទាប់</b>ពី CRS — ដូច្នេះ <code>SecRuleUpdateTargetById</code> / <code>SecRuleRemoveById</code> អាចលៃតម្រូវច្បាប់ CRS បាន (សូមមើលជំពូក ២២.៣–២២.៤)។</li>
+  <li>កញ្ចប់លើកលែងប្រភេទ <b>seclang</b> ដំណើរការ <b>បន្ទាប់</b>ពី CRS — ដូច្នេះ <code>SecRuleUpdateTargetById</code> / <code>SecRuleRemoveById</code> អាចលៃតម្រូវច្បាប់ CRS បាន (សូមមើលជំពូក ២១.៣–២១.៤)។</li>
 </ol>
 
-<h2 id="s27-4">២៧.៤ Paranoia Level Ceiling ជាអ្វី?</h2>
+<h2 id="s27-4">២៦.៤ Paranoia Level Ceiling ជាអ្វី?</h2>
 <p>ច្បាប់ CRS នីមួយៗមាន <b>កម្រិត paranoia (PL1–PL4)</b> ឬគ្មានកម្រិត (ដំណើរការជានិច្ច)។ <b>Ceiling</b> គឺជា <b>កម្រិតខ្ពស់បំផុតដែលត្រូវបានអនុញ្ញាត</b>៖</p>
 <ul>
   <li>ច្បាប់ដែលមាន PL <b>ខ្ពស់ជាង ceiling</b> → <b>មិនត្រូវបានបញ្ជូនទៅ Edge</b> ទេ (មិនដំណើរការ)។</li>
@@ -1441,10 +1441,10 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
   <tr><td><b>PL 4</b></td><td>ប្រុងប្រយ័ត្នបំផុត — FP ច្រើន; ត្រូវការលើកលែងច្រើន</td><td>កម្រប្រើ — សម្រាប់តែបរិស្ថានពិសេស</td></tr>
 </table>
 <div class="warn"><b>កុំច្រឡំច្រកទ្វារពីរ</b>
-<b>Paranoia level របស់គេហទំព័រ</b> (Site posture, 1–4) គ្រប់គ្រង <b>ច្បាប់គ្រប់គ្រងភ្ជាប់មកជាមួយ</b> (ជំពូក ២៦) និងឥរិយាបថម៉ាស៊ីន។
+<b>Paranoia level របស់គេហទំព័រ</b> (Site posture, 1–4) គ្រប់គ្រង <b>ច្បាប់គ្រប់គ្រងភ្ជាប់មកជាមួយ</b> (ជំពូក ២៥) និងឥរិយាបថម៉ាស៊ីន។
 <b>Paranoia level ceiling</b> (ស្រទាប់ CRS ruleset ក្នុងគោលនយោបាយ) គ្រប់គ្រង <b>ច្បាប់ CRS ដែលនាំចូល</b> — ច្បាប់ខាងលើ ceiling មិនត្រូវបានបញ្ជូនទៅ Edge។ ពួកវាជា <b>កម្មវិធីកំណត់ដាច់ដោយឡែកពីគ្នា</b> — ត្រូវកំណត់ទាំងពីរដោយចេតនា។</div>
 
-<h2 id="s27-5">២៧.៥ រូបមន្តជាក់ស្តែង (Recipes)</h2>
+<h2 id="s27-5">២៦.៥ រូបមន្តជាក់ស្តែង (Recipes)</h2>
 <pre><code># ១. ចាប់ផ្តើមប្រកបដោយសុវត្ថិភាព
 Site posture:  Paranoia level = 2,  Advanced mode = បិទ,  Mode = monitor
 CRS layer:     Paranoia level ceiling = 1
@@ -1464,7 +1464,7 @@ Policy history → ជ្រើសកំណែចាស់ → Restore (បង�
 <div class="note"><b>បោះផ្សាយ = អនុវត្ត</b>
 ការកែ ceiling ឬការភ្ជាប់ ruleset បង្កើត <b>revision ថ្មី</b> ហើយបញ្ជូន bundle ទៅ Edge ភ្លាមៗ។ អ្នកអាចផ្ទៀងផ្ទាត់នៅ <b>Effective posture</b> និង <b>Version history</b>។</div>
 
-<h2 id="s27-6">២៧.៦ ដែនកំណត់ដែលគួរដឹង</h2>
+<h2 id="s27-6">២៦.៦ ដែនកំណត់ដែលគួរដឹង</h2>
 <ul>
   <li>ច្បាប់ដែលញែកមិនបាន (unsupported) នៅតែ <b>មើលឃើញ</b>ជាមួយកំហុស ប៉ុន្តែ <b>មិនអាចអនុវត្តបាន</b> — ប្រព័ន្ធប្រាប់ត្រង់ៗ។</li>
   <li>CRS ដំណើរការជា virtual patches៖ <b>root prefix</b> និង <b>ទាំងគេហទំព័រ</b> (មិនតាម path នីមួយៗ)។</li>
@@ -1473,10 +1473,10 @@ Policy history → ជ្រើសកំណែចាស់ → Restore (បង�
 </ul>
 </section>
 
-<h1 class="part" id="p28">ជំពូកទី ២៨ — ឧបសម្ព័ន្ធ</h1>
+<h1 class="part" id="p28">ជំពូកទី ២៧ — ឧបសម្ព័ន្ធ</h1>
 
 <section class="card">
-<h2 id="s20-1">២០.១ ពាក្យបច្ចេកទេសសំខាន់ៗ</h2>
+<h2 id="s27-1">២៧.១ ពាក្យបច្ចេកទេសសំខាន់ៗ</h2>
 <table>
   <tr><th>ពាក្យ</th><th>អត្ថន័យ</th></tr>
   <tr><td>WAF</td><td>ជញ្ជាំងភ្លើងកម្មវិធីវេប — ការពារ SQLi, XSS ។ល។</td></tr>
@@ -1491,7 +1491,7 @@ Policy history → ជ្រើសកំណែចាស់ → Restore (បង�
   <tr><td>mTLS</td><td>TLS ទៅវិញទៅមក — ភាគីទាំងពីរផ្ទៀងផ្ទាត់គ្នា</td></tr>
 </table>
 
-<h2 id="s20-2">២០.២ តារាងយោងរហ័ស</h2>
+<h2 id="s27-2">២៧.២ តារាងយោងរហ័ស</h2>
 <table>
   <tr><th>ខ្ញុំចង់…</th><th>ទៅកាន់</th></tr>
   <tr><td>មើលស្ថានភាពទូទៅ</td><td>Dashboard</td></tr>
@@ -1507,7 +1507,7 @@ Policy history → ជ្រើសកំណែចាស់ → Restore (បង�
   <tr><td>បង្កើតកូនសោ API</td><td>Settings → API keys</td></tr>
 </table>
 
-<h2 id="s20-3">២០.៣ ឯកសារបន្ថែម</h2>
+<h2 id="s27-3">២៧.៣ ឯកសារបន្ថែម</h2>
 <ul>
   <li><b>docs/features.md</b> — បញ្ជីមុខងារពេញលេញ (អង់គ្លេស)។</li>
   <li><b>docs/security-engine.md</b> — ព័ត៌មានលម្អិតនៃម៉ាស៊ីនសុវត្ថិភាព។</li>
