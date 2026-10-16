@@ -2808,6 +2808,23 @@
         "schemaHint": "{{n}} OpenAPI spec bound to this site.",
         "exclusionsHint": "{{n}} exclusion binding(s) attached.",
         "sslHint": "{{n}} certificate(s) on this site."
+      },
+      "fleet": {
+        "title": "Fleet topology",
+        "description": "Every site, every agent and the control plane in one view - the whole deployment's flow at a glance.",
+        "agentCount": "{{n}} agent(s)",
+        "siteCount": "{{n}} site(s)",
+        "openAgents": "Agents",
+        "openFleet": "Fleet view",
+        "overviewTitle": "The whole deployment",
+        "overview": "The control plane pushes configuration to every agent (edge node), and each agent is bound to a site. Click a node for its details, or open a site's topology to see and edit its full request path.",
+        "legendControl": "Control plane",
+        "legendAgent": "Edge agent",
+        "legendSite": "Site",
+        "controlPlane": "Control plane",
+        "agent": "Edge agent",
+        "openSiteTopology": "Open site topology",
+        "hint": "The control plane pushes configuration to every agent and every site; recorded agent-to-site bindings appear as extra links. In all-in-one deployments one agent serves the whole instance."
       }
     },
     "configHistory": {

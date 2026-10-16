@@ -176,7 +176,7 @@ export function TopologyPanel({
         : t(`pages.topology.kinds.${selection.data.kind}`)
 
   return (
-    <aside className="absolute right-3 top-3 z-50 flex max-h-[calc(100%-24px)] w-[360px] flex-col overflow-hidden rounded-xl border border-line bg-bg-elevated shadow-xl">
+    <aside className="absolute right-3 top-3 z-50 flex max-h-[calc(100%-24px)] w-[360px] flex-col overflow-hidden rounded-xl border border-line bg-elevated shadow-xl">
       <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
         <div className="min-w-0">
           <p className="truncate text-[14px] font-semibold text-fg-strong">

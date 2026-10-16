@@ -213,32 +213,39 @@ Conventions used below:
   verified-bot lists (known good crawlers by reverse DNS), user-agent
   heuristics and reputation signals feeding the CC layer.
 
-### 2.4 Routing topology (the flow view)
+### 2.4 Routing topology (the flow views)
 
-- **Where** — `/topology` (fleet-wide, with a site selector) and
-  `/sites/:siteId/topology` (site-scoped; also a tab in the site workspace).
-- **API** — composes existing endpoints (site detail, WAF settings, routes,
-  pools, upstreams, rate limits, IP rules, cache rules, basic auth, bot, geo,
-  SSL, rewrites, custom rules, exclusion bindings); edits go through the same
-  endpoints the feature pages use.
-- **How it works** — a live ReactFlow graph of the real request path:
+- **Where** — `/topology` (fleet view: control plane, every agent and every
+  site in one graph) and `/sites/:siteId/topology` (one site's full request
+  path; also a tab in the site workspace).
+- **API** — the site view composes existing endpoints (site detail, WAF
+  settings, routes, pools, upstreams, rate limits, IP rules, cache rules,
+  basic auth, bot, geo, SSL, rewrites, custom rules, exclusion bindings); the
+  fleet view reads agents, sites and the version endpoint. Edits go through
+  the same endpoints the feature pages use.
+- **Fleet view** — the control plane links to every agent and every site (it
+  pushes their configuration); recorded agent-to-site bindings appear as
+  extra links. Clicking a site node opens that site's topology; clicking an
+  agent opens the Agents page. Empty fleets render explicit placeholders.
+- **Site view** — a live ReactFlow graph of the real request path:
   **Internet → Site → Web Protection → Security layers → Routing → Origin
   pools → Targets**. Every link is animated; security layers are grouped in
   one box and each origin pool groups its targets. Nodes are draggable and
   the arrangement is remembered per site; `Auto layout` restores the computed
   layout.
-- **Editing in place** — clicking a node opens an editor: site identity,
-  WAF posture (enabled/mode/engine/paranoia), rate limits, IP rules, cache
-  rules, basic auth credentials, bot posture, geo policy, routes, pools and
-  upstreams. Components whose editors are pages of their own (rule authoring,
-  API schema, exclusions, SSL issuance) open from the panel.
+- **Editing in place** — clicking a node opens a solid editor panel: site
+  identity, WAF posture (enabled/mode/engine/paranoia), rate limits, IP
+  rules, cache rules, basic auth credentials, bot posture, geo policy,
+  routes, pools and upstreams. Components whose editors are pages of their
+  own (rule authoring, API schema, exclusions, SSL issuance) open from the
+  panel.
 - **Drag to add** — palette items (Upstream, Origin pool, Route, Rate limit,
   IP rule, Cache rule) are dragged onto the canvas; the create form opens and
   **nothing is written until it is saved**.
-- **Honest by construction** — the graph is built from configuration, never
+- **Honest by construction** — the graphs are built from configuration, never
   hand-drawn; empty sections render explicit placeholder nodes ("No origin
-  pool yet"), so a site with nothing configured still shows the complete flow
-  instead of a single lonely node.
+  pool yet", "No agents registered"), so a bare deployment still shows the
+  complete flow instead of a single lonely node.
 
 ### 3.7 API assets
 - **Where** — `/sites/:siteId/security/api-assets`.

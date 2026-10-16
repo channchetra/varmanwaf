@@ -3,7 +3,9 @@ import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
 import {
   Broadcast,
   CloudArrowUp,
+  Cpu,
   Cube,
+  Desktop,
   Gear,
   Globe,
   Lightning,
@@ -63,10 +65,20 @@ function Chips({ chips }: { chips?: TopologyNodeData['chips'] }) {
 
 /** Left/right connection points, by node kind. */
 function Handles({ kind }: { kind: TopologyNodeData['kind'] }) {
-  const dot = '!h-2.5 !w-2.5 !border-2 !border-bg-elevated !bg-brand'
+  const dot = '!h-2.5 !w-2.5 !border-2 !border-elevated !bg-brand'
   const left =
-    kind === 'site' || kind === 'waf' || kind === 'route' || kind === 'upstream'
-  const right = kind === 'client' || kind === 'site' || kind === 'waf' || kind === 'route'
+    kind === 'site' ||
+    kind === 'waf' ||
+    kind === 'route' ||
+    kind === 'upstream' ||
+    kind === 'agent'
+  const right =
+    kind === 'client' ||
+    kind === 'site' ||
+    kind === 'waf' ||
+    kind === 'route' ||
+    kind === 'control' ||
+    kind === 'agent'
   return (
     <>
       {left && <Handle type="target" position={Position.Left} className={dot} />}
@@ -76,6 +88,8 @@ function Handles({ kind }: { kind: TopologyNodeData['kind'] }) {
 }
 
 function nodeIcon(kind: TopologyNodeData['kind'], layerKind?: LayerKind): Icon {
+  if (kind === 'control') return Cpu
+  if (kind === 'agent') return Desktop
   if (kind === 'client') return Broadcast
   if (kind === 'site') return Globe
   if (kind === 'waf') return Shield
@@ -102,19 +116,23 @@ export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
   const accent =
     placeholder
       ? 'border-dashed border-line bg-recessed/60 text-fg-subtle'
-      : kind === 'client'
-        ? 'border-focus/30 bg-focus/10'
-        : kind === 'site'
-          ? 'border-brand/30 bg-brand/12'
-          : kind === 'waf'
-            ? 'border-success/30 bg-success/12'
-            : kind === 'route'
-              ? 'border-warning/40 bg-warning/15'
-              : kind === 'upstream'
-                ? healthy === false
-                  ? 'border-danger/30 bg-danger/12'
-                  : 'border-success/30 bg-success/12'
-                : 'border-line bg-bg-elevated'
+      : kind === 'control'
+        ? 'border-brand/40 bg-brand/12'
+        : kind === 'agent'
+          ? 'border-focus/40 bg-focus/10'
+          : kind === 'client'
+            ? 'border-focus/30 bg-focus/10'
+            : kind === 'site'
+              ? 'border-brand/30 bg-brand/12'
+              : kind === 'waf'
+                ? 'border-success/30 bg-success/12'
+                : kind === 'route'
+                  ? 'border-warning/40 bg-warning/15'
+                  : kind === 'upstream'
+                    ? healthy === false
+                      ? 'border-danger/30 bg-danger/12'
+                      : 'border-success/30 bg-success/12'
+                    : 'border-line bg-elevated'
 
   const isLayer = kind === 'layer'
 
@@ -123,7 +141,7 @@ export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
   if (isLayer) {
     const chip = chips?.[0]
     return (
-      <div className="flex w-[230px] items-center gap-2 rounded-lg border-2 border-line bg-bg-elevated px-2.5 py-1.5 shadow-sm transition-shadow hover:shadow-md">
+      <div className="flex w-[230px] items-center gap-2 rounded-lg border-2 border-line bg-elevated px-2.5 py-1.5 shadow-sm transition-shadow hover:shadow-md">
         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-brand/12 text-brand">
           {icon}
         </span>
@@ -157,7 +175,7 @@ export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
         <span
           className={cn(
             'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
-            placeholder ? 'bg-recessed text-fg-subtle' : 'bg-bg-elevated text-brand',
+            placeholder ? 'bg-recessed text-fg-subtle' : 'bg-elevated text-brand',
           )}
         >
           {icon}

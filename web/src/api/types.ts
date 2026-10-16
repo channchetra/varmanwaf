@@ -1158,6 +1158,8 @@ export interface VersionResponse {
   version: string
   api: string
   registration_open: boolean
+  /** The gRPC control endpoint is served with TLS. */
+  grpc_tls: boolean
 }
 
 /* ── SSL / TLS ────────────────────────────────────────────────────── */

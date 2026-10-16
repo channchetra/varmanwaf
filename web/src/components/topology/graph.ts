@@ -50,6 +50,8 @@ export interface TopologyNodeData extends Record<string, unknown> {
     | 'pool'
     | 'upstream'
     | 'placeholder'
+    | 'control'
+    | 'agent'
   label: string
   subtitle?: string
   chips?: NodeChip[]
@@ -484,4 +486,189 @@ export function graphBounds(graph: TopologyGraph) {
     maxY = Math.max(maxY, node.position.y)
   }
   return { width: maxX, height: maxY }
+}
+
+/* ------------------------------------------------------------------ */
+/* Fleet view: control plane -> agents (edge nodes) -> every site      */
+/* ------------------------------------------------------------------ */
+
+export interface FleetAgent {
+  id: string
+  hostname: string
+  ip_address: string
+  status: string
+  connected: boolean
+  site_id: string | null
+  site_domain: string | null
+  version: string | null
+}
+
+export interface FleetSite {
+  id: string
+  name: string
+  domain: string
+  status: string
+}
+
+export interface FleetInput {
+  controlPlane: {
+    version: string
+    grpcTls: boolean
+    registrationOpen: boolean
+  }
+  agents: FleetAgent[]
+  sites: FleetSite[]
+}
+
+export const FLEET_COLUMN = {
+  control: 0,
+  agents: 430,
+  sites: 900,
+} as const
+
+export const FLEET_ROW_HEIGHT = 92
+
+/**
+ * The fleet graph: the control plane, every registered agent (edge node) and
+ * every site in one view - instead of one site at a time. Each agent links to
+ * the site it is bound to; unbound agents and sites without an agent are
+ * shown as such rather than hidden.
+ */
+export function buildFleetGraph(input: FleetInput): TopologyGraph {
+  const { controlPlane, agents, sites } = input
+  const nodes: Node<TopologyNodeData>[] = []
+  const edges: Edge[] = []
+
+  nodes.push({
+    id: 'control',
+    type: 'topology',
+    position: { x: FLEET_COLUMN.control, y: 30 },
+    data: {
+      kind: 'control',
+      label: 'Control plane',
+      subtitle: `v${controlPlane.version}`,
+      chips: [
+        {
+          text: controlPlane.registrationOpen
+            ? 'registration open'
+            : 'registration closed',
+          tone: controlPlane.registrationOpen ? 'warning' : 'success',
+        },
+        {
+          text: controlPlane.grpcTls ? 'gRPC TLS' : 'gRPC plain',
+          tone: controlPlane.grpcTls ? 'success' : 'warning',
+        },
+      ],
+    },
+  })
+
+  // Sites keyed for the agent links.
+  const siteById = new Map(sites.map((site) => [site.id, site]))
+
+  if (agents.length === 0) {
+    nodes.push({
+      id: 'agents-empty',
+      type: 'topology',
+      position: { x: FLEET_COLUMN.agents, y: 30 },
+      data: {
+        kind: 'placeholder',
+        label: 'No agents registered',
+        subtitle: 'install an agent or run all-in-one',
+        placeholder: true,
+      },
+    })
+  } else {
+    agents.forEach((agent, index) => {
+      const statusTone: ChipTone =
+        agent.status === 'online'
+          ? 'success'
+          : agent.status === 'degraded'
+            ? 'warning'
+            : 'danger'
+      nodes.push({
+        id: `agent-${agent.id}`,
+        type: 'topology',
+        position: {
+          x: FLEET_COLUMN.agents,
+          y: 30 + index * FLEET_ROW_HEIGHT,
+        },
+        data: {
+          kind: 'agent',
+          entityId: agent.id,
+          label: agent.hostname || agent.id.slice(0, 8),
+          subtitle: agent.ip_address,
+          chips: [
+            { text: agent.status, tone: statusTone },
+            ...(agent.connected
+              ? []
+              : [{ text: 'disconnected', tone: 'warning' as ChipTone }]),
+            ...(agent.version
+              ? [{ text: `v${agent.version}`, tone: 'neutral' as ChipTone }]
+              : []),
+          ],
+        },
+      })
+      edges.push(link(`control-${agent.id}`, 'control', `agent-${agent.id}`))
+
+      const boundSite = agent.site_id ? siteById.get(agent.site_id) : undefined
+      if (boundSite) {
+        edges.push(
+          link(
+            `agent-${agent.id}-site-${boundSite.id}`,
+            `agent-${agent.id}`,
+            `site-${boundSite.id}`,
+          ),
+        )
+      }
+    })
+  }
+
+  if (sites.length === 0) {
+    nodes.push({
+      id: 'sites-empty',
+      type: 'topology',
+      position: { x: FLEET_COLUMN.sites, y: 30 },
+      data: {
+        kind: 'placeholder',
+        label: 'No sites yet',
+        subtitle: 'create a site to start protecting traffic',
+        placeholder: true,
+      },
+    })
+  } else {
+    sites.forEach((site, index) => {
+      const agent = agents.find((a) => a.site_id === site.id)
+      nodes.push({
+        id: `site-${site.id}`,
+        type: 'topology',
+        position: {
+          x: FLEET_COLUMN.sites,
+          y: 30 + index * FLEET_ROW_HEIGHT,
+        },
+        data: {
+          kind: 'site',
+          entityId: site.id,
+          label: site.name || site.domain,
+          subtitle: site.domain,
+          chips: [
+            {
+              text: site.status,
+              tone: site.status === 'active' ? 'success' : 'warning',
+            },
+            // Bindings are only shown when the platform records one; in
+            // all-in-one deployments the single agent serves every site and
+            // no per-site binding row exists, so no chip is invented.
+            ...(agent
+              ? [{ text: 'agent bound', tone: 'success' as ChipTone }]
+              : []),
+          ],
+        },
+      })
+      // The control plane pushes every site's bundle to the edge fleet; draw
+      // that link so the flow is complete even without binding rows.
+      edges.push(link(`control-site-${site.id}`, 'control', `site-${site.id}`))
+    })
+  }
+
+  return { nodes, edges }
 }

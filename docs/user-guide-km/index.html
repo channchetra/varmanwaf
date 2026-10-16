@@ -1261,7 +1261,7 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
 <pre><code>អ្នកប្រើ → គេហទំព័រ → ការការពារ (WAF) → ស្រទាប់សុវត្ថិភាព → ផ្លូវ (Routes) → ក្រុម origin → គោលដៅ (Targets)</code></pre>
 <figure>
   <img src="images/49-topology-site.png" alt="Routing topology">
-  <figcaption>រូបភាព ២៥.១ — លំហូរពិតរបស់គេហទំព័រ នៅទំព័រ Routing topology</figcaption>
+  <figcaption>រូបភាព ២៥.២ — លំហូរពិតរបស់គេហទំព័រ នៅទំព័រ Routing topology</figcaption>
 </figure>
 <ul>
   <li><b>គ្រប់ខ្សែតភ្ជាប់មានចលនា (animation)</b> — ដើម្បីបង្ហាញទិសដៅលំហូរ។</li>
@@ -1269,7 +1269,18 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
   <li><b>Placeholder</b> — បើផ្នែកណាមួយទទេ (ឧ. គ្មាន origin) វាបង្ហាញប្រអប់ដាច់ៗ "No origin pool yet" ជំនួសឱ្យការបាត់ — ដូច្នេះអ្នកឃើញលំហូរពេញលេញជានិច្ច។</li>
 </ul>
 
-<h2 id="s25-2">២៥.២ ការប្រើប្រាស់</h2>
+<h2 id="s25-2">២៥.២ ទិដ្ឋភាពទាំងពីរ៖ បណ្តាញទូទៅ និងបណ្តាញគេហទំព័រ</h2>
+<p>ទំព័រនេះមានពីរទិដ្ឋភាព៖</p>
+<ul>
+  <li><b>Fleet topology</b> (<code>/topology</code>) — បង្ហាញ <b>គេហទំព័រទាំងអស់ ភ្នាក់ងារទាំងអស់ និង Control Plane</b> ក្នុងទិដ្ឋភាពតែមួយ៖ Control Plane → ភ្នាក់ងារ (edge) → គេហទំព័រ។ ចុចលើគេហទំព័រណាមួយ ដើម្បីបើកបណ្តាញពេញលេញរបស់វា។</li>
+  <li><b>Site topology</b> (<code>/sites/&lt;id&gt;/topology</code>) — លំហូរពេញលេញរបស់គេហទំព័រតែមួយ (មើលរូបភាពខាងក្រោម)។</li>
+</ul>
+<figure>
+  <img src="images/51-topology-fleet.png" alt="Fleet topology">
+  <figcaption>រូបភាព ២៥.១ — បណ្តាញទូទៅ៖ Control Plane, ភ្នាក់ងារ និងគេហទំព័រទាំងអស់ក្នុងទិដ្ឋភាពតែមួយ</figcaption>
+</figure>
+
+<h2 id="s25-3">២៥.៣ ការប្រើប្រាស់ (Site topology)</h2>
 <ol class="steps">
   <li><b>អូសដាក់វិញ (drag)</b> — អូស node ណាមួយដើម្បីរៀបចំទិដ្ឋភាព។ ការរៀបចំត្រូវបានចងចាំតាមគេហទំព័រ (per site)។</li>
   <li><b>Auto layout</b> — ត្រឡប់ទៅការរៀបចំស្វ័យប្រវត្តិវិញ។</li>
@@ -1278,7 +1289,7 @@ blocked_asns: [AS13335]      # តាមដានដោយឡែក (monitor)</c
 </ol>
 <figure>
   <img src="images/50-topology-panel.png" alt="ការកែសម្រួលក្នុងទំព័របណ្តាញ">
-  <figcaption>រូបភាព ២៥.២ — ចុចលើ node ដើម្បីកែសម្រួលភ្លាមៗ (ឧ. របៀបអនុវត្ត, engine, paranoia)</figcaption>
+  <figcaption>រូបភាព ២៥.៣ — ចុចលើ node ដើម្បីកែសម្រួលភ្លាមៗ (ឧ. របៀបអនុវត្ត, engine, paranoia)</figcaption>
 </figure>
 
 <h2 id="s25-3">២៥.៣ អ្វីដែលអ្នកកែបានក្នុងទំព័រនេះ</h2>

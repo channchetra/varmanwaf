@@ -3,11 +3,11 @@
   "site": "996841ea-f1c0-4ba2-be1e-34aca2e0439c",
   "captured": [
     {
-      "name": "37-config-history",
-      "route": "/config-history",
-      "wait": 2000,
-      "file": "37-config-history.png",
-      "bytes": 162053
+      "name": "51-topology-fleet",
+      "route": "/topology",
+      "wait": 4000,
+      "file": "51-topology-fleet.png",
+      "bytes": 89959
     }
   ]
 }

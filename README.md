@@ -114,7 +114,7 @@ reach Monitor/Block. See [`docs/security-engine.md`](./docs/security-engine.md).
 | **Access control** | IP rules and groups, **geo policy with ipverse data** (monitor action, per-country/ASN sync), **client IP analysis**, basic auth |
 | **API assets** | Observed endpoint inventory vs the declared OpenAPI document, **bounded JSON learning** (requests and responses; structures and counts, never values), **OpenAPI draft export**, per-endpoint **Off / Observe / Enforce** controls |
 | **Global policies** | Revisioned policy documents with a per-policy detail page (every layer editable in place, history, preview) |
-| **Routing topology** | A live flow view (ReactFlow) of the real request path — drag to rearrange, drag palette items to add, click any node to edit it in place |
+| **Routing topology** | A live flow view (ReactFlow): the fleet (control plane, agents, every site) and each site's real request path — drag to rearrange, drag palette items to add, click any node to edit it in place |
 | **CRS** | Imported rulesets, categories, paranoia ceiling, rule catalogue |
 | **Alerts & notifications** | Alert rules, silences, delivery channels (email, webhook, Telegram), login security, alert history - one merged page |
 | **Reports** | Interception reports (filters, custom heading/footer, HTML attachment), schedules (daily/weekly/monthly), send-now |

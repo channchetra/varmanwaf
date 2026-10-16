@@ -19,6 +19,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import {
   ArrowClockwise,
+  ArrowSquareOut,
   CloudArrowUp,
   Cpu,
   FlowArrow,
@@ -28,17 +29,19 @@ import {
   Prohibit,
   Stack,
   Tag,
+  X,
 } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Callout } from '@/components/ui/Callout'
 import { Button } from '@/components/ui/Button'
-import { Select } from '@/components/ui/Select'
 import { Badge } from '@/components/ui/Badge'
-import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ErrorState'
 import { SkeletonCard } from '@/components/ui/Skeleton'
 import { useCanWrite, useSitesList } from '@/hooks'
 import { sitesApi } from '@/api/sites'
+import { agentsApi } from '@/api/agents'
+import type { Agent } from '@/api/types'
+import { systemApi } from '@/api/system'
 import { wafSettingsApi } from '@/api/wafSettings'
 import { rateLimitApi } from '@/api/rateLimiting'
 import { ipRulesApi } from '@/api/ipRules'
@@ -51,6 +54,7 @@ import { rewriteApi } from '@/api/rewrite'
 import { rulesApi } from '@/api/rules'
 import { exclusionsApi } from '@/api/exclusions'
 import {
+  buildFleetGraph,
   buildTopologyGraph,
   type ChipTone,
   type TopologyGraph,
@@ -98,100 +102,358 @@ function loadLayout(siteId: string): Record<string, { x: number; y: number }> {
 export function TopologyPage() {
   return (
     <ReactFlowProvider>
-      <TopologyWorkspace />
+      <TopologyRouter />
     </ReactFlowProvider>
   )
 }
 
-function TopologyWorkspace() {
+/** `/topology` is the fleet view; `/sites/:id/topology` is one site's flow. */
+function TopologyRouter() {
+  const { siteId } = useParams<{ siteId: string }>()
+  return siteId ? <SiteTopology siteId={siteId} /> : <FleetTopology />
+}
+
+/* ------------------------------------------------------------------ */
+/* Fleet view: control plane -> agents -> every site                   */
+/* ------------------------------------------------------------------ */
+
+function FleetTopology() {
   const { t } = useTranslation()
-  const { siteId: routeSiteId } = useParams<{ siteId: string }>()
+  const queryClient = useQueryClient()
+  const { fitView } = useReactFlow()
+  const [selection, setSelection] = useState<TopologyNodeData | null>(null)
+
+  const { data: sites } = useSitesList()
+  const agentsQuery = useQuery({
+    queryKey: ['topology', 'fleet', 'agents'],
+    queryFn: () => agentsApi.list(),
+  })
+  const versionQuery = useQuery({
+    queryKey: ['topology', 'fleet', 'version'],
+    queryFn: () => systemApi.version(),
+  })
+
+  const agents = useMemo(() => asItems<Agent>(agentsQuery.data), [agentsQuery.data])
+
+  const graph: TopologyGraph = useMemo(
+    () =>
+      buildFleetGraph({
+        controlPlane: {
+          version: versionQuery.data?.version ?? '…',
+          grpcTls: versionQuery.data?.grpc_tls ?? true,
+          registrationOpen: versionQuery.data?.registration_open ?? false,
+        },
+        agents: agents.map((agent) => ({
+          id: agent.id,
+          hostname: agent.hostname,
+          ip_address: agent.ip_address,
+          status: agent.status,
+          connected: agent.connected,
+          site_id: agent.site_id ?? null,
+          site_domain: agent.site_domain ?? null,
+          version: agent.version ?? null,
+        })),
+        sites: (sites ?? []).map((site) => ({
+          id: site.id,
+          name: site.name ?? '',
+          domain: site.domain ?? '',
+          status: site.status ?? 'active',
+        })),
+      }),
+    [agents, sites, versionQuery.data],
+  )
+
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+  const [appliedGraph, setAppliedGraph] = useState<TopologyGraph | null>(null)
+  if (appliedGraph !== graph) {
+    setAppliedGraph(graph)
+    setNodes(graph.nodes as Node[])
+    setEdges(graph.edges)
+  }
+
+  const nodeCount = nodes.length
+  useEffect(() => {
+    if (nodeCount === 0) return
+    const handle = window.setTimeout(() => {
+      void fitView({ padding: 0.15, duration: 250 })
+    }, 80)
+    return () => window.clearTimeout(handle)
+  }, [nodeCount, fitView])
+
+  const onNodeClick = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      setSelection(node.data as TopologyNodeData)
+    },
+    [],
+  )
+
+  const refreshing = agentsQuery.isFetching || versionQuery.isFetching
+
+  return (
+    <div className="animate-slide-up flex h-[calc(100vh-140px)] min-h-[560px] flex-col">
+      <PageHeader
+        title={t('pages.topology.fleet.title')}
+        description={t('pages.topology.fleet.description')}
+      />
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Badge tone="neutral">
+          {t('pages.topology.fleet.agentCount', { n: agents.length })}
+        </Badge>
+        <Badge tone="neutral">
+          {t('pages.topology.fleet.siteCount', { n: (sites ?? []).length })}
+        </Badge>
+        <div className="ml-auto flex items-center gap-2">
+          <Link to="/agents">
+            <Button size="sm" variant="ghost" icon={<ArrowSquareOut className="h-4 w-4" />}>
+              {t('pages.topology.fleet.openAgents')}
+            </Button>
+          </Link>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<ArrowClockwise className="h-4 w-4" />}
+            loading={refreshing}
+            onClick={() => {
+              void queryClient.invalidateQueries({ queryKey: ['topology', 'fleet'] })
+            }}
+          >
+            {t('common.refresh')}
+          </Button>
+        </div>
+      </div>
+
+      <Callout
+        tone="brand"
+        className="mb-3"
+        icon={<FlowArrow weight="duotone" className="h-5 w-5" />}
+        title={t('pages.topology.fleet.overviewTitle')}
+      >
+        {t('pages.topology.fleet.overview')}
+      </Callout>
+
+      <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-line bg-recessed/30">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={(changes: NodeChange<Node>[]) => onNodesChange(changes)}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={onNodeClick}
+          nodeTypes={topologyNodeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.15 }}
+          minZoom={0.2}
+          maxZoom={2.5}
+          nodesConnectable={false}
+          proOptions={{ hideAttribution: true }}
+          className="[&_.react-flow__node]:cursor-grab"
+        >
+          <Background variant={BackgroundVariant.Dots} gap={22} size={1} />
+          <Controls showInteractive={false} />
+          <MiniMap
+            pannable
+            zoomable
+            nodeColor={(node) => {
+              const kind = (node.data as { kind?: string })?.kind
+              switch (kind) {
+                case 'control':
+                  return '#f6821f'
+                case 'agent':
+                  return '#6e56cf'
+                case 'site':
+                  return '#f6821f'
+                default:
+                  return '#c8c8cc'
+              }
+            }}
+          />
+        </ReactFlow>
+
+        {selection && (
+          <FleetInfoPanel
+            node={selection}
+            onClose={() => setSelection(null)}
+          />
+        )}
+
+        <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 rounded-lg border border-line bg-elevated/95 px-3 py-1.5 text-[10px] text-fg-subtle">
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-[#f6821f]" />
+            {t('pages.topology.fleet.legendControl')}
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-[#6e56cf]" />
+            {t('pages.topology.fleet.legendAgent')}
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-[#f6821f]" />
+            {t('pages.topology.fleet.legendSite')}
+          </span>
+          <span className="flex items-center gap-1">
+            <Tag className="h-3 w-3" />
+            {t('pages.topology.legend.animated')}
+          </span>
+        </div>
+      </div>
+
+      <p className="mt-2 text-[11px] text-fg-subtle">
+        {t('pages.topology.fleet.hint')}
+      </p>
+    </div>
+  )
+}
+
+function FleetInfoPanel({
+  node,
+  onClose,
+}: {
+  node: TopologyNodeData
+  onClose: () => void
+}) {
+  const { t } = useTranslation()
+  const kindLabel =
+    node.kind === 'control'
+      ? t('pages.topology.fleet.controlPlane')
+      : node.kind === 'agent'
+        ? t('pages.topology.fleet.agent')
+        : t('pages.topology.kinds.site')
+
+  return (
+    <aside className="absolute right-3 top-3 z-50 flex max-h-[calc(100%-24px)] w-[340px] flex-col overflow-hidden rounded-xl border border-line bg-elevated shadow-xl">
+      <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+        <div className="min-w-0">
+          <p className="truncate text-[14px] font-semibold text-fg-strong">
+            {node.label}
+          </p>
+          <p className="truncate text-[11px] text-fg-subtle">{kindLabel}</p>
+        </div>
+        <Button
+          size="icon"
+          variant="ghost"
+          aria-label={t('common.close')}
+          onClick={onClose}
+          icon={<X className="h-4 w-4" />}
+        />
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        {node.subtitle && (
+          <p className="mb-2 text-[12px] text-fg">{node.subtitle}</p>
+        )}
+        <div className="mb-3 flex flex-wrap gap-1">
+          {(node.chips ?? []).map((chip, index) => (
+            <Badge key={`${chip.text}-${index}`} tone={chip.tone} size="sm">
+              {chip.text}
+            </Badge>
+          ))}
+        </div>
+        {node.kind === 'site' && node.entityId && (
+          <Link to={`/sites/${node.entityId}/topology`}>
+            <Button size="sm" icon={<FlowArrow className="h-4 w-4" />}>
+              {t('pages.topology.fleet.openSiteTopology')}
+            </Button>
+          </Link>
+        )}
+        {node.kind === 'agent' && (
+          <Link to="/agents">
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<ArrowSquareOut className="h-4 w-4" />}
+            >
+              {t('pages.topology.fleet.openAgents')}
+            </Button>
+          </Link>
+        )}
+      </div>
+    </aside>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Site view: the full request path for one site                       */
+/* ------------------------------------------------------------------ */
+
+function SiteTopology({ siteId }: { siteId: string }) {
+  const { t } = useTranslation()
   const canWrite = useCanWrite()
   const queryClient = useQueryClient()
   const { fitView } = useReactFlow()
 
-  const { data: sites } = useSitesList()
-  const [pickedSiteId, setPickedSiteId] = useState('')
-
-  // Derived, not stored: the route param wins, then the operator's pick, then
-  // the first site. No effect is needed to keep them in step.
-  const siteId = routeSiteId || pickedSiteId || sites?.[0]?.id || ''
-  const enabled = Boolean(siteId)
-
   const siteQuery = useQuery({
     queryKey: ['topology', siteId, 'site'],
     queryFn: () => sitesApi.get(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const wafQuery = useQuery({
     queryKey: ['topology', siteId, 'waf'],
     queryFn: () => wafSettingsApi.get(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const routesQuery = useQuery({
     queryKey: ['topology', siteId, 'routes'],
     queryFn: () => sitesApi.listRoutes(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const poolsQuery = useQuery({
     queryKey: ['topology', siteId, 'pools'],
     queryFn: () => sitesApi.listPools(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const upstreamsQuery = useQuery({
     queryKey: ['topology', siteId, 'upstreams'],
     queryFn: () => sitesApi.listUpstreams(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const rateLimitsQuery = useQuery({
     queryKey: ['topology', siteId, 'rate-limits'],
     queryFn: () => rateLimitApi.list(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const ipRulesQuery = useQuery({
     queryKey: ['topology', siteId, 'ip-rules'],
     queryFn: () => ipRulesApi.list(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const cacheQuery = useQuery({
     queryKey: ['topology', siteId, 'cache'],
     queryFn: () => cachingApi.listRules(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const basicAuthQuery = useQuery({
     queryKey: ['topology', siteId, 'basic-auth'],
     queryFn: () => siteBasicAuthApi.get(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const botQuery = useQuery({
     queryKey: ['topology', siteId, 'bot'],
     queryFn: () => botApi.get(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const geoQuery = useQuery({
     queryKey: ['topology', siteId, 'geo'],
     queryFn: () => geoApi.get(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const sslQuery = useQuery({
     queryKey: ['topology', siteId, 'ssl'],
     queryFn: () => sslApi.list(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const rewritesQuery = useQuery({
     queryKey: ['topology', siteId, 'rewrites'],
     queryFn: () => rewriteApi.list(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const rulesQuery = useQuery({
     queryKey: ['topology', siteId, 'rules'],
     queryFn: () => rulesApi.list(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
   const exclusionsQuery = useQuery({
     queryKey: ['topology', siteId, 'exclusions'],
     queryFn: () => exclusionsApi.bindings(siteId),
-    enabled,
+    enabled: Boolean(siteId),
   })
 
   const panelData: TopologyPanelData | null = useMemo(() => {
@@ -371,18 +633,12 @@ function TopologyWorkspace() {
     return buildTopologyGraph(input)
   }, [panelData, t])
 
-  // --- Canvas state -------------------------------------------------------
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [selection, setSelection] = useState<TopologySelection | null>(null)
 
-  // Apply the built graph, restoring the operator's saved arrangement.
-  // Adjusting during render (rather than in an effect) is the documented
-  // pattern and avoids the cascading render the lint rule warns about: when
-  // the memoized graph identity changes - a save, a refresh, a new site - the
-  // canvas state is reset to it; drags only touch the canvas state.
   const applied = useMemo(() => {
-    if (!graph || !siteId) return null
+    if (!graph) return null
     const saved = loadLayout(siteId)
     return {
       nodes: graph.nodes.map((node) =>
@@ -398,9 +654,6 @@ function TopologyWorkspace() {
     setEdges(applied?.edges ?? [])
   }
 
-  // Frame the graph whenever the node count changes (the graph arrives after
-  // the first render, so the `fitView` prop alone would frame an empty
-  // canvas). The tick lets ReactFlow measure the nodes first.
   const nodeCount = nodes.length
   useEffect(() => {
     if (nodeCount === 0) return
@@ -411,7 +664,6 @@ function TopologyWorkspace() {
   }, [nodeCount, fitView])
 
   const persistLayout = useCallback(() => {
-    if (!siteId) return
     const layout: Record<string, { x: number; y: number }> = {}
     for (const node of nodes) {
       layout[node.id] = { x: node.position.x, y: node.position.y }
@@ -424,12 +676,10 @@ function TopologyWorkspace() {
   }, [nodes, siteId])
 
   const autoLayout = useCallback(() => {
-    if (siteId) {
-      try {
-        localStorage.removeItem(layoutKey(siteId))
-      } catch {
-        /* ignore */
-      }
+    try {
+      localStorage.removeItem(layoutKey(siteId))
+    } catch {
+      /* ignore */
     }
     if (graph) {
       setNodes(graph.nodes as Node[])
@@ -475,22 +725,6 @@ function TopologyWorkspace() {
     routesQuery.isFetching ||
     poolsQuery.isFetching
 
-  if (!sites || sites.length === 0) {
-    return (
-      <div className="animate-slide-up">
-        <PageHeader
-          title={t('pages.topology.title')}
-          description={t('pages.topology.description')}
-        />
-        <EmptyState
-          icon={<FlowArrow weight="duotone" />}
-          title={t('pages.topology.noSitesTitle')}
-          description={t('pages.topology.noSites')}
-        />
-      </div>
-    )
-  }
-
   if (siteQuery.isError && !siteQuery.data) {
     return (
       <div className="animate-slide-up">
@@ -511,18 +745,7 @@ function TopologyWorkspace() {
       />
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        {!routeSiteId && (
-          <Select
-            containerClassName="w-64"
-            value={siteId}
-            onChange={(event) => setPickedSiteId(event.target.value)}
-            options={sites.map((site) => ({
-              value: site.id,
-              label: site.name || site.domain,
-            }))}
-          />
-        )}
-        {routeSiteId && siteQuery.data && (
+        {siteQuery.data && (
           <Badge tone="brand">
             {siteQuery.data.site.name || siteQuery.data.site.domain}
           </Badge>
@@ -534,6 +757,11 @@ function TopologyWorkspace() {
           {t('pages.topology.edgeCount', { n: edges.length })}
         </Badge>
         <div className="ml-auto flex items-center gap-2">
+          <Link to="/topology">
+            <Button size="sm" variant="ghost" icon={<FlowArrow className="h-4 w-4" />}>
+              {t('pages.topology.fleet.openFleet')}
+            </Button>
+          </Link>
           <Button
             size="sm"
             variant="ghost"
@@ -569,7 +797,7 @@ function TopologyWorkspace() {
 
       <div className="relative flex min-h-0 flex-1 gap-3">
         {canWrite && (
-          <aside className="w-[188px] shrink-0 rounded-xl border border-line bg-bg-elevated p-2.5">
+          <aside className="w-[188px] shrink-0 rounded-xl border border-line bg-elevated p-2.5">
             <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">
               {t('pages.topology.palette.title')}
             </p>
@@ -665,7 +893,7 @@ function TopologyWorkspace() {
             onChanged={invalidate}
           />
 
-          <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 rounded-lg border border-line bg-bg-elevated/95 px-3 py-1.5 text-[10px] text-fg-subtle">
+          <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 rounded-lg border border-line bg-elevated/95 px-3 py-1.5 text-[10px] text-fg-subtle">
             <span className="flex items-center gap-1">
               <span className="h-2 w-2 rounded-full bg-[#f6821f]" />
               {t('pages.topology.legend.site')}
@@ -692,10 +920,7 @@ function TopologyWorkspace() {
 
       <p className="mt-2 text-[11px] text-fg-subtle">
         {t('pages.topology.hint')}{' '}
-        <Link
-          to={`/sites/${siteId}/origin`}
-          className="font-medium text-link"
-        >
+        <Link to={`/sites/${siteId}/origin`} className="font-medium text-link">
           {t('pages.topology.openOrigin')}
         </Link>
       </p>

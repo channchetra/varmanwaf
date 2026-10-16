@@ -9,6 +9,10 @@
 
 ## Status board
 
+> **1.1.1 (2026-10-16):** field-review fixes on the topology round - the
+> global page is a fleet view (control plane, agents, every site in one
+> graph) and the in-place edit panel is fully opaque.
+>
 > **1.1.0 (2026-10-16):** the routing-topology round - a live flow view that
 > edits the site in place, all-layers policies, the config-history table fix,
 > and the documentation rebuild (architecture, modules, api, sizing, HA,

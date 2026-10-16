@@ -4,6 +4,7 @@ import {
   LAYER_GROUP_ID,
   PLACEHOLDER_POOL_ID,
   ROUTE_GROUP_ID,
+  buildFleetGraph,
   buildTopologyGraph,
   type TopologyInput,
 } from './graph'
@@ -166,5 +167,75 @@ describe('buildTopologyGraph', () => {
       graph.edges.some((e) => e.source === 'route-r9' && e.target === 'pool-p1'),
     ).toBe(true)
     expect(graph.nodes.map((n) => n.id)).toContain('pool-p1-empty')
+  })
+})
+
+describe('buildFleetGraph', () => {
+  it('shows the control plane, every agent and every site in one view', () => {
+    const graph = buildFleetGraph({
+      controlPlane: { version: '1.1.1', grpcTls: true, registrationOpen: false },
+      agents: [
+        {
+          id: 'a1',
+          hostname: 'edge-1',
+          ip_address: '10.0.0.10',
+          status: 'online',
+          connected: true,
+          site_id: 's1',
+          site_domain: 'example.com',
+          version: '1.1.1',
+        },
+        {
+          id: 'a2',
+          hostname: 'edge-2',
+          ip_address: '10.0.0.11',
+          status: 'offline',
+          connected: false,
+          site_id: null,
+          site_domain: null,
+          version: '1.1.0',
+        },
+      ],
+      sites: [
+        { id: 's1', name: 'Example', domain: 'example.com', status: 'active' },
+        { id: 's2', name: 'Other', domain: 'other.test', status: 'paused' },
+      ],
+    })
+
+    const ids = graph.nodes.map((n) => n.id)
+    expect(ids).toContain('control')
+    expect(ids).toContain('agent-a1')
+    expect(ids).toContain('agent-a2')
+    expect(ids).toContain('site-s1')
+    expect(ids).toContain('site-s2')
+
+    // Every agent links from the control plane; the bound agent links to its
+    // site, the unbound one does not. Every site links from the control plane
+    // (it pushes their bundles to the edge fleet).
+    expect(graph.edges.some((e) => e.source === 'control' && e.target === 'agent-a1')).toBe(true)
+    expect(graph.edges.some((e) => e.source === 'agent-a1' && e.target === 'site-s1')).toBe(true)
+    expect(graph.edges.some((e) => e.source === 'agent-a2')).toBe(false)
+    expect(graph.edges.some((e) => e.source === 'control' && e.target === 'site-s1')).toBe(true)
+    expect(graph.edges.some((e) => e.source === 'control' && e.target === 'site-s2')).toBe(true)
+
+    // All links animated; statuses honest.
+    expect(graph.edges.every((e) => e.animated === true)).toBe(true)
+    const a2 = graph.nodes.find((n) => n.id === 'agent-a2')
+    expect(a2?.data.chips?.[0]?.tone).toBe('danger')
+    const s2 = graph.nodes.find((n) => n.id === 'site-s2')
+    expect(s2?.data.chips?.some((c) => c.text === 'agent bound')).toBe(false)
+  })
+
+  it('renders explicit placeholders when the fleet is empty', () => {
+    const graph = buildFleetGraph({
+      controlPlane: { version: '1.1.1', grpcTls: true, registrationOpen: false },
+      agents: [],
+      sites: [],
+    })
+    const ids = graph.nodes.map((n) => n.id)
+    expect(ids).toContain('control')
+    expect(ids).toContain('agents-empty')
+    expect(ids).toContain('sites-empty')
+    expect(graph.edges.length).toBe(0)
   })
 })
