@@ -1492,6 +1492,7 @@
       "domain": "Domain",
       "issuer": "Issuer",
       "unknownIssuer": "Unknown issuer",
+      "pendingHint": "Waiting for the edge to finish the ACME order - open the Application log for the raw ACME log, and note that an order with no progress is marked failed after 30 minutes.",
       "expires": "Expires",
       "daysLeft": "{{days}} days left",
       "autoRenew": "Auto-renew",

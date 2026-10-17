@@ -524,6 +524,19 @@ export function SslPage() {
                             : t('pages.ssl.daysLeft', { days: currentDays })}
                         </Badge>
                       )}
+                      {/* An order that failed says why; one still pending says
+                          where to watch it. */}
+                      {currentCert.status === 'failed' &&
+                        currentCert.failure_reason && (
+                          <p className="w-full text-xs text-danger">
+                            {currentCert.failure_reason}
+                          </p>
+                        )}
+                      {currentCert.status === 'pending' && (
+                        <p className="w-full text-xs text-fg-subtle">
+                          {t('pages.ssl.pendingHint')}
+                        </p>
+                      )}
                     </>
                   ) : (
                     <span className="flex items-center gap-1.5 text-[13px] text-fg-subtle">

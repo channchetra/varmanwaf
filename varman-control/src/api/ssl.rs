@@ -29,7 +29,7 @@ use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::grpc::notify_config_changed;
 use crate::models::{
-    acme_challenge, certificate_events, site, site_certificates,
+    acme_challenge, certificate_events, site, site_certificates, site_ssl,
 };
 
 /// Certificate status values.
@@ -547,10 +547,63 @@ async fn delete_certificate(
     if let Err(err) = event.insert(&state.db).await {
         tracing::warn!(%err, "failed to write certificate event");
     }
+
+    // A posture that selected *this* certificate would otherwise keep pointing
+    // at a deleted row: the site would carry a certificate id that no longer
+    // exists (TLS serves nothing, and raw ACME lines attribute to a ghost).
+    // Clear the selection only when it pointed at the deleted row, and say so.
+    let selected = site_ssl::Entity::find()
+        .filter(site_ssl::Column::SiteId.eq(id))
+        .one(&state.db)
+        .await?;
+    if selected
+        .as_ref()
+        .and_then(|row| row.certificate_id)
+        .is_some_and(|selected_id| selected_id == target)
+    {
+        let posture = TlsPostureRequest {
+            certificate_id: Some(None),
+            ..Default::default()
+        };
+        match site_row(&state, id).await {
+            Ok(site) => {
+                if let Err(err) = save_tls_posture(&state.db, &site, &posture).await {
+                    tracing::warn!(%err, site_id = %id, "could not clear the deleted certificate selection");
+                } else {
+                    let cleared = certificate_events::ActiveModel {
+                        id: Set(Uuid::new_v4()),
+                        certificate_id: Set(None),
+                        site_id: Set(Some(id)),
+                        event_type: Set("posture_cleared".to_string()),
+                        message: Set(format!(
+                            "Certificate {target} was selected by this site; the selection was cleared"
+                        )),
+                        details: Set(None),
+                        created_at: Set(Utc::now()),
+                    };
+                    if let Err(err) = cleared.insert(&state.db).await {
+                        tracing::warn!(%err, "failed to write certificate event");
+                    }
+                }
+            },
+            Err(err) => {
+                tracing::warn!(%err, site_id = %id, "could not load the site to clear its certificate selection");
+            },
+        }
+    }
+
     touch_site(&state, id).await?;
     notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// Loads the site row for posture writes inside certificate handlers.
+async fn site_row(state: &AppState, id: Uuid) -> Result<site::Model, ApiError> {
+    site::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("site {id} not found")))
 }
 
 /// `POST /api/v1/sites/{site_id}/certificates/{cert_id}/renew`
@@ -788,7 +841,7 @@ async fn create_global_certificate(
     if activate {
         let posture = TlsPostureRequest {
             https_enabled: Some(true),
-            certificate_id: Some(model.id),
+            certificate_id: Some(Some(model.id)),
             ..Default::default()
         };
         save_tls_posture(&txn, &site, &posture).await?;

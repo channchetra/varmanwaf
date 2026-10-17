@@ -306,7 +306,18 @@ Conventions used below:
 - **How it works** — Per-site certificates: manual PEM upload, or ACME
   (Let's Encrypt) issuance/renewal with HTTP-01 or DNS-01; renewal status
   and expiry are shown. The global page lists every certificate in the
-  fleet with expiry warnings.
+  fleet with expiry warnings, an **Application log** tab (the raw
+  `pingap::acme` log shipped as certificate events) and **Renew now**.
+- **Runtime-created orders** — the edge's ACME task is always registered and
+  re-reads the live configuration each cycle, so a certificate created while
+  the process is running is picked up within the ACME cycle (~60 s). A row
+  that makes no progress is marked **failed after 30 minutes** by the control
+  plane, with the reason recorded (`failure_reason`) and an
+  `issuance_failed` event; both SSL surfaces render the reason under the
+  status, and pending rows point at the Application log.
+- **Diagnosing a stuck order** — status + `failure_reason` on the row, the
+  Application log for the raw ACME transcript, DNS (the domain must resolve
+  to the edge) and port 80 reachability for HTTP-01.
 
 ### 3.10 Traffic analytics
 

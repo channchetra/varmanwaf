@@ -118,6 +118,7 @@ docker run --rm -p 8080:8080 varmanwaf-website     # http://localhost:8080
 | Agent offline | Agents page, gRPC connectivity (:9090), registration state |
 | Engine disagreement | Run the site in `shadow` mode and read the comparison events |
 | Slow requests | `docs/profiling.md` (built-in profiling), analytics latency tiles |
+| ACME order stuck pending/failed | The SSL page shows the reason; the Application log tab has the raw ACME transcript; check DNS and port 80 for HTTP-01 |
 | Config history | `/config-history` - every bundle with diff and rollback |
 
 ## 8. Working agreements

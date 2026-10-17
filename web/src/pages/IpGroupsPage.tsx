@@ -374,16 +374,20 @@ function GroupDialog({ initial, sites, onClose, onSaved }: GroupDialogProps) {
     () => new Set(),
   )
 
-  // Load associated sites for edit mode
-  useQuery({
+  // Load associated sites for edit mode. The result seeds the selection once
+  // per group - adjusting during render (the React-documented pattern).
+  // Calling setState inside the query's `select` re-renders on every pass and
+  // loops forever: React error #301 ("Maximum update depth exceeded").
+  const sitesQuery = useQuery({
     queryKey: ipGroupKeys.sites(initial?.id ?? ''),
     queryFn: () => ipGroupsApi.listSites(initial!.id),
     enabled: isEdit && !isGlobal,
-    select: (data) => {
-      setSelectedSites(new Set(data.map((s) => s.id)))
-      return data
-    },
   })
+  const [seededFrom, setSeededFrom] = useState<string | null>(null)
+  if (sitesQuery.data && seededFrom !== (initial?.id ?? null)) {
+    setSeededFrom(initial?.id ?? null)
+    setSelectedSites(new Set(sitesQuery.data.map((s) => s.id)))
+  }
 
   const saveMutation = useMutation({
     mutationFn: async () => {

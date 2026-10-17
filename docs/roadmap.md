@@ -9,6 +9,12 @@
 
 ## Status board
 
+> **1.1.2 (2026-10-17):** production fixes - the IP-group edit crash, ACME
+> issuance for certificates created at runtime (the task is now always
+> registered), the raw ACME transcript reaching its certificate, and a
+> certificate selection that can be cleared (deleting a certificate clears a
+> dangling selection).
+>
 > **1.1.1 (2026-10-16):** field-review fixes on the topology round - the
 > global page is a fleet view (control plane, agents, every site in one
 > graph) and the in-place edit panel is fully opaque.

@@ -483,8 +483,10 @@ pub struct TlsPostureRequest {
     pub max_tls_version: Option<String>,
     #[serde(default)]
     pub self_signed: Option<bool>,
-    #[serde(default)]
-    pub certificate_id: Option<Uuid>,
+    /// `null` clears the selection; omitting the field leaves it alone. The
+    /// double option is what distinguishes the two.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub certificate_id: Option<Option<Uuid>>,
     #[serde(default)]
     pub mtls_enabled: Option<bool>,
     #[serde(default)]
@@ -499,6 +501,18 @@ pub struct TlsPostureRequest {
     pub hsts_max_age: Option<i32>,
     #[serde(default)]
     pub always_use_https: Option<bool>,
+}
+
+/// Wraps the deserialized value in `Some`, so `Option<Option<T>>` fields can
+/// tell "absent" (`None`) from "explicitly null" (`Some(None)`).
+fn deserialize_some<'de, T, D>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 /// Largest HSTS lifetime accepted, in seconds (two years).
@@ -568,8 +582,12 @@ impl TlsPosture {
         if let Some(value) = req.self_signed {
             next.self_signed = value;
         }
-        if let Some(value) = req.certificate_id {
-            next.certificate_id = Some(value);
+        match req.certificate_id {
+            Some(Some(value)) => next.certificate_id = Some(value),
+            // An explicit null clears the selection.
+            Some(None) => next.certificate_id = None,
+            // Absent: leave the current selection alone.
+            None => {},
         }
         if let Some(value) = req.mtls_enabled {
             next.mtls_enabled = value;
@@ -677,7 +695,7 @@ pub(crate) async fn save_tls_posture<C: ConnectionTrait>(
         .one(db)
         .await?;
 
-    if let Some(cert_id) = req.certificate_id {
+    if let Some(Some(cert_id)) = req.certificate_id {
         let owned = site_certificates::Entity::find_by_id(cert_id)
             .filter(site_certificates::Column::SiteId.eq(site.id))
             .one(db)
@@ -2211,6 +2229,54 @@ pub async fn touch_site(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The certificate selection distinguishes "absent" (leave the current
+    /// selection alone) from "explicitly null" (clear it): a plain
+    /// `Option<Uuid>` could not, so a site whose certificate was deleted kept
+    /// pointing at the dead row forever.
+    #[test]
+    fn certificate_selection_clears_on_null_but_survives_absence() {
+        let id = Uuid::new_v4();
+
+        let absent: TlsPostureRequest = serde_json::from_value(
+            serde_json::json!({ "https_enabled": true }),
+        )
+        .expect("absent field parses");
+        assert_eq!(absent.certificate_id, None);
+
+        let cleared: TlsPostureRequest =
+            serde_json::from_value(serde_json::json!({ "certificate_id": null }))
+                .expect("null parses");
+        assert_eq!(cleared.certificate_id, Some(None));
+
+        let selected: TlsPostureRequest =
+            serde_json::from_value(serde_json::json!({ "certificate_id": id }))
+                .expect("an id parses");
+        assert_eq!(selected.certificate_id, Some(Some(id)));
+
+        let mut posture = TlsPosture::unset();
+        posture.certificate_id = Some(id);
+        let after_clear = posture
+            .merged(&TlsPostureRequest {
+                certificate_id: Some(None),
+                ..Default::default()
+            })
+            .expect("clearing merges");
+        assert_eq!(after_clear.certificate_id, None);
+
+        let after_absent = posture
+            .merged(&TlsPostureRequest::default())
+            .expect("absence merges");
+        assert_eq!(after_absent.certificate_id, Some(id));
+
+        let after_select = posture
+            .merged(&TlsPostureRequest {
+                certificate_id: Some(Some(Uuid::new_v4())),
+                ..Default::default()
+            })
+            .expect("selecting merges");
+        assert!(after_select.certificate_id.is_some());
+    }
 
     #[test]
     fn proxy_ranges_normalize_to_canonical_cidr() {

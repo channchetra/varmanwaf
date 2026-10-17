@@ -322,9 +322,26 @@ export function GlobalSslPage() {
       header: t('common.status'),
       accessor: (r) => r.status,
       cell: (r) => (
-        <Badge tone={STATUS_TONE[r.status] ?? 'neutral'} dot size="sm">
-          {t(`pages.sslGlobal.status_${r.status}`, { defaultValue: r.status })}
-        </Badge>
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <Badge tone={STATUS_TONE[r.status] ?? 'neutral'} dot size="sm">
+            {t(`pages.sslGlobal.status_${r.status}`, { defaultValue: r.status })}
+          </Badge>
+          {/* Why an order failed is recorded by the control plane - show it
+              instead of leaving the operator with a bare "Failed"/"Pending". */}
+          {r.status === 'failed' && r.failure_reason && (
+            <span
+              className="max-w-[280px] truncate text-[11px] text-danger"
+              title={r.failure_reason}
+            >
+              {r.failure_reason}
+            </span>
+          )}
+          {r.status === 'pending' && (
+            <span className="text-[11px] text-fg-subtle">
+              {t('pages.ssl.pendingHint')}
+            </span>
+          )}
+        </div>
       ),
     },
     {

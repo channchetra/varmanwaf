@@ -1128,14 +1128,16 @@ pub async fn start_data_plane(
     let bootstrap_handle = my_server.bootstrap_as_a_service();
 
     // ACME (Let's Encrypt): issue and renew certificates for sites whose
-    // SSL config carries no uploaded PEM. The task shares the config manager
-    // with the proxy — the HTTP-01 challenge handler reads tokens from it,
-    // and a renewed PEM lands in both the config and the certificate
-    // provider below. PINGAP_DISABLE_ACME opts out entirely.
-    let acme_enabled = !config.certificates.is_empty()
-        && std::env::var("PINGAP_DISABLE_ACME")
-            .unwrap_or_default()
-            .is_empty();
+    // The ACME task must exist even when no certificate is configured at
+    // start-up: certificates are created at runtime (the console, the API)
+    // and the task re-reads the live config every cycle, so a task that was
+    // never registered leaves runtime-created orders unprocessed - the row
+    // sits `pending` and the stale sweeper eventually fails it with a
+    // generic reason. With no ACME certificates the task is a cheap no-op.
+    // PINGAP_DISABLE_ACME opts out entirely.
+    let acme_enabled = std::env::var("PINGAP_DISABLE_ACME")
+        .unwrap_or_default()
+        .is_empty();
     let mut background_tasks = BackgroundTaskService::new(
         "data_plane_background_tasks",
         Duration::from_secs(60),

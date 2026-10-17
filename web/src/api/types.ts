@@ -1209,6 +1209,9 @@ export interface SslCertificate {
   acme_dns_provider: string | null
   acme_dns_config: unknown | null
   status: CertificateStatus | string
+  /** Why an ACME order failed, when it did (the edge never reported, the
+   *  challenge did not validate, the CA was unreachable, …). */
+  failure_reason: string | null
   has_certificate: boolean
   has_private_key: boolean
   created_at: string

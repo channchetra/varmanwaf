@@ -100,6 +100,20 @@ impl<S: Subscriber> Layer<S> for AcmeCaptureLayer {
         if message.is_empty() {
             return;
         }
+        // Keep the event's fields on the line: ACME names the identifiers in
+        // fields (`domains="a.example.com,b.example.com"`), not in the
+        // message, and the ship-time attribution matches domains in the text.
+        // Dropping them left every raw line unattributable.
+        let mut line = message;
+        for (key, value) in visitor.fields {
+            if line.len() + key.len() + value.len() + 2 > MAX_ACME_LINE {
+                break;
+            }
+            line.push(' ');
+            line.push_str(&key);
+            line.push('=');
+            line.push_str(&value);
+        }
         cert_event_buffer().push(proto::CertEventEntry {
             agent_id: String::new(),
             site_id: String::new(),
@@ -107,7 +121,7 @@ impl<S: Subscriber> Layer<S> for AcmeCaptureLayer {
             event_type: "acme_raw".to_string(),
             level: event.metadata().level().as_str().to_string(),
             target: event.metadata().target().to_string(),
-            message,
+            message: line,
             timestamp: Some(Timestamp {
                 seconds: chrono::Utc::now().timestamp(),
                 nanos: 0,
@@ -115,6 +129,10 @@ impl<S: Subscriber> Layer<S> for AcmeCaptureLayer {
         });
     }
 }
+
+/// Longest raw ACME line kept (fields included); the buffer is bounded and a
+/// runaway line must not grow it.
+const MAX_ACME_LINE: usize = 2_048;
 
 /// One site's worth of attribution data: every hostname its certificate
 /// covers (apex, wildcard and alternates, lowercased) plus the ids events
@@ -199,12 +217,23 @@ pub fn attribute_events(
 #[derive(Default)]
 struct MessageVisitor {
     message: Option<String>,
+    /// Non-message fields, in visit order (`domains`, `name`, `error`, …).
+    fields: Vec<(String, String)>,
 }
+
+impl MessageVisitor {
+    fn record(&mut self, field: &Field, value: String) {
+        if field.name() == "message" {
+            self.message = Some(value);
+        } else {
+            self.fields.push((field.name().to_string(), value));
+        }
+    }
+}
+
 impl Visit for MessageVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
-        if field.name() == "message" {
-            self.message = Some(value.to_string());
-        }
+        self.record(field, value.to_string());
     }
 
     fn record_error(
@@ -212,15 +241,11 @@ impl Visit for MessageVisitor {
         field: &Field,
         value: &(dyn std::error::Error + 'static),
     ) {
-        if field.name() == "message" {
-            self.message = Some(value.to_string());
-        }
+        self.record(field, value.to_string());
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
-            self.message = Some(format!("{value:?}"));
-        }
+        self.record(field, format!("{value:?}"));
     }
 }
 
@@ -284,6 +309,40 @@ mod tests {
         assert_eq!(drained[0].target, "pingap::acme");
         assert_eq!(drained[1].level, "WARN");
         assert_eq!(drained[1].message, "challenge failed: dns timeout");
+    }
+
+    /// The ACME crate names the identifiers in a field, not the message;
+    /// dropping fields left every raw line unattributable (empty
+    /// certificate id -> the per-certificate log stayed empty).
+    #[test]
+    fn captured_lines_keep_fields_and_attribute_to_the_certificate() {
+        let _guard = test_lock();
+        cert_event_buffer().drain("");
+
+        use tracing_subscriber::prelude::*;
+        let subscriber = tracing_subscriber::registry().with(AcmeCaptureLayer);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(
+                target: "pingap::acme",
+                domains = "shop.example.com,www.example.com",
+                name = "shop",
+                "acme from let's encrypt"
+            );
+        });
+
+        let mut drained = cert_event_buffer().drain("agent-1");
+        assert_eq!(drained.len(), 1);
+        assert!(drained[0].message.contains("domains="));
+        assert!(drained[0].message.contains("shop.example.com"));
+
+        let attributions = vec![CertAttribution {
+            domains: vec!["shop.example.com".to_string()],
+            site_id: "site-shop".to_string(),
+            certificate_id: "cert-shop".to_string(),
+        }];
+        attribute_events(&mut drained, &attributions);
+        assert_eq!(drained[0].site_id, "site-shop");
+        assert_eq!(drained[0].certificate_id, "cert-shop");
     }
 
     fn entry(message: &str) -> proto::CertEventEntry {
