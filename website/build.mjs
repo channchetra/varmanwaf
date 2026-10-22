@@ -190,32 +190,33 @@ function pageShell({ title, description, body, toc = [], active = '' }) {
 <meta name="theme-color" content="#f5f8fd" media="(prefers-color-scheme: light)">
 <script>
   try {
-    var saved = localStorage.getItem('varman-theme')
-    if (saved === 'light' || saved === 'dark') {
-      document.documentElement.dataset.theme = saved
-    }
+    var pref = localStorage.getItem('varman-theme') || 'system';
+    var dark = pref === 'dark' || (pref === 'system' && !window.matchMedia('(prefers-color-scheme: light)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    document.documentElement.dataset.themePreference = pref;
+    document.documentElement.dataset.animations = localStorage.getItem('varman-animations') === 'off' ? 'off' : 'on';
   } catch (e) {}
 </script>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/site.css?v=20261023">
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
 ${navbar(active)}
-<main class="doc-main">
+<main class="doc-main" id="main">
   <div class="doc-wrap">
     <article class="doc-body">${body}</article>
     ${tocHtml}
   </div>
 </main>
 ${footer()}
-<script src="/assets/site.js" defer></script>
+<script src="/assets/site.js?v=20261023" defer></script>
 <script type="module">
   import mermaid from '/assets/mermaid.min.js'
-  const root = document.documentElement
-  const light = root.dataset.theme
-    ? root.dataset.theme === 'light'
-    : window.matchMedia('(prefers-color-scheme: light)').matches
-  mermaid.initialize({ startOnLoad: true, theme: light ? 'default' : 'dark' })
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: document.documentElement.dataset.theme === 'light' ? 'default' : 'dark',
+  })
 </script>
 </body>
 </html>`
@@ -223,75 +224,104 @@ ${footer()}
 
 function navbar(active = '') {
   const link = (href, label, id) =>
-    `<a href="${href}"${active === id ? ' class="active"' : ''}>${label}</a>`
-  return `<header class="nav">
-  <div class="nav-inner">
-    <a class="brand" href="/">
-      <span class="brand-mark">វ</span>
-      <span class="brand-name">VarmanWAF</span>
+    `<a href="${href}"${active === id ? ' aria-current="page"' : ''}>${label}</a>`
+  return `<header class="site-header" id="site-header">
+  <div class="container nav-wrap">
+    <a class="wordmark" href="/" aria-label="VarmanWAF home">
+      <span class="brand-mark" aria-hidden="true"><svg width="14" height="16" viewBox="0 0 24 28" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2 22 6v8c0 6-4.4 10.4-10 12-5.6-1.6-10-6-10-12V6Z"/><path d="m8 14 3 3 5-6"/></svg></span>
+      <span class="brand-wordmark">VarmanWAF</span>
     </a>
-    <nav class="nav-links">
+    <nav class="desktop-nav" aria-label="Main navigation">
       ${link('/#features', 'Features')}
-      ${link('/#architecture', 'Architecture')}
-      ${link('/#performance', 'Performance')}
+      ${link('/#how-it-works', 'How it works')}
+      ${link('/#deploy', 'Deploy')}
       ${link('/docs/', 'Docs', 'docs')}
-      ${link('/khmer/index.html', 'ខ្មែរ')}
-      ${link('/releases/', 'Releases')}
     </nav>
     <div class="nav-actions">
-      <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle color theme" title="Toggle color theme">
-        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
-        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <div class="theme-control">
+        <button type="button" class="theme-trigger" id="theme-trigger" aria-expanded="false" aria-controls="appearance-panel" aria-label="Color theme: System">
+          <svg class="theme-icon icon-theme-system" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          <svg class="theme-icon icon-theme-light" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <svg class="theme-icon icon-theme-dark" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+          <span id="theme-label">System</span>
+          <svg class="theme-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="theme-panel" id="appearance-panel" role="dialog" aria-labelledby="appearance-title" aria-describedby="appearance-description" hidden>
+          <h2 id="appearance-title">Appearance</h2>
+          <p id="appearance-description">Your space, your style.</p>
+          <div class="theme-options" role="radiogroup" aria-label="Color theme">
+            <button type="button" role="radio" class="theme-option" data-theme-option="light" aria-checked="false" tabindex="-1">
+              <span class="theme-preview theme-preview-light" aria-hidden="true"><span class="theme-preview-window"><i></i><i></i><i></i></span><span class="theme-preview-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2"/></svg></span></span>
+              <span>Light</span>
+              <span class="theme-selected" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            </button>
+            <button type="button" role="radio" class="theme-option" data-theme-option="dark" aria-checked="false" tabindex="-1">
+              <span class="theme-preview theme-preview-dark" aria-hidden="true"><span class="theme-preview-window"><i></i><i></i><i></i></span><span class="theme-preview-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></span></span>
+              <span>Dark</span>
+              <span class="theme-selected" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            </button>
+            <button type="button" role="radio" class="theme-option" data-theme-option="system" aria-checked="true" tabindex="0">
+              <span class="theme-preview theme-preview-system" aria-hidden="true"><span class="theme-preview-window"><i></i><i></i><i></i></span><span class="theme-preview-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span></span>
+              <span>System</span>
+              <span class="theme-selected" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            </button>
+          </div>
+          <div class="theme-hint"><span class="status-dot" aria-hidden="true"></span><span>System matches your device's appearance.</span></div>
+        </div>
+      </div>
+      <span class="animation-control">
+        <button type="button" class="animation-toggle" id="animation-toggle" aria-label="Disable mouse effects" aria-pressed="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="7"/><path d="M12 6v4"/></svg>
+        </button>
+        <span class="animation-tooltip" id="animation-tooltip">Disable mouse effects</span>
+      </span>
+      <a class="github-nav" href="https://github.com/channchetra/varmanwaf" target="_blank" rel="noreferrer" aria-label="VarmanWAF on GitHub">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .9a11.1 11.1 0 0 0-3.51 21.63c.55.1.76-.24.76-.54v-2.08c-3.09.67-3.74-1.31-3.74-1.31-.5-1.29-1.23-1.63-1.23-1.63-1.01-.7.08-.68.08-.68 1.11.08 1.69 1.14 1.69 1.14.99 1.7 2.6 1.21 3.23.93.1-.72.39-1.21.71-1.49-2.47-.28-5.07-1.24-5.07-5.49 0-1.21.43-2.2 1.14-2.98-.11-.28-.5-1.41.11-2.94 0 0 .93-.3 3.05 1.14a10.6 10.6 0 0 1 5.55 0c2.12-1.44 3.05-1.14 3.05-1.14.61 1.53.22 2.66.11 2.94.71.78 1.14 1.77 1.14 2.98 0 4.26-2.6 5.21-5.08 5.48.4.35.75 1.02.75 2.06v3.07c0 .3.2.65.76.54A11.1 11.1 0 0 0 12 .9Z"/></svg>
+        <span>GitHub</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
+      </a>
+      <button type="button" class="icon-button menu-toggle" id="menu-toggle" aria-label="Open navigation" aria-expanded="false" aria-controls="mobile-nav">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
       </button>
-      <a class="btn btn-ghost" href="https://github.com/channchetra/varmanwaf" rel="noopener">GitHub</a>
-      <a class="btn btn-primary" href="/#quick-start">Quick start</a>
     </div>
   </div>
+  <nav class="mobile-nav" id="mobile-nav" aria-label="Mobile navigation" hidden>
+    <a href="/#features">Features</a>
+    <a href="/#how-it-works">How it works</a>
+    <a href="/#deploy">Deploy</a>
+    <a href="/docs/">Docs</a>
+  </nav>
 </header>`
 }
 
 function footer() {
-  return `<footer class="footer">
-  <div class="footer-inner">
-    <div class="footer-brand">
-      <span class="brand-mark">វ</span>
-      <div>
-        <p class="footer-name">VarmanWAF</p>
-        <p class="footer-note">Self-hosted, distributed Web Application Firewall. Apache-2.0.</p>
-      </div>
+  return `<footer class="site-footer container">
+  <div class="footer-main">
+    <div>
+      <a class="wordmark" href="/" aria-label="VarmanWAF home"><span class="brand-mark" aria-hidden="true"><svg width="14" height="16" viewBox="0 0 24 28" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2 22 6v8c0 6-4.4 10.4-10 12-5.6-1.6-10-6-10-12V6Z"/><path d="m8 14 3 3 5-6"/></svg></span><span class="brand-wordmark">VarmanWAF</span></a>
+      <p>A distributed WAF you run yourself.</p>
     </div>
-    <div class="footer-cols">
-      <div>
-        <p class="footer-col-title">Product</p>
-        <a href="/#features">Features</a>
-        <a href="/#architecture">Architecture</a>
-        <a href="/#performance">Performance</a>
-        <a href="/#quick-start">Quick start</a>
-      </div>
-      <div>
-        <p class="footer-col-title">Documentation</p>
-        <a href="/docs/">All documents</a>
-        <a href="/docs/features.html">Feature inventory</a>
-        <a href="/docs/security-engine.html">Security engine</a>
-        <a href="/khmer/index.html">ណែនាំអ្នកប្រើប្រាស់ (ខ្មែរ)</a>
-      </div>
-      <div>
-        <p class="footer-col-title">Operations</p>
-        <a href="/docs/ha.html">High availability</a>
-        <a href="/docs/sizing.html">Sizing &amp; capacity</a>
-        <a href="/docs/benchmarks-v1.0.0.html">Benchmark report</a>
-        <a href="/releases/">Release notes</a>
-      </div>
-      <div>
-        <p class="footer-col-title">Project</p>
-        <a href="https://github.com/channchetra/varmanwaf" rel="noopener">GitHub</a>
-        <a href="https://hub.docker.com/r/sovichetra/varmanwaf" rel="noopener">Docker Hub</a>
-        <a href="/docs/developer-guide.html">Developer guide</a>
-        <a href="/docs/roadmap.html">Roadmap</a>
-      </div>
+    <div class="footer-links">
+      <a href="/docs/">Documentation</a>
+      <a href="/releases/">Releases</a>
+      <a href="/docs/features.html">Features</a>
+      <a href="/khmer/index.html">ខ្មែរ</a>
+      <a href="https://github.com/channchetra/varmanwaf" target="_blank" rel="noreferrer">GitHub</a>
     </div>
   </div>
-  <p class="footer-legal">VarmanWAF is built on PingWAF / Pingap / Pingora. Geo and ASN data from ipverse.</p>
+  <div class="footer-bottom">
+    <span>© 2026 VarmanWAF. Apache-2.0.</span>
+    <span><svg class="tiny-shield" width="11" height="12" viewBox="0 0 24 28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 22 6v8c0 6-4.4 10.4-10 12-5.6-1.6-10-6-10-12V6Z"/></svg> Built in the open.</span>
+  </div>
+  <a class="studio-signature" href="https://github.com/channchetra/varmanwaf" target="_blank" rel="noreferrer">
+    <svg class="oxog-mark" viewBox="0 0 105 60" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 8v44l18-26Z"></path><path d="M98 8v44L80 26Z"></path><path d="M35 30h35"></path><path d="M52 16v28"></path></svg>
+    <div class="studio-copy">
+      <span class="studio-eyebrow">OPEN SOURCE, BUILT IN THE OPEN</span>
+      <h2>Small team.<br><span>Sharp tools.</span></h2>
+      <p>VarmanWAF ships with every release verified end to end.</p>
+    </div>
+    <span class="studio-link">Star on GitHub <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg></span>
+  </a>
 </footer>`
 }
 

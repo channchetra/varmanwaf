@@ -67,10 +67,51 @@ The public site follows the same visual language as GuardianWAF's site, with
 VarmanWAF's own content: navy `#0b1220` and light `#f5f8fd` backgrounds, a
 single blue accent (`#88c2ff` dark / `#2165c5` light), Space Grotesk for UI
 text, JetBrains Mono for code and labels, a 1728px layout grid with
-`clamp(20px, 3.5vw, 72px)` gutters, hairline borders and small radii. Dark is
-the default; light follows the system preference and can be pinned with the
-nav toggle (stored in `localStorage` as `varman-theme`). The landing page and
-the generated docs pages share `src/assets/site.css`, so both stay in step.
+`clamp(20px, 3.5vw, 72px)` gutters, hairline borders and small radii.
+
+## What the landing reproduces
+
+The landing was rebuilt after a runtime teardown of guardianwaf.com (DOM
+structure, computed styles, CSS keyframes, `document.getAnimations()` and the
+interactive widgets). The structure is mirrored section for section, with our
+own copy and artwork:
+
+- sticky header with a three-state theme panel (Light / Dark / System, with
+  previews), a mouse-effects toggle, GitHub and a mobile menu;
+- hero with a staggered entrance, a coded shield SVG, SMIL traffic packets,
+  a floating shield, a blinking orbit spark, labels and a scroll nudge;
+- four-stat strip; six feature cards with the SQL token visual, fingerprint
+  rings, routing graph, animated bar chart, integration tags and the wide
+  open-source card;
+- the interactive request inspector: four example requests, six pipeline
+  stages (checkpoint animation with per-stage delays), attack/challenge states
+  and a live verdict + score;
+- deployment tabs (Docker Compose / control plane + edges / binary) with a
+  code window, copy button and changing note;
+- observability split with a dashboard mock: metric strip, SVG chart drawn
+  with `stroke-dashoffset`, and a security-event list;
+- native `<details>` FAQ with rotating plus signs, final CTA with an inline
+  install command and corner marks, footer with a signature card.
+
+### Motion and preferences
+
+- 11 CSS keyframes: `theme-panel-enter`, `shield-float`, `nudge`, `spark`,
+  `blink`, `scan`, `checkpoint`, `bar-grow`, `chart-draw`, `hero-entrance`
+  (the studio logo draw was not carried over).
+- A fixed, pointer-events-none SVG overlay (`site-interactions`) draws a
+  cursor ring/core, a fading 18-point trail, proximity "lift" glyphs, relay
+  links, click pulses and wave halos. It is built in `site.js` at runtime.
+- Dark is the default; the theme is stored under `varman-theme`
+  (`light` / `dark` / `system`) and resolved before paint. The mouse-effects
+  preference is stored under `varman-animations` (`on` / `off`); off also
+  disables CSS animation and transition globally.
+- The overlay and page animations are disabled for
+  `prefers-reduced-motion: reduce`, coarse pointers, and viewports below
+  800px. `chart-draw` is pinned to its final state when motion is off.
+
+The runtime is intentionally framework-free: state changes touch only the
+affected DOM (pipeline classes and result, deploy tab content, theme/animations
+attributes), so there is no client-side router or hydration step.
 
 ## Notes
 
