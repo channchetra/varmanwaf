@@ -63,6 +63,15 @@ pub struct AgentConfig {
     /// 0 disables metric shipping
     #[serde(default = "default_metrics_ship_interval")]
     pub metrics_ship_interval_secs: u64,
+    /// Name the control plane's gRPC certificate is expected to carry.
+    ///
+    /// All-in-one injects the active control-plane certificate as the trust
+    /// anchor. That certificate may be an ACME **IP** certificate (its only
+    /// SAN is the management IP), while the agent connects over loopback -
+    /// without this the hostname check fails and the agent can never connect.
+    /// `None` keeps tonic's default (the URL's host).
+    #[serde(default)]
+    pub server_tls_name: Option<String>,
 }
 
 fn default_heartbeat_interval() -> u64 {
@@ -118,6 +127,7 @@ impl Default for AgentConfig {
             probe_interval_secs: default_probe_interval(),
             probe_disk_path: default_probe_disk_path(),
             metrics_ship_interval_secs: default_metrics_ship_interval(),
+            server_tls_name: None,
         }
     }
 }

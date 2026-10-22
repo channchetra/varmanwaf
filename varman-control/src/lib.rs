@@ -604,9 +604,77 @@ pub async fn bootstrap_and_seed_api_key(
 /// certificate is used, generating (and persisting) a self-signed pair on
 /// first boot — `start_server` later picks the same row up. Returns `None`
 /// when the gRPC listener runs without TLS.
+/// The trust anchor and expected certificate name for an embedded agent.
+pub struct EmbeddedAgentTls {
+    /// PEM the agent pins as its only trust anchor (the gRPC listener's
+    /// certificate, chain included).
+    pub ca_pem: String,
+    /// Name the certificate covers.
+    ///
+    /// All-in-one agents dial loopback, while the active certificate may be an
+    /// ACME **IP** certificate whose only SAN is the management IP; without
+    /// this name the hostname check fails and the agent can never connect.
+    /// `None` keeps tonic's default (the URL host).
+    pub tls_name: Option<String>,
+}
+
+/// The name a loopback client should verify against a certificate with these
+/// SANs: a loopback name when the certificate carries one (the generated
+/// self-signed default), otherwise its first SAN (an ACME IP certificate).
+fn preferred_tls_name(sans: &[String]) -> Option<String> {
+    for candidate in ["localhost", "127.0.0.1", "::1"] {
+        if sans.iter().any(|san| san.eq_ignore_ascii_case(candidate)) {
+            return Some(candidate.to_string());
+        }
+    }
+    sans.first().cloned()
+}
+
+/// Splits a PEM bundle into its first certificate (the leaf) and the rest
+/// (the issuer chain, when the CA returned one).
+fn split_leaf_and_chain(pem: &str) -> (String, String) {
+    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+    const END: &str = "-----END CERTIFICATE-----";
+    let mut blocks: Vec<String> = Vec::new();
+    let mut rest = pem;
+    while let Some(start) = rest.find(BEGIN) {
+        let Some(end) = rest[start..].find(END) else {
+            break;
+        };
+        let block = &rest[start..start + end + END.len()];
+        blocks.push(block.to_string());
+        rest = &rest[start + end + END.len()..];
+    }
+    match blocks.len() {
+        0 => (String::new(), String::new()),
+        1 => (blocks.remove(0), String::new()),
+        _ => {
+            let leaf = blocks.remove(0);
+            let mut chain = blocks.join("\n");
+            chain.push('\n');
+            (leaf, chain)
+        },
+    }
+}
+
+/// The trust anchor for a loopback client.
+///
+/// A generated self-signed certificate is its own root, so the leaf is the
+/// anchor. An ACME certificate is a **leaf** followed by the issuer chain;
+/// a leaf is not a CA and webpki rejects it as a trust anchor, so the chain
+/// (everything after the leaf) is pinned instead.
+fn trust_anchor_pem(cert_pem: &str) -> String {
+    let (leaf, chain) = split_leaf_and_chain(cert_pem);
+    if chain.trim().is_empty() {
+        leaf
+    } else {
+        chain
+    }
+}
+
 pub async fn embedded_agent_ca_pem(
     config: &ServerConfig,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<Option<EmbeddedAgentTls>> {
     if !config.grpc_tls_enabled() {
         return Ok(None);
     }
@@ -616,7 +684,12 @@ pub async fn embedded_agent_ca_pem(
                 "failed to read gRPC TLS certificate {cert_path}: {err}"
             )
         })?;
-        return Ok(Some(pem));
+        // Explicit files keep tonic's default name check (the URL host):
+        // deployments that run their own gRPC certificate know its names.
+        return Ok(Some(EmbeddedAgentTls {
+            ca_pem: pem,
+            tls_name: None,
+        }));
     }
 
     let mut opts = ConnectOptions::new(config.db_url.as_str());
@@ -637,7 +710,22 @@ pub async fn embedded_agent_ca_pem(
         .one(&db)
         .await?
     {
-        Some(row) => Ok(Some(row.cert_pem)),
+        Some(row) => {
+            let sans: Vec<String> = row
+                .sans
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(Some(EmbeddedAgentTls {
+                tls_name: preferred_tls_name(&sans),
+                ca_pem: trust_anchor_pem(&row.cert_pem),
+            }))
+        },
         None => {
             let sans = config.effective_tls_sans();
             let material = crate::pki::tls::generate_self_signed(
@@ -672,8 +760,95 @@ pub async fn embedded_agent_ca_pem(
                 "generated the first self-signed control plane certificate \
                  (all-in-one bootstrap)"
             );
-            Ok(Some(material.cert_pem))
+            Ok(Some(EmbeddedAgentTls {
+                tls_name: preferred_tls_name(&sans),
+                ca_pem: material.cert_pem,
+            }))
         },
+    }
+}
+
+#[cfg(test)]
+mod embedded_agent_tls_tests {
+    use super::{preferred_tls_name, split_leaf_and_chain, trust_anchor_pem};
+
+    fn sans(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| item.to_string()).collect()
+    }
+
+    fn cert(label: &str) -> String {
+        format!("-----BEGIN CERTIFICATE-----\n{label}\n-----END CERTIFICATE-----\n")
+    }
+
+    #[test]
+    fn loopback_names_win_when_the_certificate_carries_them() {
+        // The generated self-signed certificate covers loopback, so the agent
+        // keeps verifying `localhost` and no configuration is needed.
+        assert_eq!(
+            preferred_tls_name(&sans(&["localhost", "127.0.0.1"])),
+            Some("localhost".to_string())
+        );
+        assert_eq!(
+            preferred_tls_name(&sans(&["127.0.0.1", "varman"])),
+            Some("127.0.0.1".to_string())
+        );
+    }
+
+    #[test]
+    fn an_ip_certificate_verifies_against_its_ip_san() {
+        // An ACME IP certificate only carries the management IP; the agent
+        // must verify that name instead of the loopback URL host.
+        assert_eq!(
+            preferred_tls_name(&sans(&["103.189.187.19"])),
+            Some("103.189.187.19".to_string())
+        );
+        assert_eq!(
+            preferred_tls_name(&sans(&["waf.example.com", "www.example.com"])),
+            Some("waf.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn no_sans_keeps_the_url_host() {
+        assert_eq!(preferred_tls_name(&[]), None);
+    }
+
+    #[test]
+    fn a_chain_pins_the_issuer_not_the_leaf() {
+        // An ACME certificate is a leaf followed by its issuer chain. A leaf
+        // is not a CA, so webpki rejects it as a trust anchor; the issuer
+        // chain must be pinned instead.
+        let bundle = format!(
+            "{}{}{}",
+            cert("LEAF"),
+            cert("ISSUER"),
+            cert("ROOT")
+        );
+        let (leaf, chain) = split_leaf_and_chain(&bundle);
+        assert!(leaf.contains("LEAF"));
+        assert!(chain.contains("ISSUER"));
+        assert!(chain.contains("ROOT"));
+        assert!(!chain.contains("LEAF"));
+        let anchor = trust_anchor_pem(&bundle);
+        assert!(anchor.contains("ISSUER"));
+        assert!(!anchor.contains("LEAF"));
+    }
+
+    #[test]
+    fn a_single_certificate_is_its_own_anchor() {
+        // The generated self-signed certificate is its own root.
+        let single = cert("SELF");
+        let (leaf, chain) = split_leaf_and_chain(&single);
+        assert!(leaf.contains("SELF"));
+        assert!(chain.is_empty());
+        assert_eq!(trust_anchor_pem(&single), leaf);
+    }
+
+    #[test]
+    fn garbage_or_empty_pem_never_yields_an_anchor() {
+        assert_eq!(split_leaf_and_chain("").0, "");
+        assert_eq!(split_leaf_and_chain("not a pem").1, "");
+        assert_eq!(trust_anchor_pem("not a pem"), "");
     }
 }
 

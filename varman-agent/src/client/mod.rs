@@ -229,6 +229,7 @@ impl ControlPlaneClient {
             &self.config.server_url,
             &self.config.server_ca_cert,
             &self.config.server_ca_pem,
+            &self.config.server_tls_name,
         )?;
 
         let channel = endpoint.connect().await?;
@@ -367,7 +368,7 @@ impl ControlPlaneClient {
                 },
                 Err(e) => {
                     warn!(
-                        error = %e,
+                        error = ?e,
                         delay_ms = retry_delay.as_millis() as u64,
                         "Connection to control plane failed"
                     );
@@ -1171,11 +1172,20 @@ fn apply_client_tls(
     server_url: &str,
     ca_cert_path: &Option<String>,
     ca_cert_pem: &Option<String>,
+    tls_name: &Option<String>,
 ) -> anyhow::Result<Endpoint> {
     if !server_url.starts_with("https://") {
         return Ok(endpoint);
     }
     let mut tls = ClientTlsConfig::new();
+    // The pinned certificate is the control plane's own: when it is an ACME
+    // IP certificate its only SAN is the management IP, so the loopback URL
+    // would fail hostname verification unless the expected name is supplied.
+    if let Some(name) = tls_name.as_deref().map(str::trim) {
+        if !name.is_empty() {
+            tls = tls.domain_name(name.to_string());
+        }
+    }
     if let Some(pem) = ca_cert_pem {
         tls = tls.ca_certificate(Certificate::from_pem(pem));
     } else if let Some(path) = ca_cert_path {
@@ -1354,7 +1364,8 @@ mod tests {
             endpoint,
             "http://localhost:9090",
             &None,
-            &None
+            &None,
+            &None,
         )
         .is_ok());
     }
@@ -1367,7 +1378,8 @@ mod tests {
             endpoint,
             "https://waf.example.com:9090",
             &None,
-            &None
+            &None,
+            &None,
         )
         .is_ok());
     }
@@ -1380,6 +1392,7 @@ mod tests {
             endpoint,
             "https://waf.example.com:9090",
             &Some("/nonexistent/ca.pem".to_string()),
+            &None,
             &None,
         )
         .expect_err("a missing CA file must fail before connecting");
@@ -1398,6 +1411,7 @@ mod tests {
             "https://127.0.0.1:9090",
             &Some("/nonexistent/ca.pem".to_string()),
             &Some("not a pem".to_string()),
+            &None,
         )
         .is_ok());
     }

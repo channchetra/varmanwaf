@@ -9,6 +9,10 @@
 
 ## Status board
 
+> **1.1.6 (2026-10-22):** fix - the embedded agent verifies the gRPC
+> listener against the name the active certificate actually covers, so an ACME
+> IP dashboard certificate no longer takes the agent offline.
+>
 > **1.1.5 (2026-10-22):** fix - the control-plane protection policy now
 > rebuilds when the referenced IP group is enabled or edited, not only when
 > the settings row changes; the reported stale-allowlist case is pinned by a

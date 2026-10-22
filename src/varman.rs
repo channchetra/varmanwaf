@@ -119,6 +119,7 @@ fn agent_config_from_opts(opts: &AgentOpts) -> AgentConfig {
         agent_id: String::new(),
         server_ca_cert: opts.server_ca_cert.clone(),
         server_ca_pem: None,
+        server_tls_name: None,
         heartbeat_interval_secs: opts.heartbeat_interval_secs,
         cache_dir: opts.cache_dir.clone(),
         log_batch_size: opts.log_batch_size,
@@ -163,6 +164,7 @@ fn agent_config_from_all_in_one(opts: &AllInOneOpts) -> AgentConfig {
         agent_id: String::new(),
         server_ca_cert,
         server_ca_pem: None,
+        server_tls_name: None,
         heartbeat_interval_secs: opts.heartbeat_interval_secs,
         cache_dir: opts.cache_dir.clone(),
         log_batch_size: opts.log_batch_size,
@@ -1509,8 +1511,16 @@ pub async fn run(mode: RunMode) -> anyhow::Result<()> {
             // default, so the embedded agent needs the console certificate
             // (or the explicitly configured one) as its trust anchor.
             match varman_control::embedded_agent_ca_pem(&server_config).await {
-                Ok(Some(pem)) => {
-                    agent_config.server_ca_pem = Some(pem);
+                Ok(Some(tls)) => {
+                    agent_config.server_ca_pem = Some(tls.ca_pem);
+                    // The gRPC listener serves the active certificate, which
+                    // may be an ACME IP certificate; tell the loopback client
+                    // which name that certificate actually covers.
+                    agent_config.server_tls_name = tls.tls_name;
+                    info!(
+                        tls_name = ?agent_config.server_tls_name,
+                        "embedded agent gRPC certificate name"
+                    );
                 },
                 Ok(None) => {},
                 Err(e) => {
