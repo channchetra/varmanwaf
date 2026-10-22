@@ -161,7 +161,7 @@ async fn show(
 ) -> Result<Json<ApiProtectionView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
     let settings = self_protection::load_settings(&state.db).await?;
-    let allowlist =
+    let (allowlist, _) =
         self_protection::effective_allowlist(&state.db, &settings).await?;
     let entries = effective_entries(&settings, &allowlist);
     Ok(Json(ApiProtectionView {
@@ -260,7 +260,7 @@ async fn update(
     // Lockout guard: enabling the allowlist (or narrowing it) must not cut off
     // the very connection editing it, unless the operator insists.
     if prospective.ip_allowlist_enabled && !payload.force {
-        let allowlist =
+        let (allowlist, _) =
             self_protection::effective_allowlist(&state.db, &prospective)
                 .await?;
         let caller_ip = peer.map(|Extension(info)| info.0.peer_addr.ip());
@@ -313,7 +313,7 @@ async fn update(
         "api protection settings updated"
     );
 
-    let allowlist =
+    let (allowlist, _) =
         self_protection::effective_allowlist(&state.db, &updated).await?;
     let entries = effective_entries(&updated, &allowlist);
     Ok(Json(ApiProtectionView {

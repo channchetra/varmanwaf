@@ -744,7 +744,7 @@ async fn get_defense_status(ctx: &ToolContext<'_>) -> Result<Value, String> {
     let settings = self_protection::load_settings(&ctx.state.db)
         .await
         .map_err(db_error)?;
-    let allowlist =
+    let (allowlist, _) =
         self_protection::effective_allowlist(&ctx.state.db, &settings)
             .await
             .map_err(db_error)?;

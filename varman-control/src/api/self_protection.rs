@@ -172,6 +172,10 @@ pub struct ProtectionPolicy {
     pub waf_blocking: bool,
     /// `updated_at` of the settings row this policy was built from.
     pub settings_updated_at: DateTime<Utc>,
+    /// `updated_at` of the referenced `ip_groups` row, if any. Editing or
+    /// enabling the group must rebuild the policy even when the settings row
+    /// itself did not change.
+    pub group_updated_at: Option<DateTime<Utc>>,
 }
 
 impl Default for ProtectionPolicy {
@@ -185,6 +189,7 @@ impl Default for ProtectionPolicy {
             waf: None,
             waf_blocking: false,
             settings_updated_at: DateTime::<Utc>::MIN_UTC,
+            group_updated_at: None,
         }
     }
 }
@@ -306,18 +311,31 @@ pub async fn load_settings(
 pub async fn effective_allowlist(
     db: &DatabaseConnection,
     settings: &api_protection_setting::Model,
-) -> Result<Allowlist, DbErr> {
+) -> Result<(Allowlist, Option<DateTime<Utc>>), DbErr> {
     let mut ranges = settings.ip_allowlist_ranges.clone();
+    let mut group_updated_at = None;
     if let Some(group_id) = settings.ip_allowlist_group_id {
-        let group = ip_groups::Entity::find_by_id(group_id)
-            .filter(ip_groups::Column::Enabled.eq(true))
-            .one(db)
-            .await?;
+        let group = ip_groups::Entity::find_by_id(group_id).one(db).await?;
         match group {
-            Some(group) => ranges.extend(group.ip_ranges),
+            Some(group) => {
+                // Track the row even while it is disabled: enabling or
+                // editing the group later must rebuild the policy. Before
+                // this timestamp was compared, the policy only rebuilt when
+                // the *settings* row changed, so a group enabled after the
+                // save kept being ignored until the next save or restart.
+                group_updated_at = Some(group.updated_at);
+                if group.enabled {
+                    ranges.extend(group.ip_ranges);
+                } else {
+                    tracing::warn!(
+                        group_id = %group_id,
+                        "API allowlist references a disabled ip group; only the inline ranges apply"
+                    );
+                }
+            },
             None => tracing::warn!(
                 group_id = %group_id,
-                "API allowlist references a missing or disabled ip group; only the inline ranges apply"
+                "API allowlist references a missing ip group; only the inline ranges apply"
             ),
         }
     }
@@ -328,7 +346,7 @@ pub async fn effective_allowlist(
             "ignoring invalid API allowlist entries"
         );
     }
-    Ok(allowlist)
+    Ok((allowlist, group_updated_at))
 }
 
 /// Builds the enforcement policy from the current settings row.
@@ -336,7 +354,8 @@ pub async fn refresh(
     db: &DatabaseConnection,
 ) -> Result<ProtectionPolicy, DbErr> {
     let settings = load_settings(db).await?;
-    let allowlist = effective_allowlist(db, &settings).await?;
+    let (allowlist, group_updated_at) =
+        effective_allowlist(db, &settings).await?;
     let (denylist, invalid_deny) =
         Allowlist::parse(&settings.ip_denylist_ranges);
     if !invalid_deny.is_empty() {
@@ -381,7 +400,19 @@ pub async fn refresh(
         waf,
         waf_blocking,
         settings_updated_at: settings.updated_at,
+        group_updated_at,
     })
+}
+
+/// Whether a freshly built policy differs from the one in force.
+///
+/// Both inputs matter: the settings row *and* the referenced IP group. The
+/// group is edited on its own page (and enabled by its own switch), so
+/// comparing only the settings timestamp left a group enabled after the save
+/// out of the enforced policy until something else touched the settings.
+fn inputs_changed(current: &ProtectionPolicy, fresh: &ProtectionPolicy) -> bool {
+    fresh.settings_updated_at != current.settings_updated_at
+        || fresh.group_updated_at != current.group_updated_at
 }
 
 /// Background task: re-read the settings every [`REFRESH_INTERVAL`] and swap
@@ -393,11 +424,11 @@ pub fn start_refresh_task(state: AppState) -> tokio::task::JoinHandle<()> {
             match refresh(&state.db).await {
                 Ok(policy) => {
                     let current = state.protection.policy();
-                    if policy.settings_updated_at != current.settings_updated_at
-                    {
+                    if inputs_changed(&current, &policy) {
                         tracing::info!(
                             allowlist_enabled = policy.allowlist_enabled,
                             allowlist_entries = policy.allowlist.len(),
+                            group_updated_at = ?policy.group_updated_at,
                             waf_enabled = policy.waf.is_some(),
                             "control plane protection settings reloaded"
                         );
@@ -942,5 +973,62 @@ mod tests {
         let p = policy(true, false, &["192.0.2.0/24"], &[]);
         assert_eq!(ip_gate(&p, &ip("192.0.2.5")), IpGate::Allow);
         assert_eq!(ip_gate(&p, &ip("203.0.113.7")), IpGate::NotAllowlisted);
+    }
+
+    #[test]
+    fn an_ipv4_cidr_covers_addresses_inside_it() {
+        // The exact shape an ipverse country group carries: a /22 that must
+        // cover a client address (this was reported from a live deployment
+        // where the range was present but the policy was stale).
+        let (allowlist, invalid) =
+            Allowlist::parse(["116.197.152.0/22", "103.16.60.21"]);
+        assert!(invalid.is_empty());
+        assert!(allowlist.contains(&ip("116.197.152.21")));
+        assert!(allowlist.contains(&ip("116.197.155.255")));
+        assert!(!allowlist.contains(&ip("116.197.156.1")));
+        assert!(allowlist.contains(&ip("103.16.60.21")));
+        assert!(!allowlist.contains(&ip("103.16.60.22")));
+    }
+
+    #[test]
+    fn a_referenced_group_edit_rebuilds_the_policy() {
+        let base = Utc::now();
+        let current = ProtectionPolicy {
+            settings_updated_at: base,
+            group_updated_at: Some(base),
+            ..Default::default()
+        };
+
+        // Unchanged inputs: no rebuild.
+        let same = ProtectionPolicy {
+            settings_updated_at: base,
+            group_updated_at: Some(base),
+            ..Default::default()
+        };
+        assert!(!inputs_changed(&current, &same));
+
+        // The group was enabled/edited after the settings save: rebuild.
+        let group_edited = ProtectionPolicy {
+            settings_updated_at: base,
+            group_updated_at: Some(base + chrono::Duration::seconds(1)),
+            ..Default::default()
+        };
+        assert!(inputs_changed(&current, &group_edited));
+
+        // A group appearing or disappearing also rebuilds.
+        let group_cleared = ProtectionPolicy {
+            settings_updated_at: base,
+            group_updated_at: None,
+            ..Default::default()
+        };
+        assert!(inputs_changed(&current, &group_cleared));
+
+        // A settings save still rebuilds.
+        let settings_saved = ProtectionPolicy {
+            settings_updated_at: base + chrono::Duration::seconds(1),
+            group_updated_at: Some(base),
+            ..Default::default()
+        };
+        assert!(inputs_changed(&current, &settings_saved));
     }
 }

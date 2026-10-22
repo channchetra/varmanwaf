@@ -9,6 +9,11 @@
 
 ## Status board
 
+> **1.1.5 (2026-10-22):** fix - the control-plane protection policy now
+> rebuilds when the referenced IP group is enabled or edited, not only when
+> the settings row changes; the reported stale-allowlist case is pinned by a
+> CIDR-membership test.
+>
 > **1.1.4 (2026-10-22):** the management-certificate round - the dashboard can
 > auto-issue and auto-renew a Let's Encrypt certificate for its own domain or
 > management IP (RFC 8738 IP identifiers under the `shortlived` profile), with

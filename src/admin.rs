@@ -320,7 +320,7 @@ async fn security_command(command: SecurityCommand) -> anyhow::Result<()> {
 
 async fn security_status(db: &DatabaseConnection) -> anyhow::Result<()> {
     let settings = self_protection::load_settings(db).await?;
-    let allowlist = effective_allowlist(db, &settings).await?;
+    let (allowlist, _) = effective_allowlist(db, &settings).await?;
 
     println!("control plane (9080) protection");
     println!(
@@ -386,7 +386,7 @@ async fn set_allowlist(opts: AllowlistOpts) -> anyhow::Result<()> {
     let enabled = opts.state == OnOff::On;
 
     let settings = self_protection::load_settings(&db).await?;
-    let allowlist = effective_allowlist(&db, &settings).await?;
+    let (allowlist, _) = effective_allowlist(&db, &settings).await?;
     if enabled && allowlist.is_empty() && !opts.force {
         bail!(
             "the allowlist is empty; enabling it would refuse every API \

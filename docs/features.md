@@ -494,7 +494,10 @@ Conventions used below:
     optional IP group); the denylist refuses specific addresses even when the
     allowlist accepts them, and a denial always wins. Both are checked on the
     TCP peer, health probes stay exempt, and a write that would cut off the
-    calling connection is refused unless forced.
+    calling connection is refused unless forced. The policy follows edits to
+    the referenced group too - the group's `updated_at` is part of the change
+    detection, so enabling or editing it takes effect within the 15-second
+    refresh (a disabled group contributes nothing).
   - **AI assistant / MCP** — assistant provider and the MCP server toggle.
   - **Elasticsearch** — optional log shipping.
   - **Log retention** — how long events and access logs are kept.
