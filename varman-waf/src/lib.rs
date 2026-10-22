@@ -26,6 +26,7 @@ pub mod processor;
 pub mod rules;
 pub mod score;
 pub mod seclang;
+pub mod virtual_patches;
 
 pub use engine::{
     PathTargetExclusion, RequestData, WafEngine, WafEngineConfig, WafMode,
@@ -35,6 +36,7 @@ pub use rules::managed::{
 };
 pub use rules::{AttackCategory, CompiledRule, RuleAction};
 pub use score::{AnomalyScorer, ScoreBreakdown, ScoreClass};
+pub use virtual_patches::{templates as virtual_patch_templates, VirtualPatchTemplate};
 
 use serde::{Deserialize, Serialize};
 

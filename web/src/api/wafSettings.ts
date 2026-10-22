@@ -1,8 +1,12 @@
 import { apiClient } from './client'
-import type { UpdateWafSettingsRequest, WafSettings } from './types'
+import type {
+  UpdateWafSettingsRequest,
+  VirtualPatchTemplate,
+  WafSettings,
+} from './types'
 
 /**
- * Site-level WAF grading settings — `/api/v1/sites/{siteId}/waf/settings`.
+ * Site-level WAF grading settings - `/api/v1/sites/{siteId}/waf/settings`.
  *
  * One per-site record holding the advanced (strict + body inspection) mode
  * switch and the attack-category / backend-stack monitor lists. `GET` creates
@@ -14,6 +18,10 @@ export const wafSettingsApi = {
 
   update: (siteId: string, data: UpdateWafSettingsRequest) =>
     apiClient.put<WafSettings>(`/sites/${siteId}/waf/settings`, data),
+
+  /** Built-in virtual patches (SecLang sources) the console can insert. */
+  virtualPatchTemplates: () =>
+    apiClient.get<VirtualPatchTemplate[]>('/virtual-patch-templates'),
 }
 
 /** Sensible defaults matching the server-side `find_or_create` row. */
@@ -40,6 +48,7 @@ export const wafSettingsKeys = {
   all: (siteId: string) => ['sites', siteId, 'waf-settings'] as const,
   settings: (siteId: string) =>
     ['sites', siteId, 'waf-settings', 'settings'] as const,
+  templates: () => ['virtual-patch-templates'] as const,
 }
 
 export default wafSettingsApi

@@ -41,6 +41,13 @@ impl VirtualPatches {
             .map_err(|error| error.to_string())
     }
 
+    /// Whether any compiled rule targets a collection only the request body
+    /// can fill. The plugin captures bodies for such sites even when
+    /// generic body inspection is off.
+    pub fn needs_body(&self) -> bool {
+        self.rules.needs_body()
+    }
+
     /// Evaluate against one canonical request. Returns `(blocking rule ids,
     /// matched rule count)` when any disruptive rule matched.
     fn evaluate(
@@ -840,10 +847,16 @@ impl CustomLayers {
     }
 
     /// Whether any configured layer needs the request body (an OpenAPI spec
-    /// with JSON request-body schemas): the plugin captures bodies for such
-    /// sites even when generic body inspection is off.
+    /// with JSON request-body schemas, or virtual-patch rules that target
+    /// body collections): the plugin captures bodies for such sites even
+    /// when generic body inspection is off. Without the virtual-patch half,
+    /// a body-based patch such as the PHP2Shell template would silently
+    /// never match on a site without advanced mode.
     pub fn wants_body(&self) -> bool {
-        self.openapi.as_ref().is_some_and(|spec| spec.wants_body())
+        self.patches
+            .as_ref()
+            .is_some_and(|patches| patches.needs_body())
+            || self.openapi.as_ref().is_some_and(|spec| spec.wants_body())
     }
 
     /// Evaluate both layers against one canonical request, returning a

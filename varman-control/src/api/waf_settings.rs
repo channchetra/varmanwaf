@@ -75,6 +75,37 @@ pub struct ManagedRuleEntry {
     pub strict_only: bool,
 }
 
+/// Dashboard-facing metadata for one built-in virtual-patch template.
+#[derive(serde::Serialize)]
+pub struct VirtualPatchTemplateEntry {
+    pub id: String,
+    pub name: String,
+    pub summary: String,
+    pub cve: Vec<String>,
+    pub source: String,
+}
+
+/// `GET /api/v1/virtual-patch-templates` - built-in SecLang virtual patches.
+///
+/// The console offers these as one-click inserts into a site's (or a
+/// policy's) `virtual_patches` field. They are defence in depth for a
+/// specific vulnerability - the template text states that the origin update
+/// remains the complete fix.
+async fn list_virtual_patch_templates() -> Json<Vec<VirtualPatchTemplateEntry>> {
+    Json(
+        varman_waf::virtual_patch_templates()
+            .iter()
+            .map(|template| VirtualPatchTemplateEntry {
+                id: template.id.to_string(),
+                name: template.name.to_string(),
+                summary: template.summary.to_string(),
+                cve: template.cve.iter().map(|cve| cve.to_string()).collect(),
+                source: template.source.to_string(),
+            })
+            .collect(),
+    )
+}
+
 /// Routes contributed to `/api/v1`.
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -84,6 +115,10 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/sites/{site_id}/waf/posture", get(get_waf_posture))
         .route("/managed-rules", get(list_managed_rules))
+        .route(
+            "/virtual-patch-templates",
+            get(list_virtual_patch_templates),
+        )
 }
 
 /// `GET /api/v1/managed-rules` — catalogue of the built-in managed rules.
@@ -593,6 +628,30 @@ mod tests {
             assert!(
                 varman_waf::StackSet::parse_name(name).is_some(),
                 "{name} not parseable by StackSet"
+            );
+        }
+    }
+
+    #[test]
+    fn every_virtual_patch_template_is_installable() {
+        // A template the console offers must pass the same validation the
+        // settings endpoint applies, or the one-click insert would be
+        // rejected on save.
+        let templates = varman_waf::virtual_patch_templates();
+        assert!(!templates.is_empty());
+        let mut ids = std::collections::BTreeSet::new();
+        for template in templates {
+            assert!(ids.insert(template.id), "duplicate id {}", template.id);
+            assert!(!template.cve.is_empty(), "{} has no CVE", template.id);
+            assert!(
+                !template.summary.trim().is_empty(),
+                "{} has no summary",
+                template.id
+            );
+            validate_virtual_patches(template.source).unwrap_or_else(
+                |error| {
+                    panic!("template {} rejected: {error}", template.id)
+                },
             );
         }
     }

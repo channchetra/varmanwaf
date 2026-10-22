@@ -540,6 +540,21 @@ http.request.uri.path eq "/secret-admin"</code></pre>
 </figure>
 <p>រាល់ការផ្លាស់ប្តូរត្រូវបានចុះកំណែ។ អ្នកអាចមើលកំណែចាស់ និង <b>ត្រឡប់ក្រោយ</b> ទៅកំណែណាមួយបានយ៉ាងងាយ។</p>
 
+<h3>៥.៤.៨ Virtual patches — ការបិទភ្ជាប់រន្ធសុវត្ថិភាព (CVE)</h3>
+<p><b>Virtual patch</b> គឺជាច្បាប់ <b>SecLang</b> ខ្លីៗ ដែលបិទរន្ធសុវត្ថិភាពជាក់លាក់នៅ Edge ខណៈពេលដែលប្រព័ន្ធដើម (Origin) មិនទាន់អាប់ដេត។ វាជាស្រទាប់សង្គ្រោះបន្ទាន់ — មិនជំនួសការអាប់ដេតទេ។</p>
+<ol class="steps">
+  <li>ចូលគេហទំព័រ → <b>Web Protection</b> → <b>Custom layers</b>។</li>
+  <li>នៅក្រោម <b>Built-in virtual patch</b> ជ្រើសគំរូដែលចង់បាន (ឧ. <b>PHP2Shell — CVE-2026-109618 / CVE-2026-109619</b>)។ ប្រព័ន្ធនឹងបញ្ចូលកូដ SecLang ទៅក្នុងប្រអប់ខាងក្រោម។</li>
+  <li>ចុច <b>Save</b>។ ច្បាប់នឹងត្រូវបានផ្ទៀងផ្ទាត់ និងអនុវត្តនៅ Edge ភ្លាមៗ។</li>
+  <li>ពិនិត្យ <b>Logs → Security events</b> ដើម្បីមើលការបិទ (rule id ចាប់ផ្តើមដោយ <code>2026</code>)។</li>
+</ol>
+<div class="note"><b>ចំណាំសំខាន់ៗ</b>
+<ul>
+  <li>ច្បាប់ដែលអាន <b>តួសំណើ (body)</b> — <code>REQUEST_BODY</code>, <code>ARGS</code>, <code>FILES</code>, <code>MULTIPART_PART_HEADERS</code> — ធ្វើឱ្យ Edge ចាប់យក body ដោយស្វ័យប្រវត្តិ (មិនត្រូវការ Advanced mode)។</li>
+  <li>គំរូ <b>PHP2Shell</b> មានពីរប្រភេទ៖ សម្រាប់គេហទំព័រដែលមាន Upload និងប្រភេទ <b>no-uploads</b> (បិទ multipart ទាំងស្រុង) សម្រាប់គេហទំព័រដែលមិនទទួលឯកសារ។</li>
+  <li><b>ការអាប់ដេត PHP ជាដំណោះស្រាយពេញលេញតែមួយគត់</b> (PHP 8.2.35 / 8.3.36 / 8.4.27 / 8.5.12 ឬខ្ពស់ជាង)។ Virtual patch គ្រាន់តែកាត់បន្ថយផ្ទៃការវាយប្រហារ។</li>
+</ul></div>
+
 <h2 id="s5-5">៥.៥ Rate limiting — ដែនកំណត់អត្រា</h2>
 <figure>
   <img src="images/15-site-rate-limiting.png" alt="Rate limiting">

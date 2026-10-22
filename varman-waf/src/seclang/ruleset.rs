@@ -805,6 +805,42 @@ impl SecRuleSet {
         self.groups.len()
     }
 
+    /// Whether any rule targets a collection that only the request body can
+    /// fill (`REQUEST_BODY`, `ARGS`, `ARGS_POST*`, `FILES*`,
+    /// `MULTIPART_PART_HEADERS`, `REQUEST_BODY_LENGTH`, `XML`). The data
+    /// plane uses this to decide whether a site with virtual patches needs
+    /// request bodies captured even when generic body inspection is off -
+    /// without it, a body-based patch would silently never match.
+    pub fn needs_body(&self) -> bool {
+        const BODY_VARIABLES: &[&str] = &[
+            "REQUEST_BODY",
+            "REQUEST_BODY_LENGTH",
+            "ARGS",
+            "ARGS_NAMES",
+            "ARGS_POST",
+            "ARGS_POST_NAMES",
+            "FILES",
+            "FILES_NAMES",
+            "FILES_SIZES",
+            "FILES_COMBINED_SIZE",
+            "MULTIPART_PART_HEADERS",
+            "XML",
+        ];
+        self.groups.iter().any(|group| {
+            group.rules.iter().any(|rule| {
+                rule.line.variables.iter().any(|variable| {
+                    let base = variable
+                        .trim_start_matches('&')
+                        .split(':')
+                        .next()
+                        .unwrap_or(variable)
+                        .to_ascii_uppercase();
+                    BODY_VARIABLES.contains(&base.as_str())
+                })
+            })
+        })
+    }
+
     /// Evaluate every group in order, honouring `skip:N` and
     /// `skipAfter:NAME` control flow; `setvar` effects are visible to later
     /// groups through `TX`.
@@ -1748,5 +1784,49 @@ mod tests {
         // Parser sanity: the rule id is visible through the group accessor.
         let parsed = parse_line("SecRule ARGS \"@rx x\" \"id:1\"");
         assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn needs_body_reports_body_targeting_rules() {
+        let compile = |source: &str| {
+            SecRuleSet::from_source(source).expect("compiles")
+        };
+
+        // Header-only rules never ask for the body.
+        assert!(!compile("SecRule REQUEST_URI \"@contains /x\" \"id:1\"")
+            .needs_body());
+        assert!(!compile(
+            "SecRule REQUEST_HEADERS:Content-Type \"@rx ^multipart\" \"id:2\""
+        )
+        .needs_body());
+        assert!(!compile("SecRule ARGS_GET:x \"@streq 1\" \"id:3\"")
+            .needs_body());
+
+        // Anything a body feeds does.
+        for source in [
+            "SecRule REQUEST_BODY \"@contains evil\" \"id:10\"",
+            "SecRule REQUEST_BODY_LENGTH \"@gt 1024\" \"id:11\"",
+            "SecRule ARGS \"@detectSQLi\" \"id:12\"",
+            "SecRule ARGS_NAMES \"@streq a\" \"id:13\"",
+            "SecRule ARGS_POST:x \"@streq 1\" \"id:14\"",
+            "SecRule ARGS_POST_NAMES \"@streq a\" \"id:15\"",
+            "SecRule FILES \"@rx \\.php$\" \"id:16\"",
+            "SecRule FILES_NAMES \"@streq a\" \"id:17\"",
+            "SecRule FILES_SIZES:x \"@gt 1\" \"id:18\"",
+            "SecRule FILES_COMBINED_SIZE \"@gt 1\" \"id:19\"",
+            "SecRule &MULTIPART_PART_HEADERS \"@gt 100\" \"id:20\"",
+            "SecRule XML:/* \"@contains x\" \"id:21\"",
+        ] {
+            assert!(compile(source).needs_body(), "{source}");
+        }
+
+        // A body-targeting rule in any chain member counts.
+        assert!(
+            compile(
+                "SecRule REQUEST_URI \"@contains /u\" \"id:30,chain\"\n\
+                 SecRule REQUEST_BODY \"@contains x\" \"id:31\""
+            )
+            .needs_body()
+        );
     }
 }

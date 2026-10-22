@@ -348,6 +348,30 @@ Conventions used below:
   access-logged; WAF-answered requests are. Retention is configurable
   (Settings → Log retention); Elasticsearch shipping is optional.
 
+### 3.13 Virtual patches (CVE response)
+
+- **Where** — site *Web Protection → Custom layers*, or a policy's
+  `virtual_patches` layer.
+- **API** — `waf_settings.rs` (settings + `GET /virtual-patch-templates`).
+- **How it works** — A per-site SecLang source (OWASP CRS dialect) evaluated
+  by the native engine after the built-in pipeline; `block`/`deny` rules
+  block, everything else records. The control plane validates the source on
+  save, so a broken patch never reaches the edge. **Body-reading patches
+  capture bodies automatically**: a rule targeting `REQUEST_BODY`, `ARGS`,
+  `ARGS_POST*`, `FILES*`, `MULTIPART_PART_HEADERS`, `REQUEST_BODY_LENGTH` or
+  `XML` makes the plugin capture the body for that site even when advanced
+  mode is off (before this, such a rule silently never matched).
+- **Built-in templates** — the engine ships curated sources for known
+  criticals; the console inserts one with a click. Currently: `PHP2Shell —
+  CVE-2026-109618 / CVE-2026-109619` (targeted: upload-progress abuse,
+  multipart part-header / file-control / field-name floods, multipart
+  without a declared content length) and a **no-uploads** variant that
+  refuses every multipart request. Rule ids `2026109617`–`2026109622`.
+- **Limits** — see `docs/virtual-patches.md`: the edge evaluates requests
+  only (no response correlation), body inspection is bounded (64 KiB plus a
+  staged tail scan), and a virtual patch never replaces updating the
+  vulnerable runtime.
+
 ---
 
 ## 4. Global surfaces

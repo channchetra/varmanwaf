@@ -9,6 +9,11 @@
 
 ## Status board
 
+> **1.1.3 (2026-10-22):** the CVE-response round - built-in virtual-patch
+> templates with two PHP2Shell patches (CVE-2026-109618 / CVE-2026-109619),
+> a template picker in the site's custom-layers panel, and body-reading
+> virtual patches now capture request bodies automatically.
+>
 > **1.1.2 (2026-10-17):** production fixes - the IP-group edit crash, ACME
 > issuance for certificates created at runtime (the task is now always
 > registered), the raw ACME transcript reaching its certificate, and a

@@ -474,6 +474,18 @@ export interface UpdateWafSettingsRequest {
   monitor_stacks?: string[]
 }
 
+/** `api::waf_settings::VirtualPatchTemplateEntry` - a built-in SecLang
+ *  virtual patch the console can insert into a site's (or a policy's)
+ *  `virtual_patches` field. The source states its own limits: the origin
+ *  update remains the complete fix. */
+export interface VirtualPatchTemplate {
+  id: string
+  name: string
+  summary: string
+  cve: string[]
+  source: string
+}
+
 /* ── Rate limiting ────────────────────────────────────────────────── */
 
 /** `models::rules::characteristic` */

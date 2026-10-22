@@ -41,6 +41,14 @@ export function ProtectionSettingsPanel() {
   const [patchesDraft, setPatchesDraft] = useState<string | null>(null)
   const [openapiDraft, setOpenapiDraft] = useState<string | null>(null)
 
+  // Built-in virtual-patch templates (php2shell and friends): a static list,
+  // fetched once, inserted into the draft on demand.
+  const templatesQuery = useQuery({
+    queryKey: wafSettingsKeys.templates(),
+    queryFn: () => wafSettingsApi.virtualPatchTemplates(),
+    staleTime: Infinity,
+  })
+
   const settingsQuery = useQuery({
     queryKey: wafSettingsKeys.settings(siteId),
     queryFn: () => wafSettingsApi.get(siteId),
@@ -244,6 +252,41 @@ export function ProtectionSettingsPanel() {
               <Wrench weight="duotone" className="h-3.5 w-3.5" />
               {t('pages.protection.virtualPatches')}
             </h3>
+            {/* Built-in templates (php2shell ...): picking one appends its
+                SecLang source to the draft; Save publishes it. */}
+            <Select
+              value=""
+              disabled={
+                !canWrite ||
+                busy ||
+                (templatesQuery.data ?? []).length === 0
+              }
+              containerClassName="max-w-md"
+              hint={t('pages.protection.virtualPatchTemplateHint')}
+              options={[
+                {
+                  value: '',
+                  label: t(
+                    'pages.protection.virtualPatchTemplatePlaceholder',
+                  ),
+                },
+                ...(templatesQuery.data ?? []).map((template) => ({
+                  value: template.id,
+                  label: template.name,
+                })),
+              ]}
+              aria-label={t('pages.protection.virtualPatchTemplate')}
+              onChange={(event) => {
+                const template = (templatesQuery.data ?? []).find(
+                  (item) => item.id === event.target.value,
+                )
+                if (!template) return
+                const current = patchesValue.trim()
+                setPatchesDraft(
+                  current ? `${current}\n${template.source}` : template.source,
+                )
+              }}
+            />
             <Textarea
               mono
               rows={5}
