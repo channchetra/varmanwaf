@@ -212,6 +212,7 @@ function ReportsWorkspace() {
       />
 
       <Callout
+        dismissKey="reports"
         className="mb-4"
         tone="brand"
         icon={<FileText weight="duotone" className="h-5 w-5" />}

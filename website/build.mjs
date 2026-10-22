@@ -180,12 +180,22 @@ function pageShell({ title, description, body, toc = [], active = '' }) {
       </aside>`
       : ''
   return `<!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title} · VarmanWAF</title>
 <meta name="description" content="${description}">
+<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f8fd" media="(prefers-color-scheme: light)">
+<script>
+  try {
+    var saved = localStorage.getItem('varman-theme')
+    if (saved === 'light' || saved === 'dark') {
+      document.documentElement.dataset.theme = saved
+    }
+  } catch (e) {}
+</script>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/site.css">
 </head>
@@ -201,7 +211,11 @@ ${footer()}
 <script src="/assets/site.js" defer></script>
 <script type="module">
   import mermaid from '/assets/mermaid.min.js'
-  mermaid.initialize({ startOnLoad: true, theme: 'dark' })
+  const root = document.documentElement
+  const light = root.dataset.theme
+    ? root.dataset.theme === 'light'
+    : window.matchMedia('(prefers-color-scheme: light)').matches
+  mermaid.initialize({ startOnLoad: true, theme: light ? 'default' : 'dark' })
 </script>
 </body>
 </html>`
@@ -225,6 +239,10 @@ function navbar(active = '') {
       ${link('/releases/', 'Releases')}
     </nav>
     <div class="nav-actions">
+      <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle color theme" title="Toggle color theme">
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      </button>
       <a class="btn btn-ghost" href="https://github.com/channchetra/varmanwaf" rel="noopener">GitHub</a>
       <a class="btn btn-primary" href="/#quick-start">Quick start</a>
     </div>

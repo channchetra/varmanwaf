@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  ArrowSquareOut,
   Plus,
   Globe,
   MagnifyingGlass,
@@ -251,14 +252,19 @@ export function SitesListPage() {
             <Globe weight="duotone" className="h-4 w-4" />
           </span>
           <div className="min-w-0">
-            <p className="pw-mono truncate font-medium text-fg-strong">
+            <button
+              type="button"
+              className="pw-mono block max-w-full truncate text-left font-medium text-fg-strong hover:text-brand hover:underline"
+              title={r.domain}
+              onClick={() => navigate(`/sites/${r.id}/overview`)}
+            >
               {r.domain}
               {(r.alternate_domains?.length ?? 0) > 0 && (
                 <span className="ml-1.5 text-xs font-normal text-fg-subtle">
                   +{r.alternate_domains.length}
                 </span>
               )}
-            </p>
+            </button>
             <p className="truncate text-xs text-fg-subtle">{r.name}</p>
           </div>
         </div>
@@ -322,6 +328,14 @@ export function SitesListPage() {
           <Button
             size="icon"
             variant="ghost"
+            aria-label={t('pages.sites.open')}
+            title={t('pages.sites.open')}
+            onClick={() => navigate(`/sites/${r.id}/overview`)}
+            icon={<ArrowSquareOut weight="duotone" className="h-4 w-4" />}
+          />
+          <Button
+            size="icon"
+            variant="ghost"
             aria-label={
               r.status === 'active' ? t('pages.sites.deactivate') : t('pages.sites.activate')
             }
@@ -377,6 +391,7 @@ export function SitesListPage() {
       />
 
       <Callout
+        dismissKey="siteslist"
         className="mb-4"
         tone="brand"
         icon={<Globe weight="duotone" className="h-5 w-5" />}
@@ -451,7 +466,7 @@ export function SitesListPage() {
                 data={sites}
                 rowKey={(r) => r.id}
                 pageSize={20}
-                onRowClick={(r) => navigate(`/sites/${r.id}/origin`)}
+                onRowClick={(r) => navigate(`/sites/${r.id}/overview`)}
               />
             )}
           </CardBody>

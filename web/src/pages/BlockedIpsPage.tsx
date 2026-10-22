@@ -239,6 +239,7 @@ export function BlockedIpsPage() {
       />
 
       <Callout
+        dismissKey="blockedips"
         className="mb-4"
         tone="brand"
         icon={<Prohibit weight="duotone" className="h-5 w-5" />}

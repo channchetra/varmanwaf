@@ -78,10 +78,22 @@ Conventions used below:
 - **Where** — `/sites`.
 - **API** — `sites.rs`.
 - **How it works** — Create a site (name, domains), see its status, engine
-  mode, agent binding and quick metrics; open a site to enter its detail
-  workspace. Deleting a site removes its bundles from every agent.
+  mode, agent binding and quick metrics. Each row has an **Open** action and
+  the domain is a link; both enter the site's Overview. Deleting a site
+  removes its bundles from every agent.
 
-### 2.2 Site detail — Origin
+### 2.2 Site overview
+
+- **Where** — `/sites/:siteId/overview` (the site's default tab).
+- **API** — `sites.rs`, `analytics.rs`, `waf.rs`, certificates, logs.
+- **How it works** — One site's own dashboard: 24-hour requests, blocked
+  requests, security events and unique IPs; the protection posture actually in
+  force (mode, paranoia level, body inspection, engine mode); the active
+  certificate and its expiry; origin health; and the latest security events
+  with links to the owning surfaces. Read-only: each card links to where the
+  setting lives.
+
+### 2.3 Site detail — Origin
 
 - **Where** — `/sites/:siteId/origin`.
 - **API** — `sites.rs`, `site_failover.rs`.
@@ -91,7 +103,7 @@ Conventions used below:
   (secondary pool, static response). The edge resolves origins from its local
   bundle — the control plane is never in the request path.
 
-### 2.3 Site settings
+### 2.4 Site settings
 
 - **Where** — `/sites/:siteId/settings`.
 - **How it works** — Per-site identity and behaviour that is not security or

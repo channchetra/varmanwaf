@@ -1,5 +1,7 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
+import { X } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
+import { dismissBanner, isBannerDismissed } from '@/lib/banners'
 
 export type CalloutTone =
   | 'brand'
@@ -13,6 +15,11 @@ export type CalloutTone =
  * The console's single "box" primitive: a message box with an icon, a title
  * and body text, tinted by tone. Page overviews use `brand` (the product
  * accent), operational notes `info`, cautions `warning`, failures `danger`.
+ *
+ * A page-level note can pass `dismissKey`: it then renders a close button and
+ * remembers the dismissal for a week (see `lib/banners`). Alerts that carry a
+ * live state (a disabled TLS listener, an expiring certificate) should not be
+ * dismissible - the operator needs them until the state changes.
  */
 const toneClasses: Record<CalloutTone, string> = {
   brand: 'border-brand/30 bg-brand/8',
@@ -40,6 +47,13 @@ export interface CalloutProps {
   children?: ReactNode
   /** Trailing actions (a link or button). */
   actions?: ReactNode
+  /**
+   * Makes the note closable and remembers the choice for a week. Use only for
+   * informational notes, never for live warnings.
+   */
+  dismissKey?: string
+  /** Accessible label for the close button. */
+  dismissLabel?: string
   className?: string
 }
 
@@ -49,8 +63,14 @@ export function Callout({
   title,
   children,
   actions,
+  dismissKey,
+  dismissLabel = 'Dismiss',
   className,
 }: CalloutProps) {
+  const [closed, setClosed] = useState(false)
+  if (dismissKey && (closed || isBannerDismissed(dismissKey))) {
+    return null
+  }
   return (
     <div
       role="note"
@@ -74,6 +94,20 @@ export function Callout({
         )}
       </div>
       {actions && <div className="shrink-0">{actions}</div>}
+      {dismissKey && (
+        <button
+          type="button"
+          aria-label={dismissLabel}
+          title={dismissLabel}
+          className="-mr-1 -mt-1 shrink-0 rounded-md p-1 text-fg-subtle transition-colors hover:bg-black/10 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
+          onClick={() => {
+            setClosed(true)
+            dismissBanner(dismissKey)
+          }}
+        >
+          <X weight="bold" className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   )
 }

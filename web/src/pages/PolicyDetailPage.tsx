@@ -105,6 +105,7 @@ export function PolicyDetailPage() {
       </div>
 
       <Callout
+        dismissKey="policydetail"
         tone="brand"
         className="mb-5"
         icon={<Stack weight="duotone" className="h-5 w-5" />}

@@ -43,7 +43,14 @@ Each site needs at least one origin server:
 Sites → [your site] → Origin → Add node
 ```
 
-The **Origin** tab is a site's default view. Every site starts with a `default` origin pool, and the first node you add goes into it — see [Origin Pools & Routes](#origin-pools--routes) for pools, load balancing and path-based dispatch.
+When you open a site, the **Overview** tab answers "what does this site serve
+and what is enforced on it": 24-hour requests / blocked / security events,
+the protection mode and paranoia level in force, the serving certificate,
+origin health, and the latest findings. Each card links to the tab that owns
+the setting. The **Origin** tab is where upstreams are edited - every site
+starts with a `default` origin pool, and the first node you add goes into it.
+See [Origin Pools & Routes](#origin-pools--routes) for pools, load balancing
+and path-based dispatch.
 
 | Field | Description |
 |-------|-------------|
@@ -110,17 +117,50 @@ A prefix route on `/` is rejected: it would conflict with the default-pool fallb
 
 ## WAF Configuration
 
-### Security Modes
+### WAF rules, policy tuning, and policies
 
-Each site operates in one of three modes:
+Three surfaces are easy to confuse because they all sound like "the WAF":
+
+| Surface | What it decides | Where |
+|---------|-----------------|-------|
+| **WAF rules** | *What looks like an attack*: built-in managed rules, custom rules, SecLang/CRS rules and API schema checks. Every match produces a finding with a rule id and an anomaly score. | Web Protection → Rules, Custom rules, CRS |
+| **Policy tuning** | *What this site does with those findings*: enforcement mode, paranoia level, advanced mode, monitor-only categories and exclusions. | Web Protection → Policy tuning |
+| **Policies** | *Reusable tuning* shared by several sites. A policy sets the mode and posture; a site follows its latest published revision. | Protection → Policies |
+
+The order is **detection → enforcement → reuse**. A rule's own action never
+blocks on its own: the site's enforcement mode is the gate. A site without an
+explicit mode derives it from its rules.
+
+### Enforcement modes
 
 | Mode | Behavior |
 |------|----------|
-| **Off** | Traffic passes through without inspection |
-| **Detection** | Rules evaluated, matches logged, but not blocked |
-| **Prevention** | Rules evaluated, matches blocked with configured action |
+| **Monitor** | Every finding is recorded with its rule, score and request path. Nothing is blocked; allowed traffic is proxied to the origin normally. |
+| **Block** | Findings that pass their gates are answered by the WAF (403 by default) and recorded. |
 
-Set via: `Sites → [site] → Web Protection → WAF Rules`
+Set via: `Sites → [site] → Web Protection → Policy tuning → Enforcement mode`.
+When the site follows a shared policy, the policy's mode applies; local
+overrides belong in the site overlay, not in a copied policy.
+
+### "I sent an attack and nothing was blocked"
+
+Check these in order:
+
+1. **Mode.** `Web Protection → Policy tuning` shows the mode in force. In
+   **Monitor** nothing blocks by design - this is the most common cause.
+2. **The finding exists.** `Logs → Security` (or the site's **Overview** tab)
+   shows the event with its action, rule id and anomaly score. No row at all
+   means the request never reached the edge: check DNS, the port, and that
+   the site is not paused.
+3. **The score crossed a threshold.** A union-select probe can be detected by
+   `sig.sqli.union_bare` at score 55 while the built-in SQLi gate
+   (VARMAN-1002) starts at 60. A custom rule such as
+   `cf.waf.score.sqli ge 40` closes that gap.
+4. **The rule is enabled and its paranoia level is not above the site's.** A
+   Strict-only rule does not run on a Normal/PL2 site.
+5. **Re-test.** With mode **Block**, repeat the request: expect a 403 and a
+   new event with `action: block`. The event's *why* panel names the rule,
+   score, policy and any exclusion that applied.
 
 ### Rule Groups
 

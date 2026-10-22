@@ -671,6 +671,7 @@ export function LogsPage() {
       />
 
       <Callout
+        dismissKey="logs"
         className="mb-4"
         tone="brand"
         icon={<FileMagnifyingGlass weight="duotone" className="h-5 w-5" />}

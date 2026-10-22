@@ -61,6 +61,17 @@ website/
 └── dist/                # generated (not committed)
 ```
 
+## Design language
+
+The public site follows the same visual language as GuardianWAF's site, with
+VarmanWAF's own content: navy `#0b1220` and light `#f5f8fd` backgrounds, a
+single blue accent (`#88c2ff` dark / `#2165c5` light), Space Grotesk for UI
+text, JetBrains Mono for code and labels, a 1728px layout grid with
+`clamp(20px, 3.5vw, 72px)` gutters, hairline borders and small radii. Dark is
+the default; light follows the system preference and can be pinned with the
+nav toggle (stored in `localStorage` as `varman-theme`). The landing page and
+the generated docs pages share `src/assets/site.css`, so both stay in step.
+
 ## Notes
 
 - The docs are the single source: edit `docs/*.md`, rebuild, and the website

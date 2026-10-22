@@ -9,6 +9,13 @@
 
 ## Status board
 
+> **1.1.7 (2026-10-22):** the clarity round - three-surface WAF documentation
+> (rules detect, policy tuning enforces, policies reuse) with a concrete
+> "not blocked" checklist; per-site Overview tab; dismissible informational
+> notes; fullscreen topology canvases; Open action and clickable domain in the
+> site list; the public website now follows GuardianWAF's navy/blue visual
+> language (own copy and assets).
+>
 > **1.1.6 (2026-10-22):** fix - the embedded agent verifies the gRPC
 > listener against the name the active certificate actually covers, so an ACME
 > IP dashboard certificate no longer takes the agent offline.

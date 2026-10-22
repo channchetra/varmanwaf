@@ -149,6 +149,7 @@ export function PoliciesPage() {
       />
 
       <Callout
+        dismissKey="policies"
         tone="brand"
         icon={<Stack weight="duotone" className="h-5 w-5" />}
         title={t('pages.policies.overviewTitle')}

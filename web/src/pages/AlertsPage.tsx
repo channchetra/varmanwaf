@@ -399,6 +399,7 @@ export function AlertsPage() {
       </div>
 
       <Callout
+        dismissKey="alerts"
         tone="brand"
         icon={<BellRinging weight="duotone" className="h-5 w-5" />}
         title={t('pages.alerts.overviewTitle')}

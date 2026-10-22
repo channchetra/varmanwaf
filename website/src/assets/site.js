@@ -1,10 +1,39 @@
-/* Small, dependency-free enhancements: nav shadow, TOC scrollspy, anchors. */
+/* Small, dependency-free enhancements: nav shadow, theme toggle, TOC
+ * scrollspy, code copy buttons. */
 
 const nav = document.getElementById('nav')
 if (nav) {
   const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8)
   onScroll()
   window.addEventListener('scroll', onScroll, { passive: true })
+}
+
+// Theme toggle: system preference by default, an explicit choice is remembered.
+const themeToggle = document.getElementById('theme-toggle')
+if (themeToggle) {
+  const root = document.documentElement
+  const media = window.matchMedia('(prefers-color-scheme: light)')
+  const currentTheme = () =>
+    root.dataset.theme === 'light' || root.dataset.theme === 'dark'
+      ? root.dataset.theme
+      : media.matches
+        ? 'light'
+        : 'dark'
+  const sync = () => {
+    themeToggle.setAttribute(
+      'aria-label',
+      currentTheme() === 'light' ? 'Switch to dark theme' : 'Switch to light theme',
+    )
+  }
+  themeToggle.addEventListener('click', () => {
+    const next = currentTheme() === 'light' ? 'dark' : 'light'
+    root.dataset.theme = next
+    try {
+      localStorage.setItem('varman-theme', next)
+    } catch (e) {}
+    sync()
+  })
+  sync()
 }
 
 // Table-of-contents highlight for documentation pages.

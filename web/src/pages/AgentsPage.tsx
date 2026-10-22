@@ -355,6 +355,7 @@ export function AgentsPage() {
       />
 
       <Callout
+        dismissKey="agents"
         className="mb-4"
         tone="brand"
         icon={<Pulse weight="duotone" className="h-5 w-5" />}

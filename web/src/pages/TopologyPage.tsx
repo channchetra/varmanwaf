@@ -20,6 +20,8 @@ import '@xyflow/react/dist/style.css'
 import {
   ArrowClockwise,
   ArrowSquareOut,
+  ArrowsIn,
+  ArrowsOut,
   CloudArrowUp,
   Cpu,
   FlowArrow,
@@ -38,6 +40,7 @@ import { Badge } from '@/components/ui/Badge'
 import { ErrorState } from '@/components/ErrorState'
 import { SkeletonCard } from '@/components/ui/Skeleton'
 import { useCanWrite, useSitesList } from '@/hooks'
+import { useFullscreen } from '@/lib/useFullscreen'
 import { sitesApi } from '@/api/sites'
 import { agentsApi } from '@/api/agents'
 import type { Agent } from '@/api/types'
@@ -164,6 +167,11 @@ function FleetTopology() {
   )
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
+  const {
+    attach: attachGraph,
+    fullscreen: graphFullscreen,
+    toggle: toggleGraphFullscreen,
+  } = useFullscreen<HTMLDivElement>()
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [appliedGraph, setAppliedGraph] = useState<TopologyGraph | null>(null)
   if (appliedGraph !== graph) {
@@ -213,6 +221,21 @@ function FleetTopology() {
           <Button
             size="sm"
             variant="ghost"
+            title={graphFullscreen ? t('common.exitFullscreen') : t('common.expand')}
+            icon={
+              graphFullscreen ? (
+                <ArrowsIn className="h-4 w-4" />
+              ) : (
+                <ArrowsOut className="h-4 w-4" />
+              )
+            }
+            onClick={() => void toggleGraphFullscreen()}
+          >
+            {graphFullscreen ? t('common.exitFullscreen') : t('common.expand')}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
             icon={<ArrowClockwise className="h-4 w-4" />}
             loading={refreshing}
             onClick={() => {
@@ -225,6 +248,7 @@ function FleetTopology() {
       </div>
 
       <Callout
+        dismissKey="topology.fleet"
         tone="brand"
         className="mb-3"
         icon={<FlowArrow weight="duotone" className="h-5 w-5" />}
@@ -233,7 +257,24 @@ function FleetTopology() {
         {t('pages.topology.fleet.overview')}
       </Callout>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-line bg-recessed/30">
+      <div
+        ref={attachGraph}
+        className={`relative min-h-0 flex-1 overflow-hidden rounded-xl border border-line ${
+          graphFullscreen ? 'rounded-none border-0 bg-bg' : 'bg-recessed/30'
+        }`}
+      >
+        {graphFullscreen && (
+          <div className="absolute right-3 top-3 z-10">
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<ArrowsIn className="h-4 w-4" />}
+              onClick={() => void toggleGraphFullscreen()}
+            >
+              {t('common.exitFullscreen')}
+            </Button>
+          </div>
+        )}
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -634,6 +675,11 @@ function SiteTopology({ siteId }: { siteId: string }) {
   }, [panelData, t])
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
+  const {
+    attach: attachGraph,
+    fullscreen: graphFullscreen,
+    toggle: toggleGraphFullscreen,
+  } = useFullscreen<HTMLDivElement>()
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [selection, setSelection] = useState<TopologySelection | null>(null)
 
@@ -773,6 +819,21 @@ function SiteTopology({ siteId }: { siteId: string }) {
           <Button
             size="sm"
             variant="ghost"
+            title={graphFullscreen ? t('common.exitFullscreen') : t('common.expand')}
+            icon={
+              graphFullscreen ? (
+                <ArrowsIn className="h-4 w-4" />
+              ) : (
+                <ArrowsOut className="h-4 w-4" />
+              )
+            }
+            onClick={() => void toggleGraphFullscreen()}
+          >
+            {graphFullscreen ? t('common.exitFullscreen') : t('common.expand')}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
             icon={<ArrowClockwise className="h-4 w-4" />}
             loading={refreshing}
             onClick={() => {
@@ -787,6 +848,7 @@ function SiteTopology({ siteId }: { siteId: string }) {
       </div>
 
       <Callout
+        dismissKey="topology.site"
         tone="brand"
         className="mb-3"
         icon={<FlowArrow weight="duotone" className="h-5 w-5" />}
@@ -833,7 +895,24 @@ function SiteTopology({ siteId }: { siteId: string }) {
           </aside>
         )}
 
-        <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-line bg-recessed/30">
+        <div
+          ref={attachGraph}
+          className={`relative min-h-0 flex-1 overflow-hidden rounded-xl border border-line ${
+            graphFullscreen ? 'rounded-none border-0 bg-bg' : 'bg-recessed/30'
+          }`}
+        >
+          {graphFullscreen && (
+            <div className="absolute right-3 top-3 z-10">
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<ArrowsIn className="h-4 w-4" />}
+                onClick={() => void toggleGraphFullscreen()}
+              >
+                {t('common.exitFullscreen')}
+              </Button>
+            </div>
+          )}
           {graph === null ? (
             <SkeletonCard />
           ) : (

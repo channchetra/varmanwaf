@@ -10,7 +10,7 @@ navigation.
 | # | Item (before) | Scope | What it is | Finding | Decision |
 |---|---|---|---|---|---|
 | 1 | Dashboard | global | Overview stats + report summary | none | keep (leaf) |
-| 2 | Sites | global | Site list; the site page owns a 13-tab bar | the sidebar's site entries duplicate that tab bar | keep (leaf) |
+| 2 | Sites | global | Site list; the site page owns a 14-tab bar | the sidebar's site entries duplicate that tab bar | keep (leaf) |
 | 3 | Policies | global | Policy layers, versions, rollback | CRS rulesets are an input to policy layers | grouped under **Protection** |
 | 4 | CRS rules | global | Imported CRS ruleset catalogue | belongs with Policies | grouped under **Protection** |
 | 5 | Alerts | global | Alert rules, silences, channels, history | **duplicate**: channels/settings/history also lived on Notifications | **merged** into `/alerts` (Alerts & notifications) |
@@ -68,11 +68,25 @@ Protection        Policies · CRS rules · Alerts & notifications · IP lists ·
 Traffic & logs    Traffic · Logs · Reports
 Fleet             Agents · SSL/TLS · Config history
 Tools             AI Assistant · Request lifecycle
-This site*        Web protection · Rate limiting · Bot protection · Access control
-                  Origin · Caching · SSL/TLS · Traffic
+This site*        Overview · Web protection · Rate limiting · Bot protection · Access control
+                  Origin · API assets · Caching · SSL/TLS · Traffic · Topology · Logs
+                  Rewrite · Settings
 Settings
 ```
 \* shown only while a site is open.
+
+## Site overview tab (v1.1.7)
+
+Opening a site now lands on **Overview** (`/sites/:id/overview`), the site's
+own dashboard: 24-hour requests / blocked / security events / unique IPs, the
+protection posture in force (mode, paranoia, advanced mode, engine mode), the
+active certificate, the origin health, and the latest security findings with a
+link into Logs. The legacy default (`origin`) still resolves, so old links and
+bookmarks keep working.
+
+The site list additionally offers an **Open** action on every row, and the
+domain itself is a link to the same overview. Opening a row no longer jumps
+straight into origin editing.
 
 ## Protection section (v0.50.0)
 

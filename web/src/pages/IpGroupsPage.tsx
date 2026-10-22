@@ -241,6 +241,7 @@ export function IpGroupsPage() {
       />
 
       <Callout
+        dismissKey="ipgroups"
         className="mb-4"
         tone="brand"
         icon={<ListChecks weight="duotone" className="h-5 w-5" />}

@@ -20,6 +20,7 @@ import {
   Gear,
   BracketsCurly,
   FlowArrow,
+  SquaresFour,
   type Icon,
 } from '@phosphor-icons/react'
 import { Link } from 'react-router-dom'
@@ -75,6 +76,7 @@ export function SiteDetailPage() {
   // Grouped so the bar reads as scopes: delivery, security, traffic,
   // rules & settings. Separators render between the groups.
   const tabGroups: { to: string; label: string; icon: Icon }[][] = [
+    [{ to: `${base}/overview`, label: t('nav.overview'), icon: SquaresFour }],
     [{ to: `${base}/origin`, label: t('nav.origin'), icon: Network }],
     [
       {

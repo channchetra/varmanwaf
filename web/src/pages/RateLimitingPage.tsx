@@ -397,6 +397,7 @@ export function RateLimitingPage() {
       />
 
       <Callout
+        dismissKey="ratelimiting"
         className="mb-4"
         tone="brand"
         icon={<Gauge weight="duotone" className="h-5 w-5" />}

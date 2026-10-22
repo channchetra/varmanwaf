@@ -103,6 +103,7 @@ export function CrsPage() {
       />
 
       <Callout
+        dismissKey="crs"
         tone="brand"
         icon={<SealCheck weight="duotone" className="h-5 w-5" />}
         title={t('pages.crs.overviewTitle')}

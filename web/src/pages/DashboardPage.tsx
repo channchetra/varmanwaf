@@ -478,6 +478,7 @@ export function DashboardPage() {
 
       {/* Overview box: what this page answers and where to act next. */}
       <Callout
+        dismissKey="dashboard"
         className="mb-5"
         tone="brand"
         icon={<Compass weight="duotone" className="h-5 w-5" />}

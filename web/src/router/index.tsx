@@ -34,6 +34,7 @@ import { GlobalTrafficPage } from '@/pages/GlobalTrafficPage'
 import { IpGroupsPage } from '@/pages/IpGroupsPage'
 import { RewritePage } from '@/pages/sites/RewritePage'
 import { OriginPage } from '@/pages/sites/OriginPage'
+import { SiteOverviewPage } from '@/pages/sites/SiteOverviewPage'
 import { LifecyclePage } from '@/pages/LifecyclePage'
 import { PoliciesPage } from '@/pages/PoliciesPage'
 import { PolicyDetailPage } from '@/pages/PolicyDetailPage'
@@ -91,7 +92,8 @@ export const router = createBrowserRouter([
         path: 'sites/:siteId',
         element: <SiteDetailPage />,
         children: [
-          { index: true, element: <Navigate to="origin" replace /> },
+          { index: true, element: <Navigate to="overview" replace /> },
+          { path: 'overview', element: <SiteOverviewPage /> },
           { path: 'origin', element: <OriginPage /> },
           { path: 'security/protection', element: <ProtectionPage /> },
           { path: 'security/rate-limiting', element: <RateLimitingPage /> },

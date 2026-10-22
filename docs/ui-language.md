@@ -47,3 +47,28 @@ tabs' active item, card selections, primary buttons.
   paragraphs; hard-coded blues/purples are not part of the palette.
 - The overview text must be operational and honest (what the page does, what
   it does not, where the state lives) - not marketing copy.
+
+## Dismissible overviews (v1.1.7)
+
+An informational overview box can pass `dismissKey`. It then renders a close
+button and remembers the choice in `localStorage` under
+`varman.banner.<key>` for seven days, so a note that has been read does not
+keep taking the top of the page. Only static guidance is dismissible: live
+warnings (a paused TLS listener, an expiring certificate, an unsynced geo
+key) deliberately have no key, because the operator needs them until the
+state changes.
+
+## Fullscreen canvases (v1.1.7)
+
+The fleet and site topology graphs carry an **Expand / Exit fullscreen**
+action that makes the canvas itself fullscreen; Escape or the browser's own
+exit restores the console. State is derived from `fullscreenchange`, so an
+OS-level exit is reflected in the button.
+
+## Site overview (v1.1.7)
+
+Opening a site lands on its own **Overview** tab (`/sites/:id/overview`): the
+24-hour counters, the protection posture in force, the active certificate,
+origin health and the latest security findings, each with a link into the
+surface that owns it. This is the one place that combines what the site
+serves with what is enforced on it.
