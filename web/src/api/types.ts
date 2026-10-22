@@ -486,6 +486,36 @@ export interface VirtualPatchTemplate {
   source: string
 }
 
+/** `api::management_cert::ActiveCertificate` - the certificate the 9080
+ *  listener presents right now. */
+export interface ControlPlaneAcmeActiveCertificate {
+  source: string
+  sans: string[]
+  not_after: string
+  fingerprint_sha256: string
+}
+
+/** `api::management_cert::AcmeView` - the dashboard's own ACME request and
+ *  the active certificate. `available` is false in a split deployment, where
+ *  no edge shares the process to answer the HTTP-01 challenge. */
+export interface ControlPlaneAcmeView {
+  available: boolean
+  identity: string
+  email: string
+  enabled: boolean
+  status: 'disabled' | 'pending' | 'active' | 'failed' | string
+  failure_reason: string | null
+  installed_fingerprint: string | null
+  active: ControlPlaneAcmeActiveCertificate | null
+}
+
+/** `api::management_cert::UpdateAcmeRequest` */
+export interface UpdateControlPlaneAcmeRequest {
+  identity: string
+  email: string
+  enabled: boolean
+}
+
 /* ── Rate limiting ────────────────────────────────────────────────── */
 
 /** `models::rules::characteristic` */
@@ -1015,6 +1045,9 @@ export interface ApiProtectionSettings {
   ip_allowlist_ranges: string[]
   /** An `ip_groups` row whose ranges join the allowlist. */
   ip_allowlist_group_id: string | null
+  /** Refuse these addresses even when the allowlist accepts them. */
+  ip_denylist_enabled: boolean
+  ip_denylist_ranges: string[]
   waf_enabled: boolean
   /** `block` or `monitor`; monitor only records matches. */
   waf_mode: ApiProtectionWafMode | string
@@ -1027,6 +1060,8 @@ export type ApiProtectionWafMode = 'block' | 'monitor'
 export interface ApiProtectionView extends ApiProtectionSettings {
   /** Entries (inline plus group) the effective allowlist holds right now. */
   effective_allowlist_entries: number
+  /** Entries the effective denylist holds right now. */
+  effective_denylist_entries: number
 }
 
 /** `api::api_protection::UpdateApiProtectionRequest` */
@@ -1037,6 +1072,8 @@ export interface UpdateApiProtectionRequest {
   ip_allowlist_ranges?: string[]
   /** Absent/`null` keeps the reference; `''` clears it; a UUID points at a group. */
   ip_allowlist_group_id?: string | null
+  ip_denylist_enabled?: boolean
+  ip_denylist_ranges?: string[]
   waf_enabled?: boolean
   waf_mode?: ApiProtectionWafMode | string
   /** Applies a change even when it excludes the calling connection. */

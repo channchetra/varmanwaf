@@ -703,6 +703,23 @@ fn cached_rules_to_pingap_config(
         }
     }
 
+    // The dashboard's own certificate (Settings -> System TLS -> auto-issue).
+    // It is issued by the same ACME task through the same HTTP-01 handler,
+    // which answers for any host - so a dashboard *domain* that is not a
+    // proxied site works too. The data plane never serves it; it exists so
+    // the ACME task can fill it in, and the material is handed back to the
+    // control plane after each reload.
+    if let Some(request) = varman_control::management_cert::desired() {
+        certificates.insert(
+            varman_control::management_cert::CERT_NAME.to_string(),
+            CertificateConf {
+                domains: Some(request.identity.clone()),
+                acme: Some(format!("http://{}", request.email)),
+                ..Default::default()
+            },
+        );
+    }
+
     if location_names.is_empty() {
         return None;
     }
@@ -932,6 +949,21 @@ fn merge_config_state(new_toml: &str, prev_toml: &str) -> String {
                 let Some(cert) = certs.get_mut(name) else {
                     continue;
                 };
+                // A certificate whose identity set changed (e.g. the
+                // dashboard request was edited from one domain/IP to
+                // another) must not inherit the old PEM: that certificate
+                // does not cover the new name and would suppress issuance.
+                let prev_domains = prev_cert
+                    .get("domains")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let new_domains = cert
+                    .get("domains")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if prev_domains != new_domains {
+                    continue;
+                }
                 let has_pem = cert
                     .get("tls_cert")
                     .and_then(|v| v.as_str())
@@ -957,6 +989,36 @@ fn merge_config_state(new_toml: &str, prev_toml: &str) -> String {
     }
 
     toml::to_string_pretty(&doc).unwrap_or_else(|_| new_toml.to_string())
+}
+
+/// Hands the certificate the edge issued for the dashboard to the control
+/// plane, which installs it on the 9080 listener and persists it.
+///
+/// The ACME task fills the `__management` entry; publishing the same material
+/// again is harmless (the installer compares fingerprints, so a renewal is
+/// installed exactly once and a restart does not re-install).
+fn publish_management_certificate(config: &PingapConfig) {
+    let Some(cert) = config
+        .certificates
+        .get(varman_control::management_cert::CERT_NAME)
+    else {
+        return;
+    };
+    let (Some(cert_pem), Some(key_pem)) =
+        (cert.tls_cert.as_ref(), cert.tls_key.as_ref())
+    else {
+        return;
+    };
+    if cert_pem.is_empty() || key_pem.is_empty() {
+        return;
+    }
+    varman_control::management_cert::set_issued(Some(
+        varman_control::management_cert::Issued {
+            identity: cert.domains.clone().unwrap_or_default(),
+            cert_pem: cert_pem.clone(),
+            key_pem: key_pem.clone(),
+        },
+    ));
 }
 
 /// Start the Pingora-based data plane proxy from the agent's cached rules.
@@ -1039,6 +1101,7 @@ pub async fn start_data_plane(
         },
     };
     config_manager.set_current_config(config.clone());
+    publish_management_certificate(&config);
 
     // Initialize providers from the (merged) config
     try_init_upstreams(&config.upstreams, None)
@@ -1270,11 +1333,13 @@ pub async fn start_data_plane(
     let watcher_cache = Arc::clone(&rule_cache);
     let watcher_config_manager = Arc::clone(&config_manager);
     let mut last_hash = watcher_cache.config_hash();
+    let mut last_management = varman_control::management_cert::revision();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
             let hash = watcher_cache.config_hash();
-            if hash == last_hash {
+            let management = varman_control::management_cert::revision();
+            if hash == last_hash && management == last_management {
                 continue;
             }
             info!(
@@ -1287,6 +1352,7 @@ pub async fn start_data_plane(
                     "data plane: reload produced no usable config, keeping current"
                 );
                 last_hash = hash;
+                last_management = management;
                 continue;
             };
             let Ok(new_toml) = toml::to_string_pretty(&converted) else {
@@ -1294,6 +1360,7 @@ pub async fn start_data_plane(
                     "data plane: reload config serialization failed, keeping current"
                 );
                 last_hash = hash;
+                last_management = management;
                 continue;
             };
             // Fetch-merge-save must be atomic with respect to ACME's own
@@ -1317,6 +1384,7 @@ pub async fn start_data_plane(
                 },
             };
             watcher_config_manager.set_current_config(config.clone());
+            publish_management_certificate(&config);
             if let Err(e) = try_init_upstreams(&config.upstreams, None) {
                 error!(error = %e, "data plane: reload upstreams failed");
             }
@@ -1354,6 +1422,21 @@ pub async fn start_data_plane(
                 );
             }
             last_hash = hash;
+            last_management = management;
+        }
+    });
+
+    // The ACME task fills the `__management` entry in place, without changing
+    // the config hash, so the reload hooks above never see the issued material.
+    // Publish it on a timer instead: the installer compares fingerprints, so
+    // repeating the same certificate is a no-op.
+    let management_config = Arc::clone(&config_manager);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(15)).await;
+            publish_management_certificate(
+                &management_config.get_current_config(),
+            );
         }
     });
 
@@ -1405,6 +1488,9 @@ pub async fn run(mode: RunMode) -> anyhow::Result<()> {
                 grpc_addr = %server_config.grpc_addr,
                 "starting VarmanWAF in All-in-One mode (control plane + data plane)"
             );
+            // The dashboard's ACME certificate is issued by the edge: both
+            // halves share this process, so the control plane may arm it.
+            varman_control::management_cert::set_available(true);
 
             // Auto-provision a bootstrap API key when none is configured so the
             // embedded agent can authenticate with the local gRPC server.

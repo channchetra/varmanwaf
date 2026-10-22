@@ -918,6 +918,21 @@ http.request.uri.path eq "/secret-admin"</code></pre>
   <figcaption>រូបភាព ១៦.២ — ចរាចរណ៍ទាំងអស់ក្នុងបណ្តាញ</figcaption>
 </figure>
 <p>ស្ថិតិចរាចរណ៍រួមគ្នាសម្រាប់គ្រប់គេហទំព័រ៖ ចំនួនសំណើ, លេខកូដ, bandwidth, cache hit និងភូមិសាស្ត្រ — ជួយមើលទិដ្ឋភាពធំនៃប្រព័ន្ធទាំងមូល។</p>
+
+<h2 id="s16-3">១៦.៣ វិញ្ញាបនបត្រផ្ទាំងគ្រប់គ្រង (Dashboard TLS)</h2>
+<p>ផ្ទាំងគ្រប់គ្រង (port <code>9080</code>) អាចប្រើវិញ្ញាបនបត្រពី <b>Let's Encrypt</b> ដោយស្វ័យប្រវត្តិ — ទាំងសម្រាប់ <b>ដែន (domain)</b> និង <b>អាសយដ្ឋាន IP</b> របស់ម៉ាស៊ីន។</p>
+<ol class="steps">
+  <li>ចូល <b>Settings → Control plane HTTPS</b>។</li>
+  <li>នៅផ្នែក <b>Auto-issue (Let's Encrypt)</b> បញ្ចូល <b>ដែន ឬ IP</b> (ឧ. <code>waf.example.com</code> ឬ <code>103.189.187.19</code>) និង <b>អ៊ីមែល</b>សម្រាប់ ACME។</li>
+  <li>បើក <b>Keep this certificate issued and renewed</b> រួចចុច <b>Save</b>។ Edge នឹងបំពេញការផ្ទៀងផ្ទាត់ HTTP-01 (ច្រក ៨០) ហើយវិញ្ញាបនបត្រនឹងត្រូវដំឡើងលើផ្ទាំងភ្លាមៗ។</li>
+  <li>បើប្រើ <b>ដែន</b>៖ ត្រូវចង្អុល DNS (A/AAAA) ទៅម៉ាស៊ីននេះជាមុនសិន។ បើប្រើ <b>IP</b>៖ វិញ្ញាបនបត្រមានអាយុ ~៦ ថ្ងៃ ហើយប្រព័ន្ធបន្តអាយុដោយស្វ័យប្រវត្តិ។</li>
+</ol>
+<div class="note"><b>ចំណាំ</b>
+<ul>
+  <li>ការចេញដោយស្វ័យប្រវត្តិត្រូវការ <b>all-in-one</b> (Edge និង Control Plane នៅ process តែមួយ) ដើម្បីឆ្លើយការផ្ទៀងផ្ទាត់។ បើប្រព័ន្ធបំបែកគ្នា សូម <b>Upload certificate</b> ជំនួស។</li>
+  <li>ដើម្បីកំណត់ថាអ្នកណាអាចចូលផ្ទាំងបាន សូមប្រើ <b>Settings → API protection (port 9080)</b> — បើក <b>IP allowlist</b> ហើយបញ្ចូលជួរ IP/CIDR ឬជ្រើស IP group។ អ្នកក៏អាចបើក <b>IP denylist</b> ដើម្បីបដិសេធ IP ជាក់លាក់ — ការបដិសេធឈ្នះលើ allowlist ជានិច្ច។ ប្រព័ន្ធនឹងបដិសេធការរក្សាទុកដែលធ្វើឱ្យអ្នកខ្លួនឯងចូលមិនបាន (លុះត្រាតែជ្រើស force)។</li>
+  <li>ស្ថានភាព <b>Issuing… / Issued / Failed</b> និងមូលហេតុបង្ហាញនៅផ្នែកនេះ។ បើបរាជ័យ សូមពិនិត្យ DNS/ច្រក ៨០ ឬចុច <b>Retry now</b>។</li>
+</ul></div>
 </section>
 
 <h1 class="part" id="p17">ជំពូកទី ១៧ — ការកំណត់ប្រព័ន្ធ (Settings)</h1>
@@ -991,7 +1006,7 @@ http.request.uri.path eq "/secret-admin"</code></pre>
   <li>ប្រើវាសម្រាប់ការភ្ជាប់ពីប្រព័ន្ធខាងក្រៅ (SIEM, scripts ។ល។)។</li>
 </ol>
 <div class="note"><b>ផ្នែកផ្សេងទៀត</b>
-ការកំណត់ផ្សេងទៀតរួមមាន៖ Control-plane TLS (វិញ្ញាបនបត្រផ្ទាំងបញ្ជា), Observation mode (របៀបសង្កេតសកល — កត់ត្រាមិនទប់ស្កាត់), AI assistant, MCP (ភ្ជាប់ឧបករណ៍ជំនួយការ) និង Elasticsearch (បញ្ជូនកំណត់ហេតុបន្ថែម)។</div>
+ការកំណត់ផ្សេងទៀតរួមមាន៖ Control-plane TLS (វិញ្ញាបនបត្រផ្ទាំងបញ្ជា — រួមទាំងការចេញដោយស្វ័យប្រវត្តិពី Let's Encrypt សម្រាប់ដែន ឬ IP), Observation mode (របៀបសង្កេតសកល — កត់ត្រាមិនទប់ស្កាត់), AI assistant, MCP (ភ្ជាប់ឧបករណ៍ជំនួយការ) និង Elasticsearch (បញ្ជូនកំណត់ហេតុបន្ថែម)។</div>
 </section>
 
 <h1 class="part" id="p18">ជំពូកទី ១៨ — ម៉ាស៊ីនសុវត្ថិភាព ដំណើរការយ៉ាងដូចម្តេច?</h1>

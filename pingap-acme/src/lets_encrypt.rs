@@ -822,6 +822,32 @@ fn order_is_actionable(status: &OrderStatus) -> bool {
     matches!(status, OrderStatus::Pending | OrderStatus::Ready)
 }
 
+/// Builds the order's identifiers: a literal IP address becomes an
+/// `Identifier::Ip` (RFC 8738), everything else a DNS identifier. The two may
+/// be mixed; Let's Encrypt requires IPv4 and IPv6 literals to be requested
+/// this way, otherwise it rejects the order as an invalid DNS identifier.
+fn order_identifiers(domains: &[String]) -> Vec<Identifier> {
+    domains
+        .iter()
+        .map(|item| match item.trim().parse::<std::net::IpAddr>() {
+            Ok(ip) => Identifier::Ip(ip),
+            Err(_) => Identifier::Dns(item.to_owned()),
+        })
+        .collect()
+}
+
+/// The certificate profile an order must use, when one is required.
+///
+/// Let's Encrypt only issues IP address certificates as short-lived (~6 day)
+/// certificates, so any order containing an IP identifier selects the
+/// `shortlived` profile. Domain-only orders keep the default profile.
+fn order_profile(domains: &[String]) -> Option<&'static str> {
+    let has_ip = domains
+        .iter()
+        .any(|item| item.trim().parse::<std::net::IpAddr>().is_ok());
+    has_ip.then_some("shortlived")
+}
+
 /// The ACME protocol flow:
 /// 1. Creates/retrieves an ACME account with Let's Encrypt
 /// 2. Creates a new order for the domains to be certified
@@ -857,14 +883,18 @@ async fn new_lets_encrypt(
     let account =
         load_or_create_account(&config_manager, url, production).await?;
 
-    let identifiers = domains
-        .iter()
-        .map(|item| Identifier::Dns(item.to_owned()))
-        .collect::<Vec<Identifier>>();
+    let identifiers = order_identifiers(&domains);
+    let mut order_request = NewOrder::new(&identifiers);
+    // A certificate containing an IP identifier must be requested under the
+    // `shortlived` profile: Let's Encrypt only issues IP address certificates
+    // as short-lived (~6 days) certificates.
+    if let Some(profile) = order_profile(&domains) {
+        order_request = order_request.profile(profile);
+    }
     let mut order = acme_call(
         "new_order",
         ACME_HTTP_TIMEOUT,
-        account.new_order(&NewOrder::new(&identifiers)),
+        account.new_order(&order_request),
     )
     .await?;
 
@@ -1147,6 +1177,8 @@ async fn new_lets_encrypt(
 mod tests {
     use super::is_valid_challenge_token;
     use super::{UpdateCertificateParams, update_certificate_lets_encrypt};
+    use super::{order_identifiers, order_profile};
+    use instant_acme::Identifier;
     use pingap_config::new_file_config_manager;
     use std::sync::Arc;
 
@@ -1309,5 +1341,63 @@ mod tests {
         assert!(!order_is_actionable(&OrderStatus::Processing));
         assert!(!order_is_actionable(&OrderStatus::Valid));
         assert!(!order_is_actionable(&OrderStatus::Invalid));
+    }
+
+    fn domains(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn dns_names_become_dns_identifiers() {
+        let identifiers = order_identifiers(&domains(&[
+            "waf.example.com",
+            "www.example.com",
+        ]));
+        assert_eq!(
+            identifiers,
+            vec![
+                Identifier::Dns("waf.example.com".to_string()),
+                Identifier::Dns("www.example.com".to_string()),
+            ]
+        );
+        assert_eq!(order_profile(&domains(&["waf.example.com"])), None);
+    }
+
+    #[test]
+    fn ip_literals_become_ip_identifiers_with_the_shortlived_profile() {
+        // A management dashboard certificate for the server's IP: RFC 8738
+        // requires an `ip` identifier, and Let's Encrypt only issues IP
+        // certificates as short-lived ones, which is the `shortlived` profile.
+        let identifiers = order_identifiers(&domains(&["203.0.113.7"]));
+        assert_eq!(
+            identifiers,
+            vec![Identifier::Ip("203.0.113.7".parse().expect("ip"))]
+        );
+        assert_eq!(
+            order_profile(&domains(&["203.0.113.7"])),
+            Some("shortlived")
+        );
+
+        // IPv6 literals take the same path.
+        let identifiers = order_identifiers(&domains(&["2001:db8::1"]));
+        assert!(matches!(identifiers.as_slice(), [Identifier::Ip(_)]));
+        assert_eq!(
+            order_profile(&domains(&["2001:db8::1"])),
+            Some("shortlived")
+        );
+    }
+
+    #[test]
+    fn mixed_orders_switch_to_shortlived_too() {
+        let identifiers =
+            order_identifiers(&domains(&["waf.example.com", "203.0.113.7"]));
+        assert!(matches!(identifiers.as_slice(), [
+            Identifier::Dns(_),
+            Identifier::Ip(_)
+        ]));
+        assert_eq!(
+            order_profile(&domains(&["waf.example.com", "203.0.113.7"])),
+            Some("shortlived")
+        );
     }
 }

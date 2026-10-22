@@ -1,7 +1,9 @@
 import { apiClient } from './client'
 import type {
+  ControlPlaneAcmeView,
   GenerateControlPlaneCertificateRequest,
   TlsStatusView,
+  UpdateControlPlaneAcmeRequest,
   UploadControlPlaneCertificateRequest,
 } from './types'
 
@@ -26,11 +28,24 @@ export const tlsApi = {
 
   generateSelfSigned: (data: GenerateControlPlaneCertificateRequest) =>
     apiClient.post<TlsStatusView>('/system/tls/certificate/self-signed', data),
+
+  /**
+   * Auto-issue (Let's Encrypt) for the dashboard identity - a domain or the
+   * management IP. The edge answers the HTTP-01 challenge; the certificate
+   * is installed on the listener and renewed automatically.
+   */
+  acme: () => apiClient.get<ControlPlaneAcmeView>('/system/tls/acme'),
+
+  updateAcme: (data: UpdateControlPlaneAcmeRequest) =>
+    apiClient.put<ControlPlaneAcmeView>('/system/tls/acme', data),
+
+  retryAcme: () => apiClient.post<ControlPlaneAcmeView>('/system/tls/acme/retry'),
 }
 
 export const tlsKeys = {
   all: ['tls'] as const,
   status: () => [...tlsKeys.all, 'status'] as const,
+  acme: () => [...tlsKeys.all, 'acme'] as const,
 }
 
 /** Triggers a client-side download of the served certificate. */

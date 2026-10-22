@@ -23,6 +23,7 @@ pub mod frontend;
 pub mod grpc;
 pub mod ip_lists;
 pub mod ipverse;
+pub mod management_cert;
 pub mod mcp;
 pub mod migration;
 pub mod models;
@@ -194,6 +195,31 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
     // `varman mode` CLI) and fans them out to the agents.
     let _defense_watch_handle =
         api::defense::start_watch_task(state.clone()).await;
+
+    // ── 6e-bis. Management (dashboard) certificate ──────────────────────────
+    // Re-arm the last ACME request so a restart resumes issuance/renewal
+    // without operator action, then start the installer that puts the
+    // certificate the edge issues onto the 9080 listener.
+    match management_cert::load(&db).await {
+        Ok(row) if row.enabled && !row.identity.is_empty() => {
+            management_cert::set_desired(Some(management_cert::Request {
+                identity: row.identity.clone(),
+                email: row.email.clone(),
+                challenge: "http-01".to_string(),
+            }));
+            tracing::info!(
+                identity = %row.identity,
+                status = %row.status,
+                "management certificate request armed"
+            );
+        },
+        Ok(_) => {},
+        Err(err) => tracing::warn!(
+            error = %err,
+            "could not load the management certificate settings"
+        ),
+    }
+    let _management_cert_handle = management_cert::spawn(state.clone());
 
     // ── 6f. Notification system ─────────────────────────────────────────────
     // Installed once so REST handlers and the gRPC ingest can raise alerts

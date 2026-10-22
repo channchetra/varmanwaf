@@ -163,6 +163,9 @@ pub struct ProtectionPolicy {
     pub access_log_enabled: bool,
     pub allowlist_enabled: bool,
     pub allowlist: Allowlist,
+    /// Refuse specific addresses even when the allowlist accepts them.
+    pub denylist_enabled: bool,
+    pub denylist: Allowlist,
     /// Built only when the WAF is enabled; `None` short-circuits the guard.
     pub waf: Option<Arc<WafEngine>>,
     /// True when the WAF answers blocks (vs. monitor mode).
@@ -177,6 +180,8 @@ impl Default for ProtectionPolicy {
             access_log_enabled: false,
             allowlist_enabled: false,
             allowlist: Allowlist::default(),
+            denylist_enabled: false,
+            denylist: Allowlist::default(),
             waf: None,
             waf_blocking: false,
             settings_updated_at: DateTime::<Utc>::MIN_UTC,
@@ -266,6 +271,8 @@ pub async fn load_settings(
         ip_allowlist_enabled: Set(false),
         ip_allowlist_ranges: Set(Vec::new()),
         ip_allowlist_group_id: Set(None),
+        ip_denylist_enabled: Set(false),
+        ip_denylist_ranges: Set(Vec::new()),
         waf_enabled: Set(false),
         waf_mode: Set(waf_mode::BLOCK.to_string()),
         updated_at: Set(now),
@@ -330,6 +337,14 @@ pub async fn refresh(
 ) -> Result<ProtectionPolicy, DbErr> {
     let settings = load_settings(db).await?;
     let allowlist = effective_allowlist(db, &settings).await?;
+    let (denylist, invalid_deny) =
+        Allowlist::parse(&settings.ip_denylist_ranges);
+    if !invalid_deny.is_empty() {
+        tracing::warn!(
+            invalid = ?invalid_deny,
+            "ignoring invalid API denylist entries"
+        );
+    }
     let waf_blocking = settings.waf_mode == waf_mode::BLOCK;
     let waf = settings.waf_enabled.then(|| {
         Arc::new(WafEngine::new(&WafEngineConfig {
@@ -361,6 +376,8 @@ pub async fn refresh(
         access_log_enabled: settings.access_log_enabled,
         allowlist_enabled: settings.ip_allowlist_enabled,
         allowlist,
+        denylist_enabled: settings.ip_denylist_enabled,
+        denylist,
         waf,
         waf_blocking,
         settings_updated_at: settings.updated_at,
@@ -650,17 +667,42 @@ pub async fn access_log(
 }
 
 // ─────────────────────────────────────────────────────────────
-// IP allowlist
+// IP allowlist + denylist
 // ─────────────────────────────────────────────────────────────
 
-/// Middleware 2/3: refuses callers outside the allowlist.
+/// What the IP gates decide for one peer address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IpGate {
+    /// The request may proceed.
+    Allow,
+    /// An explicit denylist match: refuse even when allowlisted.
+    Deny,
+    /// The allowlist is enabled and does not cover the address.
+    NotAllowlisted,
+}
+
+/// The allow/deny decision, in one place so it is testable without a request.
+fn ip_gate(policy: &ProtectionPolicy, ip: &IpAddr) -> IpGate {
+    if policy.denylist_enabled && policy.denylist.contains(ip) {
+        return IpGate::Deny;
+    }
+    if !policy.allowlist_enabled || policy.allowlist.contains(ip) {
+        return IpGate::Allow;
+    }
+    IpGate::NotAllowlisted
+}
+
+/// Middleware 2/3: applies the IP gates - the denylist first (an explicit
+/// refusal wins over the allowlist), then the allowlist.
 pub async fn ip_allowlist(
     State(state): State<AppState>,
     request: Request,
     next: Next,
 ) -> Response {
     let policy = state.protection.policy();
-    if !policy.allowlist_enabled || exempt(request.uri().path()) {
+    if (!policy.allowlist_enabled && !policy.denylist_enabled)
+        || exempt(request.uri().path())
+    {
         return next.run(request).await;
     }
 
@@ -669,7 +711,7 @@ pub async fn ip_allowlist(
         // connect info; refusing nothing would silently disable the gate, so
         // refuse the request and say why.
         tracing::error!(
-            "IP allowlist is enabled but the connection carries no peer address"
+            "an API IP gate is enabled but the connection carries no peer address"
         );
         let mut response = error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -682,27 +724,45 @@ pub async fn ip_allowlist(
         });
         return response;
     };
-
-    if policy.allowlist.contains(&addr.ip()) {
-        return next.run(request).await;
-    }
-
     let ip = addr.ip();
-    tracing::warn!(
-        client_ip = %ip,
-        path = %request.uri().path(),
-        "control plane request refused by the IP allowlist"
-    );
-    let mut response = error_response(
-        StatusCode::FORBIDDEN,
-        "ip_not_allowed",
-        "your address is not in the control plane allowlist",
-    );
-    response.extensions_mut().insert(ProtectionOutcome {
-        action: action::BLOCKED_ALLOWLIST,
-        reason: Some(format!("client ip {ip} is not allowlisted")),
-    });
-    response
+
+    match ip_gate(&policy, &ip) {
+        IpGate::Allow => next.run(request).await,
+        IpGate::Deny => {
+            tracing::warn!(
+                client_ip = %ip,
+                path = %request.uri().path(),
+                "control plane request refused by the IP denylist"
+            );
+            let mut response = error_response(
+                StatusCode::FORBIDDEN,
+                "ip_denied",
+                "your address is blocked by the control plane denylist",
+            );
+            response.extensions_mut().insert(ProtectionOutcome {
+                action: action::BLOCKED_DENYLIST,
+                reason: Some(format!("client ip {ip} is on the denylist")),
+            });
+            response
+        },
+        IpGate::NotAllowlisted => {
+            tracing::warn!(
+                client_ip = %ip,
+                path = %request.uri().path(),
+                "control plane request refused by the IP allowlist"
+            );
+            let mut response = error_response(
+                StatusCode::FORBIDDEN,
+                "ip_not_allowed",
+                "your address is not in the control plane allowlist",
+            );
+            response.extensions_mut().insert(ProtectionOutcome {
+                action: action::BLOCKED_ALLOWLIST,
+                reason: Some(format!("client ip {ip} is not allowlisted")),
+            });
+            response
+        },
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -829,4 +889,58 @@ pub async fn waf_guard(
         });
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn policy(
+        allow: bool,
+        deny: bool,
+        allow_ranges: &[&str],
+        deny_ranges: &[&str],
+    ) -> ProtectionPolicy {
+        let (allowlist, _) = Allowlist::parse(allow_ranges);
+        let (denylist, _) = Allowlist::parse(deny_ranges);
+        ProtectionPolicy {
+            allowlist_enabled: allow,
+            allowlist,
+            denylist_enabled: deny,
+            denylist,
+            ..Default::default()
+        }
+    }
+
+    fn ip(value: &str) -> IpAddr {
+        value.parse().expect("ip")
+    }
+
+    #[test]
+    fn the_denylist_wins_over_the_allowlist() {
+        let p = policy(true, true, &["10.0.0.0/8"], &["10.1.2.3"]);
+        assert_eq!(ip_gate(&p, &ip("10.1.2.3")), IpGate::Deny);
+        assert_eq!(ip_gate(&p, &ip("10.9.9.9")), IpGate::Allow);
+        assert_eq!(ip_gate(&p, &ip("192.0.2.7")), IpGate::NotAllowlisted);
+    }
+
+    #[test]
+    fn the_denylist_works_without_the_allowlist() {
+        let p = policy(false, true, &[], &["203.0.113.0/24"]);
+        assert_eq!(ip_gate(&p, &ip("203.0.113.7")), IpGate::Deny);
+        assert_eq!(ip_gate(&p, &ip("198.51.100.7")), IpGate::Allow);
+    }
+
+    #[test]
+    fn both_gates_off_allow_everything() {
+        let p = policy(false, false, &[], &[]);
+        assert_eq!(ip_gate(&p, &ip("203.0.113.7")), IpGate::Allow);
+    }
+
+    #[test]
+    fn the_allowlist_alone_still_gates() {
+        let p = policy(true, false, &["192.0.2.0/24"], &[]);
+        assert_eq!(ip_gate(&p, &ip("192.0.2.5")), IpGate::Allow);
+        assert_eq!(ip_gate(&p, &ip("203.0.113.7")), IpGate::NotAllowlisted);
+    }
 }

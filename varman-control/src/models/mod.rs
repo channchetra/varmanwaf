@@ -38,6 +38,7 @@ pub mod ip_group_sites;
 pub mod ip_groups;
 pub mod log_retention;
 pub mod login_histories;
+pub mod management_certificate;
 pub mod mtls;
 pub mod notifications;
 pub mod passkeys;

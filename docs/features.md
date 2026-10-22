@@ -475,9 +475,26 @@ Conventions used below:
   - **Account** — profile, password, sessions; **Dashboard users** — create
     operators with roles, enable/disable, force password change.
   - **Passkeys** — WebAuthn registration per user.
-  - **Control-plane TLS** — certificate for the console itself.
-  - **Observation mode** — global WAF observation (record, don't block).
-  - **API protection** — default posture for the OpenAPI layer.
+  - **Control-plane TLS** - the certificate for the console itself. Besides
+    uploading a PEM pair or generating a self-signed one, the dashboard can
+    **auto-issue a Let's Encrypt certificate** for a domain *or for the
+    management IP* (`/system/tls/acme`): the edge completes the HTTP-01
+    challenge (it answers `/.well-known/acme-challenge/*` before host routing,
+    so a dashboard domain that is not a proxied site works too), and the
+    control plane installs the result on the 9080 listener, persists it
+    (`source = acme`) and replaces it on every renewal without a restart. IP
+    identities are ordered as RFC 8738 IP identifiers under Let's Encrypt's
+    `shortlived` profile (~6-day certificates, renewed automatically).
+    Auto-issue requires the all-in-one deployment (the edge must share the
+    process to answer the challenge); a split deployment keeps upload and
+    self-signed, and the API says so.
+  - **Observation mode** - global WAF observation (record, don't block).
+  - **API protection** - the 9080 listener's own access log, **IP allowlist
+    and denylist**, and WAF. The allowlist is default-deny (ranges plus an
+    optional IP group); the denylist refuses specific addresses even when the
+    allowlist accepts them, and a denial always wins. Both are checked on the
+    TCP peer, health probes stay exempt, and a write that would cut off the
+    calling connection is refused unless forced.
   - **AI assistant / MCP** — assistant provider and the MCP server toggle.
   - **Elasticsearch** — optional log shipping.
   - **Log retention** — how long events and access logs are kept.

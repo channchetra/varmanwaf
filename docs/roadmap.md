@@ -9,6 +9,12 @@
 
 ## Status board
 
+> **1.1.4 (2026-10-22):** the management-certificate round - the dashboard can
+> auto-issue and auto-renew a Let's Encrypt certificate for its own domain or
+> management IP (RFC 8738 IP identifiers under the `shortlived` profile), with
+> the edge completing the HTTP-01 challenge and the control plane installing
+> the result on 9080.
+>
 > **1.1.3 (2026-10-22):** the CVE-response round - built-in virtual-patch
 > templates with two PHP2Shell patches (CVE-2026-109618 / CVE-2026-109619),
 > a template picker in the site's custom-layers panel, and body-reading

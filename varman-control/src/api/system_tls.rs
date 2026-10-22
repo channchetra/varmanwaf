@@ -254,7 +254,7 @@ async fn generate(
 /// was served before; a restart always picks the newest active row. `actor` is
 /// `None` for the certificate generated at boot, which no account asked for —
 /// `created_by` is a foreign key, so a placeholder id would be rejected.
-async fn store_and_activate(
+pub(crate) async fn store_and_activate(
     state: &AppState,
     actor: Option<Uuid>,
     source: &str,

@@ -1853,6 +1853,14 @@ function TlsDetail({
  * without touching the server's files. An upload takes effect immediately: the
  * running listener swaps the pair through its reloadable resolver.
  */
+/** Badge tones for the dashboard certificate lifecycle. */
+const ACME_TONE: Record<string, 'neutral' | 'info' | 'success' | 'danger'> = {
+  disabled: 'neutral',
+  pending: 'info',
+  active: 'success',
+  failed: 'danger',
+}
+
 function ControlPlaneTlsCard({ canWrite }: { canWrite: boolean }) {
   const { t } = useTranslation()
   const toast = useToast()
@@ -1910,6 +1918,47 @@ function ControlPlaneTlsCard({ canWrite }: { canWrite: boolean }) {
       )
       toast.success(t('pages.settings.tlsDownloaded'))
     },
+  })
+
+  // Auto-issue (Let's Encrypt) for the dashboard identity. The draft is
+  // derived from the view until the operator edits it, so a background
+  // refetch never clobbers typing.
+  const acme = useQuery({
+    queryKey: tlsKeys.acme(),
+    queryFn: () => tlsApi.acme(),
+  })
+  const acmeView = acme.data ?? null
+  const [acmeDraft, setAcmeDraft] = useState<{
+    identity: string
+    email: string
+    enabled: boolean
+  } | null>(null)
+  const acmeForm = acmeDraft ?? {
+    identity: acmeView?.identity ?? '',
+    email: acmeView?.email ?? '',
+    enabled: acmeView?.enabled ?? false,
+  }
+  const patchAcme = (patch: Partial<typeof acmeForm>) =>
+    setAcmeDraft({ ...acmeForm, ...patch })
+
+  const saveAcme = useMutation({
+    mutationFn: () => tlsApi.updateAcme(acmeForm),
+    onSuccess: () => {
+      invalidate()
+      setAcmeDraft(null)
+      toast.success(t('pages.settings.tlsAcmeSaved'))
+    },
+    onError: (error) => handleApiError(error),
+  })
+
+  const retryAcme = useMutation({
+    mutationFn: () => tlsApi.retryAcme(),
+    onSuccess: () => {
+      invalidate()
+      setAcmeDraft(null)
+      toast.success(t('pages.settings.tlsAcmeRetried'))
+    },
+    onError: (error) => handleApiError(error),
   })
 
   const copyFingerprint = async () => {
@@ -2055,6 +2104,110 @@ function ControlPlaneTlsCard({ canWrite }: { canWrite: boolean }) {
                 className="py-8"
               />
             )}
+
+            {/* ── Auto-issue (Let's Encrypt) ───────────────────────────── */}
+            <section className="flex flex-col gap-3 rounded-md border border-line bg-surface px-4 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-fg">
+                    {t('pages.settings.tlsAcmeTitle')}
+                  </h3>
+                  <p className="mt-0.5 max-w-2xl text-[12px] text-fg-subtle">
+                    {t('pages.settings.tlsAcmeHint')}
+                  </p>
+                </div>
+                {acmeView && (
+                  <Badge
+                    tone={ACME_TONE[acmeView.status] ?? 'neutral'}
+                    dot
+                    size="sm"
+                  >
+                    {t(
+                      `pages.settings.tlsAcmeStatus_${acmeView.status}`,
+                      { defaultValue: acmeView.status },
+                    )}
+                  </Badge>
+                )}
+              </div>
+
+              {acmeView && !acmeView.available && (
+                <p className="flex items-start gap-2 text-[12px] text-fg-warning">
+                  <Warning
+                    weight="duotone"
+                    className="mt-0.5 h-4 w-4 shrink-0"
+                  />
+                  <span>{t('pages.settings.tlsAcmeUnavailable')}</span>
+                </p>
+              )}
+              {acmeView?.failure_reason && (
+                <p className="flex items-start gap-2 rounded border border-danger/40 bg-danger/8 px-2.5 py-2 text-[12px] text-fg">
+                  <Warning
+                    weight="duotone"
+                    className="mt-0.5 h-4 w-4 shrink-0 text-fg-danger"
+                  />
+                  <span>{acmeView.failure_reason}</span>
+                </p>
+              )}
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input
+                  label={t('pages.settings.tlsAcmeIdentity')}
+                  value={acmeForm.identity}
+                  disabled={!canWrite || !acmeView?.available}
+                  placeholder={t('pages.settings.tlsAcmeIdentityPlaceholder')}
+                  onChange={(event) =>
+                    patchAcme({ identity: event.target.value })
+                  }
+                />
+                <Input
+                  label={t('pages.settings.tlsAcmeEmail')}
+                  value={acmeForm.email}
+                  disabled={!canWrite || !acmeView?.available}
+                  placeholder="ops@example.com"
+                  onChange={(event) =>
+                    patchAcme({ email: event.target.value })
+                  }
+                />
+              </div>
+
+              <Switch
+                checked={acmeForm.enabled}
+                onCheckedChange={(enabled) => patchAcme({ enabled })}
+                disabled={!canWrite || !acmeView?.available}
+                label={t('pages.settings.tlsAcmeEnabled')}
+                description={t('pages.settings.tlsAcmeEnabledHint')}
+              />
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  disabled={!canWrite || !acmeView?.available}
+                  loading={saveAcme.isPending}
+                  onClick={() => saveAcme.mutate()}
+                >
+                  {t('common.save')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={
+                    !canWrite || !acmeView?.available || !acmeView.enabled
+                  }
+                  loading={retryAcme.isPending}
+                  onClick={() => retryAcme.mutate()}
+                >
+                  {t('pages.settings.tlsAcmeRetry')}
+                </Button>
+                {acmeView?.active?.source === 'acme' && (
+                  <span className="text-[12px] text-fg-subtle">
+                    {t('pages.settings.tlsAcmeActiveUntil', {
+                      date: formatDateTime(acmeView.active.not_after),
+                    })}
+                  </span>
+                )}
+              </div>
+            </section>
 
             <div className="flex flex-wrap gap-2">
               <Button
@@ -2255,6 +2408,8 @@ interface ApiProtectionDraft {
   allowlistEnabled: boolean
   rangesText: string
   groupId: string
+  denyEnabled: boolean
+  denyText: string
   wafEnabled: boolean
   wafMode: string
 }
@@ -2266,6 +2421,8 @@ function apiProtectionDraft(view: ApiProtectionView): ApiProtectionDraft {
     allowlistEnabled: view.ip_allowlist_enabled,
     rangesText: view.ip_allowlist_ranges.join('\n'),
     groupId: view.ip_allowlist_group_id ?? '',
+    denyEnabled: view.ip_denylist_enabled,
+    denyText: view.ip_denylist_ranges.join('\n'),
     wafEnabled: view.waf_enabled,
     wafMode: view.waf_mode,
   }
@@ -2324,6 +2481,11 @@ function ApiProtectionCard({ canWrite }: { canWrite: boolean }) {
     .map((line) => line.trim())
     .filter(Boolean)
 
+  const denyRanges = (draft?.denyText ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
   const group = groups.data?.items.find((g) => g.id === draft?.groupId)
   // A disabled group contributes nothing to the effective allowlist.
   const groupEntries = group?.enabled ? group.ip_ranges.length : 0
@@ -2335,6 +2497,8 @@ function ApiProtectionCard({ canWrite }: { canWrite: boolean }) {
     ip_allowlist_enabled: draft?.allowlistEnabled,
     ip_allowlist_ranges: ranges,
     ip_allowlist_group_id: draft?.groupId ?? '',
+    ip_denylist_enabled: draft?.denyEnabled,
+    ip_denylist_ranges: denyRanges,
     waf_enabled: draft?.wafEnabled,
     waf_mode: draft?.wafMode,
   })
@@ -2477,6 +2641,32 @@ function ApiProtectionCard({ canWrite }: { canWrite: boolean }) {
                 <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/8 px-3 py-2 text-[13px] text-fg">
                   <Warning weight="duotone" className="mt-0.5 h-4 w-4 shrink-0 text-fg-warning" />
                   {t('pages.settings.apiProtectionEmptyWarning')}
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-4 border-t border-line pt-4">
+              <Switch
+                checked={draft.denyEnabled}
+                disabled={!canWrite}
+                onCheckedChange={(value) => patch({ denyEnabled: value })}
+                label={t('pages.settings.apiProtectionDenylist')}
+                description={t('pages.settings.apiProtectionDenylistHint')}
+              />
+              <Textarea
+                label={t('pages.settings.apiProtectionDenyRanges')}
+                hint={t('pages.settings.apiProtectionDenyRangesHint')}
+                mono
+                rows={3}
+                value={draft.denyText}
+                placeholder={'198.51.100.9\n203.0.113.0/24'}
+                disabled={!canWrite || !draft.denyEnabled}
+                onChange={(e) => patch({ denyText: e.target.value })}
+              />
+              {draft.denyEnabled && denyRanges.length === 0 && (
+                <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/8 px-3 py-2 text-[13px] text-fg">
+                  <Warning weight="duotone" className="mt-0.5 h-4 w-4 shrink-0 text-fg-warning" />
+                  {t('pages.settings.apiProtectionDenyEmpty')}
                 </p>
               )}
             </div>

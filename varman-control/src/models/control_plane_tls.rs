@@ -49,4 +49,7 @@ pub mod source {
     pub const SELF_SIGNED: &str = "self_signed";
     /// Uploaded by an administrator.
     pub const UPLOADED: &str = "uploaded";
+    /// Issued by Let's Encrypt for the dashboard identity (domain or IP) and
+    /// installed automatically; renewals replace it the same way.
+    pub const ACME: &str = "acme";
 }

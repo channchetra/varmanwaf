@@ -2241,6 +2241,8 @@ request.
   "ip_allowlist_enabled": true,
   "ip_allowlist_ranges": ["203.0.113.4", "10.0.0.0/8"],
   "ip_allowlist_group_id": "uuid",
+  "ip_denylist_enabled": true,
+  "ip_denylist_ranges": ["198.51.100.9"],
   "waf_enabled": true,
   "waf_mode": "monitor",
   "force": false
@@ -2254,6 +2256,8 @@ request.
 | `ip_allowlist_enabled` | bool | Restrict the API to the allowlist below. |
 | `ip_allowlist_ranges` | string[] | Addresses and CIDRs; blanks are dropped, each entry must parse. |
 | `ip_allowlist_group_id` | string | Reference an `ip_groups` row; `""` clears the reference; omit or `null` to keep it. |
+| `ip_denylist_enabled` | bool | Refuse the addresses below even when the allowlist accepts them; a denial wins. |
+| `ip_denylist_ranges` | string[] | Addresses and CIDRs; blanks are dropped, each entry must parse. |
 | `waf_enabled` | bool | Inspect API requests with the embedded WAF engine. |
 | `waf_mode` | string | `block` or `monitor`; monitor only records matches (they show up as `observed_waf`). |
 | `force` | bool | Apply a change the lockout guard below would refuse. |
@@ -2278,6 +2282,9 @@ operator out of the console they are using:
 Add the address (or retry with `force: true`) to apply it anyway. The
 `varman security allowlist off` CLI on the server is the escape hatch when
 HTTP access is already gone.
+
+The same guard applies to the denylist: a write that denies the caller's own
+address is refused with `422` unless `force: true` is sent.
 
 **Response (200):** the same view as `GET`.
 
@@ -2368,6 +2375,54 @@ names (configured `tls_sans` plus the host name, the passkey relying party,
 (capped at `max_validity_days`, 3650).
 
 **Response (200):** the same shape as `GET /system/tls`.
+
+### GET /system/tls/acme
+
+The dashboard's own ACME request and the certificate the listener presents
+now. Administrators only.
+
+**Response (200):**
+```json
+{
+  "available": true,
+  "identity": "waf.example.com",
+  "email": "ops@example.com",
+  "enabled": true,
+  "status": "active",
+  "failure_reason": null,
+  "installed_fingerprint": "…",
+  "active": {
+    "source": "acme",
+    "sans": ["waf.example.com"],
+    "not_after": "2026-11-20T09:00:00Z",
+    "fingerprint_sha256": "…"
+  }
+}
+```
+
+`available` is false in a split deployment (no edge shares the process to
+answer the HTTP-01 challenge); `status` is `disabled`, `pending`, `active`
+or `failed`. IP identities are ordered as RFC 8738 IP identifiers under
+Let's Encrypt's `shortlived` profile (~6-day certificates).
+
+### PUT /system/tls/acme
+
+Set the identity/contact and arm or disarm issuance. Administrators only.
+
+```json
+{ "identity": "203.0.113.7", "email": "ops@example.com", "enabled": true }
+```
+
+`identity` accepts a DNS name or an IPv4/IPv6 literal; enabling requires
+`available` (all-in-one) and is refused with `422` otherwise. A request that
+reports no certificate within 30 minutes is marked `failed` with a reason.
+
+**Response (200):** the same shape as `GET /system/tls/acme`.
+
+### POST /system/tls/acme/retry
+
+Re-arm a `failed`/stuck request without changing its identity.
+**Response (200):** the same shape as `GET /system/tls/acme`.
 
 ---
 
@@ -3141,6 +3196,8 @@ The reference sections above cover the original surfaces in depth; this table is
 - `/system/tls`
 - `/system/tls/certificate`
 - `/system/tls/certificate/self-signed`
+- `/system/tls/acme`
+- `/system/tls/acme/retry`
 
 ### users
 

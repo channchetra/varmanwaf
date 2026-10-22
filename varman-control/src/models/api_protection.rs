@@ -31,6 +31,10 @@ pub mod api_protection_settings {
         pub ip_allowlist_ranges: Vec<String>,
         /// An `ip_groups` row whose ranges are merged into the allowlist.
         pub ip_allowlist_group_id: Option<Uuid>,
+        /// Refuse these addresses even when the allowlist would accept them.
+        pub ip_denylist_enabled: bool,
+        /// Inline IP ranges (address or CIDR) refused at the listener.
+        pub ip_denylist_ranges: Vec<String>,
         /// Inspect API requests with the embedded WAF engine.
         pub waf_enabled: bool,
         /// `block` or `monitor`; monitor only records matches.
@@ -65,6 +69,8 @@ pub mod action {
     pub const ALLOWED: &str = "allowed";
     /// Refused by the IP allowlist.
     pub const BLOCKED_ALLOWLIST: &str = "blocked_allowlist";
+    /// Refused by the IP denylist.
+    pub const BLOCKED_DENYLIST: &str = "blocked_denylist";
     /// Refused by the control plane WAF.
     pub const BLOCKED_WAF: &str = "blocked_waf";
     /// A WAF match recorded in monitor mode; the request passed.

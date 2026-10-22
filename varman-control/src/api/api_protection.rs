@@ -53,6 +53,8 @@ pub struct ApiProtectionView {
     /// referenced group); `0` while the allowlist is switched off, since
     /// nothing is enforced then.
     pub effective_allowlist_entries: usize,
+    /// Entries the denylist holds right now; `0` while it is switched off.
+    pub effective_denylist_entries: usize,
 }
 
 /// [`ApiProtectionView::effective_allowlist_entries`] for a settings row and
@@ -66,6 +68,16 @@ fn effective_entries(
     } else {
         0
     }
+}
+
+/// [`ApiProtectionView::effective_denylist_entries`] for a settings row.
+fn effective_deny_entries(settings: &api_protection_setting::Model) -> usize {
+    if !settings.ip_denylist_enabled {
+        return 0;
+    }
+    let (denylist, _) =
+        self_protection::Allowlist::parse(&settings.ip_denylist_ranges);
+    denylist.len()
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +94,10 @@ pub struct UpdateApiProtectionRequest {
     /// a UUID points the allowlist at that `ip_groups` row.
     #[serde(default, deserialize_with = "deserialize_optional_uuid")]
     pub ip_allowlist_group_id: Option<Option<Uuid>>,
+    #[serde(default)]
+    pub ip_denylist_enabled: Option<bool>,
+    #[serde(default)]
+    pub ip_denylist_ranges: Option<Vec<String>>,
     #[serde(default)]
     pub waf_enabled: Option<bool>,
     #[serde(default)]
@@ -130,6 +146,8 @@ fn writable(
         ip_allowlist_enabled: Set(row.ip_allowlist_enabled),
         ip_allowlist_ranges: Set(row.ip_allowlist_ranges),
         ip_allowlist_group_id: Set(row.ip_allowlist_group_id),
+        ip_denylist_enabled: Set(row.ip_denylist_enabled),
+        ip_denylist_ranges: Set(row.ip_denylist_ranges),
         waf_enabled: Set(row.waf_enabled),
         waf_mode: Set(row.waf_mode),
         updated_at: Set(row.updated_at),
@@ -147,6 +165,7 @@ async fn show(
         self_protection::effective_allowlist(&state.db, &settings).await?;
     let entries = effective_entries(&settings, &allowlist);
     Ok(Json(ApiProtectionView {
+        effective_denylist_entries: effective_deny_entries(&settings),
         settings,
         effective_allowlist_entries: entries,
     }))
@@ -206,6 +225,24 @@ async fn update(
         }
         prospective.ip_allowlist_group_id = group_id;
     }
+    if let Some(enabled) = payload.ip_denylist_enabled {
+        prospective.ip_denylist_enabled = enabled;
+    }
+    if let Some(ranges) = payload.ip_denylist_ranges {
+        let ranges: Vec<String> = ranges
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect();
+        let (_, invalid) = self_protection::Allowlist::parse(&ranges);
+        if !invalid.is_empty() {
+            return Err(ApiError::BadRequest(format!(
+                "invalid denylist entries (expected an address or CIDR): {}",
+                invalid.join(", ")
+            )));
+        }
+        prospective.ip_denylist_ranges = ranges;
+    }
     if let Some(enabled) = payload.waf_enabled {
         prospective.waf_enabled = enabled;
     }
@@ -243,6 +280,20 @@ async fn update(
         }
     }
 
+    // The same guard for the denylist: refusing the caller's own address
+    // locks the console out just as effectively.
+    if prospective.ip_denylist_enabled && !payload.force {
+        let (denylist, _) =
+            self_protection::Allowlist::parse(&prospective.ip_denylist_ranges);
+        if let Some(ip) = peer.map(|Extension(info)| info.0.peer_addr.ip()) {
+            if denylist.contains(&ip) {
+                return Err(ApiError::Unprocessable(format!(
+                    "the new denylist contains your address ({ip}); remove it first, or send force=true to apply anyway"
+                )));
+            }
+        }
+    }
+
     let mut active = writable(prospective);
     active.updated_at = Set(Utc::now());
     let updated = active.update(&state.db).await?;
@@ -266,6 +317,7 @@ async fn update(
         self_protection::effective_allowlist(&state.db, &updated).await?;
     let entries = effective_entries(&updated, &allowlist);
     Ok(Json(ApiProtectionView {
+        effective_denylist_entries: effective_deny_entries(&updated),
         settings: updated,
         effective_allowlist_entries: entries,
     }))
@@ -371,6 +423,8 @@ mod tests {
             ip_allowlist_enabled: false,
             ip_allowlist_ranges: vec!["10.0.0.0/8".to_string()],
             ip_allowlist_group_id: None,
+            ip_denylist_enabled: false,
+            ip_denylist_ranges: Vec::new(),
             waf_enabled: true,
             waf_mode: waf_mode::BLOCK.to_string(),
             updated_at: Utc::now(),

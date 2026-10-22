@@ -68,6 +68,8 @@ mod m20240101_000060_api_learned_schemas;
 mod m20240101_000061_exclusion_package_import;
 mod m20240101_000062_api_operation_mode;
 mod m20240101_000063_api_response_learning;
+mod m20240101_000064_management_certificate;
+mod m20240101_000065_api_protection_denylist;
 
 use sea_orm_migration::prelude::*;
 
@@ -147,6 +149,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000061_exclusion_package_import::Migration),
             Box::new(m20240101_000062_api_operation_mode::Migration),
             Box::new(m20240101_000063_api_response_learning::Migration),
+            Box::new(m20240101_000064_management_certificate::Migration),
+            Box::new(m20240101_000065_api_protection_denylist::Migration),
         ]
     }
 }
@@ -158,7 +162,7 @@ mod tests {
     #[test]
     fn migrations_are_ordered_and_unique() {
         let migrations = Migrator::migrations();
-        assert_eq!(migrations.len(), 63);
+        assert_eq!(migrations.len(), 65);
         let names: Vec<String> =
             migrations.iter().map(|m| m.name().to_owned()).collect();
         let mut sorted = names.clone();

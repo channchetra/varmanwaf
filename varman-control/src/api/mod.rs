@@ -36,6 +36,7 @@ pub mod keys;
 pub mod log_retention;
 pub mod login_security;
 pub mod logs;
+pub mod management_cert;
 pub mod mcp;
 pub mod mtls;
 pub mod notifications;
@@ -120,6 +121,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(error_pages::routes())
         .merge(debug::routes())
         .merge(system_tls::routes())
+        .merge(management_cert::routes())
         .merge(defense::routes())
         .merge(cache_settings::routes())
         .merge(api_protection::routes())
