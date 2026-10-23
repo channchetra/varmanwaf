@@ -59,6 +59,36 @@ typography:
     fontWeight: 500
     lineHeight: 1.4
     letterSpacing: "0.08em"
+  micro:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontSize: "10px"
+    fontWeight: 500
+    lineHeight: 1.4
+    letterSpacing: "0.08em"
+  caption:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontSize: "12px"
+    fontWeight: 400
+    lineHeight: 1.4
+    letterSpacing: "normal"
+  body-small:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontSize: "13px"
+    fontWeight: 400
+    lineHeight: 1.5
+    letterSpacing: "normal"
+  title-small:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontSize: "16px"
+    fontWeight: 600
+    lineHeight: 1.4
+    letterSpacing: "normal"
+  headline-small:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontSize: "18px"
+    fontWeight: 600
+    lineHeight: 1.3
+    letterSpacing: "-0.01em"
   mono:
     fontFamily: "'SFMono-Regular', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace"
     fontSize: "13px"
@@ -190,7 +220,14 @@ A warm signal ember on graphite neutrals, with a cool blue reserved for focus an
 - **Title** (600, 15px, 1.4): card headers, section labels and the name of a thing.
 - **Body** (400, 14px, 1.6): descriptions and prose, max ~70ch; tables and dense panels can run denser.
 - **Label** (500, 10-11px, uppercase, 0.08em): stat labels, table headers and small section eyebrows.
+- **Micro** (500, 10px, uppercase, 0.08em): the smallest meta line; use sparingly inside dense panels.
+- **Caption** (400-500, 12px, 1.4): table metadata, badge text, hints and dense secondary rows.
+- **Body small** (400, 13px, 1.5): secondary body text and table cells.
+- **Title small** (600, 16px, 1.4): subheads and compact card titles.
+- **Headline small** (600, 18px, 1.3): site headers and larger section titles.
 - **Mono** (400, 12-13px, 1.5): IPs, domains, expressions, rule ids, log rows and tabular numbers. Use `font-variant-numeric: tabular-nums` for counts.
+
+Generated error-page templates use 22px and 96px outside the console ramp; they are emailed artifacts, not app UI.
 
 ### Named Rules
 **The Readout Rule.** Mono is a measurement voice: code, addresses, expressions, timestamps and numeric tables. Do not set prose, labels or navigation in mono to make a surface feel technical.

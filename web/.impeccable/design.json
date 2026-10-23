@@ -74,6 +74,26 @@
         "displayName": "Label",
         "purpose": "11px uppercase, 0.08em; stat labels and table headers."
       },
+      "micro": {
+        "displayName": "Micro",
+        "purpose": "10px uppercase; the smallest dense meta line."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "12px dense metadata, badge text, hints and secondary rows."
+      },
+      "body-small": {
+        "displayName": "Body Small",
+        "purpose": "13px secondary body and table cells."
+      },
+      "title-small": {
+        "displayName": "Title Small",
+        "purpose": "16px subheads and compact card titles."
+      },
+      "headline-small": {
+        "displayName": "Headline Small",
+        "purpose": "18px site headers and larger section titles."
+      },
       "mono": {
         "displayName": "Readout",
         "purpose": "IPs, domains, expressions, logs and tabular numbers only."
