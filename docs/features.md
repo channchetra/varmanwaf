@@ -193,15 +193,18 @@ Conventions used below:
   managed challenge, or under-attack mode (heightened thresholds). Verdicts
   are recorded as events with the reason.
 
-### 3.2 Policy tuning
+### 3.2 Advanced settings (formerly policy tuning)
 
 - **Where** — `/sites/:siteId/security/protection?tab=tuning` (legacy
-  `?tab=settings|policy|exclusions` resolve here).
+  `?tab=settings|policy|exclusions` resolve here). The tab is labelled
+  **Advanced**.
 - **API** — `policies.rs`, `exclusions.rs`, `waf_settings.rs`.
+- **Enforcement** — The site's **Protection mode** is in the site header, not
+  this tab. Advanced only tunes how detection behaves.
 - **Sections (rail)** —
-  - **Policy summary** — chips for every layer with its state.
-  - **Site posture** — engine mode, advanced mode, custom layers, monitor
-    lists: what this site runs.
+  - **Protection summary** — chips for the resolved posture and plan.
+  - **Paranoia & grading** — engine mode, advanced mode, custom layers,
+    monitor lists: what this site runs.
   - **Effective posture** — the merged result after policy inheritance:
     which layer wins where, so "published" and "applied" are visibly
     distinct.
@@ -283,8 +286,8 @@ Conventions used below:
   pushes their configuration); recorded agent-to-site bindings appear as
   extra links. Clicking a site node opens that site's topology; clicking an
   agent opens the Agents page. Empty fleets render explicit placeholders.
-- **Site view** — a live ReactFlow graph of the real request path:
-  **Internet → Site → Web Protection → Security layers → Routing → Origin
+- **Site view** - a live ReactFlow graph of the real request path:
+  **Internet → Site → Protection → Security layers → Routing → Origin
   pools → Targets**. Every link is animated; security layers are grouped in
   one box and each origin pool groups its targets. Nodes are draggable and
   the arrangement is remembered per site; `Auto layout` restores the computed
@@ -379,7 +382,7 @@ Conventions used below:
 
 ### 3.13 Virtual patches (CVE response)
 
-- **Where** — site *Web Protection → Custom layers*, or a policy's
+- **Where** - site *Protection → Advanced → Custom layers*, or a policy's
   `virtual_patches` layer.
 - **API** — `waf_settings.rs` (settings + `GET /virtual-patch-templates`).
 - **How it works** — A per-site SecLang source (OWASP CRS dialect) evaluated

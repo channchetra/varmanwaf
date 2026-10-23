@@ -71,22 +71,28 @@ The **Origin** tab of a site manages origin pools and path routes.
 - The header shows live counters: WAF actions, rate-limit hits, SSL status and
   upstream count.
 
-## 4. Web Protection
+## 4. Protection
 
-**Sites → your site → Web Protection** is where the WAF posture lives.
+**Sites → your site → Protection** is where detection and enforcement live.
 
-![Web Protection](images/web-protection.png)
+![Protection](images/web-protection.png)
 
+- **Protection mode** — the control at the top of every site page. **Block**
+  answers matching attacks with a 403, **Monitor** records everything without
+  blocking, and **Paused** takes the site offline. This is the gate; rules do
+  not override it.
 - **Under Attack Mode** — challenges every visitor with a JavaScript check.
   Switch it on while a site is under an active flood; switch it off afterwards.
-- **Grading tab** — the built-in managed ruleset, graded per attack family
-  (SQL injection, cross-site scripting, remote code execution, LFI, SSRF,
-  insecure deserialization, CRLF, XXE, SSTI). Each family can be set to
-  **block** or **monitor-only**, and rules can be graded individually.
-- **WAF Rules tab** — custom rules with match expressions, actions and scores;
-  rule changes are pushed to the edge without a restart.
-- **CC Protection tab** — challenge configuration (level, clearance duration,
-  trigger thresholds, exempt paths).
+- **Rules tab** — the built-in managed ruleset plus custom rules with match
+  expressions, actions and scores. Each rule's **Rule mode** is an override for
+  that rule only (useful for one noisy signature); rule changes are pushed to
+  the edge without a restart.
+- **Flood protection tab** — challenge configuration (level, clearance
+  duration, trigger thresholds, exempt paths).
+- **Advanced tab** — attack-family grading (SQL injection, cross-site
+  scripting, remote code execution, LFI, SSRF, insecure deserialization, CRLF,
+  XXE, SSTI), advanced mode, monitor-only stacks, exclusions and the optional
+  shared policy.
 - **Advanced mode** — the strict managed set plus deep request-body
   inspection; higher interception rate at a proportional performance cost.
 - **Monitor-only downgrades** — per attack category and per backend stack

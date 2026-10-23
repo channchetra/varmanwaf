@@ -587,7 +587,7 @@ request trends and top triggered rules.
 
 ### 5. Go further
 
-Rate limiting, CC protection and challenges, caching, rewrites, custom error
+Rate limiting, flood protection and challenges, caching, rewrites, custom error
 pages, Geo/IP rules, bot protection and ACME certificates are all covered in
 [`docs/user-guide.md`](./user-guide.md). Recent releases also add per-site
 origin pools with load balancing and routing (the **Origin** tab on a site's

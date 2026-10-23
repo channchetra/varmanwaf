@@ -216,7 +216,7 @@ Enable/disable individual rules within managed groups.
 ### Rule Grading
 
 ```
-Sites → [site] → Web Protection → Grading
+Sites → [site] → Protection → Advanced
 ```
 
 Besides per-rule toggles, the whole detection posture of a site can be graded:
@@ -232,7 +232,7 @@ A site without explicit grading settings behaves exactly like the default postur
 ### Under Attack Mode
 
 ```
-Sites → [site] → Web Protection (top banner)
+Sites → [site] → Protection (top banner)
 ```
 
 A site-wide emergency switch: every visitor is challenged with a JavaScript check, and CC protection is switched on automatically. Enable it only while the site is under an active flood attack and disable it once the attack subsides.
@@ -259,12 +259,12 @@ Example: Limit to 100 requests per 60 seconds per IP on `/api/*`.
 
 Requests missing the header, cookie or query parameter bucket together, so they still count against the limit. Header names match case-insensitively; cookie and query names are case-sensitive. The `ja3` characteristic is reserved for future use and is not yet accepted by the API.
 
-## CC Protection & Challenges
+## Flood protection & challenges
 
 ### Challenge Settings
 
 ```
-Sites → [site] → Web Protection → CC Protection
+Sites → [site] → Protection → Flood protection
 ```
 
 | Setting | Options |

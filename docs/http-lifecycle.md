@@ -128,7 +128,7 @@ Two cross-cutting behaviours are worth remembering:
 - on success the visitor receives a signed clearance cookie, so later requests
   skip the challenge until it expires;
 - difficulty, clearance lifetime and challenge level are per-site settings
-  (Site → Security → CC protection).
+  (Site → Protection → Flood protection).
 
 ## Caching and the WAF
 
