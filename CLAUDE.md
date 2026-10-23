@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+> **Current handoff:** [HANDOFF.md](HANDOFF.md) — v1.1.9 console, public website
+> and Impeccable state. Read it before resuming this multi-round work.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project
