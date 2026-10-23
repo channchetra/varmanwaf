@@ -193,7 +193,7 @@ export function LoginPage() {
       <div className="flex flex-col justify-center bg-base px-6 py-12 sm:px-12">
         <div className="mx-auto w-full max-w-sm">
           <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-white">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-on-brand">
               <ShieldCheck weight="fill" className="h-6 w-6" />
             </span>
             <span className="text-lg font-semibold text-fg-strong">VarmanWAF</span>
@@ -208,7 +208,7 @@ export function LoginPage() {
 
           {needsSetup && (
             <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-brand/30 bg-brand-soft px-3 py-2.5 text-[13px] leading-relaxed text-fg">
-              <WarningCircle weight="fill" className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+              <WarningCircle weight="fill" className="mt-0.5 h-4 w-4 shrink-0 text-brand-ink" />
               <span>{t('auth.setupNotice')}</span>
             </div>
           )}
@@ -353,7 +353,7 @@ export function LoginPage() {
                   className={
                     'rounded-md px-2.5 py-1 text-xs font-medium transition-colors ' +
                     (i18n.language?.startsWith(lng)
-                      ? 'bg-brand-soft text-brand'
+                      ? 'bg-brand-soft text-brand-ink'
                       : 'text-fg-subtle hover:bg-recessed hover:text-fg')
                   }
                 >

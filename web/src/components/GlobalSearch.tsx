@@ -230,7 +230,7 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onKeyDown}
             placeholder={t('search.placeholder')}
-            className="h-10 w-full rounded-md border border-line bg-recessed pl-9 pr-3 text-sm text-fg placeholder:text-fg-subtle/70 focus:border-focus focus:outline-none"
+            className="h-10 w-full rounded-md border border-line bg-recessed pl-9 pr-3 text-sm text-fg placeholder:text-placeholder focus:border-focus focus:outline-none"
           />
         </div>
 

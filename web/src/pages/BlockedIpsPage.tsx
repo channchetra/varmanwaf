@@ -109,7 +109,7 @@ export function BlockedIpsPage() {
         cell: (r) => (
           <Link
             to={`/sites/${r.site_id}/security/access`}
-            className="text-[13px] text-brand hover:underline"
+            className="text-[13px] text-brand-ink hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
             {r.site_name || r.site_id}

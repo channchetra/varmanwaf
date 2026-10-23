@@ -315,7 +315,7 @@ export function SslPage() {
           <span
             className={cn(
               'flex h-8 w-8 shrink-0 items-center justify-center rounded-md',
-              isCurrent(c) ? 'bg-brand text-white' : 'bg-brand-soft text-brand',
+              isCurrent(c) ? 'bg-brand text-on-brand' : 'bg-brand-soft text-brand-ink',
             )}
           >
             <Lock weight="duotone" className="h-4 w-4" />
@@ -447,7 +447,7 @@ export function SslPage() {
 
       {expiringSoon > 0 && (
         <div className="mb-4 flex items-center gap-3 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3">
-          <ShieldCheck weight="duotone" className="h-5 w-5 shrink-0 text-warning" />
+          <ShieldCheck weight="duotone" className="h-5 w-5 shrink-0 text-fg-warning" />
           <p className="text-sm text-fg">
             {t('pages.ssl.expiringWarning', { count: expiringSoon })}
           </p>
@@ -540,7 +540,7 @@ export function SslPage() {
                     </>
                   ) : (
                     <span className="flex items-center gap-1.5 text-[13px] text-fg-subtle">
-                      <Warning weight="duotone" className="h-4 w-4 shrink-0 text-warning" />
+                      <Warning weight="duotone" className="h-4 w-4 shrink-0 text-fg-warning" />
                       {t('pages.ssl.noCertificateWarning')}
                     </span>
                   )}
@@ -728,7 +728,7 @@ export function SslPage() {
 
             {drafts.mtls.mtls_enabled && !drafts.https.https_enabled && (
               <p className="flex items-center gap-1.5 text-xs text-fg-subtle">
-                <Warning weight="duotone" className="h-4 w-4 shrink-0 text-warning" />
+                <Warning weight="duotone" className="h-4 w-4 shrink-0 text-fg-warning" />
                 {t('pages.ssl.mtlsNeedsHttps')}
               </p>
             )}

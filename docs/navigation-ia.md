@@ -113,6 +113,19 @@ The Protection page's Overview now starts with the operational modules, then
 the request path, then the optional shared policy, so policies are no longer
 the first thing an operator sees.
 
+## Keyboard and focus order (v1.1.9)
+
+- The first Tab from a page start reveals **Skip to content**, which moves
+  focus to `main#main`.
+- Sortable table headers are real buttons. Focus them with Tab and activate
+  with Enter or Space; the `<th>` carries `aria-sort="ascending"`,
+  `"descending"` or `"none"`, so assistive tech announces the current order.
+- Dialogs move focus to the dialog panel, keep Tab inside the panel, mark the
+  app root `inert`, and return focus to the trigger when closed. Escape closes
+  the dialog unless a save is in flight.
+- Mobile navigation and icon controls grow to at least 44 px so touch targets
+  do not shrink with the desktop density.
+
 ## Protection section (v0.50.0)
 
 Applying the study's remaining conclusions:

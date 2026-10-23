@@ -27,7 +27,7 @@ const TONE_CLASS: Record<ChipTone, string> = {
   warning: 'bg-warning/15 text-fg',
   danger: 'bg-danger/12 text-fg-danger',
   neutral: 'bg-recessed text-fg-subtle',
-  brand: 'bg-brand/12 text-brand',
+  brand: 'bg-brand/12 text-brand-ink',
   info: 'bg-focus/10 text-link',
 }
 
@@ -142,7 +142,7 @@ export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
     const chip = chips?.[0]
     return (
       <div className="flex w-[230px] items-center gap-2 rounded-lg border-2 border-line bg-elevated px-2.5 py-1.5 shadow-sm transition-shadow hover:shadow-md">
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-brand/12 text-brand">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-brand/12 text-brand-ink">
           {icon}
         </span>
         <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-fg-strong">
@@ -175,7 +175,7 @@ export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
         <span
           className={cn(
             'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
-            placeholder ? 'bg-recessed text-fg-subtle' : 'bg-elevated text-brand',
+            placeholder ? 'bg-recessed text-fg-subtle' : 'bg-elevated text-brand-ink',
           )}
         >
           {icon}
@@ -191,7 +191,7 @@ export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
           )}
         </div>
         {placeholder && kind !== 'placeholder' && (
-          <Warning weight="duotone" className="h-3.5 w-3.5 shrink-0 text-warning" />
+          <Warning weight="duotone" className="h-3.5 w-3.5 shrink-0 text-fg-warning" />
         )}
       </div>
       <Chips chips={chips} />

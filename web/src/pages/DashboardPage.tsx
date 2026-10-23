@@ -53,6 +53,7 @@ import {
   formatPercent,
   formatSize,
 } from '@/lib/format'
+import { useChartPalette } from '@/lib/chartPalette'
 import type { RangeQuery, TopIp, TopPath, TopRule } from '@/api/types'
 
 /** Preset windows, in hours. The API caps a single range at 31 days. */
@@ -67,18 +68,6 @@ const RANGE_OPTIONS = [
 
 /** 30s polling cadence, matching the dashboard's "live" promise. */
 const REFRESH_MS = 30_000
-
-/** Stroke palette for the per-site traffic lines (capped at 8 sites server-side). */
-const SITE_LINE_COLORS = [
-  '#f6821f',
-  '#18794e',
-  '#2f6fed',
-  '#e54d2a',
-  '#8b5cf6',
-  '#0891b2',
-  '#ca8a04',
-  '#db2777',
-]
 
 /** Badge tone matching the HTTP class of a status code. */
 function statusCodeTone(code: number): 'success' | 'info' | 'warning' | 'danger' {
@@ -112,6 +101,7 @@ function trafficStepFor(hours: number): number {
 
 export function DashboardPage() {
   const { t } = useTranslation()
+  const palette = useChartPalette()
   const [hours, setHours] = useState(24)
   const [siteId, setSiteId] = useState<string>('')
 
@@ -289,7 +279,7 @@ export function DashboardPage() {
         ? t('pages.dashboard.rulesTriggered', { count: formatCompactNumber(s.rules_triggered) })
         : undefined,
       icon: Lightning,
-      tone: 'text-brand bg-brand-soft',
+      tone: 'text-brand-ink bg-brand-soft',
     },
     {
       key: 'agents',
@@ -492,7 +482,7 @@ export function DashboardPage() {
         <div className="flex flex-wrap items-center gap-4">
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-2 text-sm font-semibold text-fg-strong">
-              <FileText weight="duotone" className="h-4 w-4 text-brand" />
+              <FileText weight="duotone" className="h-4 w-4 text-brand-ink" />
               {t('pages.reports.dashboardTitle')}
             </p>
             {reportSummary.data ? (
@@ -600,12 +590,12 @@ export function DashboardPage() {
                 <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
                   <defs>
                     <linearGradient id="reqFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#f6821f" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="#f6821f" stopOpacity={0} />
+                      <stop offset="0%" stopColor={palette.requests} stopOpacity={0.35} />
+                      <stop offset="100%" stopColor={palette.requests} stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="blockFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#e54d2a" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#e54d2a" stopOpacity={0} />
+                      <stop offset="0%" stopColor={palette.blocked} stopOpacity={0.3} />
+                      <stop offset="100%" stopColor={palette.blocked} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-line)" vertical={false} />
@@ -637,7 +627,7 @@ export function DashboardPage() {
                     type="monotone"
                     dataKey="requests"
                     name={t('pages.traffic.requests')}
-                    stroke="#f6821f"
+                    stroke={palette.requests}
                     strokeWidth={2}
                     fill="url(#reqFill)"
                   />
@@ -645,7 +635,7 @@ export function DashboardPage() {
                     type="monotone"
                     dataKey="blocked"
                     name={t('pages.dashboard.blockedShort')}
-                    stroke="#e54d2a"
+                    stroke={palette.blocked}
                     strokeWidth={2}
                     fill="url(#blockFill)"
                   />
@@ -653,7 +643,7 @@ export function DashboardPage() {
                     type="monotone"
                     dataKey="cache_hits"
                     name={t('nav.caching')}
-                    stroke="#18794e"
+                    stroke={palette.passed}
                     strokeWidth={2}
                     fill="transparent"
                   />
@@ -730,7 +720,7 @@ export function DashboardPage() {
                         type="monotone"
                         dataKey={domain}
                         name={siteTrafficData.names.get(domain)}
-                        stroke={SITE_LINE_COLORS[index % SITE_LINE_COLORS.length]}
+                        stroke={palette.series[index % palette.series.length]}
                         strokeWidth={2}
                         dot={false}
                         activeDot={{ r: 3 }}

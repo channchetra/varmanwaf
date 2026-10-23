@@ -338,7 +338,7 @@ export function BotPage() {
                       key={bot}
                       type="button"
                       onClick={() => addWhitelistEntry(bot)}
-                      className="rounded-full border border-dashed border-line px-2.5 py-0.5 text-xs text-fg-subtle transition-colors hover:border-brand hover:text-brand"
+                      className="rounded-full border border-dashed border-line px-2.5 py-0.5 text-xs text-fg-subtle transition-colors hover:border-brand hover:text-brand-ink"
                     >
                       + {bot}
                     </button>
@@ -373,7 +373,7 @@ function MethodToggle({
   const { t } = useTranslation()
   return (
     <div className="flex items-start gap-3 rounded-lg border border-line bg-recessed/40 p-3">
-      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-brand-soft text-brand">
+      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-brand-soft text-brand-ink">
         {icon}
       </span>
       {comingSoon ? (

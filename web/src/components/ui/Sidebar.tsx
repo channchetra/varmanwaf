@@ -200,9 +200,9 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
   ]
 
   const linkBase =
-    'group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150'
+    'group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 max-md:min-h-11'
   const linkIdle = 'text-fg-subtle hover:bg-recessed hover:text-fg'
-  const linkActive = 'bg-brand-soft text-brand'
+  const linkActive = 'bg-brand-soft text-brand-ink'
 
   return (
     <nav className="flex h-full flex-col gap-0.5 overflow-y-auto px-2 py-3">
@@ -291,7 +291,7 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
               className={cn(
                 linkBase,
                 'w-full',
-                childActive ? 'text-brand' : 'text-fg-subtle hover:bg-recessed hover:text-fg',
+                childActive ? 'text-brand-ink' : 'text-fg-subtle hover:bg-recessed hover:text-fg',
               )}
               aria-expanded={isOpen}
             >
@@ -333,7 +333,7 @@ export function Sidebar({ collapsed, onNavigate }: SidebarProps) {
                             childDisabled
                               ? 'cursor-not-allowed opacity-50'
                               : isActive
-                                ? 'bg-brand-soft font-medium text-brand'
+                                ? 'bg-brand-soft font-medium text-brand-ink'
                                 : 'text-fg-subtle hover:bg-recessed hover:text-fg',
                           )
                         }

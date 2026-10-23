@@ -113,46 +113,63 @@ export function Table<T>({
             <tr className="bg-recessed">
               {columns.map((col) => {
                 const active = sort?.key === col.key
+                const ariaSort = active
+                  ? sort?.dir === 'asc'
+                    ? 'ascending'
+                    : 'descending'
+                  : 'none'
+                const content = (
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1',
+                      col.align === 'right' && 'flex-row-reverse',
+                    )}
+                  >
+                    {col.header}
+                    {col.sortable && (
+                      <span className="inline-flex flex-col leading-none" aria-hidden>
+                        <CaretUp
+                          weight="bold"
+                          className={cn(
+                            'h-2.5 w-2.5 -mb-0.5',
+                            active && sort?.dir === 'asc' ? 'text-brand-ink' : 'text-fg-subtle/40',
+                          )}
+                        />
+                        <CaretDown
+                          weight="bold"
+                          className={cn(
+                            'h-2.5 w-2.5',
+                            active && sort?.dir === 'desc' ? 'text-brand-ink' : 'text-fg-subtle/40',
+                          )}
+                        />
+                      </span>
+                    )}
+                  </span>
+                )
                 return (
                   <th
                     key={col.key}
                     style={col.width ? { width: col.width } : undefined}
                     scope="col"
+                    aria-sort={col.sortable ? ariaSort : undefined}
                     className={cn(
                       cellPad,
                       'border-b border-line text-xs font-semibold tracking-wide text-fg-subtle uppercase',
                       alignClass[col.align ?? 'left'],
-                      col.sortable && 'cursor-pointer select-none hover:text-fg',
                       col.className,
                     )}
-                    onClick={() => toggleSort(col)}
                   >
-                    <span
-                      className={cn(
-                        'inline-flex items-center gap-1',
-                        col.align === 'right' && 'flex-row-reverse',
-                      )}
-                    >
-                      {col.header}
-                      {col.sortable && (
-                        <span className="inline-flex flex-col leading-none">
-                          <CaretUp
-                            weight="bold"
-                            className={cn(
-                              'h-2.5 w-2.5 -mb-0.5',
-                              active && sort?.dir === 'asc' ? 'text-brand' : 'text-fg-subtle/40',
-                            )}
-                          />
-                          <CaretDown
-                            weight="bold"
-                            className={cn(
-                              'h-2.5 w-2.5',
-                              active && sort?.dir === 'desc' ? 'text-brand' : 'text-fg-subtle/40',
-                            )}
-                          />
-                        </span>
-                      )}
-                    </span>
+                    {col.sortable ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleSort(col)}
+                        className="inline-flex select-none items-center gap-1 rounded-sm text-left uppercase tracking-wide hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40"
+                      >
+                        {content}
+                      </button>
+                    ) : (
+                      content
+                    )}
                   </th>
                 )
               })}

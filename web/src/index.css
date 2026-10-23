@@ -24,8 +24,14 @@
   --color-text-strong: #000000;
   --color-text-inverse: #ffffff;
   --color-text-link: #0051c3;
-  --color-text-danger: #e54d2a;
+  --color-text-danger: #b83c2c;
   --color-text-success: #18794e;
+  --color-text-warning: #805b09;
+  --color-text-brand: #a34700;
+  --color-text-on-brand: #1d1d1d;
+  --color-text-placeholder: #767676;
+  --color-bg-danger-strong: #c2410c;
+  --color-graph-control: #6e56cf;
 
   /* Border */
   --color-border-line: #e8e8e8;
@@ -69,6 +75,12 @@
   --color-text-link: #52a9ff;
   --color-text-danger: #ff6340;
   --color-text-success: #30a46c;
+  --color-text-warning: #ffc53d;
+  --color-text-brand: #ffb066;
+  --color-text-on-brand: #1d1d1d;
+  --color-text-placeholder: #9a9a9a;
+  --color-bg-danger-strong: #b83c2c;
+  --color-graph-control: #b477e4;
 
   --color-border-line: #3a3a3a;
   --color-border-fill: #4a4a4a;
@@ -104,6 +116,11 @@
   --color-link: var(--color-text-link);
   --color-fg-danger: var(--color-text-danger);
   --color-fg-success: var(--color-text-success);
+  --color-fg-warning: var(--color-text-warning);
+  --color-brand-ink: var(--color-text-brand);
+  --color-on-brand: var(--color-text-on-brand);
+  --color-placeholder: var(--color-text-placeholder);
+  --color-danger-strong: var(--color-bg-danger-strong);
 
   /* Borders */
   --color-line: var(--color-border-line);
@@ -179,10 +196,65 @@ body {
   background-color: color-mix(in srgb, var(--color-bg-brand) 12%, transparent);
 }
 .text-brand {
-  color: var(--color-bg-brand);
+  color: var(--color-text-brand);
 }
 .border-brand {
   border-color: var(--color-bg-brand);
+}
+
+/* Skip link: off-screen until keyboard focus, then a visible first stop. */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  transform: translateY(-200%);
+  border: 1px solid var(--color-border-line);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-strong);
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-lg);
+  transition: transform 150ms ease;
+}
+.skip-link:focus {
+  transform: translateY(0);
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+/* React Flow chrome uses white defaults; keep the graph surfaces in theme. */
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--color-border-line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+.react-flow__controls-button {
+  border-bottom: 1px solid var(--color-border-line);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-default);
+  fill: currentColor;
+}
+.react-flow__controls-button:hover {
+  background: var(--color-bg-recessed);
+}
+.react-flow__controls-button svg {
+  fill: currentColor;
+}
+.react-flow__minimap {
+  border: 1px solid var(--color-border-line);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+.react-flow__minimap-mask {
+  fill: color-mix(in srgb, var(--color-bg-base) 55%, transparent);
+}
+.react-flow__attribution {
+  color: var(--color-text-subtle);
+  background: transparent;
 }
 
 /* Motion helpers */
@@ -291,11 +363,20 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Keep state feedback (color, border, opacity) but remove movement and
+     decorative entrances. A global near-zero duration would erase the
+     feedback that tells an operator a control changed. */
   *,
   *::before,
   *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
+    animation: none !important;
+    transition-property: color, background-color, border-color, box-shadow,
+      opacity, fill, stroke !important;
+    transition-duration: 150ms !important;
+    scroll-behavior: auto !important;
+  }
+  .pw-skeleton::after {
+    animation: none !important;
+    opacity: 0.45;
   }
 }

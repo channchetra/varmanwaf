@@ -232,13 +232,13 @@ export function SitesListPage() {
       sortable: true,
       cell: (r) => (
         <div className="flex items-center gap-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-brand-soft text-brand">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-brand-soft text-brand-ink">
             <Globe weight="duotone" className="h-4 w-4" />
           </span>
           <div className="min-w-0">
             <button
               type="button"
-              className="pw-mono block max-w-full truncate text-left font-medium text-fg-strong hover:text-brand hover:underline"
+              className="pw-mono block max-w-full truncate text-left font-medium text-fg-strong hover:text-brand-ink hover:underline"
               title={r.domain}
               onClick={() => navigate(`/sites/${r.id}/overview`)}
             >

@@ -153,8 +153,8 @@ export const POOL_WIDTH = 300
 
 function edgeStyle(tls = false) {
   return tls
-    ? { stroke: '#eab308', strokeWidth: 2, strokeDasharray: '6 3' }
-    : { stroke: '#94a3b8', strokeWidth: 1.6 }
+    ? { stroke: 'var(--color-text-warning)', strokeWidth: 2, strokeDasharray: '6 3' }
+    : { stroke: 'var(--color-text-subtle)', strokeWidth: 1.6 }
 }
 
 function link(
@@ -170,12 +170,12 @@ function link(
     target,
     animated: true,
     label: options.label,
-    labelStyle: { fill: tls ? '#eab308' : '#94a3b8', fontSize: 10 },
+    labelStyle: { fill: tls ? 'var(--color-text-warning)' : 'var(--color-text-subtle)', fontSize: 10 },
     labelBgStyle: { fill: 'var(--color-bg-elevated)', fillOpacity: 0.85 },
     style: edgeStyle(tls),
     markerEnd: {
       type: MarkerType.ArrowClosed,
-      color: tls ? '#eab308' : '#94a3b8',
+      color: tls ? 'var(--color-text-warning)' : 'var(--color-text-subtle)',
     },
   }
 }

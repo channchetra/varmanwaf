@@ -47,7 +47,7 @@ const ToastContext = createContext<ToastContextValue | null>(null)
 const toneConfig: Record<ToastTone, { icon: ReactNode; accent: string }> = {
   success: { icon: <CheckCircle weight="fill" className="h-5 w-5" />, accent: 'text-fg-success' },
   error: { icon: <XCircle weight="fill" className="h-5 w-5" />, accent: 'text-fg-danger' },
-  warning: { icon: <WarningCircle weight="fill" className="h-5 w-5" />, accent: 'text-warning' },
+  warning: { icon: <WarningCircle weight="fill" className="h-5 w-5" />, accent: 'text-fg-warning' },
   info: { icon: <Info weight="fill" className="h-5 w-5" />, accent: 'text-link' },
 }
 

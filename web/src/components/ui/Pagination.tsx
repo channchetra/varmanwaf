@@ -101,7 +101,7 @@ export function Pagination({
               className={cn(
                 'h-8 min-w-8 rounded-md px-2 text-[13px] font-medium transition-colors',
                 entry === page
-                  ? 'bg-brand text-white'
+                  ? 'bg-brand text-on-brand'
                   : 'text-fg-subtle hover:bg-recessed hover:text-fg',
               )}
             >

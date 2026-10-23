@@ -86,14 +86,14 @@ export function ConversationList({
                     weight="duotone"
                     className={cn(
                       'mt-0.5 h-4 w-4 shrink-0',
-                      active ? 'text-brand' : 'text-fg-subtle',
+                      active ? 'text-brand-ink' : 'text-fg-subtle',
                     )}
                   />
                   <span className="min-w-0 flex-1">
                     <span
                       className={cn(
                         'block truncate text-[13px]',
-                        active ? 'font-medium text-brand' : 'text-fg',
+                        active ? 'font-medium text-brand-ink' : 'text-fg',
                       )}
                     >
                       {conversation.title || t('pages.assistant.untitled')}

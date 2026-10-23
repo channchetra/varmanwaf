@@ -49,9 +49,9 @@ import {
   formatPercent,
   formatSize,
 } from '@/lib/format'
+import { useChartPalette } from '@/lib/chartPalette'
 import { TRAFFIC_RANGES, type TopIp, type TopRule, type TrafficRange } from '@/api/types'
 
-const PIE_COLORS = ['#18794e', '#0051c3', '#ffb224', '#e54d2a']
 
 /** Traffic range → logs page `preset` (hours). */
 const LOGS_PRESET: Record<TrafficRange, string> = {
@@ -79,6 +79,7 @@ const tooltipStyle = {
  */
 export function TrafficPanels({ siteId }: { siteId?: string }) {
   const { t } = useTranslation()
+  const palette = useChartPalette()
   const navigate = useNavigate()
   const [range, setRange] = useState<TrafficRange>('24h')
 
@@ -341,12 +342,12 @@ export function TrafficPanels({ siteId }: { siteId?: string }) {
                     <AreaChart data={seriesData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
                       <defs>
                         <linearGradient id="trafficReq" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#f6821f" stopOpacity={0.35} />
-                          <stop offset="100%" stopColor="#f6821f" stopOpacity={0} />
+                          <stop offset="0%" stopColor={palette.requests} stopOpacity={0.35} />
+                          <stop offset="100%" stopColor={palette.requests} stopOpacity={0} />
                         </linearGradient>
                         <linearGradient id="trafficBlock" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#e54d2a" stopOpacity={0.3} />
-                          <stop offset="100%" stopColor="#e54d2a" stopOpacity={0} />
+                          <stop offset="0%" stopColor={palette.blocked} stopOpacity={0.3} />
+                          <stop offset="100%" stopColor={palette.blocked} stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-line)" vertical={false} />
@@ -365,9 +366,9 @@ export function TrafficPanels({ siteId }: { siteId?: string }) {
                       />
                       <Tooltip contentStyle={tooltipStyle} formatter={(v) => formatNumber(Number(v ?? 0))} />
                       <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
-                      <Area type="monotone" dataKey="passed" name={t('pages.traffic.passed')} stroke="#18794e" strokeWidth={2} fill="transparent" />
-                      <Area type="monotone" dataKey="requests" name={t('pages.traffic.requests')} stroke="#f6821f" strokeWidth={2} fill="url(#trafficReq)" />
-                      <Area type="monotone" dataKey="blocked" name={t('pages.traffic.blocked')} stroke="#e54d2a" strokeWidth={2} fill="url(#trafficBlock)" />
+                      <Area type="monotone" dataKey="passed" name={t('pages.traffic.passed')} stroke={palette.passed} strokeWidth={2} fill="transparent" />
+                      <Area type="monotone" dataKey="requests" name={t('pages.traffic.requests')} stroke={palette.requests} strokeWidth={2} fill="url(#trafficReq)" />
+                      <Area type="monotone" dataKey="blocked" name={t('pages.traffic.blocked')} stroke={palette.blocked} strokeWidth={2} fill="url(#trafficBlock)" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -413,8 +414,8 @@ export function TrafficPanels({ siteId }: { siteId?: string }) {
                       <AreaChart data={egressData} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
                         <defs>
                           <linearGradient id="trafficEgress" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#2f6fed" stopOpacity={0.35} />
-                            <stop offset="100%" stopColor="#2f6fed" stopOpacity={0} />
+                            <stop offset="0%" stopColor={palette.cache} stopOpacity={0.35} />
+                            <stop offset="100%" stopColor={palette.cache} stopOpacity={0} />
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-line)" vertical={false} />
@@ -440,7 +441,7 @@ export function TrafficPanels({ siteId }: { siteId?: string }) {
                           type="monotone"
                           dataKey="bps"
                           name={t('pages.traffic.bandwidth')}
-                          stroke="#2f6fed"
+                          stroke={palette.cache}
                           strokeWidth={2}
                           fill="url(#trafficEgress)"
                         />
@@ -467,7 +468,7 @@ export function TrafficPanels({ siteId }: { siteId?: string }) {
                         <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--color-text-subtle)' }} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompactNumber(v)} />
                         <YAxis type="category" dataKey="path" width={120} tick={{ fontSize: 11, fill: 'var(--color-text-subtle)' }} tickLine={false} axisLine={false} />
                         <Tooltip contentStyle={tooltipStyle} formatter={(v) => formatNumber(Number(v ?? 0))} cursor={{ fill: 'var(--color-bg-recessed)' }} />
-                        <Bar dataKey="requests" name={t('pages.traffic.requests')} fill="#f6821f" radius={[0, 4, 4, 0]} />
+                        <Bar dataKey="requests" name={t('pages.traffic.requests')} fill={palette.requests} radius={[0, 4, 4, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -496,7 +497,7 @@ export function TrafficPanels({ siteId }: { siteId?: string }) {
                           paddingAngle={2}
                         >
                           {statusData.map((entry, i) => (
-                            <Cell key={entry.family} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                            <Cell key={entry.family} fill={palette.pie[i % palette.pie.length]} />
                           ))}
                         </Pie>
                         <Tooltip contentStyle={tooltipStyle} formatter={(v) => formatNumber(Number(v ?? 0))} />
@@ -523,7 +524,7 @@ export function TrafficPanels({ siteId }: { siteId?: string }) {
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--color-text-subtle)' }} tickLine={false} axisLine={{ stroke: 'var(--color-border-line)' }} minTickGap={24} />
                       <YAxis tick={{ fontSize: 11, fill: 'var(--color-text-subtle)' }} tickLine={false} axisLine={false} tickFormatter={(v: number) => `${Math.round(v)}ms`} />
                       <Tooltip contentStyle={tooltipStyle} formatter={(v) => formatLatency(Number(v ?? 0))} />
-                      <Line type="monotone" dataKey="latency" name={t('pages.traffic.avgLatency')} stroke="#0051c3" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="latency" name={t('pages.traffic.avgLatency')} stroke={palette.latency} strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -623,7 +624,7 @@ function SummaryCard({
   tone?: 'brand' | 'danger'
 }) {
   const toneClass =
-    tone === 'danger' ? 'bg-danger/12 text-fg-danger' : 'bg-brand-soft text-brand'
+    tone === 'danger' ? 'bg-danger/12 text-fg-danger' : 'bg-brand-soft text-brand-ink'
   return (
     <Card padded>
       <div className="flex items-center justify-between gap-3">

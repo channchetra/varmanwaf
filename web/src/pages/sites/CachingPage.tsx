@@ -536,7 +536,7 @@ export function CachingPage() {
                   <span
                     className={cn(
                       'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
-                      cacheEnabled ? 'bg-brand-soft text-brand' : 'bg-recessed text-fg-subtle',
+                      cacheEnabled ? 'bg-brand-soft text-brand-ink' : 'bg-recessed text-fg-subtle',
                     )}
                   >
                     <Lightning weight="duotone" className="h-5 w-5" />

@@ -26,6 +26,19 @@ The dashboard provides:
 - **Logs**: Security events and access logs
 - **Settings**: Elasticsearch, API keys, global preferences
 
+### Keyboard and accessibility
+
+- Press **Tab** from the top of a page to reveal **Skip to content**; Enter
+  moves focus to the main content.
+- Table headers that can be sorted are buttons: Tab to one, then use Enter or
+  Space. Screen readers announce the current sort through `aria-sort`.
+- Dialogs take focus when they open, keep Tab inside, and return focus to the
+  control that opened them. Escape closes the dialog.
+- The console respects the operating system's reduced-motion setting: entrance
+  animation and movement are removed, while color and border feedback remains.
+- Route pages load on demand. A short loading state appears inside the shell
+  on first visit; subsequent visits use the cached chunk.
+
 ## Adding a Website
 
 ### Step 1: Create a Site

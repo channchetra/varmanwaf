@@ -299,13 +299,13 @@ function FleetTopology() {
               const kind = (node.data as { kind?: string })?.kind
               switch (kind) {
                 case 'control':
-                  return '#f6821f'
+                  return 'var(--color-text-brand)'
                 case 'agent':
-                  return '#6e56cf'
+                  return 'var(--color-graph-control)'
                 case 'site':
-                  return '#f6821f'
+                  return 'var(--color-text-brand)'
                 default:
-                  return '#c8c8cc'
+                  return 'var(--color-border-fill)'
               }
             }}
           />
@@ -320,15 +320,15 @@ function FleetTopology() {
 
         <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 rounded-lg border border-line bg-elevated/95 px-3 py-1.5 text-[10px] text-fg-subtle">
           <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-[#f6821f]" />
+            <span className="h-2 w-2 rounded-full bg-brand-ink" />
             {t('pages.topology.fleet.legendControl')}
           </span>
           <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-[#6e56cf]" />
+            <span className="h-2 w-2 rounded-full bg-[var(--color-graph-control)]" />
             {t('pages.topology.fleet.legendAgent')}
           </span>
           <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-[#f6821f]" />
+            <span className="h-2 w-2 rounded-full bg-brand-ink" />
             {t('pages.topology.fleet.legendSite')}
           </span>
           <span className="flex items-center gap-1">
@@ -882,7 +882,7 @@ function SiteTopology({ siteId }: { siteId: string }) {
                     }}
                     className="flex cursor-grab items-center gap-2 rounded-lg border border-dashed border-line bg-recessed/40 px-2.5 py-2 text-[12px] text-fg hover:border-brand/40 hover:bg-brand/5"
                   >
-                    <Icon weight="duotone" className="h-4 w-4 text-brand" />
+                    <Icon weight="duotone" className="h-4 w-4 text-brand-ink" />
                     <span className="truncate">{t(item.labelKey)}</span>
                   </div>
                 )
@@ -945,19 +945,19 @@ function SiteTopology({ siteId }: { siteId: string }) {
                   const kind = (node.data as { kind?: string })?.kind
                   switch (kind) {
                     case 'client':
-                      return '#6e56cf'
+                      return 'var(--color-graph-control)'
                     case 'site':
-                      return '#f6821f'
+                      return 'var(--color-text-brand)'
                     case 'waf':
-                      return '#18794e'
+                      return 'var(--color-text-success)'
                     case 'route':
-                      return '#ffb224'
+                      return 'var(--color-text-warning)'
                     case 'upstream':
-                      return '#30a46c'
+                      return 'var(--color-text-success)'
                     case 'layer':
-                      return '#8b8d98'
+                      return 'var(--color-text-subtle)'
                     default:
-                      return '#c8c8cc'
+                      return 'var(--color-border-fill)'
                   }
                 }}
               />
@@ -974,19 +974,19 @@ function SiteTopology({ siteId }: { siteId: string }) {
 
           <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 rounded-lg border border-line bg-elevated/95 px-3 py-1.5 text-[10px] text-fg-subtle">
             <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-[#f6821f]" />
+              <span className="h-2 w-2 rounded-full bg-brand-ink" />
               {t('pages.topology.legend.site')}
             </span>
             <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-[#18794e]" />
+              <span className="h-2 w-2 rounded-full bg-success" />
               {t('pages.topology.legend.waf')}
             </span>
             <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-[#ffb224]" />
+              <span className="h-2 w-2 rounded-full bg-warning" />
               {t('pages.topology.legend.route')}
             </span>
             <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-[#30a46c]" />
+              <span className="h-2 w-2 rounded-full bg-success" />
               {t('pages.topology.legend.upstream')}
             </span>
             <span className="flex items-center gap-1">

@@ -72,7 +72,7 @@ export function PillMultiSelect({
                 'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[13px] font-medium',
                 'transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50',
                 selected
-                  ? 'border-brand bg-brand-soft text-brand'
+                  ? 'border-brand bg-brand-soft text-brand-ink'
                   : 'border-line bg-elevated text-fg-subtle hover:border-fill hover:text-fg',
               )}
             >
@@ -189,7 +189,7 @@ export function TagInput({
             }
           }}
           onBlur={() => draft && commit(draft)}
-          className="min-w-24 flex-1 bg-transparent py-0.5 text-sm text-fg outline-none placeholder:text-fg-subtle/60"
+          className="min-w-24 flex-1 bg-transparent py-0.5 text-sm text-fg outline-none placeholder:text-placeholder"
         />
       </div>
 
@@ -203,7 +203,7 @@ export function TagInput({
                 key={s}
                 type="button"
                 onClick={() => commit(s)}
-                className="rounded-full border border-dashed border-line px-2 py-0.5 text-xs text-fg-subtle transition-colors hover:border-brand hover:text-brand"
+                className="rounded-full border border-dashed border-line px-2 py-0.5 text-xs text-fg-subtle transition-colors hover:border-brand hover:text-brand-ink"
               >
                 + {s}
               </button>

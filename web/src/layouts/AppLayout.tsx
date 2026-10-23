@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
@@ -147,6 +147,9 @@ export function AppLayout() {
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-base">
+      <a href="#main" className="skip-link">
+        Skip to content
+      </a>
       {/* Desktop sidebar */}
       <aside
         className={cn(
@@ -274,9 +277,12 @@ export function AppLayout() {
             <div className="relative" ref={userMenuRef}>
               <button
                 onClick={() => setUserMenuOpen((o) => !o)}
-                className="flex items-center gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-recessed"
+                aria-label={user?.name ?? user?.email ?? t('user.account')}
+                aria-haspopup="menu"
+                aria-expanded={userMenuOpen}
+                className="flex items-center gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-recessed max-sm:min-h-11"
               >
-                <UserCircle weight="duotone" className="h-7 w-7 text-brand" />
+                <UserCircle weight="duotone" className="h-7 w-7 text-brand-ink" />
                 <CaretDown weight="bold" className="h-3 w-3 text-fg-subtle" />
               </button>
               {userMenuOpen && (
@@ -311,9 +317,22 @@ export function AppLayout() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
+        <main id="main" tabIndex={-1} className="flex-1 overflow-y-auto outline-none">
           <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
-            <Outlet />
+            <Suspense
+              fallback={
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="flex min-h-60 items-center justify-center gap-2 text-sm text-fg-subtle"
+                >
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-brand-ink" />
+                  Loading…
+                </div>
+              }
+            >
+              <Outlet />
+            </Suspense>
           </div>
         </main>
       </div>
@@ -338,7 +357,7 @@ function SidebarHeader({ collapsed }: { collapsed: boolean }) {
         collapsed && 'justify-center px-0',
       )}
     >
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-white">
+      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-on-brand">
         <ShieldCheck weight="fill" className="h-5 w-5" />
       </span>
       {!collapsed && (
@@ -416,7 +435,7 @@ function DropdownItem({
       onClick={onClick}
       className={cn(
         'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors',
-        active ? 'bg-brand-soft text-brand' : 'text-fg hover:bg-recessed',
+        active ? 'bg-brand-soft text-brand-ink' : 'text-fg hover:bg-recessed',
       )}
     >
       {icon}

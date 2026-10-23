@@ -168,7 +168,7 @@ export function IpListCatalogDialog({ onClose }: { onClose: () => void }) {
                 className={cn(
                   'rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors',
                   category === value
-                    ? 'border-brand/40 bg-brand/12 text-brand'
+                    ? 'border-brand/40 bg-brand/12 text-brand-ink'
                     : 'border-line text-fg-subtle hover:text-fg',
                 )}
               >

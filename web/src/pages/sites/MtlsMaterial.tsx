@@ -662,7 +662,7 @@ export function MtlsMaterial({ siteId }: { siteId: string }) {
         {material && (
           <div className="flex flex-col gap-4">
             <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-[13px] text-fg">
-              <Warning weight="duotone" className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <Warning weight="duotone" className="mt-0.5 h-4 w-4 shrink-0 text-fg-warning" />
               {t('pages.ssl.materialOnce')}
             </p>
             <CopyBlock

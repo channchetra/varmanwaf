@@ -7,7 +7,7 @@ centrally-controlled Web Application Firewall built on
 
 > Project home: [`README.md`](../README.md)
 
-**Release 1.1.0** — the current reference set:
+**Release 1.1.9** — the current reference set:
 
 | Document | What you'll find |
 | --- | --- |

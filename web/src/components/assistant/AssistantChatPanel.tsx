@@ -162,7 +162,7 @@ export function AssistantChatPanel({
                     void handleSend()
                   }
                 }}
-                className="max-h-40 min-h-10 w-full resize-none bg-transparent text-sm leading-relaxed text-fg placeholder:text-fg-subtle/60 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+                className="max-h-40 min-h-10 w-full resize-none bg-transparent text-sm leading-relaxed text-fg placeholder:text-placeholder focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
               />
               {isStreaming ? (
                 <Button

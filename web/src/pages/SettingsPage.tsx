@@ -406,7 +406,7 @@ function AppearanceCard({
                   className={cn(
                     'flex flex-col items-center gap-2 rounded-lg border p-4 text-sm transition-all',
                     active
-                      ? 'border-brand bg-brand-soft text-brand'
+                      ? 'border-brand bg-brand-soft text-brand-ink'
                       : 'border-line text-fg-subtle hover:border-fill hover:text-fg',
                   )}
                 >
@@ -433,7 +433,7 @@ function AppearanceCard({
                   className={cn(
                     'inline-flex items-center gap-2 rounded-md border px-4 py-2 text-sm transition-colors',
                     active
-                      ? 'border-brand bg-brand-soft text-brand'
+                      ? 'border-brand bg-brand-soft text-brand-ink'
                       : 'border-line text-fg-subtle hover:border-fill hover:text-fg',
                   )}
                 >
@@ -1138,7 +1138,7 @@ function ElasticsearchCard({ canWrite }: { canWrite: boolean }) {
                     setUrlsText(e.target.value)
                     setDirty(true)
                   }}
-                  className="pw-mono w-full rounded-md border border-line bg-recessed px-3 py-2 text-[13px] text-fg placeholder:text-fg-subtle/60 focus:border-focus focus:outline-none disabled:opacity-60"
+                  className="pw-mono w-full rounded-md border border-line bg-recessed px-3 py-2 text-[13px] text-fg placeholder:text-placeholder focus:border-focus focus:outline-none disabled:opacity-60"
                 />
                 <p className="mt-1 text-xs text-fg-subtle">{t('pages.settings.esUrlsHint')}</p>
               </div>
@@ -1576,7 +1576,7 @@ function ErrorPagesCard({ canWrite }: { canWrite: boolean }) {
                           className={cn(
                             'flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-lg font-bold tabular-nums',
                             page?.enabled
-                              ? 'bg-brand-soft text-brand'
+                              ? 'bg-brand-soft text-brand-ink'
                               : 'bg-recessed text-fg-subtle',
                           )}
                         >
@@ -1756,7 +1756,7 @@ function ErrorPagesCard({ canWrite }: { canWrite: boolean }) {
                       }
                       className="group flex flex-col items-start rounded px-1.5 py-1 text-left transition-colors hover:bg-elevated"
                     >
-                      <span className="pw-mono text-xs text-brand">{`{{${v.name}}}`}</span>
+                      <span className="pw-mono text-xs text-brand-ink">{`{{${v.name}}}`}</span>
                       <span className="text-[11px] leading-tight text-fg-subtle">
                         {v.description}
                       </span>
@@ -3516,7 +3516,7 @@ function ApiKeysCard({ canWrite }: { canWrite: boolean }) {
             <p className="text-[13px] text-fg-subtle">
               {t('pages.settings.keyName')}: <strong className="text-fg">{secret.name}</strong>
             </p>
-            <p className="pw-mono break-all rounded-md border border-brand/40 bg-brand-soft px-3 py-2.5 text-[13px] font-medium text-brand">
+            <p className="pw-mono break-all rounded-md border border-brand/40 bg-brand-soft px-3 py-2.5 text-[13px] font-medium text-brand-ink">
               {secret.key}
             </p>
             <p className="flex items-start gap-2 text-xs text-fg-warning">
@@ -3588,7 +3588,7 @@ function AboutCard() {
               <div>
                 <dt className="text-xs font-medium text-fg-subtle">{t('pages.settings.aboutProduct')}</dt>
                 <dd className="mt-1 flex items-center gap-2 text-fg">
-                  <ShieldCheck weight="duotone" className="h-4 w-4 text-brand" />
+                  <ShieldCheck weight="duotone" className="h-4 w-4 text-brand-ink" />
                   VarmanWAF
                   <Badge tone="brand">{view.version}</Badge>
                 </dd>

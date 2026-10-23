@@ -21,7 +21,7 @@ export type RawLine = RawToken[]
 function statusTextTone(code: number | null): string {
   if (code == null) return 'text-fg'
   if (code >= 500) return 'text-fg-danger'
-  if (code >= 400) return 'text-warning'
+  if (code >= 400) return 'text-fg-warning'
   if (code >= 300) return 'text-link'
   if (code >= 200) return 'text-fg-success'
   return 'text-fg'
@@ -113,9 +113,9 @@ function highlightJsonLine(line: string): RawLine {
       })
       if (colon) tokens.push({ text: colon, tone: 'text-fg-subtle' })
     } else if (literal) {
-      tokens.push({ text: literal, tone: 'text-warning' })
+      tokens.push({ text: literal, tone: 'text-fg-warning' })
     } else if (number) {
-      tokens.push({ text: number, tone: 'text-brand' })
+      tokens.push({ text: number, tone: 'text-brand-ink' })
     } else if (punctuation) {
       tokens.push({ text: punctuation, tone: 'text-fg-subtle' })
     } else {
@@ -212,7 +212,7 @@ export function requestLines(log: AccessLog, emptyBodyLabel: string): RawLine[] 
     log.query_string ? `?${log.query_string}` : ''
   }`
   const start: RawLine = [
-    { text: log.method, tone: 'text-brand font-medium' },
+    { text: log.method, tone: 'text-brand-ink font-medium' },
     { text: ' ' },
     { text: target, tone: 'text-fg-strong' },
   ]

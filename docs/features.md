@@ -71,6 +71,21 @@ Conventions used below:
 
 ---
 
+### 1.6 Console accessibility and loading
+
+- **Where** — the app shell, tables, dialogs and every route.
+- **Keyboard** — a skip link targets `main#main`; sortable table headers are
+  buttons with `aria-sort`; dialogs move focus to the panel, trap Tab, mark the
+  app root `inert`, restore focus to the trigger and close on Escape.
+- **Contrast** — ember fills use dark ink (`--color-text-on-brand`), ember
+  labels/icons use `--color-text-brand`, danger/warning text use their ink
+  variants, and placeholders use `--color-text-placeholder`. Both themes meet
+  4.5:1 for text and 3:1 for meaningful icons.
+- **Motion** — `prefers-reduced-motion` removes decorative animation and
+  transform transitions but keeps color/border/opacity feedback.
+- **Loading** — route components are `React.lazy` chunks behind the app shell's
+  Suspense boundary, so the entry bundle no longer carries every page.
+
 ## 2. Sites
 
 ### 2.1 Sites list

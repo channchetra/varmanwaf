@@ -202,7 +202,7 @@ export function ProtectionPage() {
 
       {sitePolicy.data?.policy && tab !== 'tuning' && tab !== 'overview' && (
         <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand/10 px-4 py-3 text-[13px]">
-          <Stack weight="duotone" className="h-4 w-4 text-brand" />
+          <Stack weight="duotone" className="h-4 w-4 text-brand-ink" />
           <span className="text-fg-strong">
             {t('pages.protection.policyBanner', {
               name: sitePolicy.data.policy.name,

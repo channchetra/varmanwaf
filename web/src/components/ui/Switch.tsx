@@ -58,13 +58,13 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(
         className={cn(
           'relative inline-flex shrink-0 items-center rounded-full border transition-colors duration-200',
           dims.track,
-          isOn ? 'border-transparent bg-brand' : 'border-line bg-fill',
+          isOn ? 'border-transparent bg-brand-ink' : 'border-line bg-fill',
           disabled && 'cursor-not-allowed opacity-50',
         )}
       >
         <span
           className={cn(
-            'pointer-events-none absolute left-0.5 inline-block rounded-full bg-white shadow-sm transition-transform duration-200',
+            'pointer-events-none absolute left-0.5 inline-block rounded-full bg-elevated shadow-sm transition-transform duration-200',
             dims.thumb,
             isOn ? dims.translate : 'translate-x-0',
           )}

@@ -534,7 +534,7 @@ function CountryPicker({
           disabled={disabled}
           placeholder={t('pages.geo.searchCountries')}
           onChange={(e) => setQuery(e.target.value)}
-          className="h-9 w-full rounded-md border border-line bg-elevated pl-9 pr-3 text-sm text-fg placeholder:text-fg-subtle/60 focus:border-focus focus:outline-none focus:ring-2 focus:ring-focus/25 disabled:cursor-not-allowed disabled:opacity-60"
+          className="h-9 w-full rounded-md border border-line bg-elevated pl-9 pr-3 text-sm text-fg placeholder:text-placeholder focus:border-focus focus:outline-none focus:ring-2 focus:ring-focus/25 disabled:cursor-not-allowed disabled:opacity-60"
         />
       </div>
       <div className="max-h-80 overflow-y-auto rounded-md border border-line">
@@ -596,7 +596,7 @@ function CountryPicker({
           {selected.map((code) => (
             <span
               key={code}
-              className="inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-xs text-brand"
+              className="inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-xs text-brand-ink"
             >
               {countryFlag(code)} {COUNTRY_NAMES[code] ?? code}
               {!disabled && (
@@ -604,7 +604,7 @@ function CountryPicker({
                   type="button"
                   aria-label={`${t('common.delete')} ${code}`}
                   onClick={() => toggle(code)}
-                  className="text-brand/70 hover:text-brand"
+                  className="text-brand-ink/70 hover:text-brand-ink"
                 >
                   <Trash weight="bold" className="h-3 w-3" />
                 </button>
@@ -643,7 +643,7 @@ function CountryRow({
       <span
         className={cn(
           'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
-          selected ? 'border-brand bg-brand text-white' : 'border-fill',
+          selected ? 'border-brand bg-brand text-on-brand' : 'border-fill',
         )}
       >
         {selected && <Check weight="bold" className="h-3 w-3" />}

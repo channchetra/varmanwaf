@@ -126,7 +126,7 @@ export function LifecyclePage() {
                 className="scroll-mt-6"
               >
                 <CardBody className="flex gap-4">
-                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-soft font-mono text-[13px] font-semibold text-brand">
+                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-soft font-mono text-[13px] font-semibold text-brand-ink">
                     {String(index + 1).padStart(2, '0')}
                   </span>
                   <div className="min-w-0 flex-1">

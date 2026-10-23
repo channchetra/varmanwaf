@@ -1285,8 +1285,8 @@ function SectionNav({ items }: { items: { id: string; label: string }[] }) {
           className={cn(
             'rounded-full border px-3 py-1 text-[12px] font-medium transition-colors',
             active === item.id
-              ? 'border-brand/40 bg-brand/12 text-brand'
-              : 'border-line text-fg-subtle hover:border-brand/40 hover:text-brand',
+              ? 'border-brand/40 bg-brand/12 text-brand-ink'
+              : 'border-line text-fg-subtle hover:border-brand/40 hover:text-brand-ink',
           )}
         >
           {item.label}

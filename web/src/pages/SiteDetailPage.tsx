@@ -116,7 +116,7 @@ export function SiteDetailPage() {
       {/* Site header */}
       <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand-ink">
             <Globe weight="duotone" className="h-6 w-6" />
           </span>
           <div className="min-w-0">
@@ -129,12 +129,12 @@ export function SiteDetailPage() {
                   title={t('pages.siteDetail.visitSite')}
                   className="group inline-flex min-w-0 items-center gap-1.5"
                 >
-                  <h1 className="pw-mono truncate text-lg font-semibold tracking-tight text-fg-strong group-hover:text-brand">
+                  <h1 className="pw-mono truncate text-lg font-semibold tracking-tight text-fg-strong group-hover:text-brand-ink">
                     {site.domain}
                   </h1>
                   <ArrowSquareOut
                     weight="bold"
-                    className="h-3.5 w-3.5 shrink-0 text-fg-subtle group-hover:text-brand"
+                    className="h-3.5 w-3.5 shrink-0 text-fg-subtle group-hover:text-brand-ink"
                   />
                 </a>
               ) : (

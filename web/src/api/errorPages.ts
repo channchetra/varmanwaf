@@ -65,10 +65,12 @@ const HTML_TEMPLATE = `<!doctype html>
     }
     .card { text-align: center; padding: 48px 32px; max-width: 480px; }
     .code {
+      /* impeccable-disable-next-line design-system-font-size -- generated email error page, outside the console type ramp */
       font-size: 96px; font-weight: 800; line-height: 1; letter-spacing: -4px;
       background: linear-gradient(135deg, #f6821f, #e54d2a);
       -webkit-background-clip: text; background-clip: text; color: transparent;
     }
+    /* impeccable-disable-next-line design-system-font-size -- generated email error page, outside the console type ramp */
     h1 { font-size: 22px; margin: 16px 0 8px; }
     p { color: #666; font-size: 14px; line-height: 1.6; margin: 0; }
     .meta {

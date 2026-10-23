@@ -23,7 +23,7 @@ const toneClasses: Record<BadgeTone, string> = {
   warning: 'bg-warning/15 text-fg border-warning/40',
   danger: 'bg-danger/12 text-fg-danger border-danger/30',
   info: 'bg-focus/10 text-link border-focus/30',
-  brand: 'bg-brand/12 text-brand border-brand/30',
+  brand: 'bg-brand/12 text-brand-ink border-brand/30',
 }
 
 const dotClasses: Record<BadgeTone, string> = {

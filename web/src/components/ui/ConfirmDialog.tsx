@@ -61,7 +61,7 @@ export function ConfirmDialog({
           <span
             className={cn(
               'flex h-7 w-7 shrink-0 items-center justify-center rounded-full',
-              tone === 'danger' ? 'bg-danger/12 text-fg-danger' : 'bg-brand-soft text-brand',
+              tone === 'danger' ? 'bg-danger/12 text-fg-danger' : 'bg-brand-soft text-brand-ink',
             )}
           >
             <Warning weight="fill" className="h-4 w-4" />

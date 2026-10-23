@@ -10,6 +10,30 @@
         "canonical": "#f6821f",
         "tonalRamp": ["#2a1202", "#4a2104", "#6b3006", "#8c4008", "#b35510", "#d96c16", "#f6821f", "#ffb066"]
       },
+      "on-ember": {
+        "role": "neutral",
+        "displayName": "On Ember",
+        "canonical": "#1d1d1d",
+        "tonalRamp": ["#000000", "#0f0f0f", "#1d1d1d", "#3a3a3a", "#5c5c5c", "#7d7d7d", "#a3a3a3", "#d1d1d1"]
+      },
+      "on-danger": {
+        "role": "neutral",
+        "displayName": "On Danger",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#0a0a0a", "#1d1d1d", "#3a3a3a", "#5c5c5c", "#7d7d7d", "#a3a3a3", "#d1d1d1", "#ffffff"]
+      },
+      "brand-ink-light": {
+        "role": "primary",
+        "displayName": "Brand Ink Light",
+        "canonical": "#a34700",
+        "tonalRamp": ["#2a1202", "#4a2104", "#6b3006", "#8c4008", "#a34700", "#c45a08", "#e07018", "#ffb066"]
+      },
+      "brand-ink-dark": {
+        "role": "primary",
+        "displayName": "Brand Ink Dark",
+        "canonical": "#ffb066",
+        "tonalRamp": ["#2a1202", "#4a2104", "#6b3006", "#8c4008", "#b35510", "#d96c16", "#f6821f", "#ffb066"]
+      },
       "canvas-light": {
         "role": "neutral",
         "displayName": "Canvas Light",
@@ -34,6 +58,30 @@
         "canonical": "#e54d2a",
         "tonalRamp": ["#2b0702", "#4d1107", "#731c0d", "#992713", "#bf3219", "#e54d2a", "#ff8c73", "#ffd0c5"]
       },
+      "danger-strong-light": {
+        "role": "secondary",
+        "displayName": "Danger Strong Light",
+        "canonical": "#c2410c",
+        "tonalRamp": ["#2b0702", "#4d1107", "#731c0d", "#992713", "#c2410c", "#e54d2a", "#ff8c73", "#ffd0c5"]
+      },
+      "danger-strong-dark": {
+        "role": "secondary",
+        "displayName": "Danger Strong Dark",
+        "canonical": "#b83c2c",
+        "tonalRamp": ["#2b0702", "#4d1107", "#731c0d", "#992713", "#b83c2c", "#e0563d", "#ff8c73", "#ffd0c5"]
+      },
+      "danger-text-light": {
+        "role": "secondary",
+        "displayName": "Danger Ink Light",
+        "canonical": "#b83c2c",
+        "tonalRamp": ["#2b0702", "#4d1107", "#731c0d", "#992713", "#b83c2c", "#e0563d", "#ff8c73", "#ffd0c5"]
+      },
+      "danger-text-dark": {
+        "role": "secondary",
+        "displayName": "Danger Ink Dark",
+        "canonical": "#ff6340",
+        "tonalRamp": ["#2b0702", "#4d1107", "#731c0d", "#992713", "#bf3219", "#e54d2a", "#ff8c73", "#ffd0c5"]
+      },
       "success-light": {
         "role": "secondary",
         "displayName": "Allowed Green",
@@ -45,6 +93,42 @@
         "displayName": "Audit Amber",
         "canonical": "#ffb224",
         "tonalRamp": ["#2b1a02", "#4d2f04", "#734807", "#996108", "#cc8410", "#ffb224", "#ffd27a", "#ffedc2"]
+      },
+      "warning-text-light": {
+        "role": "secondary",
+        "displayName": "Warning Ink Light",
+        "canonical": "#805b09",
+        "tonalRamp": ["#2b1a02", "#4d2f04", "#664806", "#805b09", "#996d0b", "#cc920f", "#ffb224", "#ffedc2"]
+      },
+      "warning-text-dark": {
+        "role": "secondary",
+        "displayName": "Warning Ink Dark",
+        "canonical": "#ffc53d",
+        "tonalRamp": ["#2b1a02", "#4d2f04", "#734807", "#996108", "#cc8410", "#ffb224", "#ffd27a", "#ffedc2"]
+      },
+      "placeholder-light": {
+        "role": "neutral",
+        "displayName": "Placeholder Light",
+        "canonical": "#767676",
+        "tonalRamp": ["#0a0a0a", "#1d1d1d", "#3a3a3a", "#5c5c5c", "#767676", "#a3a3a3", "#d1d1d1", "#ffffff"]
+      },
+      "placeholder-dark": {
+        "role": "neutral",
+        "displayName": "Placeholder Dark",
+        "canonical": "#9a9a9a",
+        "tonalRamp": ["#161616", "#1d1d1d", "#2a2a2a", "#3a3a3a", "#5c5c5c", "#767676", "#9a9a9a", "#e8e8e8"]
+      },
+      "graph-control-light": {
+        "role": "secondary",
+        "displayName": "Control Plane",
+        "canonical": "#6e56cf",
+        "tonalRamp": ["#17102f", "#261b4d", "#35266b", "#44318a", "#5a44b0", "#6e56cf", "#a48df0", "#e2d9ff"]
+      },
+      "graph-control-dark": {
+        "role": "secondary",
+        "displayName": "Control Plane Dark",
+        "canonical": "#b477e4",
+        "tonalRamp": ["#17102f", "#261b4d", "#35266b", "#44318a", "#5a44b0", "#8b5fbf", "#b477e4", "#e2d9ff"]
       },
       "line-light": {
         "role": "neutral",
@@ -153,7 +237,7 @@
       "refersTo": "button-primary",
       "description": "The one ember action on a surface: save, create or confirm.",
       "html": "<button class=\"ds-btn-primary\" type=\"button\">Save mode</button>",
-      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border:1px solid transparent;border-radius:6px;background:var(--color-bg-brand,#f6821f);color:#fff;font:500 14px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.05);cursor:pointer;transition:background-color 150ms ease,box-shadow 150ms ease,transform 150ms ease}.ds-btn-primary:hover{background:var(--color-bg-brand-hover,#e5731a)}.ds-btn-primary:active{transform:translateY(1px)}.ds-btn-primary:focus-visible{outline:2px solid var(--color-border-focus,#0051c3);outline-offset:2px}.ds-btn-primary:disabled{opacity:.6;cursor:not-allowed}"
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border:1px solid transparent;border-radius:6px;background:var(--color-bg-brand,#f6821f);color:var(--color-text-on-brand,#1d1d1d);font:500 14px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.05);cursor:pointer;transition:background-color 150ms ease,box-shadow 150ms ease,transform 150ms ease}.ds-btn-primary:hover{background:var(--color-bg-brand-hover,#e5731a)}.ds-btn-primary:active{transform:translateY(1px)}.ds-btn-primary:focus-visible{outline:2px solid var(--color-border-focus,#0051c3);outline-offset:2px}.ds-btn-primary:disabled{opacity:.6;cursor:not-allowed}"
     },
     {
       "name": "Secondary Button",
@@ -169,7 +253,7 @@
       "refersTo": "input",
       "description": "A compact 36px field with a visible focus ring and inline error support.",
       "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">Search sites</span><input class=\"ds-input\" type=\"text\" placeholder=\"example.com\" /></label>",
-      "css": ".ds-field{display:flex;flex-direction:column;gap:6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.ds-field-label{font-size:13px;font-weight:500;color:var(--color-text-subtle,#666)}.ds-input{height:36px;width:100%;box-sizing:border-box;padding:0 12px;border:1px solid var(--color-border-line,#e8e8e8);border-radius:6px;background:var(--color-bg-elevated,#fff);color:var(--color-text-default,#1d1d1d);font-size:14px;transition:border-color 150ms ease,box-shadow 150ms ease}.ds-input::placeholder{color:var(--color-text-subtle,#666);opacity:.6}.ds-input:focus{outline:none;border-color:var(--color-border-focus,#0051c3);box-shadow:0 0 0 2px color-mix(in srgb,var(--color-border-focus,#0051c3) 25%,transparent)}"
+      "css": ".ds-field{display:flex;flex-direction:column;gap:6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.ds-field-label{font-size:13px;font-weight:500;color:var(--color-text-subtle,#666)}.ds-input{height:36px;width:100%;box-sizing:border-box;padding:0 12px;border:1px solid var(--color-border-line,#e8e8e8);border-radius:6px;background:var(--color-bg-elevated,#fff);color:var(--color-text-default,#1d1d1d);font-size:14px;transition:border-color 150ms ease,box-shadow 150ms ease}.ds-input::placeholder{color:var(--color-text-placeholder,#767676)}.ds-input:focus{outline:none;border-color:var(--color-border-focus,#0051c3);box-shadow:0 0 0 2px color-mix(in srgb,var(--color-border-focus,#0051c3) 25%,transparent)}"
     },
     {
       "name": "Surface Card",
@@ -193,7 +277,7 @@
       "refersTo": "nav-item-active",
       "description": "The current location in the sidebar: ember text on a soft ember wash.",
       "html": "<a class=\"ds-nav-item is-active\" href=\"#\"><span class=\"ds-nav-icon\"></span>Sites</a>",
-      "css": ".ds-nav-item{display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:6px;font:500 14px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:var(--color-text-subtle,#666);text-decoration:none;transition:background-color 150ms ease,color 150ms ease}.ds-nav-item:hover{background:var(--color-bg-recessed,#f7f7f8);color:var(--color-text-default,#1d1d1d)}.ds-nav-item.is-active{background:color-mix(in srgb,var(--color-bg-brand,#f6821f) 12%,transparent);color:var(--color-bg-brand,#f6821f)}.ds-nav-icon{width:16px;height:16px;border-radius:4px;background:currentColor;opacity:.7}"
+      "css": ".ds-nav-item{display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:6px;font:500 14px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:var(--color-text-subtle,#666);text-decoration:none;transition:background-color 150ms ease,color 150ms ease}.ds-nav-item:hover{background:var(--color-bg-recessed,#f7f7f8);color:var(--color-text-default,#1d1d1d)}.ds-nav-item.is-active{background:color-mix(in srgb,var(--color-bg-brand,#f6821f) 12%,transparent);color:var(--color-text-brand,#a34700)}.ds-nav-icon{width:16px;height:16px;border-radius:4px;background:currentColor;opacity:.7}"
     },
     {
       "name": "Protection Mode Picker",
@@ -201,7 +285,7 @@
       "refersTo": "button-secondary",
       "description": "The single enforcement decision: three plain-language cards with one Save.",
       "html": "<div class=\"ds-mode-picker\"><button class=\"ds-mode is-selected\" type=\"button\"><strong>Block</strong><span>Attacks are blocked at the edge.</span></button><button class=\"ds-mode\" type=\"button\"><strong>Monitor</strong><span>Record everything; block nothing.</span></button><button class=\"ds-mode\" type=\"button\"><strong>Paused</strong><span>The site is offline.</span></button></div>",
-      "css": ".ds-mode-picker{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.ds-mode{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-height:120px;padding:16px;border:1px solid var(--color-border-line,#e8e8e8);border-radius:12px;background:var(--color-bg-recessed,#f7f7f8);color:var(--color-text-default,#1d1d1d);text-align:left;cursor:pointer;transition:border-color 150ms ease,background-color 150ms ease}.ds-mode strong{font-size:14px;font-weight:600}.ds-mode span{font-size:12px;line-height:1.5;color:var(--color-text-subtle,#666)}.ds-mode:hover{border-color:var(--color-border-fill,#d9d9d9)}.ds-mode.is-selected{border-color:var(--color-bg-brand,#f6821f);background:color-mix(in srgb,var(--color-bg-brand,#f6821f) 12%,transparent)}.ds-mode.is-selected strong{color:var(--color-bg-brand,#f6821f)}.ds-mode:focus-visible{outline:2px solid var(--color-border-focus,#0051c3);outline-offset:2px}"
+      "css": ".ds-mode-picker{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.ds-mode{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-height:120px;padding:16px;border:1px solid var(--color-border-line,#e8e8e8);border-radius:12px;background:var(--color-bg-recessed,#f7f7f8);color:var(--color-text-default,#1d1d1d);text-align:left;cursor:pointer;transition:border-color 150ms ease,background-color 150ms ease}.ds-mode strong{font-size:14px;font-weight:600}.ds-mode span{font-size:12px;line-height:1.5;color:var(--color-text-subtle,#666)}.ds-mode:hover{border-color:var(--color-border-fill,#d9d9d9)}.ds-mode.is-selected{border-color:var(--color-bg-brand,#f6821f);background:color-mix(in srgb,var(--color-bg-brand,#f6821f) 12%,transparent)}.ds-mode.is-selected strong{color:var(--color-text-brand,#a34700)}.ds-mode:focus-visible{outline:2px solid var(--color-border-focus,#0051c3);outline-offset:2px}"
     }
   ],
   "narrative": {

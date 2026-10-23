@@ -9,6 +9,12 @@
 
 ## Status board
 
+> **1.1.9 (2026-10-23):** the accessibility and performance round - WCAG
+> contrast for ember, danger and warning text; keyboard-sortable table headers
+> with `aria-sort`; focus-trapped dialogs with an inert background and focus
+> restore; a skip link; a reduced-motion mode that keeps state feedback;
+> theme-aware chart and topology colors; and route-level code splitting.
+>
 > **1.1.8 (2026-10-23):** the site-management clarity round - one Protection
 > mode (Block / Monitor / Paused) in the site header, the Rules page no longer
 > carries a competing bulk mode, Policy tuning is renamed Advanced, a rule's

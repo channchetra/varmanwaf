@@ -245,7 +245,7 @@ function ConfigHistoryWorkspace() {
               icon={
                 <ArrowCounterClockwise
                   weight="bold"
-                  className="h-4 w-4 text-warning"
+                  className="h-4 w-4 text-fg-warning"
                 />
               }
               onClick={() => setPendingRollback(row)}

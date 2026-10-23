@@ -31,7 +31,7 @@ const toneClasses: Record<CalloutTone, string> = {
 }
 
 const iconClasses: Record<CalloutTone, string> = {
-  brand: 'text-brand',
+  brand: 'text-brand-ink',
   info: 'text-link',
   warning: 'text-fg',
   danger: 'text-fg-danger',

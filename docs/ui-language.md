@@ -82,3 +82,25 @@ plain-language consequence, and a single **Save mode**. The same dialog is
 opened from the site header on every tab; no other surface repeats the
 control. When a shared policy owns the mode, the dialog says so and offers
 **Open Advanced** instead of a Save that would not take effect.
+
+## Accessible interaction language (v1.1.9)
+
+- **Ember is a fill, not a text color.** Primary buttons use dark ink on the
+  ember fill (6.53:1); ember-tinted labels and icons use `brand-ink`
+  (`#a34700` light / `#ffb066` dark) on canvas and soft tints. White is not
+  used for UI text on ember.
+- **Semantic text has an ink variant.** Danger text uses `#b83c2c` light /
+  `#ff6340` dark; warning text uses `#805b09` light / `#ffc53d` dark; filled
+  destructive buttons use the darker Danger Strong fill with white text.
+- **Placeholders are readable** (`#767676` / `#9a9a9a`, 4.5:1 or better) and
+  never replace a field label.
+- **Tables sort from the keyboard.** The header `<th>` owns `aria-sort`; the
+  interactive element is a button, not a click handler on the cell.
+- **Dialogs are modal in behavior, not just appearance.** Focus enters the
+  panel, Tab is trapped, the background is inert, and focus returns to the
+  trigger.
+- **Reduced motion removes movement, not feedback.** Decorative animation and
+  transform transitions are disabled while color, border and opacity changes
+  remain at 150 ms.
+- **Charts follow the theme.** Recharts series and topology nodes are selected
+  from the resolved theme instead of hard-coded light-mode hex values.

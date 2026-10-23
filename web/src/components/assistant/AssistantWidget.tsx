@@ -63,7 +63,7 @@ export function AssistantWidget() {
           title={t('pages.assistant.open')}
           className={cn(
             'fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full',
-            'bg-brand text-white shadow-lg transition-transform duration-150 hover:scale-105',
+            'bg-brand text-on-brand shadow-lg transition-transform duration-150 hover:scale-105',
             'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
           )}
         >
@@ -85,7 +85,7 @@ export function AssistantWidget() {
       >
         {/* Panel header */}
         <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand text-white">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand text-on-brand">
             <AssistantBall className="h-5 w-5" />
           </span>
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-fg-strong">
@@ -103,7 +103,7 @@ export function AssistantWidget() {
             icon={
               <ClockCounterClockwise
                 weight="duotone"
-                className={cn('h-4.5 w-4.5', historyOpen && 'text-brand')}
+                className={cn('h-4.5 w-4.5', historyOpen && 'text-brand-ink')}
               />
             }
           />

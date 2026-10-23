@@ -306,17 +306,17 @@ export function ProtectionMode({ siteId }: { siteId: string }) {
                       weight="duotone"
                       className={cn(
                         'h-6 w-6',
-                        active ? 'text-brand' : 'text-fg-subtle',
+                        active ? 'text-brand-ink' : 'text-fg-subtle',
                       )}
                     />
                     {active && (
-                      <ShieldCheck weight="fill" className="h-4 w-4 text-brand" />
+                      <ShieldCheck weight="fill" className="h-4 w-4 text-brand-ink" />
                     )}
                   </span>
                   <span
                     className={cn(
                       'text-sm font-semibold',
-                      active ? 'text-brand' : 'text-fg-strong',
+                      active ? 'text-brand-ink' : 'text-fg-strong',
                     )}
                   >
                     {t(choiceMeta.labelKey)}
