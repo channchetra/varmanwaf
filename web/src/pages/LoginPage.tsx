@@ -177,9 +177,9 @@ export function LoginPage() {
         </div>
 
         <div className="relative z-10 px-10 text-white">
-          <h2 className="max-w-md text-4xl font-semibold leading-tight tracking-tight">
+          <p className="max-w-md text-4xl font-semibold leading-tight tracking-tight">
             {t('app.tagline')}
-          </h2>
+          </p>
           <div className="mt-8 grid max-w-md gap-4">
             <Feature icon={<Globe weight="duotone" className="h-5 w-5" />} text={t('auth.featureMultiSite')} />
             <Feature icon={<Lightning weight="duotone" className="h-5 w-5" />} text={t('auth.featureEdge')} />
