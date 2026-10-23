@@ -256,6 +256,7 @@ export function ProtectionMode({ siteId }: { siteId: string }) {
               actions={
                 <Link
                   to={`/sites/${siteId}/security/protection?tab=tuning`}
+                  onClick={() => setOpen(false)}
                   className="inline-flex items-center rounded-md border border-line px-3 py-1.5 text-[12px] font-medium text-link hover:border-brand/40"
                 >
                   {t('pages.protectionMode.openAdvanced')}
