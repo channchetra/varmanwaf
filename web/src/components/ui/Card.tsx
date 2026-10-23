@@ -56,7 +56,7 @@ export function CardHeader({
       {children ?? (
         <div className="min-w-0">
           {title && (
-            <h3 className="truncate text-[15px] font-semibold text-fg-strong">{title}</h3>
+            <h2 className="truncate text-[15px] font-semibold text-fg-strong">{title}</h2>
           )}
           {description && (
             <p className="mt-0.5 text-[13px] leading-relaxed text-fg-subtle">

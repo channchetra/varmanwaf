@@ -536,7 +536,7 @@ export function DashboardPage() {
                     </p>
                     <p className="mt-0.5 text-[13px] text-fg-subtle">{stat.label}</p>
                     {stat.sub && (
-                      <p className="mt-1 text-xs text-fg-subtle/80 tabular-nums">{stat.sub}</p>
+                      <p className="mt-1 text-xs text-fg-subtle tabular-nums">{stat.sub}</p>
                     )}
                   </>
                 )}

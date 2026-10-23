@@ -151,7 +151,7 @@ export function LoginPage() {
   const canRegister = mode === 'register' || registrationOpen || needsSetup
 
   return (
-    <div className="grid min-h-full w-full grid-cols-1 lg:grid-cols-2">
+    <main className="grid min-h-full w-full grid-cols-1 lg:grid-cols-2">
       {/* Brand panel */}
       <div className="relative hidden overflow-hidden bg-brand-panel lg:flex lg:flex-col lg:justify-between">
         <div
@@ -252,7 +252,7 @@ export function LoginPage() {
                   type="button"
                   onClick={() => setShowPassword((s) => !s)}
                   aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
-                  className="transition-colors hover:text-fg"
+                  className="flex h-6 w-6 items-center justify-center rounded text-fg-subtle transition-colors hover:bg-recessed hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40"
                 >
                   {showPassword ? <EyeSlash weight="duotone" /> : <Eye weight="duotone" />}
                 </button>
@@ -367,7 +367,7 @@ export function LoginPage() {
           </div>
         </div>
       </div>
-    </div>
+    </main>
   )
 }
 

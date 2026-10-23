@@ -552,7 +552,7 @@ function CountryPicker({
               <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-recessed px-3 py-1.5">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">
                   {t(`continents.${group.continent}`, group.continent)}
-                  <span className="ml-1.5 font-normal normal-case tabular-nums text-fg-subtle/70">
+                  <span className="ml-1.5 font-normal normal-case tabular-nums text-fg-subtle">
                     {selectedCount}/{codes.length}
                   </span>
                 </span>

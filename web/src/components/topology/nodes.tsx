@@ -217,7 +217,7 @@ export function TopologyGroupNode({ data }: NodeProps<Node<TopologyNodeData>>) {
             {label}
           </p>
           {subtitle && (
-            <p className="truncate text-[11px] text-fg-subtle/80">{subtitle}</p>
+            <p className="truncate text-[11px] text-fg-subtle">{subtitle}</p>
           )}
         </div>
         <Chips chips={chips} />

@@ -377,7 +377,7 @@ export function IpListCatalogDialog({ onClose }: { onClose: () => void }) {
                     <p className="mt-0.5 text-[12px] text-fg-subtle">
                       {entry.description}
                     </p>
-                    <p className="mt-0.5 text-[11px] text-fg-subtle/80">
+                    <p className="mt-0.5 text-[11px] text-fg-subtle">
                       {entry.attribution}
                     </p>
                   </div>
