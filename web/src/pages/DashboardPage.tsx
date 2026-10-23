@@ -790,7 +790,12 @@ export function DashboardPage() {
                 description={t('pages.dashboard.noRulesTriggeredDescription')}
               />
             ) : (
-              <Table columns={ruleColumns} data={topRules.data ?? []} rowKey={(r) => r.rule_id} dense />
+              <Table
+                columns={ruleColumns}
+                data={topRules.data ?? []}
+                rowKey={(r) => `${r.rule_id}:${r.action}`}
+                dense
+              />
             )}
           </CardBody>
         </Card>
