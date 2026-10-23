@@ -12,7 +12,7 @@ import {
   MagnifyingGlass,
   ArrowClockwise,
 } from '@phosphor-icons/react'
-import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Callout } from '@/components/ui/Callout'
 import { Select } from '@/components/ui/Select'
 import { Switch } from '@/components/ui/Switch'
@@ -31,8 +31,8 @@ import { deriveWafConfig, ruleKeys, rulesApi } from '@/api/rules'
 import { siteKeys } from '@/api/sites'
 import { useCanWrite, useDebouncedValue } from '@/hooks'
 import { cn } from '@/lib/utils'
-import { RULE_MODES, type Rule, type RuleGroup, type RuleMode } from '@/api/types'
-
+import { type Rule, type RuleGroup } from '@/api/types'
+import { policiesApi, policyKeys } from '@/api/policies'
 const ACTION_TONE: Record<string, 'danger' | 'warning' | 'info' | 'success' | 'neutral'> = {
   block: 'danger',
   challenge: 'warning',
@@ -40,13 +40,11 @@ const ACTION_TONE: Record<string, 'danger' | 'warning' | 'info' | 'success' | 'n
   log: 'info',
   allow: 'success',
 }
-
 const MODE_TONE: Record<string, 'danger' | 'warning' | 'neutral'> = {
   block: 'danger',
   monitor: 'warning',
   off: 'neutral',
 }
-
 /** The rule-management module of the site's protection tab. */
 export function WafRulesPanel() {
   const { t } = useTranslation()
@@ -55,7 +53,6 @@ export function WafRulesPanel() {
   const canWrite = useCanWrite()
   const { siteId = '' } = useParams<{ siteId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
-
   const [search, setSearch] = useState('')
   const debouncedSearch = useDebouncedValue(search.trim(), 300)
   const [groupFilter, setGroupFilter] = useState('')
@@ -67,30 +64,35 @@ export function WafRulesPanel() {
   const [groupDialogOpen, setGroupDialogOpen] = useState(false)
   const [groupName, setGroupName] = useState('')
   const [groupPhase, setGroupPhase] = useState('request')
-
   const rulesQuery = useQuery({
     queryKey: ruleKeys.list(siteId, { search: debouncedSearch || undefined }),
     queryFn: () => rulesApi.list(siteId, { search: debouncedSearch || undefined }),
     select: (page) => page.items,
     enabled: Boolean(siteId),
   })
-
   const groupsQuery = useQuery({
     queryKey: ruleKeys.groups(siteId),
     queryFn: () => rulesApi.listGroups(siteId),
     select: (page) => page.items,
     enabled: Boolean(siteId),
   })
-
   const allRules = useMemo(() => rulesQuery.data ?? [], [rulesQuery.data])
   const groups = useMemo(() => groupsQuery.data ?? [], [groupsQuery.data])
-
   /** Derived exactly the way the control plane derives it for the agents. */
   const waf = useMemo(
     () => deriveWafConfig(allRules, groups),
     [allRules, groups],
   )
-
+  // The real gate is the site's resolved enforcement mode, not the aggregate
+  // of per-rule modes. Read it from the same effective-config source the
+  // bundle builder uses.
+  const effective = useQuery({
+    queryKey: policyKeys.siteEffective(siteId),
+    queryFn: () => policiesApi.effectiveConfig(siteId),
+    enabled: Boolean(siteId),
+  })
+  const effectiveMode = effective.data?.effective.mode ?? waf.mode
+  const effectiveEnabled = effective.data?.effective.waf_enabled ?? waf.enabled
   const visibleRules = useMemo(() => {
     const filtered = allRules.filter((r) => {
       if (groupFilter === 'none' && r.group_id !== null) return false
@@ -102,15 +104,12 @@ export function WafRulesPanel() {
     // Lowest priority number runs first — that is the order the agents use.
     return [...filtered].sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
   }, [allRules, groupFilter, enabledFilter])
-
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ruleKeys.all(siteId) })
     void queryClient.invalidateQueries({ queryKey: ruleKeys.groups(siteId) })
     void queryClient.invalidateQueries({ queryKey: siteKeys.detail(siteId) })
   }
-
   /* ── Mutations ───────────────────────────────────────────────────── */
-
   const toggleRule = useMutation({
     mutationFn: ({ rule, enabled }: { rule: Rule; enabled: boolean }) =>
       rulesApi.toggleEnabled(siteId, rule.id, enabled),
@@ -122,7 +121,6 @@ export function WafRulesPanel() {
       invalidate()
     },
   })
-
   const deleteRule = useMutation({
     mutationFn: (ruleId: string) => rulesApi.delete(siteId, ruleId),
     onSuccess: (_data, ruleId) => {
@@ -132,28 +130,6 @@ export function WafRulesPanel() {
       invalidate()
     },
   })
-
-  /**
-   * Applies an enforcement mode across the whole rule set. There is no
-   * site-level WAF record — the posture is the aggregate of the rules — so
-   * "block mode" means every rule enforces in block mode.
-   */
-  const applyMode = useMutation({
-    mutationFn: async (mode: RuleMode) => {
-      const targets = allRules.filter((r) => r.mode !== mode)
-      await Promise.all(targets.map((r) => rulesApi.setMode(siteId, r.id, mode)))
-      return targets.length
-    },
-    onSuccess: (changed, mode) => {
-      if (changed === 0) {
-        toast.info(t('pages.waf.modeAlready'), t(`pages.waf.mode_${mode}`))
-      } else {
-        toast.success(t('pages.waf.modeApplied'), `${t(`pages.waf.mode_${mode}`)} · ${changed}`)
-      }
-      invalidate()
-    },
-  })
-
   /** Re-adds the built-in rule pack for a site whose rules were deleted. */
   const restoreBuiltins = useMutation({
     mutationFn: () => rulesApi.restoreDefaults(siteId),
@@ -169,13 +145,11 @@ export function WafRulesPanel() {
       invalidate()
     },
   })
-
   const toggleGroup = useMutation({
     mutationFn: ({ group, enabled }: { group: RuleGroup; enabled: boolean }) =>
       rulesApi.updateGroup(siteId, group.id, { enabled }),
     onSuccess: () => invalidate(),
   })
-
   const deleteGroup = useMutation({
     mutationFn: (groupId: string) => rulesApi.deleteGroup(siteId, groupId),
     onSuccess: () => {
@@ -183,7 +157,6 @@ export function WafRulesPanel() {
       invalidate()
     },
   })
-
   const createGroup = useMutation({
     mutationFn: () =>
       rulesApi.createGroup(siteId, { name: groupName.trim(), phase: groupPhase }),
@@ -194,21 +167,16 @@ export function WafRulesPanel() {
       invalidate()
     },
   })
-
-  const busy = applyMode.isPending || restoreBuiltins.isPending
-
   const openCreate = (tags?: string[]) => {
     setEditing(null)
     setPresetTags(tags)
     setDialogOpen(true)
   }
-
   const openEdit = (rule: Rule) => {
     setEditing(rule)
     setPresetTags(undefined)
     setDialogOpen(true)
   }
-
   const closeDialog = () => {
     setDialogOpen(false)
     setEditing(null)
@@ -219,7 +187,6 @@ export function WafRulesPanel() {
       setSearchParams(next, { replace: true })
     }
   }
-
   // Deep link from the log console: /sites/:siteId/security/protection?rule=<id>
   // opens that rule's dialog once the list has loaded. `null` until the first
   // matching pass, so a link present at mount still opens; the param is
@@ -236,9 +203,7 @@ export function WafRulesPanel() {
     const rule = allRules.find((r) => r.id === requestedRuleId)
     if (rule) openEdit(rule)
   }
-
   /* ── Columns ─────────────────────────────────────────────────────── */
-
   const columns: Column<Rule>[] = [
     {
       key: 'priority',
@@ -387,7 +352,6 @@ export function WafRulesPanel() {
       ),
     },
   ]
-
   const groupOptions = useMemo(
     () => [
       { value: '', label: t('pages.waf.allGroups') },
@@ -396,10 +360,8 @@ export function WafRulesPanel() {
     ],
     [groups, t],
   )
-
   const loading = rulesQuery.isPending || groupsQuery.isPending
   const failed = (rulesQuery.isError && !rulesQuery.data) || (groupsQuery.isError && !groupsQuery.data)
-
   return (
     <div>
       <Callout
@@ -410,7 +372,6 @@ export function WafRulesPanel() {
       >
         {t('pages.waf.overview')}
       </Callout>
-
       {failed ? (
         <ErrorState
           error={rulesQuery.error ?? groupsQuery.error}
@@ -428,9 +389,9 @@ export function WafRulesPanel() {
           ) : (
             <div
               className={cn(
-                'mb-4 flex flex-wrap items-center gap-4 rounded-lg border px-4 py-3',
-                waf.enabled
-                  ? waf.mode === 'block'
+                'mb-4 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-lg border px-4 py-3',
+                effectiveEnabled
+                  ? effectiveMode === 'block'
                     ? 'border-danger/35 bg-danger/8'
                     : 'border-warning/35 bg-warning/8'
                   : 'border-line bg-elevated',
@@ -439,15 +400,15 @@ export function WafRulesPanel() {
               <span
                 className={cn(
                   'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
-                  waf.enabled
-                    ? waf.mode === 'block'
+                  effectiveEnabled
+                    ? effectiveMode === 'block'
                       ? 'bg-danger/15 text-fg-danger'
                       : 'bg-warning/15 text-fg-warning'
                     : 'bg-recessed text-fg-subtle',
                 )}
               >
-                {waf.enabled ? (
-                  waf.mode === 'block' ? (
+                {effectiveEnabled ? (
+                  effectiveMode === 'block' ? (
                     <ShieldCheck weight="duotone" className="h-5 w-5" />
                   ) : (
                     <ShieldWarning weight="duotone" className="h-5 w-5" />
@@ -456,10 +417,10 @@ export function WafRulesPanel() {
                   <Shield weight="duotone" className="h-5 w-5" />
                 )}
               </span>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-[180px] flex-1">
                 <p className="text-sm font-semibold text-fg-strong">
-                  {waf.enabled
-                    ? waf.mode === 'block'
+                  {effectiveEnabled
+                    ? effectiveMode === 'block'
                       ? t('pages.waf.postureBlocking')
                       : t('pages.waf.postureMonitoring')
                     : t('pages.waf.postureOff')}
@@ -471,14 +432,14 @@ export function WafRulesPanel() {
                   })}
                 </p>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-3">
                 <PostureStat label={t('pages.waf.paranoiaLevel')} value={waf.paranoia_level} />
                 <PostureStat
                   label={t('pages.waf.activeRules')}
                   value={`${waf.active_rules}/${waf.total_rules}`}
                 />
-                <Badge tone={MODE_TONE[waf.mode] ?? 'neutral'} dot>
-                  {t(`pages.waf.mode_${waf.mode}`)}
+                <Badge tone={MODE_TONE[effectiveMode ?? 'block'] ?? 'neutral'} dot>
+                  {t(`pages.waf.mode_${effectiveMode ?? 'block'}`)}
                 </Badge>
                 {canWrite && (
                   <>
@@ -507,60 +468,7 @@ export function WafRulesPanel() {
                 )}
               </div>
             </div>
-          )}
-
-          {/* ── Mode ─────────────────────────────────────────────────── */}
-          <Card className="max-w-2xl">
-            <CardHeader
-              title={t('pages.waf.mode')}
-              description={t('pages.waf.modeCardHint')}
-            />
-            <CardBody className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                {RULE_MODES.map((m) => {
-                  const active = waf.mode === m
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      disabled={!canWrite || busy || loading}
-                      onClick={() => applyMode.mutate(m as RuleMode)}
-                      className={cn(
-                        'flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60',
-                        active
-                          ? 'border-brand bg-brand-soft'
-                          : 'border-line hover:border-fill hover:bg-recessed',
-                      )}
-                    >
-                      <span className="min-w-0">
-                        <span
-                          className={cn(
-                            'block text-sm font-medium',
-                            active ? 'text-brand' : 'text-fg',
-                          )}
-                        >
-                          {t(`pages.waf.mode_${m}`)}
-                        </span>
-                        <span className="block text-xs text-fg-subtle">
-                          {t(`pages.waf.modeHint_${m}`)}
-                        </span>
-                      </span>
-                      {active && <ShieldCheck weight="fill" className="h-4 w-4 shrink-0 text-brand" />}
-                    </button>
-                  )
-                })}
-              </div>
-              {applyMode.isPending && (
-                <p className="text-xs text-fg-subtle">{t('pages.waf.applyingMode')}</p>
-              )}
-              <div className="rounded-md border border-line bg-recessed px-3 py-2">
-                <p className="text-xs leading-relaxed text-fg-subtle">
-                  {t('pages.waf.modeExplainer')}
-                </p>
-              </div>
-            </CardBody>
-          </Card>
-
+          )}
           {/* ── Rule groups ──────────────────────────────────────────── */}
           <Card className="mt-4">
             <CardHeader
@@ -632,7 +540,6 @@ export function WafRulesPanel() {
               )}
             </CardBody>
           </Card>
-
           {/* ── Custom rules ─────────────────────────────────────────── */}
           <Card className="mt-4">
             <CardHeader
@@ -752,7 +659,6 @@ export function WafRulesPanel() {
           </Card>
         </>
       )}
-
       {/* ── Dialogs ──────────────────────────────────────────────────── */}
       <RuleDialog
         open={dialogOpen}
@@ -762,7 +668,6 @@ export function WafRulesPanel() {
         rule={editing}
         presetTags={presetTags}
       />
-
       <Dialog
         open={groupDialogOpen}
         onClose={createGroup.isPending ? () => undefined : () => setGroupDialogOpen(false)}
@@ -804,7 +709,6 @@ export function WafRulesPanel() {
           />
         </div>
       </Dialog>
-
       <ConfirmDialog
         open={pendingDelete !== null}
         onClose={() => setPendingDelete(null)}
@@ -826,7 +730,6 @@ export function WafRulesPanel() {
     </div>
   )
 }
-
 function PostureStat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="text-center">
@@ -835,5 +738,4 @@ function PostureStat({ label, value }: { label: string; value: string | number }
     </div>
   )
 }
-
 export default WafRulesPanel

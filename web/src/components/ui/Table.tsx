@@ -123,6 +123,7 @@ export function Table<T>({
                       'border-b border-line text-xs font-semibold tracking-wide text-fg-subtle uppercase',
                       alignClass[col.align ?? 'left'],
                       col.sortable && 'cursor-pointer select-none hover:text-fg',
+                      col.className,
                     )}
                     onClick={() => toggleSort(col)}
                   >

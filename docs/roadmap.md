@@ -9,6 +9,12 @@
 
 ## Status board
 
+> **1.1.8 (2026-10-23):** the site-management clarity round - one Protection
+> mode (Block / Monitor / Paused) in the site header, the Rules page no longer
+> carries a competing bulk mode, Policy tuning is renamed Advanced, a rule's
+> mode is an explicit override, and the site domain / Visit site action open
+> the live site.
+>
 > **1.1.7 (2026-10-22):** the clarity round - three-surface WAF documentation
 > (rules detect, policy tuning enforces, policies reuse) with a concrete
 > "not blocked" checklist; per-site Overview tab; dismissible informational

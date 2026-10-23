@@ -118,13 +118,13 @@ export function ProtectionPage() {
         <SkeletonCard className="mb-5 h-16" />
       ) : (
         <div
-          className={`mb-5 flex flex-wrap items-center justify-between gap-4 rounded-lg border px-4 py-3 ${
+          className={`mb-5 flex items-center justify-between gap-3 rounded-lg border px-4 py-3 ${
             underAttack
               ? 'border-danger/45 bg-danger/10'
               : 'border-line bg-elevated'
           }`}
         >
-          <span className="flex min-w-0 items-center gap-3">
+          <span className="flex min-w-0 flex-1 items-center gap-3">
             <span
               className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
                 underAttack
@@ -152,19 +152,21 @@ export function ProtectionPage() {
             </span>
           </span>
           {canWrite && (
-            <Switch
-              size="md"
-              checked={underAttack}
-              disabled={!canWrite || setUnderAttack.isPending}
-              aria-label={t('pages.protection.underAttackTitle')}
-              onCheckedChange={(enabled) => {
-                if (enabled) {
-                  setConfirmUnderAttack(true)
-                } else {
-                  setUnderAttack.mutate(false)
-                }
-              }}
-            />
+            <span className="shrink-0">
+              <Switch
+                size="md"
+                checked={underAttack}
+                disabled={!canWrite || setUnderAttack.isPending}
+                aria-label={t('pages.protection.underAttackTitle')}
+                onCheckedChange={(enabled) => {
+                  if (enabled) {
+                    setConfirmUnderAttack(true)
+                  } else {
+                    setUnderAttack.mutate(false)
+                  }
+                }}
+              />
+            </span>
           )}
         </div>
       )}

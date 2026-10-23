@@ -168,11 +168,6 @@ function TuningSummary({
                 ? t('pages.tuning.engineOn')
                 : t('pages.tuning.engineOff')}
             </Badge>
-            <Badge tone="brand" size="sm">
-              {t('pages.tuning.mode', {
-                mode: effective.effective.mode ?? 'block',
-              })}
-            </Badge>
             <Badge tone="neutral" size="sm">
               {t('pages.tuning.paranoia', {
                 level: effective.effective.paranoia_level,

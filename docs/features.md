@@ -77,21 +77,34 @@ Conventions used below:
 
 - **Where** — `/sites`.
 - **API** — `sites.rs`.
-- **How it works** — Create a site (name, domains), see its status, engine
-  mode, agent binding and quick metrics. Each row has an **Open** action and
-  the domain is a link; both enter the site's Overview. Deleting a site
-  removes its bundles from every agent.
+- **How it works** - Create a site (name, domains), see its status, engine
+  mode, agent binding and quick metrics. Each row has a **Visit site** action
+  that opens the live site in a new tab; the row and the domain open the
+  site's Overview. Deleting a site removes its bundles from every agent.
 
 ### 2.2 Site overview
 
 - **Where** — `/sites/:siteId/overview` (the site's default tab).
 - **API** — `sites.rs`, `analytics.rs`, `waf.rs`, certificates, logs.
-- **How it works** — One site's own dashboard: 24-hour requests, blocked
+- **How it works** - One site's own dashboard: 24-hour requests, blocked
   requests, security events and unique IPs; the protection posture actually in
   force (mode, paranoia level, body inspection, engine mode); the active
   certificate and its expiry; origin health; and the latest security events
   with links to the owning surfaces. Read-only: each card links to where the
-  setting lives.
+  setting lives. The **Protection mode** control in the site header is the one
+  place that changes Block / Monitor / Paused.
+
+### 2.2.1 Protection mode
+
+- **Where** - The site header on every site tab.
+- **API** - `sites.rs` (status) and the site's `waf/settings` (mode,
+  `waf_enabled`); the display reads `effective-config` so a shared policy is
+  reflected.
+- **How it works** - Block and Monitor set the site active and write the WAF
+  mode; Paused takes the site offline. The mode is the enforcement gate; a
+  rule's own mode only overrides that rule. A policy-managed site shows the
+  policy badge and routes the change to Advanced instead of writing a local
+  mode that the policy would override.
 
 ### 2.3 Site detail — Origin
 
@@ -114,15 +127,19 @@ Conventions used below:
 
 ## 3. Protection (per site)
 
-### 3.1 Web Protection — the single security surface
+### 3.1 Protection — the single security surface
 
 - **Where** — `/sites/:siteId/security/protection`.
-- **Legacy links** — `/security/waf` → Rules tab, `/security/cc` → CC tab,
-  `/security/policy` → Policy tuning, `?rule=` and `?block=` deep links are
-  preserved.
-- **Tabs** — **Overview** (posture summary and what is active), **Rules**
-  (managed + custom rules, rule tester), **CC** (challenge / under-attack),
-  **Policy tuning** (see 3.2).
+- **Legacy links** — `/security/waf` → Rules tab, `/security/cc` → Flood
+  protection tab, `/security/policy` → Advanced, `?rule=` and `?block=` deep
+  links are preserved.
+- **Tabs** — **Overview** (protection modules, request path and optional
+  shared policy), **Rules** (managed + custom rules, rule tester; no bulk mode
+  switch), **Flood protection** (challenge / under-attack), **Advanced**
+  (paranoia, advanced mode, monitor-only categories, exclusions, shared
+  policy and history).
+- **Enforcement** — Set by the **Protection mode** control in the site header,
+  not by these tabs. A rule's **Rule mode** is an override for that rule only.
 
 #### Managed rules
 

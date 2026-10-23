@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { NavLink, Outlet, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Globe,
   Shield,
@@ -11,8 +10,6 @@ import {
   Sliders,
   Gauge,
   CaretLeft,
-  Pause,
-  Play,
   Robot,
   IdentificationCard,
   Network,
@@ -21,35 +18,22 @@ import {
   BracketsCurly,
   FlowArrow,
   SquaresFour,
+  ArrowSquareOut,
   type Icon,
 } from '@phosphor-icons/react'
 import { Link } from 'react-router-dom'
 import { cn } from '@/lib/utils'
-import { Badge } from '@/components/ui/Badge'
-import { Button } from '@/components/ui/Button'
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Skeleton } from '@/components/ui/Skeleton'
-import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
-import { sitesApi, siteKeys } from '@/api/sites'
-import { useCanWrite, useSiteDetail } from '@/hooks'
+import { ProtectionMode } from '@/components/site/ProtectionMode'
+import { useSiteDetail } from '@/hooks'
 import { useSiteStore } from '@/stores/siteStore'
-import type { SiteStatus } from '@/api/types'
-
-const STATUS_TONE: Record<SiteStatus, 'success' | 'warning' | 'neutral'> = {
-  active: 'success',
-  paused: 'warning',
-  pending: 'neutral',
-}
+import { liveSiteUrl } from '@/lib/siteUrl'
 
 export function SiteDetailPage() {
   const { t } = useTranslation()
   const { siteId } = useParams<{ siteId: string }>()
   const setCurrentSiteId = useSiteStore((s) => s.setCurrentSiteId)
-  const canWrite = useCanWrite()
-  const toast = useToast()
-  const queryClient = useQueryClient()
-  const [confirmToggle, setConfirmToggle] = useState(false)
 
   useEffect(() => {
     if (siteId) setCurrentSiteId(siteId)
@@ -58,18 +42,6 @@ export function SiteDetailPage() {
   const detail = useSiteDetail(siteId)
   const site = detail.data?.site
 
-  const toggleStatus = useMutation({
-    mutationFn: (status: SiteStatus) => sitesApi.update(siteId as string, { status }),
-    onSuccess: (updated) => {
-      toast.success(
-        updated.status === 'active' ? t('pages.sites.activated') : t('pages.sites.deactivated'),
-        updated.domain,
-      )
-      setConfirmToggle(false)
-      void queryClient.invalidateQueries({ queryKey: siteKeys.all })
-    },
-  })
-
   const paused = site?.status === 'paused'
 
   const base = `/sites/${siteId}`
@@ -77,7 +49,6 @@ export function SiteDetailPage() {
   // rules & settings. Separators render between the groups.
   const tabGroups: { to: string; label: string; icon: Icon }[][] = [
     [{ to: `${base}/overview`, label: t('nav.overview'), icon: SquaresFour }],
-    [{ to: `${base}/origin`, label: t('nav.origin'), icon: Network }],
     [
       {
         to: `${base}/security/protection`,
@@ -102,6 +73,7 @@ export function SiteDetailPage() {
       },
     ],
     [
+      { to: `${base}/origin`, label: t('nav.origin'), icon: Network },
       { to: `${base}/caching`, label: t('nav.caching'), icon: Lightning },
       { to: `${base}/ssl`, label: t('nav.ssl'), icon: Lock },
       { to: `${base}/traffic`, label: t('nav.traffic'), icon: ChartLine },
@@ -142,7 +114,7 @@ export function SiteDetailPage() {
   return (
     <div className="animate-slide-up">
       {/* Site header */}
-      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">
             <Globe weight="duotone" className="h-6 w-6" />
@@ -150,16 +122,23 @@ export function SiteDetailPage() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               {site ? (
-                <h1 className="pw-mono truncate text-lg font-semibold tracking-tight text-fg-strong">
-                  {site.domain}
-                </h1>
+                <a
+                  href={liveSiteUrl(site.domain, detail.data?.ssl?.has_certificate)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={t('pages.siteDetail.visitSite')}
+                  className="group inline-flex min-w-0 items-center gap-1.5"
+                >
+                  <h1 className="pw-mono truncate text-lg font-semibold tracking-tight text-fg-strong group-hover:text-brand">
+                    {site.domain}
+                  </h1>
+                  <ArrowSquareOut
+                    weight="bold"
+                    className="h-3.5 w-3.5 shrink-0 text-fg-subtle group-hover:text-brand"
+                  />
+                </a>
               ) : (
                 <Skeleton className="h-6 w-56 rounded-md" />
-              )}
-              {site && (
-                <Badge tone={STATUS_TONE[site.status as SiteStatus] ?? 'neutral'} dot>
-                  {t(`status.${site.status}`, site.status)}
-                </Badge>
               )}
             </div>
             <p className="truncate text-[13px] text-fg-subtle">
@@ -184,43 +163,11 @@ export function SiteDetailPage() {
           </div>
         </div>
 
-        {/* Live counters straight from SiteDetail */}
-        <div className="flex shrink-0 items-center gap-4">
-          {detail.data && (
-            <div className="flex items-center gap-4 text-[13px]">
-              <Counter
-                label={t('nav.securityWaf')}
-                value={detail.data.rule_count}
-              />
-              <Counter
-                label={t('nav.securityRateLimiting')}
-                value={detail.data.rate_limit_count}
-              />
-              <Counter label={t('nav.ssl')} value={detail.data.ssl ? 1 : 0} />
-              <Counter
-                label={t('pages.siteDetail.upstreams')}
-                value={detail.data.upstreams.length}
-              />
-            </div>
-          )}
-          {site && canWrite && (
-            <Button
-              variant={paused ? 'primary' : 'secondary'}
-              size="sm"
-              loading={toggleStatus.isPending}
-              icon={
-                paused ? (
-                  <Play weight="duotone" className="h-4 w-4" />
-                ) : (
-                  <Pause weight="duotone" className="h-4 w-4" />
-                )
-              }
-              onClick={() => setConfirmToggle(true)}
-            >
-              {paused ? t('pages.sites.activate') : t('pages.sites.deactivate')}
-            </Button>
-          )}
-        </div>
+        {siteId && (
+          <div className="w-full shrink-0 sm:max-w-xs">
+            <ProtectionMode siteId={siteId} />
+          </div>
+        )}
       </div>
 
       {/* The edge answers a paused site with a maintenance page, so say so. */}
@@ -266,36 +213,7 @@ export function SiteDetailPage() {
       </div>
 
       <Outlet />
-
-      <ConfirmDialog
-        open={confirmToggle}
-        onClose={() => setConfirmToggle(false)}
-        onConfirm={() => toggleStatus.mutate(paused ? 'active' : 'paused')}
-        title={paused ? t('pages.sites.resumeTitle') : t('pages.sites.pauseTitle')}
-        description={
-          paused ? t('pages.sites.resumeDescription') : t('pages.sites.pauseDescription')
-        }
-        confirmLabel={paused ? t('pages.sites.activate') : t('pages.sites.deactivate')}
-        tone={paused ? 'primary' : 'danger'}
-        loading={toggleStatus.isPending}
-      >
-        {site && (
-          <div className="rounded-md border border-line bg-recessed px-3 py-2">
-            <p className="pw-mono text-[13px] font-medium text-fg-strong">{site.domain}</p>
-          </div>
-        )}
-      </ConfirmDialog>
     </div>
   )
 }
 
-function Counter({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="text-center">
-      <p className="tabular-nums text-base font-semibold leading-tight text-fg-strong">
-        {value}
-      </p>
-      <p className="text-[11px] leading-tight text-fg-subtle">{label}</p>
-    </div>
-  )
-}

@@ -39,8 +39,8 @@ navigation.
   "Recent notifications" list, which was the smaller duplicate).
   `/notifications` now redirects to `/alerts`, so old links keep working.
 - **This site** (contextual): appears only inside a site and lists that
-  site's tabs (Web protection, Rate limiting, Bot protection, Access
-  control, Origin, Caching, SSL/TLS, Traffic). Outside a site the section
+  site's tabs (Protection, Rate limiting, Bot protection, Access control,
+  Origin, Caching, SSL/TLS, Traffic). Outside a site the section
   is absent, so the sidebar no longer mixes scopes.
 
 ## Deliberately NOT merged (with reasons)
@@ -68,7 +68,7 @@ Protection        Policies · CRS rules · Alerts & notifications · IP lists ·
 Traffic & logs    Traffic · Logs · Reports
 Fleet             Agents · SSL/TLS · Config history
 Tools             AI Assistant · Request lifecycle
-This site*        Overview · Web protection · Rate limiting · Bot protection · Access control
+This site*        Overview · Protection · Rate limiting · Bot protection · Access control
                   Origin · API assets · Caching · SSL/TLS · Traffic · Topology · Logs
                   Rewrite · Settings
 Settings
@@ -84,9 +84,34 @@ active certificate, the origin health, and the latest security findings with a
 link into Logs. The legacy default (`origin`) still resolves, so old links and
 bookmarks keep working.
 
-The site list additionally offers an **Open** action on every row, and the
-domain itself is a link to the same overview. Opening a row no longer jumps
-straight into origin editing.
+The site list opens the overview from the row and from the domain. Its action
+button visits the live site in a new tab.
+
+## One protection mode (v1.1.8)
+
+The site-level enforcement mode now has exactly one control: the **Protection
+mode** button in the site header, present on every site tab.
+
+- **Block / Monitor / Paused** writes both the site status and the WAF mode.
+  Paused replaces the old separate pause button; Block/Monitor resume a paused
+  site. The old quick pause on the sites list was removed for the same reason.
+- **The site domain is a link to the live site** (new tab), with an external
+  icon. The site list's action button also visits the live site; the row and
+  the domain in the list open the site workspace.
+- **Protection tabs** are now **Overview · Rules · Flood protection ·
+  Advanced**. "Policy tuning" is renamed Advanced; "CC Protection" is
+  Flood protection.
+- **Rules** no longer offers a bulk "apply mode to every rule" card. The site
+  mode is the gate; a rule's **Rule mode** is an explicit override for that
+  rule only.
+- **Protection → Advanced** keeps paranoia, advanced mode, monitor-only
+  categories, exclusions, shared policy and history. A site that follows a
+  shared policy shows "Managed by policy" in the mode dialog and routes the
+  change to Advanced instead of pretending a local write would apply.
+
+The Protection page's Overview now starts with the operational modules, then
+the request path, then the optional shared policy, so policies are no longer
+the first thing an operator sees.
 
 ## Protection section (v0.50.0)
 

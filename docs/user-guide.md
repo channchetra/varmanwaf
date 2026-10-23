@@ -117,47 +117,54 @@ A prefix route on `/` is rejected: it would conflict with the default-pool fallb
 
 ## WAF Configuration
 
-### WAF rules, policy tuning, and policies
+### Protection mode, rules, and advanced settings
 
-Three surfaces are easy to confuse because they all sound like "the WAF":
+The console keeps one enforcement decision in one place. Three surfaces remain,
+but only one of them is a mode:
 
 | Surface | What it decides | Where |
 |---------|-----------------|-------|
-| **WAF rules** | *What looks like an attack*: built-in managed rules, custom rules, SecLang/CRS rules and API schema checks. Every match produces a finding with a rule id and an anomaly score. | Web Protection → Rules, Custom rules, CRS |
-| **Policy tuning** | *What this site does with those findings*: enforcement mode, paranoia level, advanced mode, monitor-only categories and exclusions. | Web Protection → Policy tuning |
-| **Policies** | *Reusable tuning* shared by several sites. A policy sets the mode and posture; a site follows its latest published revision. | Protection → Policies |
+| **Protection mode** | *What the edge does with matching traffic*: Block, Monitor or Paused. This is the gate the engine reads. | The site header, on every site tab |
+| **Rules** | *What looks like an attack*: built-in managed rules, custom rules, SecLang/CRS rules and API schema checks. Every match produces a finding with a rule id and an anomaly score. A rule's own **Rule mode** only overrides that one rule. | Protection → Rules |
+| **Advanced** | Paranoia level, advanced mode, monitor-only categories, exclusions, and an optional shared policy. Most sites never need this page. | Protection → Advanced |
 
-The order is **detection → enforcement → reuse**. A rule's own action never
-blocks on its own: the site's enforcement mode is the gate. A site without an
-explicit mode derives it from its rules.
+The order is **detection → enforcement → reuse**. Changing a rule to Block
+does not override the site's Protection mode; the site mode always wins. This
+is why the rules page no longer offers a bulk mode switch.
 
-### Enforcement modes
+### Protection modes
 
 | Mode | Behavior |
 |------|----------|
-| **Monitor** | Every finding is recorded with its rule, score and request path. Nothing is blocked; allowed traffic is proxied to the origin normally. |
 | **Block** | Findings that pass their gates are answered by the WAF (403 by default) and recorded. |
+| **Monitor** | Every finding is recorded with its rule, score and request path. Nothing is blocked; traffic is proxied to the origin normally. |
+| **Paused** | The site goes offline: the edge answers every request with a maintenance page. Use it for planned maintenance, not as a substitute for Monitor. |
 
-Set via: `Sites → [site] → Web Protection → Policy tuning → Enforcement mode`.
-When the site follows a shared policy, the policy's mode applies; local
-overrides belong in the site overlay, not in a copied policy.
+Set via the **Protection mode** control at the top of any site page. Choosing
+Block or Monitor resumes a paused site. The control writes the site status and
+the enforcement mode, and the change syncs to the edge.
+
+A site that follows a shared policy has its mode controlled by that policy.
+The dialog says so and links to **Protection → Advanced**, where the policy is
+managed or paused; it does not pretend a local change would take effect.
 
 ### "I sent an attack and nothing was blocked"
 
 Check these in order:
 
-1. **Mode.** `Web Protection → Policy tuning` shows the mode in force. In
-   **Monitor** nothing blocks by design - this is the most common cause.
+1. **Protection mode.** The control at the top of the site shows the mode in
+   force. In **Monitor** nothing blocks by design - this is the most common
+   cause. In **Paused**, requests never reach the origin.
 2. **The finding exists.** `Logs → Security` (or the site's **Overview** tab)
    shows the event with its action, rule id and anomaly score. No row at all
-   means the request never reached the edge: check DNS, the port, and that
-   the site is not paused.
+   means the request never reached the edge: check DNS, the port, and the mode.
 3. **The score crossed a threshold.** A union-select probe can be detected by
    `sig.sqli.union_bare` at score 55 while the built-in SQLi gate
    (VARMAN-1002) starts at 60. A custom rule such as
    `cf.waf.score.sqli ge 40` closes that gap.
 4. **The rule is enabled and its paranoia level is not above the site's.** A
-   Strict-only rule does not run on a Normal/PL2 site.
+   Strict-only rule does not run on a Normal/PL2 site. A rule whose own Rule
+   mode is Monitor will stay monitor-only even when the site is Block.
 5. **Re-test.** With mode **Block**, repeat the request: expect a 403 and a
    new event with `action: block`. The event's *why* panel names the rule,
    score, policy and any exclusion that applied.

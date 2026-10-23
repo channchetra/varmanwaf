@@ -23,7 +23,7 @@ import { ErrorState } from '@/components/ErrorState'
 import { policiesApi, policyKeys } from '@/api/policies'
 import { cn } from '@/lib/utils'
 
-type ProtectionTab = 'settings' | 'rules' | 'cc' | 'policy'
+type ProtectionTab = 'rules' | 'cc' | 'tuning'
 
 /**
  * The site's protection overview: what configuration is actually in force,
@@ -77,7 +77,7 @@ export function ProtectionOverview({
 
   if (assignment.isLoading || effective.isLoading) {
     return (
-      <div className="space-y-4">
+      <div className="flex flex-col gap-4">
         <SkeletonCard />
         <SkeletonCard />
       </div>
@@ -127,12 +127,8 @@ export function ProtectionOverview({
         : t('common.disabled'),
     },
     {
-      label: t('pages.policies.fields.mode'),
-      value: data?.effective.mode ?? t('pages.sitePolicy.modeDerived'),
-    },
-    {
       label: t('pages.policies.fields.paranoia'),
-      value: String(data?.effective.paranoia_level ?? '—'),
+      value: String(data?.effective.paranoia_level ?? '-'),
     },
     {
       label: t('pages.policies.fields.advanced'),
@@ -220,14 +216,6 @@ export function ProtectionOverview({
       onOpen: () => onSelectTab('rules'),
     },
     {
-      id: 'crs',
-      icon: ShieldCheck,
-      title: t('pages.protectionOverview.modules.crs'),
-      description: t('pages.protectionOverview.modules.crsHint'),
-      chip: layerChip('rule_overrides', 'CRS'),
-      onOpen: () => onSelectTab('policy'),
-    },
-    {
       id: 'access',
       icon: IdentificationCard,
       title: t('pages.protectionOverview.modules.access'),
@@ -261,14 +249,14 @@ export function ProtectionOverview({
       title: t('pages.protectionOverview.modules.settings'),
       description: t('pages.protectionOverview.modules.settingsHint'),
       chip: layerChip('engine', 'Engine'),
-      onOpen: () => onSelectTab('settings'),
+      onOpen: () => onSelectTab('tuning'),
     },
   ]
 
   return (
-    <div className="space-y-4">
-      {/* Effective policy */}
-      <Card className="border-focus/30">
+    <div className="flex flex-col gap-4">
+      {/* Shared policy */}
+      <Card className="order-3 border-focus/30">
         <CardBody className="space-y-4">
           <div className="flex flex-wrap items-start gap-4">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-focus/10 text-link">
@@ -320,7 +308,7 @@ export function ProtectionOverview({
               >
                 {t(`pages.sitePolicy.apply.${applyState}`, applyState)}
               </Badge>
-              <Button size="sm" onClick={() => onSelectTab('policy')}>
+              <Button size="sm" onClick={() => onSelectTab('tuning')}>
                 {t('pages.protectionOverview.openPolicy')}
               </Button>
             </div>
@@ -342,7 +330,7 @@ export function ProtectionOverview({
       </Card>
 
       {/* Execution path */}
-      <Card>
+      <Card className="order-2">
         <CardHeader
           title={t('pages.protectionOverview.pathTitle')}
           description={t('pages.protectionOverview.pathHint')}
@@ -395,7 +383,7 @@ export function ProtectionOverview({
       </Card>
 
       {/* Modules */}
-      <div>
+      <div className="order-1">
         <h2 className="text-[15px] font-semibold text-fg-strong">
           {t('pages.protectionOverview.modulesTitle')}
         </h2>

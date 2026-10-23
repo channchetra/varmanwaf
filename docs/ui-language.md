@@ -72,3 +72,13 @@ Opening a site lands on its own **Overview** tab (`/sites/:id/overview`): the
 origin health and the latest security findings, each with a link into the
 surface that owns it. This is the one place that combines what the site
 serves with what is enforced on it.
+
+## Protection mode dialog (v1.1.8)
+
+Changing what the edge does to matching traffic is a protected decision, so
+it uses one focused dialog rather than a scattered set of switches: three
+radio-like cards (**Block**, **Monitor**, **Paused**), each with a
+plain-language consequence, and a single **Save mode**. The same dialog is
+opened from the site header on every tab; no other surface repeats the
+control. When a shared policy owns the mode, the dialog says so and offers
+**Open Advanced** instead of a Save that would not take effect.
