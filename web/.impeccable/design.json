@@ -1,0 +1,260 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-23T16:07:38+07:00",
+  "title": "Design System: VarmanWAF Console",
+  "extensions": {
+    "colorMeta": {
+      "signal-ember": {
+        "role": "primary",
+        "displayName": "Signal Ember",
+        "canonical": "#f6821f",
+        "tonalRamp": ["#2a1202", "#4a2104", "#6b3006", "#8c4008", "#b35510", "#d96c16", "#f6821f", "#ffb066"]
+      },
+      "canvas-light": {
+        "role": "neutral",
+        "displayName": "Canvas Light",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#0a0a0a", "#1d1d1d", "#3a3a3a", "#5c5c5c", "#7d7d7d", "#a3a3a3", "#d1d1d1", "#ffffff"]
+      },
+      "canvas-dark": {
+        "role": "neutral",
+        "displayName": "Graphite Canvas",
+        "canonical": "#1d1d1d",
+        "tonalRamp": ["#0a0a0a", "#161616", "#1d1d1d", "#2a2a2a", "#3a3a3a", "#5c5c5c", "#a0a0a0", "#e8e8e8"]
+      },
+      "focus-light": {
+        "role": "primary",
+        "displayName": "Instrument Blue",
+        "canonical": "#0051c3",
+        "tonalRamp": ["#001a3d", "#002f66", "#00448f", "#0051c3", "#1a6fe0", "#4a9bff", "#8cc3ff", "#d1e7ff"]
+      },
+      "danger-light": {
+        "role": "secondary",
+        "displayName": "Verdict Red",
+        "canonical": "#e54d2a",
+        "tonalRamp": ["#2b0702", "#4d1107", "#731c0d", "#992713", "#bf3219", "#e54d2a", "#ff8c73", "#ffd0c5"]
+      },
+      "success-light": {
+        "role": "secondary",
+        "displayName": "Allowed Green",
+        "canonical": "#18794e",
+        "tonalRamp": ["#031b10", "#06301d", "#0a452b", "#0f5a38", "#18794e", "#2a9a67", "#65c995", "#c8f0da"]
+      },
+      "warning-light": {
+        "role": "secondary",
+        "displayName": "Audit Amber",
+        "canonical": "#ffb224",
+        "tonalRamp": ["#2b1a02", "#4d2f04", "#734807", "#996108", "#cc8410", "#ffb224", "#ffd27a", "#ffedc2"]
+      },
+      "line-light": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#e8e8e8",
+        "tonalRamp": ["#1d1d1d", "#3a3a3a", "#5c5c5c", "#7d7d7d", "#a3a3a3", "#c9c9c9", "#e8e8e8", "#f7f7f8"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Page Title",
+        "purpose": "One per page, 24px semibold; the page's name."
+      },
+      "headline": {
+        "displayName": "Dialog / Site Header",
+        "purpose": "20px semibold; dialogs and prominent site headers."
+      },
+      "title": {
+        "displayName": "Card Title",
+        "purpose": "15px semibold; card headers and section labels."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "14px regular; descriptions and prose, max ~70ch."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "11px uppercase, 0.08em; stat labels and table headers."
+      },
+      "mono": {
+        "displayName": "Readout",
+        "purpose": "IPs, domains, expressions, logs and tabular numbers only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-sm",
+        "value": "0 1px 2px rgba(0, 0, 0, 0.05)",
+        "purpose": "Resting cards, buttons and the top bar."
+      },
+      {
+        "name": "shadow-md",
+        "value": "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+        "purpose": "Interactive hover and popovers."
+      },
+      {
+        "name": "shadow-lg",
+        "value": "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
+        "purpose": "Dialogs, toasts and the mobile sidebar."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state",
+        "value": "150ms ease-out",
+        "purpose": "Hover, press and color/border changes."
+      },
+      {
+        "name": "dialog-enter",
+        "value": "160ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Scale/fade entrance for dialogs."
+      },
+      {
+        "name": "page-enter",
+        "value": "280ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Slide-up entrance for page content."
+      },
+      {
+        "name": "toast-enter",
+        "value": "240ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Toast and drawer entrance."
+      }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" },
+      { "name": "2xl", "value": "1536px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one ember action on a surface: save, create or confirm.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\">Save mode</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border:1px solid transparent;border-radius:6px;background:var(--color-bg-brand,#f6821f);color:#fff;font:500 14px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.05);cursor:pointer;transition:background-color 150ms ease,box-shadow 150ms ease,transform 150ms ease}.ds-btn-primary:hover{background:var(--color-bg-brand-hover,#e5731a)}.ds-btn-primary:active{transform:translateY(1px)}.ds-btn-primary:focus-visible{outline:2px solid var(--color-border-focus,#0051c3);outline-offset:2px}.ds-btn-primary:disabled{opacity:.6;cursor:not-allowed}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "The default companion action; structure from a hairline and a tonal surface.",
+      "html": "<button class=\"ds-btn-secondary\" type=\"button\">Cancel</button>",
+      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border:1px solid var(--color-border-line,#e8e8e8);border-radius:6px;background:var(--color-bg-elevated,#fff);color:var(--color-text-default,#1d1d1d);font:500 14px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.05);cursor:pointer;transition:background-color 150ms ease}.ds-btn-secondary:hover{background:var(--color-bg-recessed,#f7f7f8)}.ds-btn-secondary:focus-visible{outline:2px solid var(--color-border-focus,#0051c3);outline-offset:2px}"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A compact 36px field with a visible focus ring and inline error support.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">Search sites</span><input class=\"ds-input\" type=\"text\" placeholder=\"example.com\" /></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.ds-field-label{font-size:13px;font-weight:500;color:var(--color-text-subtle,#666)}.ds-input{height:36px;width:100%;box-sizing:border-box;padding:0 12px;border:1px solid var(--color-border-line,#e8e8e8);border-radius:6px;background:var(--color-bg-elevated,#fff);color:var(--color-text-default,#1d1d1d);font-size:14px;transition:border-color 150ms ease,box-shadow 150ms ease}.ds-input::placeholder{color:var(--color-text-subtle,#666);opacity:.6}.ds-input:focus{outline:none;border-color:var(--color-border-focus,#0051c3);box-shadow:0 0 0 2px color-mix(in srgb,var(--color-border-focus,#0051c3) 25%,transparent)}"
+    },
+    {
+      "name": "Surface Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "The boxed section: hairline, tonal surface, 8px radius, restrained shadow.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-header\"><span class=\"ds-card-title\">Protection mode</span><span class=\"ds-badge\">Monitor</span></div><p class=\"ds-card-body\">Every finding is recorded; nothing is blocked. Use this while tuning.</p></div>",
+      "css": ".ds-card{border:1px solid var(--color-border-line,#e8e8e8);border-radius:8px;background:var(--color-bg-elevated,#fff);box-shadow:0 1px 2px rgba(0,0,0,.05);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.ds-card-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px;border-bottom:1px solid var(--color-border-line,#e8e8e8)}.ds-card-title{font-size:15px;font-weight:600;color:var(--color-text-strong,#000)}.ds-card-body{margin:0;padding:20px;font-size:14px;line-height:1.6;color:var(--color-text-subtle,#666)}"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge-neutral",
+      "description": "Semantic state at a glance: active, paused, blocked or monitored.",
+      "html": "<span class=\"ds-badge ds-badge-success\"><span class=\"ds-dot\"></span>Active</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border:1px solid var(--color-border-line,#e8e8e8);border-radius:9999px;background:var(--color-bg-recessed,#f7f7f8);color:var(--color-text-subtle,#666);font:500 12px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;white-space:nowrap}.ds-badge-success{border-color:color-mix(in srgb,var(--color-bg-success,#18794e) 30%,transparent);background:color-mix(in srgb,var(--color-bg-success,#18794e) 12%,transparent);color:var(--color-text-success,#18794e)}.ds-dot{width:6px;height:6px;border-radius:50%;background:currentColor}"
+    },
+    {
+      "name": "Active Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "The current location in the sidebar: ember text on a soft ember wash.",
+      "html": "<a class=\"ds-nav-item is-active\" href=\"#\"><span class=\"ds-nav-icon\"></span>Sites</a>",
+      "css": ".ds-nav-item{display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:6px;font:500 14px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:var(--color-text-subtle,#666);text-decoration:none;transition:background-color 150ms ease,color 150ms ease}.ds-nav-item:hover{background:var(--color-bg-recessed,#f7f7f8);color:var(--color-text-default,#1d1d1d)}.ds-nav-item.is-active{background:color-mix(in srgb,var(--color-bg-brand,#f6821f) 12%,transparent);color:var(--color-bg-brand,#f6821f)}.ds-nav-icon{width:16px;height:16px;border-radius:4px;background:currentColor;opacity:.7}"
+    },
+    {
+      "name": "Protection Mode Picker",
+      "kind": "custom",
+      "refersTo": "button-secondary",
+      "description": "The single enforcement decision: three plain-language cards with one Save.",
+      "html": "<div class=\"ds-mode-picker\"><button class=\"ds-mode is-selected\" type=\"button\"><strong>Block</strong><span>Attacks are blocked at the edge.</span></button><button class=\"ds-mode\" type=\"button\"><strong>Monitor</strong><span>Record everything; block nothing.</span></button><button class=\"ds-mode\" type=\"button\"><strong>Paused</strong><span>The site is offline.</span></button></div>",
+      "css": ".ds-mode-picker{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.ds-mode{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-height:120px;padding:16px;border:1px solid var(--color-border-line,#e8e8e8);border-radius:12px;background:var(--color-bg-recessed,#f7f7f8);color:var(--color-text-default,#1d1d1d);text-align:left;cursor:pointer;transition:border-color 150ms ease,background-color 150ms ease}.ds-mode strong{font-size:14px;font-weight:600}.ds-mode span{font-size:12px;line-height:1.5;color:var(--color-text-subtle,#666)}.ds-mode:hover{border-color:var(--color-border-fill,#d9d9d9)}.ds-mode.is-selected{border-color:var(--color-bg-brand,#f6821f);background:color-mix(in srgb,var(--color-bg-brand,#f6821f) 12%,transparent)}.ds-mode.is-selected strong{color:var(--color-bg-brand,#f6821f)}.ds-mode:focus-visible{outline:2px solid var(--color-border-focus,#0051c3);outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Operations Bridge",
+    "overview": "The console is a command bridge between a control plane and a fleet of edges. It is dense because operators are making real decisions, but it is quiet: graphite surfaces, hairline structure and a single ember signal keep the eye on the request, the site and the verdict. Nothing decorative competes with a live incident.\n\nThe visual system is instrument-like rather than consumer-like. Small radii, compact controls, system type and monospaced readouts make the interface feel native to the work. Light and dark are both first-class; the same semantic tokens carry the same meaning in either theme. Color is a state language: ember for action and selection, red/green/amber for danger/success/warning, neutrals for everything else.\n\nMotion is state, not choreography. Page and dialog entrances are short, hover states are 150 ms, and nothing loops unless it is genuinely live.",
+    "keyCharacteristics": [
+      "Signal over noise: one ember accent, used sparingly for action, selection and state.",
+      "Instrument density: compact controls, tables and readouts built for repeated use.",
+      "Tonal depth: 1 px hairlines and layered surfaces before shadows.",
+      "One gate per decision: enforcement is a single explicit control, not a hidden default.",
+      "System type for familiarity; mono only for data, code and measurement.",
+      "Light/dark parity from the same semantic tokens."
+    ],
+    "rules": [
+      {
+        "name": "The Signal Rule",
+        "body": "Ember covers at most ~10% of any screen. It marks a primary action, the current selection or a live state - never a large background, never body text, never decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Semantic-Only Rule",
+        "body": "Red, green and amber never carry branding or emphasis. If a color is not reporting danger, success or a warning, it is a neutral.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two-Canvas Rule",
+        "body": "Light and dark are peers. A new color is not complete until both themes have a role for it; never pick one theme as the 'real' one.",
+        "section": "colors"
+      },
+      {
+        "name": "The Readout Rule",
+        "body": "Mono is a measurement voice: code, addresses, expressions, timestamps and numeric tables. Do not set prose, labels or navigation in mono to make a surface feel technical.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Step Rule",
+        "body": "The type scale is fixed, not fluid. Stay within 11-24 px; use weight and color for hierarchy before adding another size.",
+        "section": "typography"
+      },
+      {
+        "name": "The Hairline Rule",
+        "body": "Structure comes from a 1 px border and a tonal surface. A border plus a wide shadow is a ghost card; pick structure, add shadow only when the element actually lifts.",
+        "section": "elevation"
+      },
+      {
+        "name": "The No-Halo Rule",
+        "body": "No zero-offset colored glows. A shadow carries an offset and a soft blur; color never substitutes for depth.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Instrument Rule",
+        "body": "Radii stay at or below 12 px (except pills). Large consumer radii, thick colored side-borders and decorative blobs are out of vocabulary.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do use ember for primary actions, active navigation and the current selection - and keep it under ~10% of the screen.",
+      "Do build structure from a 1 px line border plus the base/elevated/recessed tonal steps; add shadow-sm for rest and shadow-lg only for overlays.",
+      "Do keep radii in the 4/6/8/12 px set; pills are the only full-radius shape.",
+      "Do use mono for IPs, domains, rule expressions, logs and tabular counts; use the system sans for prose and controls.",
+      "Do show published vs applied, the effective mode and the why-chain instead of implying a state.",
+      "Do keep one primary control per decision; if a value is editable in two places, one of them is wrong.",
+      "Do verify both themes and keyboard focus before shipping a component."
+    ],
+    "donts": [
+      "Don't add a second enforcement switch or a bulk 'mode' that competes with Protection mode.",
+      "Don't use ember as a large background, gradient text or body color; it is a signal, not a surface.",
+      "Don't use red/green/amber for branding or emphasis outside danger/success/warning.",
+      "Don't stack a 1 px border and a wide shadow on the same resting card; choose structure or lift.",
+      "Don't use colored side-borders thicker than 1 px, large consumer radii, emoji or unicode glyphs as icons, or decorative glows.",
+      "Don't turn a routine settings edit into a modal; use a modal only for a protected decision (enforcement, destructive actions).",
+      "Don't simplify by deleting a feature; group it, rename it, or demote it to Advanced.",
+      "Don't fabricate benchmarks, customers, certifications or 'all clear' states; show the real limit."
+    ]
+  }
+}
