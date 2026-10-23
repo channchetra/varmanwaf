@@ -32,6 +32,7 @@
   --color-text-placeholder: #767676;
   --color-bg-danger-strong: #c2410c;
   --color-graph-control: #6e56cf;
+  --color-bg-brand-panel: #1d1d1d;
 
   /* Border */
   --color-border-line: #e8e8e8;
@@ -81,6 +82,7 @@
   --color-text-placeholder: #9a9a9a;
   --color-bg-danger-strong: #b83c2c;
   --color-graph-control: #b477e4;
+  --color-bg-brand-panel: #1d1d1d;
 
   --color-border-line: #3a3a3a;
   --color-border-fill: #4a4a4a;
@@ -118,6 +120,7 @@
   --color-fg-success: var(--color-text-success);
   --color-fg-warning: var(--color-text-warning);
   --color-brand-ink: var(--color-text-brand);
+  --color-brand-panel: var(--color-bg-brand-panel);
   --color-on-brand: var(--color-text-on-brand);
   --color-placeholder: var(--color-text-placeholder);
   --color-danger-strong: var(--color-bg-danger-strong);

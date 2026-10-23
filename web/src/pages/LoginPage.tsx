@@ -153,7 +153,7 @@ export function LoginPage() {
   return (
     <div className="grid min-h-full w-full grid-cols-1 lg:grid-cols-2">
       {/* Brand panel */}
-      <div className="relative hidden overflow-hidden bg-brand lg:flex lg:flex-col lg:justify-between">
+      <div className="relative hidden overflow-hidden bg-brand-panel lg:flex lg:flex-col lg:justify-between">
         <div
           className="pointer-events-none absolute inset-0 opacity-[0.15]"
           style={{
@@ -164,10 +164,13 @@ export function LoginPage() {
         />
         <div
           className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full"
-          style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.35), transparent 70%)' }}
+          style={{
+            background:
+              'radial-gradient(circle, color-mix(in srgb, var(--color-bg-brand) 20%, transparent), transparent 70%)',
+          }}
         />
         <div className="relative z-10 flex items-center gap-3 p-10 text-white">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-on-brand shadow-sm">
             <ShieldCheck weight="fill" className="h-6 w-6" />
           </span>
           <span className="text-xl font-semibold tracking-tight">VarmanWAF</span>

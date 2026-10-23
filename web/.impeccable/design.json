@@ -34,6 +34,12 @@
         "canonical": "#ffb066",
         "tonalRamp": ["#2a1202", "#4a2104", "#6b3006", "#8c4008", "#b35510", "#d96c16", "#f6821f", "#ffb066"]
       },
+      "brand-panel": {
+        "role": "neutral",
+        "displayName": "Login Brand Panel",
+        "canonical": "#1d1d1d",
+        "tonalRamp": ["#0a0a0a", "#161616", "#1d1d1d", "#2a2a2a", "#3a3a3a", "#5c5c5c", "#a0a0a0", "#e8e8e8"]
+      },
       "canvas-light": {
         "role": "neutral",
         "displayName": "Canvas Light",

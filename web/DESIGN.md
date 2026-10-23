@@ -11,6 +11,7 @@ colors:
   brand-ink-dark: "#ffb066"
   brand-soft-light: "#fef0e4"
   brand-soft-dark: "#423529"
+  brand-panel: "#1d1d1d"
   canvas-light: "#ffffff"
   canvas-dark: "#1d1d1d"
   surface-light: "#ffffff"
@@ -207,6 +208,7 @@ A warm signal ember on graphite neutrals, with a cool blue reserved for focus an
 
 ### Neutral
 - **Canvas** (`#ffffff` light / `#1d1d1d` dark): the page background and the scrollbar track.
+- **Brand panel** (`#1d1d1d`): the login brand panel only. White text measures 16.9:1; the mark is an ember tile with dark ink. Ember is never a large login surface.
 - **Surface** (`#ffffff` light / `#2a2a2a` dark): cards, the sidebar, the top bar and dialogs.
 - **Recessed** (`#f7f7f8` light / `#161616` dark): table headers, inset panels, skeletons and the bottom of a two-tone control.
 - **Ink** (`#1d1d1d` light / `#e8e8e8` dark): default body text.
