@@ -408,6 +408,51 @@
     if (!ambientAllowed()) hideAmbient()
   })
 
+  /* ------------------------------------------------- hero product tilt */
+
+  const heroFrame = document.querySelector('.hero-product .product-frame')
+  let heroTiltFrame = 0
+  let heroTilt = { x: 0, y: 0 }
+
+  function resetHeroTilt() {
+    if (!heroFrame) return
+    heroFrame.style.setProperty('--tilt-x', '0deg')
+    heroFrame.style.setProperty('--tilt-y', '0deg')
+    heroFrame.style.setProperty('--tilt-lift', '0px')
+  }
+
+  function applyHeroTilt() {
+    heroTiltFrame = 0
+    if (!heroFrame) return
+    heroFrame.style.setProperty('--tilt-x', `${heroTilt.y.toFixed(2)}deg`)
+    heroFrame.style.setProperty('--tilt-y', `${heroTilt.x.toFixed(2)}deg`)
+    heroFrame.style.setProperty('--tilt-lift', `${(-Math.abs(heroTilt.x) * 0.18 - Math.abs(heroTilt.y) * 0.18).toFixed(2)}px`)
+  }
+
+  if (heroFrame) {
+    document.addEventListener(
+      'pointermove',
+      (event) => {
+        if (!ambientAllowed() || window.innerWidth < 960) {
+          resetHeroTilt()
+          return
+        }
+        heroTilt = {
+          x: (event.clientX / window.innerWidth - 0.5) * 2.4,
+          y: (event.clientY / window.innerHeight - 0.5) * 1.8,
+        }
+        if (!heroTiltFrame) heroTiltFrame = requestAnimationFrame(applyHeroTilt)
+      },
+      { passive: true },
+    )
+    document.addEventListener('pointerleave', resetHeroTilt)
+    window.addEventListener('blur', resetHeroTilt)
+    reduceMotion.addEventListener('change', () => {
+      if (reduceMotion.matches) resetHeroTilt()
+    })
+    resetHeroTilt()
+  }
+
   /* ------------------------------------------------------ pipeline demo */
 
   const requestData = {
@@ -500,8 +545,9 @@
 
   const deployData = {
     docker: {
-      title: 'One container. Every backend.',
-      description: 'Start the all-in-one image: console, control plane and edge in one process, with PostgreSQL alongside.',
+      title: 'One container. One protected app.',
+      description:
+        'Start the all-in-one image: console, control plane and edge in one process, with PostgreSQL alongside. Good for a lab or a single internal app.',
       code: `docker compose up -d
 # console   https://localhost:9080
 # traffic   :80 / :443
@@ -509,27 +555,41 @@
       note: 'First boot generates a self-signed console certificate. Change the seeded admin password immediately.',
     },
     split: {
-      title: 'Your fleet. Your topology.',
-      description: 'Run the control plane once and one agent per edge. The control plane is never in the request path.',
+      title: 'One control plane. A fleet of edges.',
+      description:
+        'Run the control plane once and one agent per edge. The control plane is never in the request path; edges keep serving their last-good bundle.',
       code: `# control plane
-varman control-plane
+varman server --db-url "postgres://…" \
+  --admin-addr 0.0.0.0:9080 --grpc-addr 0.0.0.0:9090
 
 # each edge
-varman-agent --control https://waf.example.com:9090
+varman agent --server-url "http://control-plane:9090" \
+  --api-key "…"`,
+      note: 'Bind an agent to one site, or leave it unbound for every site owned by its API key. Issue the key in Settings → API keys.',
+    },
+    ha: {
+      title: 'Two failure domains. No single edge.',
+      description:
+        'Put two or more edge nodes behind DNS, a load balancer or anycast. Add a control-plane standby and replicated PostgreSQL for configuration writes.',
+      code: `# 1. two or more edge nodes
+# 2. DNS / LB / anycast in front
+# 3. a control-plane standby
+# 4. PostgreSQL streaming replication
 
-# agents keep their last-good bundle on disk`,
-      note: 'Registration is closed by default; mTLS pins each agent to the control plane certificate.',
+# agents reconnect and re-sync by config_hash
+# while the remaining edges keep serving`,
+      note: 'The control plane is a control dependency, not a traffic dependency. Losing it stops changes, not requests.',
     },
     binary: {
-      title: 'Your infrastructure. One binary.',
-      description: 'Install the static binary and run the all-in-one process under systemd, with your own PostgreSQL.',
-      code: `curl -fsSL https://get.varman.dev | sh
-varman init
-systemctl enable --now varman
+      title: 'Your host. Your service manager.',
+      description:
+        'Install the static binary and run the all-in-one process under systemd, with your own PostgreSQL and your own certificate.',
+      code: `curl -fsSL https://raw.githubusercontent.com/channchetra/varmanwaf/main/install.sh | bash
 
-# console https://<host>:9080
-# traffic :80 / :443`,
-      note: 'Prebuilt binaries are published for amd64 and arm64 on GitHub Releases; the installer verifies the checksum.',
+# then, with your database
+varman all-in-one --db-url "postgres://…" \
+  --admin-addr 0.0.0.0:9080`,
+      note: 'Prebuilt Linux binaries are published for amd64 and arm64 on GitHub Releases; the installer verifies the checksum.',
     },
   }
 
@@ -537,7 +597,7 @@ systemctl enable --now varman
   const deployTitle = document.getElementById('deploy-title')
   const deployDescription = document.getElementById('deploy-description')
   const deployCode = document.getElementById('deploy-code')
-  const deployNote = document.getElementById('deploy-note')
+  const deployNote = document.getElementById('deploy-code-note')
 
   function selectDeploy(key) {
     const data = deployData[key]
@@ -575,7 +635,7 @@ systemctl enable --now varman
       const target = document.getElementById(button.dataset.copyTarget)
       if (!target) return
       const ok = await copyText(target.textContent || '')
-      const label = button.querySelector('span')
+      const label = button.querySelector('[data-copy-label]') || button.querySelector('span')
       if (!label) return
       const original = label.textContent
       label.textContent = ok ? 'Copied' : 'Failed'
