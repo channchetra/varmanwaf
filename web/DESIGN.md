@@ -46,67 +46,67 @@ colors:
   graph-control-dark: "#b477e4"
 typography:
   display:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     fontSize: "24px"
     fontWeight: 600
     lineHeight: 1.25
     letterSpacing: "-0.02em"
   headline:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     fontSize: "20px"
     fontWeight: 600
     lineHeight: 1.3
     letterSpacing: "-0.01em"
   title:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     fontSize: "15px"
     fontWeight: 600
     lineHeight: 1.4
     letterSpacing: "normal"
   body:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     fontSize: "14px"
     fontWeight: 400
     lineHeight: 1.6
     letterSpacing: "normal"
   label:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     fontSize: "11px"
     fontWeight: 500
     lineHeight: 1.4
     letterSpacing: "0.08em"
   micro:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     fontSize: "10px"
     fontWeight: 500
     lineHeight: 1.4
     letterSpacing: "0.08em"
   caption:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     fontSize: "12px"
     fontWeight: 400
     lineHeight: 1.4
     letterSpacing: "normal"
   body-small:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     fontSize: "13px"
     fontWeight: 400
     lineHeight: 1.5
     letterSpacing: "normal"
   title-small:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     fontSize: "16px"
     fontWeight: 600
     lineHeight: 1.4
     letterSpacing: "normal"
   headline-small:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     fontSize: "18px"
     fontWeight: 600
     lineHeight: 1.3
     letterSpacing: "-0.01em"
   mono:
-    fontFamily: "'SFMono-Regular', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace"
+    fontFamily: "'JetBrains Mono', 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace"
     fontSize: "13px"
     fontWeight: 400
     lineHeight: 1.5
@@ -235,11 +235,11 @@ A warm signal ember on graphite neutrals, with a cool blue reserved for focus an
 
 ## Typography
 
-**Display Font:** system sans (`-apple-system`, `Segoe UI`, Roboto, Helvetica Neue, Arial)
-**Body Font:** the same system sans
-**Label/Mono Font:** `SFMono-Regular`, `ui-monospace`, `JetBrains Mono`, Menlo, Consolas
+**Display Font:** Google Sans (`Google Sans`, with the system sans as fallback)
+**Body Font:** Google Sans
+**Label/Mono Font:** JetBrains Mono for addresses, expressions and measurements; Google Sans for labels
 
-**Character:** familiar and compact. The system face disappears into the task; the mono face is reserved for addresses, expressions and measurements, so a monospaced row reads as data rather than decoration.
+**Character:** friendly, compact and legible at console sizes. Google Sans carries the interface; the mono face is reserved for data rows so a monospaced readout reads as evidence rather than decoration.
 
 ### Hierarchy
 - **Display** (600, 24px, 1.25, -0.02em): page titles only; one per page.
@@ -342,7 +342,7 @@ The form language is instrument-like: 4 px for tiny marks, 6 px for controls, 8 
 - **Do** use ember for primary actions, active navigation and the current selection - and keep it under ~10% of the screen.
 - **Do** build structure from a 1 px `line` border plus the base/elevated/recessed tonal steps; add `shadow-sm` for rest and `shadow-lg` only for overlays.
 - **Do** keep radii in the 4/6/8/12 px set; pills are the only full-radius shape.
-- **Do** use mono for IPs, domains, rule expressions, logs and tabular counts; use the system sans for prose and controls.
+- **Do** use mono for IPs, domains, rule expressions, logs and tabular counts; use Google Sans for prose and controls.
 - **Do** show published vs applied, the effective mode and the why-chain instead of implying a state.
 - **Do** keep one primary control per decision; if a value is editable in two places, one of them is wrong.
 - **Do** verify both themes and keyboard focus before shipping a component.
