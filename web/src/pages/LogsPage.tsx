@@ -13,6 +13,11 @@ import {
   Terminal,
   LockKey,
   FileMagnifyingGlass,
+  Copy,
+  Info,
+  MinusCircle,
+  Question,
+  ArrowSquareOut,
 } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Callout } from '@/components/ui/Callout'
@@ -29,13 +34,22 @@ import { Pagination } from '@/components/ui/Pagination'
 import { SkeletonRows } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
-import { downloadJson, fileTimestamp, logKeys, logsApi } from '@/api/logs'
+import {
+  downloadJson,
+  fileTimestamp,
+  logKeys,
+  logsApi,
+  type EventExplanation,
+  type ExplanationStep,
+  type MatchedRule,
+} from '@/api/logs'
 import { apiProtectionApi, apiProtectionKeys } from '@/api/apiProtection'
 import { useCanWrite, useSitesList } from '@/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { cn } from '@/lib/utils'
 import { buildCurlCommand } from '@/lib/curl'
 import { parseLogQuery } from '@/lib/logQuery'
+import { decidingRule } from '@/lib/wafDetails'
 import { requestLines, responseLines, type RawLine } from '@/lib/rawHttp'
 import {
   formatDateTime,
@@ -89,8 +103,13 @@ const CONTROL_ACTION_TONE: Record<string, 'danger' | 'warning' | 'info' | 'succe
 
 /** Time window used when the URL carries none: the trailing 24 hours. */
 function defaultWindow(): { from: string; to: string } {
-  const to = new Date()
-  const from = new Date(to.getTime() - 24 * 3600_000)
+  const now = new Date()
+  const from = new Date(now.getTime() - 24 * 3600_000)
+  // datetime-local is minute-precision. A `to` of the current minute excludes
+  // an event that arrived seconds later in that same minute (exactly the
+  // "I just got blocked and cannot find the request" case), so round up one
+  // minute. The upper bound is harmless and keeps the current minute visible.
+  const to = new Date(now.getTime() + 60_000)
   return { from: toLocalInputValue(from), to: toLocalInputValue(to) }
 }
 
@@ -298,6 +317,67 @@ export function LogsPage() {
   })
   const rawRequest = rawRequestQuery.data?.items[0] ?? null
 
+  // The why-chain is the investigation summary, so the dialog fetches it as
+  // soon as an event opens (not only when the details are expanded). The
+  // matched-rule list and the deciding-rule label feed the whole dialog.
+  const explanationQuery = useQuery({
+    queryKey: ['logs', 'why', selectedEvent?.id],
+    queryFn: () => logsApi.whySecurity(selectedEvent!.id),
+    enabled: selectedEvent !== null,
+    retry: false,
+  })
+  const explanation = explanationQuery.data ?? null
+  const selectedRequestId = selectedEvent?.request_id ?? ''
+  const selectedLogRequestId = selectedLog?.request_id ?? ''
+  const selectedControlRequestId = selectedControl?.request_id ?? ''
+  const selectedRuleId = selectedEvent?.rule_id ?? ''
+  const selectedSite = selectedEvent?.site_id
+    ? sites?.find((site) => site.id === selectedEvent.site_id)
+    : undefined
+  const primaryRule = selectedRuleId
+    ? explanation?.matched_rules?.find(
+        (rule) => rule.id.toLowerCase() === selectedRuleId.toLowerCase(),
+      )
+    : undefined
+  const ruleLabel =
+    selectedRuleId &&
+    explanation?.blocked_by &&
+    selectedRuleId.toLowerCase() !== explanation.blocked_by.toLowerCase()
+      ? t('pages.logs.firstMatch')
+      : t('pages.logs.rule')
+
+  /** Jump from any id to the log rows for that request. */
+  const searchByRequestId = (id: string, timestamp?: string, tab?: Tab) => {
+    setSelectedEvent(null)
+    setSelectedLog(null)
+    setSelectedControl(null)
+    const at = timestamp ? new Date(timestamp) : new Date()
+    const center = Number.isNaN(at.getTime()) ? new Date() : at
+    const patch: Record<string, string | null> = {
+      q: `request_id:${id}`,
+      from: toLocalInputValue(new Date(center.getTime() - 5 * 60_000)),
+      to: toLocalInputValue(new Date(center.getTime() + 5 * 60_000)),
+      preset: 'custom',
+    }
+    if (tab) patch.tab = tab === 'security' ? null : tab
+    updateQuery(patch)
+  }
+
+  /** Jump from a matched rule to the security events that carry its id. */
+  const searchByRule = (ruleId: string) => {
+    setSelectedEvent(null)
+    setSelectedLog(null)
+    setSelectedControl(null)
+    const now = new Date()
+    updateQuery({
+      q: `rule:${ruleId}`,
+      tab: null,
+      from: toLocalInputValue(new Date(now.getTime() - 24 * 3600_000)),
+      to: toLocalInputValue(new Date(now.getTime() + 60_000)),
+      preset: '24',
+    })
+  }
+
   const exportJson = () => {
     if (rows.length === 0) {
       toast.warning(t('pages.logs.exportEmpty'))
@@ -371,18 +451,41 @@ export function LogsPage() {
     {
       key: 'rule',
       header: t('pages.logs.rule'),
-      accessor: (r) => r.rule_name ?? '',
-      cell: (r) =>
-        r.rule_name || r.rule_id ? (
-          <div className="min-w-0">
-            <p className="truncate text-[13px]">{r.rule_name ?? r.rule_id}</p>
-            {r.rule_name && r.rule_id && (
-              <p className="pw-mono truncate text-[11px] text-fg-subtle">{r.rule_id}</p>
+      accessor: (r) =>
+        decidingRule(r.waf_details)?.id ?? r.rule_name ?? r.rule_id ?? '',
+      cell: (r) => {
+        const decision = decidingRule(r.waf_details)
+        const primaryId = decision?.id ?? r.rule_id
+        const primaryName = decision?.name ?? r.rule_name ?? primaryId
+        const firstId =
+          decision &&
+          r.rule_id &&
+          decision.id.toLowerCase() !== r.rule_id.toLowerCase()
+            ? r.rule_id
+            : null
+        if (!primaryName) {
+          return <span className="text-fg-subtle">—</span>
+        }
+        const showId = Boolean(primaryId && primaryName !== primaryId)
+        const secondary = [
+          showId ? primaryId : null,
+          firstId
+            ? t('pages.logs.firstMatchInline', { id: firstId })
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+        return (
+          <div className="min-w-0" title={r.waf_details ?? undefined}>
+            <p className="truncate text-[13px]">{primaryName}</p>
+            {secondary && (
+              <p className="pw-mono truncate text-[11px] text-fg-subtle">
+                {secondary}
+              </p>
             )}
           </div>
-        ) : (
-          <span className="text-fg-subtle">—</span>
-        ),
+        )
+      },
     },
     {
       key: 'action',
@@ -902,9 +1005,35 @@ export function LogsPage() {
                   {t('pages.logs.wafScore')}: {selectedEvent.score}
                 </Badge>
               )}
-              {selectedEvent.rule_name && <Badge tone="info">{selectedEvent.rule_name}</Badge>}
             </div>
-            <WhyPanel eventId={selectedEvent.id} />
+            {selectedRequestId && (
+              <RequestIdBar
+                value={selectedRequestId}
+                onSearch={() =>
+                  searchByRequestId(
+                    selectedRequestId,
+                    selectedEvent.timestamp,
+                  )
+                }
+                secondary={{
+                  label: t('pages.logs.accessTab'),
+                  onClick: () =>
+                    searchByRequestId(
+                      selectedRequestId,
+                      selectedEvent.timestamp,
+                      'access',
+                    ),
+                }}
+              />
+            )}
+            <WhyPanel
+              event={selectedEvent}
+              explanation={explanation}
+              loading={explanationQuery.isPending}
+              error={explanationQuery.isError}
+              onRetry={() => explanationQuery.refetch()}
+              onSearchRule={searchByRule}
+            />
             <DefinitionGrid
               rows={[
                 [t('pages.logs.time'), formatDateTime(selectedEvent.timestamp)],
@@ -914,23 +1043,36 @@ export function LogsPage() {
                 [t('pages.logs.host'), selectedEvent.host],
                 [t('pages.logs.path'), selectedEvent.path],
                 [
-                  t('pages.logs.rule'),
+                  ruleLabel,
                   selectedEvent.rule_id ? (
-                    selectedEvent.site_id ? (
-                      <Link
-                        to={`/sites/${selectedEvent.site_id}/security/waf?rule=${selectedEvent.rule_id}`}
-                        className="text-link hover:underline"
-                      >
-                        {selectedEvent.rule_id}
-                      </Link>
-                    ) : (
-                      selectedEvent.rule_id
-                    )
+                    <RuleValue
+                      event={selectedEvent}
+                      matched={primaryRule}
+                    />
                   ) : undefined,
                 ],
-                [t('pages.logs.requestId'), selectedEvent.request_id],
-                [t('pages.logs.agent'), selectedEvent.agent_id],
-                [t('pages.logs.site'), selectedEvent.site_id],
+                [
+                  t('pages.logs.agent'),
+                  selectedEvent.agent_id ? (
+                    <Link
+                      to="/agents"
+                      className="text-link hover:underline"
+                    >
+                      {selectedEvent.agent_id}
+                    </Link>
+                  ) : undefined,
+                ],
+                [
+                  t('pages.logs.site'),
+                  selectedEvent.site_id ? (
+                    <Link
+                      to={`/sites/${selectedEvent.site_id}`}
+                      className="text-link hover:underline"
+                    >
+                      {selectedSite?.domain ?? selectedEvent.site_id}
+                    </Link>
+                  ) : undefined,
+                ],
               ]}
             />
             {selectedEvent.waf_details && (
@@ -1006,6 +1148,26 @@ export function LogsPage() {
                 {selectedLog.tls_version && <Badge tone="info">{selectedLog.tls_version}</Badge>}
               </div>
             )}
+            {selectedLogRequestId && (
+              <RequestIdBar
+                value={selectedLogRequestId}
+                onSearch={() =>
+                  searchByRequestId(
+                    selectedLogRequestId,
+                    selectedLog.timestamp,
+                  )
+                }
+                secondary={{
+                  label: t('pages.logs.securityTab'),
+                  onClick: () =>
+                    searchByRequestId(
+                      selectedLogRequestId,
+                      selectedLog.timestamp,
+                      'security',
+                    ),
+                }}
+              />
+            )}
             <DefinitionGrid
               rows={[
                 [t('pages.logs.time'), formatDateTime(selectedLog.timestamp)],
@@ -1027,7 +1189,6 @@ export function LogsPage() {
                     : undefined,
                 ],
                 [t('pages.logs.cacheStatus'), selectedLog.cache_status],
-                [t('pages.logs.requestId'), selectedLog.request_id],
               ]}
             />
             <RawSection
@@ -1078,6 +1239,17 @@ export function LogsPage() {
                 {t(`actions.${selectedControl.action}`, selectedControl.action)}
               </Badge>
             </div>
+            {selectedControlRequestId && (
+              <RequestIdBar
+                value={selectedControlRequestId}
+                onSearch={() =>
+                  searchByRequestId(
+                    selectedControlRequestId,
+                    selectedControl.timestamp,
+                  )
+                }
+              />
+            )}
             <DefinitionGrid
               rows={[
                 [t('pages.logs.time'), formatDateTime(selectedControl.timestamp)],
@@ -1095,7 +1267,6 @@ export function LogsPage() {
                 ],
                 [t('pages.logs.userEmail'), selectedControl.user_email],
                 [t('pages.logs.userId'), selectedControl.user_id],
-                [t('pages.logs.requestId'), selectedControl.request_id],
                 [t('pages.logs.referer'), selectedControl.referer],
               ]}
             />
@@ -1162,7 +1333,7 @@ function DefinitionGrid({ rows }: { rows: [string, ReactNode][] }) {
       {visible.map(([label, value]) => (
         <div key={label} className="flex min-w-0 items-baseline justify-between gap-3 border-b border-line/60 pb-1.5">
           <dt className="shrink-0 text-xs text-fg-subtle">{label}</dt>
-          <dd className="pw-mono min-w-0 truncate text-right text-[13px] text-fg">{value}</dd>
+          <dd className="pw-mono min-w-0 break-all text-right text-[13px] text-fg">{value}</dd>
         </div>
       ))}
     </dl>
@@ -1254,10 +1425,98 @@ function RawRequestPanel({ log, onCopy }: { log: AccessLog; onCopy: () => void }
   )
 }
 
-const WHY_STATUS_TONE: Record<string, 'info' | 'neutral' | 'warning'> = {
-  hit: 'info',
-  miss: 'neutral',
-  unknown: 'warning',
+/** Copy and jump actions for a request id, shared by all three detail dialogs. */
+function RequestIdBar({
+  value,
+  onSearch,
+  secondary,
+}: {
+  value: string
+  onSearch: () => void
+  secondary?: { label: string; onClick: () => void }
+}) {
+  const { t } = useTranslation()
+  const toast = useToast()
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value)
+      toast.success(t('pages.logs.copied'))
+    } catch {
+      toast.error(t('pages.logs.copyFailed'))
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-recessed px-3 py-2">
+      <div className="min-w-0">
+        <p className="text-[10px] font-medium uppercase tracking-wide text-fg-subtle">
+          {t('pages.logs.requestId')}
+        </p>
+        <code className="pw-mono block break-all text-[13px] text-fg">
+          {value}
+        </code>
+      </div>
+      <div className="flex items-center gap-1">
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<MagnifyingGlass weight="duotone" className="h-4 w-4" />}
+          onClick={onSearch}
+        >
+          {t('pages.logs.searchLogs')}
+        </Button>
+        {secondary && (
+          <Button size="sm" variant="ghost" onClick={secondary.onClick}>
+            {secondary.label}
+          </Button>
+        )}
+        <Button
+          size="icon"
+          variant="ghost"
+          aria-label={t('pages.logs.copyRequestId')}
+          title={t('pages.logs.copyRequestId')}
+          icon={<Copy weight="duotone" className="h-4 w-4" />}
+          onClick={copy}
+        />
+      </div>
+    </div>
+  )
+}
+
+/** The rule id plus its provenance, without linking a built-in id to a page
+ * that cannot show it. Only a site custom rule has a reachable editor. */
+function RuleValue({
+  event,
+  matched,
+}: {
+  event: SecurityEvent
+  matched?: MatchedRule
+}) {
+  const { t } = useTranslation()
+  if (!event.rule_id) return null
+  const source = matched?.source
+  const body = (
+    <span className="inline-flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+      <code className="pw-mono break-all">{event.rule_id}</code>
+      {source && (
+        <span className="text-[11px] text-fg-subtle">
+          {t(`pages.logs.ruleSources.${source}`, source)}
+        </span>
+      )}
+    </span>
+  )
+  if (matched?.source === 'site_rule' && event.site_id) {
+    return (
+      <Link
+        to={`/sites/${event.site_id}/security/protection?rule=${encodeURIComponent(event.rule_id)}`}
+        className="text-link hover:underline"
+      >
+        {body}
+      </Link>
+    )
+  }
+  return body
 }
 
 const WHY_VERDICT_TONE: Record<
@@ -1268,88 +1527,339 @@ const WHY_VERDICT_TONE: Record<
   monitored: 'warning',
   challenged: 'info',
   allowed: 'success',
+  unknown: 'neutral',
+}
+
+type RuleSourceTone = 'neutral' | 'brand' | 'info' | 'warning' | 'danger' | 'success'
+
+const RULE_SOURCE_TONE: Record<string, RuleSourceTone> = {
+  managed: 'brand',
+  signature: 'info',
+  crs_import: 'info',
+  policy: 'neutral',
+  site_rule: 'neutral',
+  patch: 'info',
+  detector: 'neutral',
+  unknown: 'warning',
+}
+
+function severityTone(severity: number): RuleSourceTone {
+  if (severity >= 5) return 'danger'
+  if (severity >= 4) return 'warning'
+  return 'neutral'
+}
+
+function StepIcon({ status }: { status: string }) {
+  if (status === 'unknown') {
+    return (
+      <Question
+        weight="duotone"
+        className="mt-0.5 h-4 w-4 shrink-0 text-fg-warning"
+        aria-hidden
+      />
+    )
+  }
+  if (status === 'miss') {
+    return (
+      <MinusCircle
+        weight="duotone"
+        className="mt-0.5 h-4 w-4 shrink-0 text-fg-subtle"
+        aria-hidden
+      />
+    )
+  }
+  return (
+    <Info
+      weight="duotone"
+      className="mt-0.5 h-4 w-4 shrink-0 text-fg-subtle"
+      aria-hidden
+    />
+  )
+}
+
+function DecisionStep({ step }: { step: ExplanationStep }) {
+  const { t } = useTranslation()
+  return (
+    <li className="grid grid-cols-[72px_1fr] items-start gap-2 sm:grid-cols-[92px_1fr]">
+      <span className="pt-0.5 text-[10px] font-medium uppercase tracking-wide text-fg-subtle">
+        {t(`pages.logs.stages.${step.stage}`, step.stage)}
+      </span>
+      <div className="min-w-0">
+        <p className="flex items-start gap-1.5 text-[13px] font-medium text-fg">
+          <StepIcon status={step.status} />
+          <span>{step.title}</span>
+        </p>
+        <p className="mt-0.5 text-[12px] text-fg-subtle">{step.detail}</p>
+      </div>
+    </li>
+  )
+}
+
+function MatchedRuleRow({
+  rule,
+  event,
+  onSearchRule,
+}: {
+  rule: MatchedRule
+  event: SecurityEvent
+  onSearchRule: (ruleId: string) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <li className="flex flex-col gap-1 py-2 first:pt-0 last:pb-0">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[13px] font-medium text-fg">{rule.name}</span>
+        <code className="text-[11px] text-fg-subtle">{rule.id}</code>
+        <Badge size="sm" tone={RULE_SOURCE_TONE[rule.source] ?? 'neutral'}>
+          {t(`pages.logs.ruleSources.${rule.source}`, rule.source)}
+        </Badge>
+        {rule.deciding && (
+          <Badge size="sm" tone="danger">
+            {t('pages.logs.deciding')}
+          </Badge>
+        )}
+        {rule.severity != null && (
+          <Badge size="sm" tone={severityTone(rule.severity)}>
+            {t('pages.logs.severity', { severity: rule.severity })}
+          </Badge>
+        )}
+        {rule.action && (
+          <Badge size="sm" tone={ACTION_TONE[rule.action] ?? 'neutral'}>
+            {rule.action}
+          </Badge>
+        )}
+      </div>
+      <p className="text-[12px] text-fg-subtle">{rule.detail}</p>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          className="text-[12px] text-link hover:underline"
+          onClick={() => onSearchRule(rule.id)}
+        >
+          {t('pages.logs.searchRuleEvents')}
+        </button>
+        {rule.source === 'site_rule' && event.site_id && (
+          <Link
+            to={`/sites/${event.site_id}/security/protection?rule=${encodeURIComponent(rule.id)}`}
+            className="inline-flex w-fit items-center gap-1 text-[12px] text-link hover:underline"
+          >
+            {t('pages.logs.openRule')}
+            <ArrowSquareOut weight="duotone" className="h-3.5 w-3.5" aria-hidden />
+          </Link>
+        )}
+      </div>
+    </li>
+  )
 }
 
 /**
- * "Why was this blocked?" - expands the resolved decision chain the control
- * plane can actually prove (auto-block state, rate limit, producing rule
- * with its source, policy binding, tuning). Unknowns are listed, not
- * guessed.
+ * "Why was this blocked?" - names the rule that actually decided the verdict,
+ * lists every other match with its source, and keeps the non-events behind a
+ * disclosure. The old panel showed the first stored rule id (often a weak
+ * signature) and every miss, which buried the real cause.
  */
-function WhyPanel({ eventId }: { eventId: number }) {
+function WhyPanel({
+  event,
+  explanation,
+  loading,
+  error,
+  onRetry,
+  onSearchRule,
+}: {
+  event: SecurityEvent
+  explanation: EventExplanation | null
+  loading: boolean
+  error: boolean
+  onRetry: () => void
+  onSearchRule: (ruleId: string) => void
+}) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
-  const explanation = useQuery({
-    queryKey: ['logs', 'why', eventId],
-    queryFn: () => logsApi.whySecurity(eventId),
-    enabled: open,
-    retry: false,
-  })
+  const verdict =
+    explanation?.verdict ??
+    (event.action === 'block' ? 'blocked' : event.action)
+  const isBlocked = verdict === 'blocked' || verdict === 'challenged'
+  const matched = explanation?.matched_rules ?? []
+  const deciding = matched.find((rule) => rule.deciding)
+  const title = isBlocked
+    ? t('pages.logs.whyTitle')
+    : t('pages.logs.whyTitleOther')
+  const heading = deciding
+    ? null
+    : explanation
+      ? t('pages.logs.noSingleRule')
+      : null
+  const firstMatchNote =
+    explanation?.blocked_by &&
+    event.rule_id &&
+    event.rule_id.toLowerCase() !== explanation.blocked_by.toLowerCase()
+      ? t('pages.logs.firstMatchNote', {
+          first: event.rule_id,
+          deciding: explanation.blocked_by,
+        })
+      : null
+  // With the richer matched-rule list the chain step for the deciding rule is
+  // redundant. Keep it when an older control plane returns no list.
+  const chain = explanation
+    ? explanation.steps.filter(
+        (step) =>
+          step.stage !== 'event' &&
+          (step.stage !== 'waf_rule' || matched.length === 0),
+      )
+    : []
+  const hits = chain.filter((step) => step.status !== 'miss')
+  const misses = chain.filter((step) => step.status === 'miss')
 
   return (
-    <div className="rounded-md border border-line">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between px-3 py-2 text-left text-[13px] font-medium text-fg hover:bg-recessed"
-        onClick={() => setOpen((value) => !value)}
-      >
-        {t('pages.logs.whyTitle')}
-        <span className="text-fg-subtle">
-          {open ? t('common.hide') : t('common.show')}
-        </span>
-      </button>
-      {open && (
-        <div className="space-y-3 border-t border-line px-3 py-2">
-          {explanation.isLoading ? (
-            <p className="text-xs text-fg-subtle">{t('common.loading')}</p>
-          ) : explanation.isError ? (
-            <p className="text-xs text-fg-danger">
-              {t('pages.logs.whyFailed')}
+    <section className="rounded-md border border-line">
+      <div className="flex items-start justify-between gap-3 px-3 py-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-medium text-fg">{title}</p>
+          {loading ? (
+            <p className="mt-2 text-xs text-fg-subtle">
+              {t('pages.logs.whyLoading')}
             </p>
-          ) : explanation.data ? (
+          ) : error ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="text-xs text-fg-danger">
+                {t('pages.logs.whyFailed')}
+              </p>
+              <Button size="sm" variant="secondary" onClick={onRetry}>
+                {t('common.retry')}
+              </Button>
+            </div>
+          ) : explanation ? (
             <>
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={WHY_VERDICT_TONE[explanation.data.verdict] ?? 'neutral'}>
-                  {explanation.data.verdict}
+              <p className="mt-1 flex flex-wrap items-baseline gap-1.5 text-[14px] font-medium text-fg-strong">
+                {deciding ? (
+                  <>
+                    <code className="pw-mono text-[13px]">{deciding.id}</code>
+                    <span>{deciding.name}</span>
+                  </>
+                ) : (
+                  heading
+                )}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <Badge
+                  tone={WHY_VERDICT_TONE[verdict] ?? 'neutral'}
+                  dot
+                >
+                  {t(`pages.logs.verdicts.${verdict}`, verdict)}
                 </Badge>
-                {explanation.data.blocked_by && (
-                  <code className="text-xs text-fg-subtle">
-                    {explanation.data.blocked_by}
-                  </code>
+                {deciding && (
+                  <>
+                    <Badge
+                      size="sm"
+                      tone={RULE_SOURCE_TONE[deciding.source] ?? 'neutral'}
+                    >
+                      {t(
+                        `pages.logs.ruleSources.${deciding.source}`,
+                        deciding.source,
+                      )}
+                    </Badge>
+                    {deciding.severity != null && (
+                      <Badge
+                        size="sm"
+                        tone={severityTone(deciding.severity)}
+                      >
+                        {t('pages.logs.severity', {
+                          severity: deciding.severity,
+                        })}
+                      </Badge>
+                    )}
+                  </>
+                )}
+                {matched.length > 0 && (
+                  <span className="text-[11px] text-fg-subtle">
+                    {t('pages.logs.matchedRuleCount', {
+                      count: matched.length,
+                    })}
+                  </span>
                 )}
               </div>
-              <ol className="space-y-2">
-                {explanation.data.steps.map((step) => (
-                  <li key={step.stage} className="flex gap-2">
-                    <Badge tone={WHY_STATUS_TONE[step.status] ?? 'neutral'}>
-                      {t(`pages.logs.stages.${step.stage}`, step.stage)}
-                    </Badge>
-                    <div className="min-w-0">
-                      <p className="text-[13px] font-medium text-fg">
-                        {step.title}
-                      </p>
-                      <p className="text-[12px] text-fg-subtle">{step.detail}</p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-              {explanation.data.notes.length > 0 && (
-                <div>
-                  <p className="mb-1 text-[12px] font-medium text-fg-subtle">
-                    {t('pages.logs.whyNotes')}
-                  </p>
-                  <ul className="list-disc space-y-1 pl-4 text-[12px] text-fg-subtle">
-                    {explanation.data.notes.map((note, index) => (
-                      <li key={index}>{note}</li>
-                    ))}
-                  </ul>
-                </div>
+              {firstMatchNote && (
+                <p className="mt-2 text-[12px] text-fg-subtle">
+                  {firstMatchNote}
+                </p>
               )}
             </>
           ) : null}
         </div>
+        {explanation && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="shrink-0"
+            aria-expanded={open}
+            onClick={() => setOpen((value) => !value)}
+          >
+            {open ? t('pages.logs.whyHide') : t('pages.logs.whyDetails')}
+          </Button>
+        )}
+      </div>
+
+      {open && explanation && (
+        <div className="space-y-4 border-t border-line px-3 py-3">
+          {matched.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-fg-subtle">
+                {t('pages.logs.matchedRules')}
+              </p>
+              <ul className="divide-y divide-line rounded-md border border-line px-3">
+                {matched.map((rule) => (
+                  <MatchedRuleRow
+                    key={rule.id}
+                    rule={rule}
+                    event={event}
+                    onSearchRule={onSearchRule}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {hits.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-fg-subtle">
+                {t('pages.logs.decisionChain')}
+              </p>
+              <ul className="space-y-3">
+                {hits.map((step, index) => (
+                  <DecisionStep key={`${step.stage}-${index}`} step={step} />
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {misses.length > 0 && (
+            <details className="rounded-md border border-line">
+              <summary className="cursor-pointer px-3 py-2 text-[12px] text-fg-subtle hover:text-fg">
+                {t('pages.logs.whyChecks', { count: misses.length })}
+              </summary>
+              <ul className="space-y-3 border-t border-line px-3 py-3">
+                {misses.map((step, index) => (
+                  <DecisionStep key={`${step.stage}-${index}`} step={step} />
+                ))}
+              </ul>
+            </details>
+          )}
+
+          {explanation.notes.length > 0 && (
+            <div>
+              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-fg-subtle">
+                {t('pages.logs.whyNotes')}
+              </p>
+              <ul className="list-disc space-y-1 pl-4 text-[12px] text-fg-subtle">
+                {explanation.notes.map((note, index) => (
+                  <li key={index}>{note}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
       )}
-    </div>
+    </section>
   )
 }
 

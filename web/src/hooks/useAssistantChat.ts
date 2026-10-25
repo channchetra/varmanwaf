@@ -41,7 +41,7 @@ const NAV_ROUTES: Array<[RegExp, string]> = [
 /** Human-readable "label (path)" description of the current console page. */
 function describeCurrentPage(pathname: string, t: (key: string) => string) {
   const labelKey = NAV_ROUTES.find(([pattern]) => pattern.test(pathname))?.[1]
-  const label = labelKey ? t(labelKey) : 'PingWAF console'
+  const label = labelKey ? t(labelKey) : 'VarmanWAF console'
   return `${label} (${pathname})`
 }
 

@@ -15,6 +15,7 @@ import { Select } from '@/components/ui/Select'
 import { Switch } from '@/components/ui/Switch'
 import { useToast } from '@/components/ui/Toast'
 import { errorMessage } from '@/api/errors'
+import { cn } from '@/lib/utils'
 import { sitesApi } from '@/api/sites'
 import { wafSettingsApi } from '@/api/wafSettings'
 import { rateLimitApi } from '@/api/rateLimiting'
@@ -80,6 +81,7 @@ interface PanelProps {
   data: TopologyPanelData
   onClose: () => void
   onChanged: () => void
+  className?: string
 }
 
 function Section({
@@ -92,9 +94,9 @@ function Section({
   action?: React.ReactNode
 }) {
   return (
-    <div className="border-t border-line px-4 py-3 first:border-t-0">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">
+    <div className="border-t border-line px-5 py-3.5 first:border-t-0">
+      <div className="mb-2.5 flex items-center justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-fg-subtle">
           {title}
         </p>
         {action}
@@ -154,6 +156,7 @@ export function TopologyPanel({
   data,
   onClose,
   onChanged,
+  className,
 }: PanelProps) {
   const { t } = useTranslation()
   const toast = useToast()
@@ -176,10 +179,15 @@ export function TopologyPanel({
         : t(`pages.topology.kinds.${selection.data.kind}`)
 
   return (
-    <aside className="absolute right-3 top-3 z-50 flex max-h-[calc(100%-24px)] w-[360px] flex-col overflow-hidden rounded-xl border border-line bg-elevated shadow-xl">
-      <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+    <aside
+      className={cn(
+        'topology-inspector flex h-full w-full flex-col overflow-hidden bg-elevated',
+        className,
+      )}
+    >
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-5 py-4">
         <div className="min-w-0">
-          <p className="truncate text-[14px] font-semibold text-fg-strong">
+          <p className="truncate text-[15px] font-semibold text-fg-strong">
             {title}
           </p>
           {selection.type === 'node' && selection.data.subtitle && (
@@ -196,7 +204,7 @@ export function TopologyPanel({
           icon={<X className="h-4 w-4" />}
         />
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="topology-panel-scroll min-h-0 flex-1 overflow-y-auto">
         {selection.type === 'create' ? (
           <CreateEditor
             siteId={siteId}

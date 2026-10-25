@@ -50,11 +50,6 @@ impl From<ChallengeLevel> for ClearanceLevel {
 }
 
 impl ChallengeLevel {
-    /// Returns true if this level requires at least a JS challenge
-    pub fn requires_challenge(&self) -> bool {
-        !matches!(self, Self::None)
-    }
-
     /// Returns the string representation used in configuration
     pub fn as_str(&self) -> &'static str {
         match self {

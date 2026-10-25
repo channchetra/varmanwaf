@@ -81,9 +81,6 @@ export interface AlertSilenceRequest {
   starts_at?: string
   ends_at?: string | null
 }
-
-export const alertMetrics: AlertMetric[] = ['event_count', 'blocked_ratio']
-
 export const alertsApi = {
   rules: () => apiClient.get<AlertRule[]>('/alerts/rules'),
 

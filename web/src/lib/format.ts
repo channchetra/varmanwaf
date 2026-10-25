@@ -76,11 +76,6 @@ export function setDisplayTimeZone(timeZone: string | null | undefined): void {
   formatterCache.clear()
 }
 
-/** The timezone the console currently renders in (undefined = browser). */
-export function displayTimeZoneSetting(): string | undefined {
-  return displayTimeZone
-}
-
 function formatters(): DateFormatters {
   const key = `${displayLocale ?? 'default'}|${displayTimeZone ?? 'local'}`
   const cached = formatterCache.get(key)
@@ -224,11 +219,6 @@ export function formatBitrate(bps: number | null | undefined): string {
     i += 1
   }
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[i]}`
-}
-
-/** Uppercases an HTTP verb for table cells. */
-export function formatMethod(method: string | null | undefined): string {
-  return method ? method.toUpperCase() : '—'
 }
 
 /** Colour class for an HTTP status: 2xx green, 3xx neutral, 4xx amber, 5xx red. */

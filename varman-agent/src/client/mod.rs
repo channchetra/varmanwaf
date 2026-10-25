@@ -27,7 +27,7 @@ use crate::cert_events::{
     attribute_events, cert_event_buffer, CertAttribution,
 };
 use crate::config::AgentConfig;
-use crate::heartbeat::{MetricsCollector, SystemMetrics};
+use crate::heartbeat::MetricsCollector;
 use crate::probe::{self, HostSample, ProbeBuffer};
 
 /// Log entry that can be queued for shipping to the control plane.
@@ -1135,11 +1135,6 @@ impl ControlPlaneClient {
     pub fn shutdown(&self) {
         info!("Initiating agent shutdown");
         self.shutdown_signal.store(true, Ordering::Relaxed);
-    }
-
-    /// Get the current system metrics snapshot.
-    pub fn metrics_snapshot(&self) -> SystemMetrics {
-        self.metrics.collect()
     }
 }
 

@@ -299,6 +299,19 @@ pub(crate) mod test_support {
     use pingora::proxy::Session;
     use tokio_test::io::Builder;
 
+    /// Serializes tests that install the process-wide agent.
+    ///
+    /// The agent instance is a global and cargo runs tests in parallel: a test
+    /// reaching the plugin's agent paths while another has an agent installed
+    /// would record into that agent's metrics collector.
+    pub(crate) static AGENT_LOCK: tokio::sync::Mutex<()> =
+        tokio::sync::Mutex::const_new(());
+
+    /// Acquires the process-wide agent test lock.
+    pub(crate) async fn lock_agent() -> tokio::sync::MutexGuard<'static, ()> {
+        AGENT_LOCK.lock().await
+    }
+
     /// Builds an H1 session preloaded with a single request.
     pub(crate) async fn h1_session(
         method: &str,

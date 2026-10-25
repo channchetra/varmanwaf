@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::es::EsConfig;
+use crate::es::config::EsConfig;
 
 /// Default PostgreSQL DSN used by the development docker-compose file.
 pub const DEFAULT_DB_URL: &str =

@@ -57,7 +57,13 @@ import {
   type RulePlanEntry,
   type VirtualPatchesLayerConfig,
 } from '@/api/policies'
-import { WAF_CATEGORIES, WAF_ENGINE_MODES, WAF_STACKS } from '@/api/types'
+import {
+  RULE_ACTIONS,
+  RULE_MODES,
+  WAF_CATEGORIES,
+  WAF_ENGINE_MODES,
+  WAF_STACKS,
+} from '@/api/types'
 
 /** Layer tabs of the editor, in display order. */
 export const LAYER_TABS: PolicyLayerKind[] = [
@@ -1790,9 +1796,6 @@ function IpAccessForm({
   )
 }
 
-const RULE_ACTIONS = ['block', 'log', 'challenge', 'js_challenge', 'allow']
-const RULE_MODES = ['block', 'monitor', 'off']
-
 function emptyRule(): PolicyRule {
   return {
     name: '',
@@ -1908,7 +1911,7 @@ function CustomRulesForm({
                 label={t('pages.policies.fields.ruleMode')}
                 value={rule.mode ?? 'block'}
                 onChange={(e) => patch(index, { mode: e.target.value })}
-                options={RULE_MODES.map((mode) => ({
+                options={[...RULE_MODES].reverse().map((mode) => ({
                   value: mode,
                   label: mode,
                 }))}

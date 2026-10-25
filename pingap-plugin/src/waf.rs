@@ -2060,21 +2060,6 @@ pub struct WafPlugin {
     /// Locally configured engine; shared and hot-reloadable.
     engine: Arc<RwLock<WafEngine>>,
     mode: WafMode,
-    // Parsed for configuration compatibility and wiring status: `detections`
-    // limits which families may block (unlisted families are monitored),
-    // `paranoia_level`/`anomaly_threshold` feed the engine config, and
-    // `ml_enabled`/`ml_threshold` are reported as unsupported at load time.
-    #[allow(dead_code)]
-    paranoia_level: u8,
-    #[allow(dead_code)]
-    anomaly_threshold: u32,
-    /// Informational: the parsed detection whitelist (see `try_from`).
-    #[allow(dead_code)]
-    detections: Vec<String>,
-    #[allow(dead_code)]
-    ml_enabled: bool,
-    #[allow(dead_code)]
-    ml_threshold: f64,
     /// Inspect the full request body with the WAF engine. Off by default:
     /// scanning arbitrary bodies is expensive. Independent of this flag the
     /// first KiB of every body is captured for the access log.
@@ -2542,10 +2527,6 @@ impl TryFrom<&PluginConf> for WafPlugin {
                  flag has no effect"
             );
         }
-        let ml_threshold = value
-            .get("ml_threshold")
-            .and_then(|v| v.as_float())
-            .unwrap_or(0.5);
         let inspect_body =
             advanced_mode || get_bool_conf(value, "inspect_body");
         let configured_body_size =
@@ -2632,11 +2613,6 @@ impl TryFrom<&PluginConf> for WafPlugin {
             plugin_step,
             engine: Arc::new(RwLock::new(WafEngine::new(&engine_config))),
             mode,
-            paranoia_level,
-            anomaly_threshold,
-            detections,
-            ml_enabled,
-            ml_threshold,
             inspect_body,
             max_body_size,
             body_reject,
@@ -3965,6 +3941,7 @@ register_plugin!("waf", WafPlugin);
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::test_support::lock_agent;
     use pingap_core::PluginStep;
     use pingap_util::base64_encode;
     use pingora::proxy::Session;
@@ -3993,10 +3970,6 @@ ml_threshold = 0.75
         )
         .unwrap();
         assert_eq!(WafMode::Block, plugin.mode);
-        assert_eq!(3, plugin.paranoia_level);
-        assert_eq!(30, plugin.anomaly_threshold);
-        assert!(plugin.ml_enabled);
-        assert_eq!(5, plugin.detections.len());
         assert_eq!(PluginStep::EarlyRequest, plugin.plugin_step);
     }
 
@@ -4382,7 +4355,6 @@ ml_threshold = 0.9
             .unwrap(),
         )
         .unwrap();
-        assert!(plugin.ml_enabled);
         let engine = plugin.engine.read().unwrap_or_else(|e| e.into_inner());
         let sqli = engine.inspect(&probe("id=1' OR 1=1 --"));
         assert_eq!(sqli.action, WafAction::Block, "details: {}", sqli.details);
@@ -4517,18 +4489,6 @@ advanced_mode = true
             .await
             .unwrap();
         assert!(result == RequestPluginResult::Skipped);
-    }
-
-    /// The agent instance is a process-wide global, and cargo runs a
-    /// binary's tests in parallel: any test reaching the plugin's agent
-    /// paths while another has an agent installed records into that
-    /// agent's metrics collector. Tests touching the instance therefore
-    /// serialize on this lock.
-    static AGENT_LOCK: tokio::sync::Mutex<()> =
-        tokio::sync::Mutex::const_new(());
-
-    pub(crate) async fn lock_agent() -> tokio::sync::MutexGuard<'static, ()> {
-        AGENT_LOCK.lock().await
     }
 
     /// Install a never-connecting agent for the duration of one test,

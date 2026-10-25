@@ -15,29 +15,7 @@ use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::grpc::notify_config_changed;
 use crate::models::challenge_settings;
-
-/// Valid challenge levels.
-pub mod challenge_level {
-    pub const NONE: &str = "none";
-    pub const NON_INTERACTIVE: &str = "non_interactive";
-    pub const MANAGED: &str = "managed";
-    pub const INTERACTIVE: &str = "interactive";
-
-    pub fn is_valid(level: &str) -> bool {
-        matches!(level, NONE | NON_INTERACTIVE | MANAGED | INTERACTIVE)
-    }
-
-    /// Maps to proto `ChallengeLevel` enum.
-    pub fn to_proto(level: &str) -> i32 {
-        match level {
-            NONE => 0,
-            NON_INTERACTIVE => 1,
-            MANAGED => 2,
-            INTERACTIVE => 3,
-            _ => 1,
-        }
-    }
-}
+use crate::waf_values::challenge_level;
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateChallengeRequest {

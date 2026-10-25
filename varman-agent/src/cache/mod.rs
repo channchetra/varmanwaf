@@ -147,17 +147,6 @@ impl Default for ProxyTrustConfig {
     }
 }
 
-impl ProxyTrustConfig {
-    /// Effective header name; empty resolves to `x-forwarded-for`.
-    pub fn effective_header(&self) -> &str {
-        if self.header.is_empty() {
-            "x-forwarded-for"
-        } else {
-            &self.header
-        }
-    }
-}
-
 fn default_true() -> bool {
     true
 }

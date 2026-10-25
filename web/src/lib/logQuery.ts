@@ -12,6 +12,14 @@ export interface LogSearch {
 const UUID_RE =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
+/** The edge generates a 16-character hex request id (`hex(8 random bytes)`). */
+export const REQUEST_ID_RE = /^[0-9a-f]{16}$/i
+
+/** True when a pasted value is exactly one edge request id. */
+export function isRequestId(value: string): boolean {
+  return REQUEST_ID_RE.test(value.trim())
+}
+
 /**
  * Kibana-style search grammar for the log pages.
  *
@@ -43,6 +51,13 @@ export function parseLogQuery(input: string, tab: LogTab): LogSearch {
   for (const token of tokenize(input)) {
     const separator = token.indexOf(':')
     if (separator <= 0) {
+      // A bare 16-hex id is the value an operator copies from a block page or
+      // a block/challenge event. Treat it as a request id instead of free
+      // text, which would only search path and host.
+      if (isRequestId(token)) {
+        if (!params.request_id) params.request_id = token.toLowerCase()
+        continue
+      }
       terms.push(token)
       continue
     }
@@ -69,7 +84,7 @@ export function parseLogQuery(input: string, tab: LogTab): LogSearch {
         else unknown.push(token)
         break
       case 'request_id':
-        params.request_id = value
+        params.request_id = value.toLowerCase()
         break
       case 'country':
       case 'country_code':

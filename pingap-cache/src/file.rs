@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::fs_util::remove_empty_dirs;
 use super::http_cache::{
     CacheObject, HttpCacheClearStats, HttpCacheStats, HttpCacheStorage,
 };
@@ -227,19 +228,6 @@ fn measure_dir_size(directory: &str) -> u64 {
 /// Removes every directory under `dir` that is empty, deepest first, and
 /// finally `dir` itself. Best effort: a concurrent write recreates what it
 /// needs.
-fn remove_empty_dirs(dir: &Path) {
-    let mut dirs: Vec<PathBuf> = WalkDir::new(dir)
-        .into_iter()
-        .filter_map(|item| item.ok())
-        .filter(|item| item.file_type().is_dir())
-        .map(|item| item.into_path())
-        .collect();
-    dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
-    for dir in dirs {
-        let _ = std::fs::remove_dir(&dir);
-    }
-}
-
 impl FileCache {
     /// Create a file cache and use tinyufo for hotspot data caching
     pub fn new(dir: &str) -> Result<Self> {

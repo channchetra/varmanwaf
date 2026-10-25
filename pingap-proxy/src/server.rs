@@ -975,6 +975,14 @@ impl Server {
                     },
                     RequestPluginResult::Respond(resp) => {
                         record_time("request plugin create new response");
+                        // A plugin that answers before the upstream exchange
+                        // must give up any cache wish for this request. The
+                        // cache plugin runs before the WAF/challenge plugins,
+                        // and leaving a write permit behind trips pingora's
+                        // dangling-lock assertion when the response is sent.
+                        if session.cache.enabled() {
+                            session.cache.disable(NoCacheReason::InternalError);
+                        }
                         // ignore status >= 900
                         if resp.status.as_u16() < 900 {
                             ctx.state.status = Some(resp.status);
@@ -1737,10 +1745,10 @@ impl ProxyHttp for Server {
             .await?;
 
         // Identity stamp: every response leaving the edge says `server:
-        // pingwaf`, the way `server: cloudflare` does. Visitors and site
+        // varmanwaf`, the way `server: cloudflare` does. Visitors and site
         // owners see from the response alone that the edge served it, and a
         // support request with the x-request-id is attributable in seconds.
-        let _ = upstream_response.insert_header("server", "pingwaf");
+        let _ = upstream_response.insert_header("server", "varmanwaf");
 
         // add server-timing response header
         if self.enable_server_timing {
@@ -1927,7 +1935,7 @@ impl ProxyHttp for Server {
         let mut resp = error_response_header(code);
         // The edge generated this error itself (upstream unreachable, …) —
         // stamp it like every other edge response.
-        let _ = resp.insert_header("server", "pingwaf");
+        let _ = resp.insert_header("server", "varmanwaf");
         let content = self.error_template.render(
             pingap_util::get_pkg_version(),
             &e.to_string(),

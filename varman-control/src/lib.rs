@@ -34,8 +34,11 @@ pub mod policy;
 pub mod policy_content;
 pub mod policy_test;
 pub mod provenance;
+pub mod self_protection;
+pub mod site_credentials;
 pub mod subscription;
 pub mod tls;
+pub mod waf_values;
 
 pub use config::ServerConfig;
 
@@ -164,7 +167,7 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
         es: es_client.clone(),
         cache_status: cache_status.clone(),
         control_tls: control_tls.clone(),
-        protection: Arc::new(api::self_protection::SelfProtection::new()),
+        protection: Arc::new(self_protection::SelfProtection::new()),
     };
 
     // ── 6d. Control plane self-protection ───────────────────────────────────
@@ -768,90 +771,6 @@ pub async fn embedded_agent_ca_pem(
     }
 }
 
-#[cfg(test)]
-mod embedded_agent_tls_tests {
-    use super::{preferred_tls_name, split_leaf_and_chain, trust_anchor_pem};
-
-    fn sans(items: &[&str]) -> Vec<String> {
-        items.iter().map(|item| item.to_string()).collect()
-    }
-
-    fn cert(label: &str) -> String {
-        format!("-----BEGIN CERTIFICATE-----\n{label}\n-----END CERTIFICATE-----\n")
-    }
-
-    #[test]
-    fn loopback_names_win_when_the_certificate_carries_them() {
-        // The generated self-signed certificate covers loopback, so the agent
-        // keeps verifying `localhost` and no configuration is needed.
-        assert_eq!(
-            preferred_tls_name(&sans(&["localhost", "127.0.0.1"])),
-            Some("localhost".to_string())
-        );
-        assert_eq!(
-            preferred_tls_name(&sans(&["127.0.0.1", "varman"])),
-            Some("127.0.0.1".to_string())
-        );
-    }
-
-    #[test]
-    fn an_ip_certificate_verifies_against_its_ip_san() {
-        // An ACME IP certificate only carries the management IP; the agent
-        // must verify that name instead of the loopback URL host.
-        assert_eq!(
-            preferred_tls_name(&sans(&["103.189.187.19"])),
-            Some("103.189.187.19".to_string())
-        );
-        assert_eq!(
-            preferred_tls_name(&sans(&["waf.example.com", "www.example.com"])),
-            Some("waf.example.com".to_string())
-        );
-    }
-
-    #[test]
-    fn no_sans_keeps_the_url_host() {
-        assert_eq!(preferred_tls_name(&[]), None);
-    }
-
-    #[test]
-    fn a_chain_pins_the_issuer_not_the_leaf() {
-        // An ACME certificate is a leaf followed by its issuer chain. A leaf
-        // is not a CA, so webpki rejects it as a trust anchor; the issuer
-        // chain must be pinned instead.
-        let bundle = format!(
-            "{}{}{}",
-            cert("LEAF"),
-            cert("ISSUER"),
-            cert("ROOT")
-        );
-        let (leaf, chain) = split_leaf_and_chain(&bundle);
-        assert!(leaf.contains("LEAF"));
-        assert!(chain.contains("ISSUER"));
-        assert!(chain.contains("ROOT"));
-        assert!(!chain.contains("LEAF"));
-        let anchor = trust_anchor_pem(&bundle);
-        assert!(anchor.contains("ISSUER"));
-        assert!(!anchor.contains("LEAF"));
-    }
-
-    #[test]
-    fn a_single_certificate_is_its_own_anchor() {
-        // The generated self-signed certificate is its own root.
-        let single = cert("SELF");
-        let (leaf, chain) = split_leaf_and_chain(&single);
-        assert!(leaf.contains("SELF"));
-        assert!(chain.is_empty());
-        assert_eq!(trust_anchor_pem(&single), leaf);
-    }
-
-    #[test]
-    fn garbage_or_empty_pem_never_yields_an_anchor() {
-        assert_eq!(split_leaf_and_chain("").0, "");
-        assert_eq!(split_leaf_and_chain("not a pem").1, "");
-        assert_eq!(trust_anchor_pem("not a pem"), "");
-    }
-}
-
 use crate::api::keys::BOOTSTRAP_KEY_NAME;
 const BOOTSTRAP_KEY_FILE: &str = "/var/lib/varman/bootstrap_api_key";
 
@@ -1041,5 +960,87 @@ async fn serve_http(
         )
         .with_graceful_shutdown(shutdown_wait())
         .await
+    }
+}
+
+#[cfg(test)]
+mod embedded_agent_tls_tests {
+    use super::{preferred_tls_name, split_leaf_and_chain, trust_anchor_pem};
+
+    fn sans(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| item.to_string()).collect()
+    }
+
+    fn cert(label: &str) -> String {
+        format!(
+            "-----BEGIN CERTIFICATE-----\n{label}\n-----END CERTIFICATE-----\n"
+        )
+    }
+
+    #[test]
+    fn loopback_names_win_when_the_certificate_carries_them() {
+        // The generated self-signed certificate covers loopback, so the agent
+        // keeps verifying `localhost` and no configuration is needed.
+        assert_eq!(
+            preferred_tls_name(&sans(&["localhost", "127.0.0.1"])),
+            Some("localhost".to_string())
+        );
+        assert_eq!(
+            preferred_tls_name(&sans(&["127.0.0.1", "varman"])),
+            Some("127.0.0.1".to_string())
+        );
+    }
+
+    #[test]
+    fn an_ip_certificate_verifies_against_its_ip_san() {
+        // An ACME IP certificate only carries the management IP; the agent
+        // must verify that name instead of the loopback URL host.
+        assert_eq!(
+            preferred_tls_name(&sans(&["103.189.187.19"])),
+            Some("103.189.187.19".to_string())
+        );
+        assert_eq!(
+            preferred_tls_name(&sans(&["waf.example.com", "www.example.com"])),
+            Some("waf.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn no_sans_keeps_the_url_host() {
+        assert_eq!(preferred_tls_name(&[]), None);
+    }
+
+    #[test]
+    fn a_chain_pins_the_issuer_not_the_leaf() {
+        // An ACME certificate is a leaf followed by its issuer chain. A leaf
+        // is not a CA, so webpki rejects it as a trust anchor; the issuer
+        // chain must be pinned instead.
+        let bundle =
+            format!("{}{}{}", cert("LEAF"), cert("ISSUER"), cert("ROOT"));
+        let (leaf, chain) = split_leaf_and_chain(&bundle);
+        assert!(leaf.contains("LEAF"));
+        assert!(chain.contains("ISSUER"));
+        assert!(chain.contains("ROOT"));
+        assert!(!chain.contains("LEAF"));
+        let anchor = trust_anchor_pem(&bundle);
+        assert!(anchor.contains("ISSUER"));
+        assert!(!anchor.contains("LEAF"));
+    }
+
+    #[test]
+    fn a_single_certificate_is_its_own_anchor() {
+        // The generated self-signed certificate is its own root.
+        let single = cert("SELF");
+        let (leaf, chain) = split_leaf_and_chain(&single);
+        assert!(leaf.contains("SELF"));
+        assert!(chain.is_empty());
+        assert_eq!(trust_anchor_pem(&single), leaf);
+    }
+
+    #[test]
+    fn garbage_or_empty_pem_never_yields_an_anchor() {
+        assert_eq!(split_leaf_and_chain("").0, "");
+        assert_eq!(split_leaf_and_chain("not a pem").1, "");
+        assert_eq!(trust_anchor_pem("not a pem"), "");
     }
 }

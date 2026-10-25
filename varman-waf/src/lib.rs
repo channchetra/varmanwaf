@@ -36,7 +36,9 @@ pub use rules::managed::{
 };
 pub use rules::{AttackCategory, CompiledRule, RuleAction};
 pub use score::{AnomalyScorer, ScoreBreakdown, ScoreClass};
-pub use virtual_patches::{templates as virtual_patch_templates, VirtualPatchTemplate};
+pub use virtual_patches::{
+    templates as virtual_patch_templates, VirtualPatchTemplate,
+};
 
 use serde::{Deserialize, Serialize};
 

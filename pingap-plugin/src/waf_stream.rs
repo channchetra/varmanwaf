@@ -14,7 +14,7 @@
 //! The frame decoder is defensive: reserved bits, interleaved data frames,
 //! continuation frames without a start, oversized control frames and
 //! oversized frames/messages all fail the stream instead of being
-//! mis-interpreted. Fragmented messages are assembled up to a hard cap and
+//! misinterpreted. Fragmented messages are assembled up to a hard cap and
 //! only complete messages are scanned, so a payload split across fragments is
 //! still inspected as one unit.
 

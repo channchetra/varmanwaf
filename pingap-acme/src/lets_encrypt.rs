@@ -1391,10 +1391,10 @@ mod tests {
     fn mixed_orders_switch_to_shortlived_too() {
         let identifiers =
             order_identifiers(&domains(&["waf.example.com", "203.0.113.7"]));
-        assert!(matches!(identifiers.as_slice(), [
-            Identifier::Dns(_),
-            Identifier::Ip(_)
-        ]));
+        assert!(matches!(
+            identifiers.as_slice(),
+            [Identifier::Dns(_), Identifier::Ip(_)]
+        ));
         assert_eq!(
             order_profile(&domains(&["waf.example.com", "203.0.113.7"])),
             Some("shortlived")

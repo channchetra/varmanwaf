@@ -28,12 +28,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-use crate::api::waf_settings::{
-    CATEGORIES, ENGINE_MODES, MANAGED_RULES, STACKS,
-};
 use crate::models::{
     action, mode, site_waf_policy, site_waf_policy_override, waf_policy,
     waf_policy_layer, waf_policy_version, waf_settings,
+};
+use crate::waf_values::{
+    ip_action, CATEGORIES, ENGINE_MODES, MANAGED_RULES, STACKS,
 };
 
 /// Engine layer kind: posture knobs, same meaning as `waf_settings`.
@@ -185,10 +185,10 @@ fn catalogue_tags() -> std::collections::BTreeSet<&'static str> {
 
 impl RuleOverrideEntry {
     fn validate(&self) -> Result<(), String> {
-        let addressings = usize::from(!self.rule_id.is_empty())
+        let addressing = usize::from(!self.rule_id.is_empty())
             + usize::from(!self.tags.is_empty())
             + usize::from(self.severity_min.is_some());
-        if addressings != 1 {
+        if addressing != 1 {
             return Err(
                 "exactly one of 'rule_id', 'tags' or 'severity_min' is required"
                     .to_string(),
@@ -891,7 +891,7 @@ fn validate_ip_access_rule(value: &Value) -> Result<(), String> {
             },
             "action" => {
                 let ip_action = expect_str(key, value)?;
-                if !crate::api::ip_rules::ip_action::is_valid(ip_action) {
+                if !ip_action::is_valid(ip_action) {
                     return Err(format!("unknown ip action '{ip_action}'"));
                 }
             },
@@ -2016,7 +2016,7 @@ mod tests {
         .unwrap_err()
         .contains("exactly one"));
 
-        // Two addressings at once.
+        // Two addressing passes at once.
         assert!(validate_layer(
             LAYER_RULE_OVERRIDES,
             &json!({"overrides": [

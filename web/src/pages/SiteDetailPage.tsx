@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { NavLink, Outlet, useParams } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Globe,
@@ -33,6 +33,7 @@ import { liveSiteUrl } from '@/lib/siteUrl'
 export function SiteDetailPage() {
   const { t } = useTranslation()
   const { siteId } = useParams<{ siteId: string }>()
+  const location = useLocation()
   const setCurrentSiteId = useSiteStore((s) => s.setCurrentSiteId)
 
   useEffect(() => {
@@ -109,6 +110,13 @@ export function SiteDetailPage() {
         />
       </div>
     )
+  }
+
+  // The topology canvas is the task. Drop the site header and tab strip so
+  // the graph gets the full viewport; the canvas chrome carries the site
+  // identity and a link back to the workspace.
+  if (location.pathname.endsWith('/topology')) {
+    return <Outlet />
   }
 
   return (

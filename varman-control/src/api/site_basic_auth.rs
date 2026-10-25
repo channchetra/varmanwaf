@@ -36,12 +36,7 @@ const MAX_USERNAME_LEN: usize = 100;
 const MAX_CREDENTIALS: usize = 100;
 
 /// One accepted credential pair.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct BasicAuthCredential {
-    pub username: String,
-    /// Stored in the clear; masked in responses.
-    pub password: String,
-}
+pub use crate::site_credentials::BasicAuthCredential;
 
 /// What the dashboard receives: credentials with masked passwords.
 #[derive(Debug, Serialize)]
@@ -240,18 +235,15 @@ fn merge_credentials(
 pub fn stored_credentials(
     row: &site_basic_auth::Model,
 ) -> Result<Vec<BasicAuthCredential>, ApiError> {
-    decode_credentials(&row.credentials)
+    crate::site_credentials::stored_credentials(row).map_err(ApiError::Internal)
 }
 
 /// Decodes a credentials JSON value, rejecting a shape we did not write.
 pub fn decode_credentials(
     value: &serde_json::Value,
 ) -> Result<Vec<BasicAuthCredential>, ApiError> {
-    serde_json::from_value(value.clone()).map_err(|err| {
-        ApiError::Internal(format!(
-            "stored basic auth credentials are invalid: {err}"
-        ))
-    })
+    crate::site_credentials::decode_credentials(value)
+        .map_err(ApiError::Internal)
 }
 
 fn to_view(row: &site_basic_auth::Model) -> Result<BasicAuthView, ApiError> {

@@ -567,7 +567,9 @@ async fn delete_certificate(
         };
         match site_row(&state, id).await {
             Ok(site) => {
-                if let Err(err) = save_tls_posture(&state.db, &site, &posture).await {
+                if let Err(err) =
+                    save_tls_posture(&state.db, &site, &posture).await
+                {
                     tracing::warn!(%err, site_id = %id, "could not clear the deleted certificate selection");
                 } else {
                     let cleared = certificate_events::ActiveModel {

@@ -562,25 +562,12 @@ impl WafEngine {
         self.rules.extend(user_rules);
     }
 
-    /// Replace the entire rule set, including managed defaults.
-    pub fn replace_all_rules(&mut self, rules: Vec<CompiledRule>) {
-        self.rules = rules;
-    }
-
     pub fn set_mode(&mut self, mode: WafMode) {
         self.mode = mode;
     }
 
     pub fn mode(&self) -> WafMode {
         self.mode
-    }
-
-    pub fn set_threshold(&mut self, threshold: u32) {
-        self.scorer.threshold = threshold.max(1);
-    }
-
-    pub fn set_paranoia_level(&mut self, level: u8) {
-        self.scorer.paranoia_level = level.clamp(1, 4);
     }
 
     pub fn rule_count(&self) -> usize {

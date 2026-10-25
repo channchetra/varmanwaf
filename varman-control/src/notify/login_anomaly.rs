@@ -358,29 +358,6 @@ pub fn is_anomalous(
     !baseline.iter().any(|country| country == current)
 }
 
-/// Recorded facts of one login: the resolved client IP and user agent.
-pub struct LoginCapture {
-    pub ip: Option<IpAddr>,
-    pub user_agent: Option<String>,
-}
-
-/// Resolves the IP and user agent for a login without touching the network
-/// or the database — safe to run inline in the handler. Header trust is NOT
-/// applied here (that needs the stored settings); the spawned task calls
-/// `resolve_client_ip` again with the real settings before persisting.
-pub fn capture_login(
-    headers: &HeaderMap,
-    peer: Option<IpAddr>,
-) -> LoginCapture {
-    LoginCapture {
-        ip: peer,
-        user_agent: headers
-            .get(reqwest::header::USER_AGENT)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string),
-    }
-}
-
 /// Records one login, looks up its geo and — when `judge` is set — compares
 /// the country against the account's recent baseline, emitting an alert on
 /// a mismatch. Runs detached. The history row is written even when no client

@@ -152,11 +152,9 @@ mod tests {
     #[test]
     fn every_template_parses() {
         for template in templates() {
-            SecRuleSet::from_source(template.source).unwrap_or_else(
-                |error| {
-                    panic!("template {} does not parse: {error}", template.id)
-                },
-            );
+            SecRuleSet::from_source(template.source).unwrap_or_else(|error| {
+                panic!("template {} does not parse: {error}", template.id)
+            });
         }
     }
 
@@ -219,7 +217,9 @@ mod tests {
                 "Content-Type",
                 "multipart/form-data; boundary=----Boundary",
             )
-            .with_body(multipart_body(&[("file", Some("a.bin"), 0)]).into_bytes());
+            .with_body(
+                multipart_body(&[("file", Some("a.bin"), 0)]).into_bytes(),
+            );
         assert!(matches(PHP2SHELL_TARGETED, parts));
     }
 
@@ -230,10 +230,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("&");
         let parts = RequestParts::new("POST", "shop.example.com", "/form")
-            .with_header(
-                "Content-Type",
-                "application/x-www-form-urlencoded",
-            )
+            .with_header("Content-Type", "application/x-www-form-urlencoded")
             .with_header("Content-Length", "4096")
             .with_body(body.into_bytes());
         assert!(matches(PHP2SHELL_TARGETED, parts));

@@ -56,14 +56,16 @@ pub mod waf_policy_layers;
 pub mod waf_policy_versions;
 pub mod waf_settings;
 
-pub use agent_blocked_ips::agent_blocked_ips as agent_blocked_ip;
-pub use agent_metrics::agent_metrics as agent_metric;
-pub use agents::{agent_status, agents as agent};
-pub use ai::{
+pub use self::ai::{
     ai_conversations as ai_conversation, ai_defaults,
     ai_messages as ai_message, ai_settings as ai_setting, message_role,
 };
-pub use alerts::{alert_rules as alert_rule, alert_silences as alert_silence};
+pub use self::alerts::{
+    alert_rules as alert_rule, alert_silences as alert_silence,
+};
+pub use agent_blocked_ips::agent_blocked_ips as agent_blocked_ip;
+pub use agent_metrics::agent_metrics as agent_metric;
+pub use agents::{agent_status, agents as agent};
 pub use api_protection::{
     api_protection_settings as api_protection_setting,
     control_plane_access_logs as control_plane_access_log,

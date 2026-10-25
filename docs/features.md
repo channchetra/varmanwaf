@@ -297,25 +297,41 @@ Conventions used below:
   basic auth, bot, geo, SSL, rewrites, custom rules, exclusion bindings); the
   fleet view reads agents, sites and the version endpoint. Edits go through
   the same endpoints the feature pages use.
-- **Fleet view** — the control plane links to every agent and every site (it
-  pushes their configuration); recorded agent-to-site bindings appear as
-  extra links. Clicking a site node opens that site's topology; clicking an
-  agent opens the Agents page. Empty fleets render explicit placeholders.
+- **Fleet view** — the control plane links to every agent, and each agent
+  links to every site it serves: a bound agent serves exactly its site, while
+  an unbound agent (all-in-one, or a node enrolled with an administrator key)
+  serves every site owned by its API key's user. There is no direct
+  control-plane → site edge; the control plane pushes configuration to agents,
+  never to a site. Site chips say `agent bound`, `served by N`, or `no agent`.
+  Clicking a site node opens that site's topology; clicking an agent opens the
+  Agents page. Empty fleets render explicit placeholders.
 - **Site view** - a live ReactFlow graph of the real request path:
   **Internet → Site → Protection → Security layers → Routing → Origin
-  pools → Targets**. Every link is animated; security layers are grouped in
-  one box and each origin pool groups its targets. Nodes are draggable and
-  the arrangement is remembered per site; `Auto layout` restores the computed
-  layout.
-- **Editing in place** — clicking a node opens a solid editor panel: site
-  identity, WAF posture (enabled/mode/engine/paranoia), rate limits, IP
-  rules, cache rules, basic auth credentials, bot posture, geo policy,
-  routes, pools and upstreams. Components whose editors are pages of their
-  own (rule authoring, API schema, exclusions, SSL issuance) open from the
-  panel.
-- **Drag to add** — palette items (Upstream, Origin pool, Route, Rate limit,
-  IP rule, Cache rule) are dragged onto the canvas; the create form opens and
-  **nothing is written until it is saved**.
+  pool**, with each pool's targets contained inside its frame. The group
+  frames are real graph endpoints (the WAF enters Security layers, layers
+  feed Routing, a route lands on a pool). Edges are curved signal lines that
+  draw in once, then carry a slow pulse on live paths; the client hop keeps
+  the TLS warning tone. Nodes are draggable and the arrangement is remembered
+  per site; `Auto layout` restores the computed layout, `Fit` frames the whole
+  flow and `Expand` gives the canvas the full window.
+- **Canvas is the task** — the site header and tab strip are hidden on
+  `/sites/:siteId/topology`. The site identity, counts, back link and fleet
+  link float over the canvas instead, so the graph gets the full content
+  area. The add palette is a floating icon rail, and the legend/toolbar stay
+  clear of the assistant button. Light and dark are both first-class; motion
+  follows `prefers-reduced-motion`.
+- **Editing in place** — clicking a node opens a solid editor panel docked to
+  the right at desktop widths (420 px) and as a capped bottom sheet below
+  `xl`; the clicked node is re-centred so it never disappears behind the
+  panel. Select another node to switch editors; click empty canvas or the
+  close button to dismiss. Editors cover site identity, WAF posture
+  (enabled/mode/engine/paranoia), rate limits, IP rules, cache rules, basic
+  auth credentials, bot posture, geo policy, routes, pools and upstreams.
+  Components whose editors are pages of their own (rule authoring, API
+  schema, exclusions, SSL issuance) open from the panel.
+- **Drag to add** — the floating rail offers Upstream, Origin pool, Route,
+  Rate limit, IP rule and Cache rule. Drag an item onto the canvas or click
+  it; the create form opens and **nothing is written until it is saved**.
 - **Honest by construction** — the graphs are built from configuration, never
   hand-drawn; empty sections render explicit placeholder nodes ("No origin
   pool yet", "No agents registered"), so a bare deployment still shows the
@@ -394,6 +410,15 @@ Conventions used below:
   Body views show the inspected payload. Pass-through 5xx responses are not
   access-logged; WAF-answered requests are. Retention is configurable
   (Settings → Log retention); Elasticsearch shipping is optional.
+- **Deciding rule and request id** — The list's **Rule** column names the
+  rule that decided the event (the `action=block`/`challenge` rule), with the
+  stored first match kept as a secondary line (`VARMAN-1020 · first
+  SSRF-006`); the event dialog lists every match with its source, severity
+  and the **Deciding** marker. A bare 16-character request id in the search
+  box or the global search (`⌘/Ctrl+K`) opens the request; the dialog's
+  Request ID bar copies it and cross-links the access log. The default time
+  window includes the current minute, so a fresh block is visible
+  immediately.
 
 ### 3.13 Virtual patches (CVE response)
 

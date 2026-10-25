@@ -107,16 +107,6 @@ pub fn update_certificates(
     (dynamic_certs, errors, updated)
 }
 
-/// Builds the certificate store from scratch: `update_certificates` with
-/// nothing to reuse.
-pub fn parse_certificates(
-    certificate_configs: &HashMap<String, CertificateConf>,
-) -> (DynamicCertificates, Vec<(String, String)>) {
-    let (certs, errors, _) =
-        update_certificates(certificate_configs, &AHashMap::new());
-    (certs, errors)
-}
-
 /// Parameters for configuring TLS settings
 ///
 /// Contains all the necessary configuration options for setting up TLS,

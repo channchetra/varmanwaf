@@ -6,7 +6,6 @@ import {
   Background,
   BackgroundVariant,
   Controls,
-  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   useEdgesState,
@@ -21,20 +20,17 @@ import {
   ArrowClockwise,
   ArrowSquareOut,
   ArrowsIn,
+  CaretLeft,
   ArrowsOut,
   CloudArrowUp,
   Cpu,
   FlowArrow,
   Gauge,
   Lightning,
-  Plus,
   Prohibit,
   Stack,
-  Tag,
   X,
 } from '@phosphor-icons/react'
-import { PageHeader } from '@/components/PageHeader'
-import { Callout } from '@/components/ui/Callout'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { ErrorState } from '@/components/ErrorState'
@@ -65,6 +61,7 @@ import {
   type TopologyLayer,
   type TopologyNodeData,
 } from '@/components/topology/graph'
+import { topologyEdgeTypes } from '@/components/topology/edges'
 import { topologyNodeTypes } from '@/components/topology/nodes'
 import {
   TopologyPanel,
@@ -117,13 +114,129 @@ function TopologyRouter() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Shared canvas chrome                                                */
+/* ------------------------------------------------------------------ */
+
+function ToolButton({
+  label,
+  icon,
+  onClick,
+}: {
+  label: string
+  icon: React.ReactNode
+  onClick: () => void
+}) {
+  return (
+    <Button
+      size="icon"
+      variant="ghost"
+      aria-label={label}
+      title={label}
+      icon={icon}
+      onClick={onClick}
+    />
+  )
+}
+
+function CanvasChrome({
+  eyebrow,
+  title,
+  subtitle,
+  meta,
+  actions,
+}: {
+  eyebrow: string
+  title: string
+  subtitle: string
+  meta?: React.ReactNode
+  actions?: React.ReactNode
+}) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-2 p-3 sm:p-4">
+      <div className="pointer-events-auto min-w-0 max-w-[calc(100vw-8.5rem)] rounded-xl border border-line bg-elevated px-4 py-3 shadow-md">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-fg-subtle">
+          {eyebrow}
+        </p>
+        <h1 className="mt-1 truncate text-[20px] font-semibold tracking-tight text-fg-strong">
+          {title}
+        </h1>
+        <p className="mt-0.5 truncate text-[12px] text-fg-subtle" title={subtitle}>
+          {subtitle}
+        </p>
+        {meta && <div className="mt-2 flex flex-wrap items-center gap-1.5">{meta}</div>}
+      </div>
+      {actions && (
+        <div className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-lg border border-line bg-elevated p-1 shadow-md">
+          {actions}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CanvasLegend({
+  items,
+}: {
+  items: Array<{ label: string; className: string }>
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="pointer-events-none absolute bottom-3 right-20 z-20 hidden items-center gap-3 rounded-lg border border-line bg-elevated px-3 py-1.5 text-[10px] text-fg-subtle shadow-sm xl:flex">
+      {items.map((item) => (
+        <span key={item.label} className="flex items-center gap-1.5">
+          <span className={`h-2 w-2 rounded-full ${item.className}`} />
+          {item.label}
+        </span>
+      ))}
+      <span className="flex items-center gap-1.5">
+        <span className="h-px w-4 bg-fill" />
+        {t('pages.topology.legend.animated')}
+      </span>
+    </div>
+  )
+}
+
+function AddRail({ onPick }: { onPick: (kind: CreateKind) => void }) {
+  const { t } = useTranslation()
+  return (
+    <div className="pointer-events-auto absolute left-3 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-0.5 rounded-xl border border-line bg-elevated p-1.5 shadow-md">
+      <span className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-fg-subtle">
+        {t('pages.topology.palette.shortTitle')}
+      </span>
+      {PALETTE.map((item) => {
+        const Icon = item.icon
+        const label = t(item.labelKey)
+        return (
+          <button
+            key={item.kind}
+            type="button"
+            draggable
+            aria-label={label}
+            title={label}
+            onDragStart={(event) => {
+              event.dataTransfer.setData('application/varman-topology', item.kind)
+              event.dataTransfer.effectAllowed = 'copy'
+            }}
+            onClick={() => onPick(item.kind)}
+            className="flex h-9 w-9 cursor-grab items-center justify-center rounded-lg text-fg-subtle transition-colors hover:bg-recessed hover:text-fg-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+          >
+            <Icon weight="duotone" className="h-4 w-4" />
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+
+/* ------------------------------------------------------------------ */
 /* Fleet view: control plane -> agents -> every site                   */
 /* ------------------------------------------------------------------ */
 
 function FleetTopology() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const { fitView } = useReactFlow()
+  const { fitView, getZoom } = useReactFlow()
   const [selection, setSelection] = useState<TopologyNodeData | null>(null)
 
   const { data: sites } = useSitesList()
@@ -154,6 +267,7 @@ function FleetTopology() {
           connected: agent.connected,
           site_id: agent.site_id ?? null,
           site_domain: agent.site_domain ?? null,
+          served_site_ids: agent.served_site_ids ?? [],
           version: agent.version ?? null,
         })),
         sites: (sites ?? []).map((site) => ({
@@ -189,158 +303,143 @@ function FleetTopology() {
     return () => window.clearTimeout(handle)
   }, [nodeCount, fitView])
 
+  // Opening the inspector shrinks the canvas. Keep the clicked node centred
+  // at the current zoom instead of letting the right-hand columns disappear
+  // under the new panel.
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       setSelection(node.data as TopologyNodeData)
+      const zoom = getZoom()
+      window.setTimeout(() => {
+        void fitView({
+          nodes: [node],
+          padding: 0.4,
+          duration: 260,
+          minZoom: zoom,
+          maxZoom: zoom,
+        })
+      }, 90)
     },
-    [],
+    [getZoom, fitView],
   )
 
-  const refreshing = agentsQuery.isFetching || versionQuery.isFetching
+  const fitAll = useCallback(() => {
+    void fitView({ padding: 0.1, duration: 300 })
+  }, [fitView])
 
   return (
-    <div className="animate-slide-up flex h-[calc(100vh-140px)] min-h-[560px] flex-col">
-      <PageHeader
-        title={t('pages.topology.fleet.title')}
-        description={t('pages.topology.fleet.description')}
-      />
+    <div
+      ref={attachGraph}
+      className={`topology-stage -mx-4 -my-6 flex h-[calc(100dvh-var(--topbar-height))] min-h-[620px] flex-col overflow-hidden sm:-mx-6 lg:-mx-8 ${
+        graphFullscreen ? 'bg-base' : 'bg-recessed'
+      }`}
+    >
+      <div className="relative flex min-h-0 flex-1">
+        <div className="relative min-w-0 flex-1">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={(changes: NodeChange<Node>[]) => onNodesChange(changes)}
+            onEdgesChange={onEdgesChange}
+            onNodeClick={onNodeClick}
+            onNodeDoubleClick={(_event, node) => {
+              void fitView({ nodes: [node], padding: 1.2, duration: 300 })
+            }}
+            onPaneClick={() => setSelection(null)}
+            nodeTypes={topologyNodeTypes}
+            edgeTypes={topologyEdgeTypes}
+            fitView
+            fitViewOptions={{ padding: 0.1 }}
+            minZoom={0.2}
+            maxZoom={2.5}
+            nodesConnectable={false}
+            proOptions={{ hideAttribution: true }}
+            className="topology-canvas [&_.react-flow__node]:cursor-grab"
+          >
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={28}
+              size={1.2}
+              color="var(--color-border-fill)"
+            />
+            <Controls showInteractive={false} />
+          </ReactFlow>
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Badge tone="neutral">
-          {t('pages.topology.fleet.agentCount', { n: agents.length })}
-        </Badge>
-        <Badge tone="neutral">
-          {t('pages.topology.fleet.siteCount', { n: (sites ?? []).length })}
-        </Badge>
-        <div className="ml-auto flex items-center gap-2">
-          <Link to="/agents">
-            <Button size="sm" variant="ghost" icon={<ArrowSquareOut className="h-4 w-4" />}>
-              {t('pages.topology.fleet.openAgents')}
-            </Button>
-          </Link>
-          <Button
-            size="sm"
-            variant="ghost"
-            title={graphFullscreen ? t('common.exitFullscreen') : t('common.expand')}
-            icon={
-              graphFullscreen ? (
-                <ArrowsIn className="h-4 w-4" />
-              ) : (
-                <ArrowsOut className="h-4 w-4" />
-              )
+          <div className="topology-vignette pointer-events-none absolute inset-0 z-10" />
+
+          <CanvasChrome
+            eyebrow={t('pages.topology.fleet.eyebrow')}
+            title={t('pages.topology.fleet.title')}
+            subtitle={t('pages.topology.fleet.canvasHint')}
+            meta={
+              <>
+                <Badge tone="neutral">
+                  {t('pages.topology.fleet.agentCount', { n: agents.length })}
+                </Badge>
+                <Badge tone="neutral">
+                  {t('pages.topology.fleet.siteCount', { n: (sites ?? []).length })}
+                </Badge>
+              </>
             }
-            onClick={() => void toggleGraphFullscreen()}
-          >
-            {graphFullscreen ? t('common.exitFullscreen') : t('common.expand')}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={<ArrowClockwise className="h-4 w-4" />}
-            loading={refreshing}
-            onClick={() => {
-              void queryClient.invalidateQueries({ queryKey: ['topology', 'fleet'] })
-            }}
-          >
-            {t('common.refresh')}
-          </Button>
-        </div>
-      </div>
-
-      <Callout
-        dismissKey="topology.fleet"
-        tone="brand"
-        className="mb-3"
-        icon={<FlowArrow weight="duotone" className="h-5 w-5" />}
-        title={t('pages.topology.fleet.overviewTitle')}
-      >
-        {t('pages.topology.fleet.overview')}
-      </Callout>
-
-      <div
-        ref={attachGraph}
-        className={`relative min-h-0 flex-1 overflow-hidden rounded-xl border border-line ${
-          graphFullscreen ? 'rounded-none border-0 bg-bg' : 'bg-recessed/30'
-        }`}
-      >
-        {graphFullscreen && (
-          <div className="absolute right-3 top-3 z-10">
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<ArrowsIn className="h-4 w-4" />}
-              onClick={() => void toggleGraphFullscreen()}
-            >
-              {t('common.exitFullscreen')}
-            </Button>
-          </div>
-        )}
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={(changes: NodeChange<Node>[]) => onNodesChange(changes)}
-          onEdgesChange={onEdgesChange}
-          onNodeClick={onNodeClick}
-          nodeTypes={topologyNodeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          minZoom={0.2}
-          maxZoom={2.5}
-          nodesConnectable={false}
-          proOptions={{ hideAttribution: true }}
-          className="[&_.react-flow__node]:cursor-grab"
-        >
-          <Background variant={BackgroundVariant.Dots} gap={22} size={1} />
-          <Controls showInteractive={false} />
-          <MiniMap
-            pannable
-            zoomable
-            nodeColor={(node) => {
-              const kind = (node.data as { kind?: string })?.kind
-              switch (kind) {
-                case 'control':
-                  return 'var(--color-text-brand)'
-                case 'agent':
-                  return 'var(--color-graph-control)'
-                case 'site':
-                  return 'var(--color-text-brand)'
-                default:
-                  return 'var(--color-border-fill)'
-              }
-            }}
+            actions={
+              <Link to="/agents">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<ArrowSquareOut className="h-4 w-4" />}
+                >
+                  {t('pages.topology.fleet.openAgents')}
+                </Button>
+              </Link>
+            }
           />
-        </ReactFlow>
+
+          <CanvasLegend
+            items={[
+              { label: t('pages.topology.fleet.legendControl'), className: 'bg-brand-ink' },
+              {
+                label: t('pages.topology.fleet.legendAgent'),
+                className: 'bg-[var(--color-graph-control)]',
+              },
+              { label: t('pages.topology.fleet.legendSite'), className: 'bg-brand-ink' },
+            ]}
+          />
+
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center">
+            <div className="pointer-events-auto flex items-center gap-0.5 rounded-lg border border-line bg-elevated p-1 shadow-md">
+              <ToolButton
+                label={t('pages.topology.fit')}
+                icon={<ArrowsOut className="h-4 w-4" />}
+                onClick={fitAll}
+              />
+              <ToolButton
+                label={graphFullscreen ? t('common.exitFullscreen') : t('common.expand')}
+                icon={
+                  graphFullscreen ? (
+                    <ArrowsIn className="h-4 w-4" />
+                  ) : (
+                    <ArrowsOut className="h-4 w-4" />
+                  )
+                }
+                onClick={() => void toggleGraphFullscreen()}
+              />
+              <ToolButton
+                label={t('common.refresh')}
+                icon={<ArrowClockwise className="h-4 w-4" />}
+                onClick={() => {
+                  void queryClient.invalidateQueries({ queryKey: ['topology', 'fleet'] })
+                }}
+              />
+            </div>
+          </div>
+        </div>
 
         {selection && (
-          <FleetInfoPanel
-            node={selection}
-            onClose={() => setSelection(null)}
-          />
+          <div className="topology-inspector-wrap absolute inset-x-3 bottom-3 z-30 h-[min(70%,620px)] overflow-hidden rounded-xl border border-line bg-elevated shadow-xl xl:relative xl:inset-auto xl:z-auto xl:h-full xl:w-[380px] xl:shrink-0 xl:rounded-none xl:border-y-0 xl:border-r-0 xl:shadow-none">
+            <FleetInfoPanel node={selection} onClose={() => setSelection(null)} />
+          </div>
         )}
-
-        <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 rounded-lg border border-line bg-elevated/95 px-3 py-1.5 text-[10px] text-fg-subtle">
-          <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-brand-ink" />
-            {t('pages.topology.fleet.legendControl')}
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-[var(--color-graph-control)]" />
-            {t('pages.topology.fleet.legendAgent')}
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-brand-ink" />
-            {t('pages.topology.fleet.legendSite')}
-          </span>
-          <span className="flex items-center gap-1">
-            <Tag className="h-3 w-3" />
-            {t('pages.topology.legend.animated')}
-          </span>
-        </div>
       </div>
-
-      <p className="mt-2 text-[11px] text-fg-subtle">
-        {t('pages.topology.fleet.hint')}
-      </p>
     </div>
   )
 }
@@ -361,10 +460,10 @@ function FleetInfoPanel({
         : t('pages.topology.kinds.site')
 
   return (
-    <aside className="absolute right-3 top-3 z-50 flex max-h-[calc(100%-24px)] w-[340px] flex-col overflow-hidden rounded-xl border border-line bg-elevated shadow-xl">
-      <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+    <aside className="topology-inspector flex h-full w-full flex-col overflow-hidden bg-elevated">
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-5 py-4">
         <div className="min-w-0">
-          <p className="truncate text-[14px] font-semibold text-fg-strong">
+          <p className="truncate text-[15px] font-semibold text-fg-strong">
             {node.label}
           </p>
           <p className="truncate text-[11px] text-fg-subtle">{kindLabel}</p>
@@ -377,7 +476,7 @@ function FleetInfoPanel({
           icon={<X className="h-4 w-4" />}
         />
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      <div className="topology-panel-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {node.subtitle && (
           <p className="mb-2 text-[12px] text-fg">{node.subtitle}</p>
         )}
@@ -419,7 +518,7 @@ function SiteTopology({ siteId }: { siteId: string }) {
   const { t } = useTranslation()
   const canWrite = useCanWrite()
   const queryClient = useQueryClient()
-  const { fitView } = useReactFlow()
+  const { fitView, getZoom } = useReactFlow()
 
   const siteQuery = useQuery({
     queryKey: ['topology', siteId, 'site'],
@@ -734,6 +833,8 @@ function SiteTopology({ siteId }: { siteId: string }) {
     window.setTimeout(() => void fitView({ padding: 0.15, duration: 300 }), 50)
   }, [graph, siteId, setNodes, setEdges, fitView])
 
+  // Docking the inspector narrows the canvas; centre the clicked node so the
+  // editor never opens on a node that just slid behind the panel.
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       setSelection({
@@ -741,8 +842,18 @@ function SiteTopology({ siteId }: { siteId: string }) {
         nodeId: node.id,
         data: node.data as TopologyNodeData,
       })
+      const zoom = getZoom()
+      window.setTimeout(() => {
+        void fitView({
+          nodes: [node],
+          padding: 0.4,
+          duration: 260,
+          minZoom: zoom,
+          maxZoom: zoom,
+        })
+      }, 90)
     },
-    [],
+    [getZoom, fitView],
   )
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -765,11 +876,13 @@ function SiteTopology({ siteId }: { siteId: string }) {
     void queryClient.invalidateQueries({ queryKey: ['sites'] })
   }, [queryClient, siteId])
 
-  const refreshing =
-    siteQuery.isFetching ||
-    wafQuery.isFetching ||
-    routesQuery.isFetching ||
-    poolsQuery.isFetching
+  const openCreate = useCallback((kind: CreateKind) => {
+    setSelection({ type: 'create', kind })
+  }, [])
+
+  const fitAll = useCallback(() => {
+    void fitView({ padding: 0.08, duration: 300 })
+  }, [fitView])
 
   if (siteQuery.isError && !siteQuery.data) {
     return (
@@ -783,138 +896,21 @@ function SiteTopology({ siteId }: { siteId: string }) {
     )
   }
 
+  const site = siteQuery.data?.site
+
   return (
-    <div className="animate-slide-up flex h-[calc(100vh-140px)] min-h-[560px] flex-col">
-      <PageHeader
-        title={t('pages.topology.title')}
-        description={t('pages.topology.description')}
-      />
-
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        {siteQuery.data && (
-          <Badge tone="brand">
-            {siteQuery.data.site.name || siteQuery.data.site.domain}
-          </Badge>
-        )}
-        <Badge tone="neutral">
-          {t('pages.topology.nodeCount', { n: nodes.length })}
-        </Badge>
-        <Badge tone="neutral">
-          {t('pages.topology.edgeCount', { n: edges.length })}
-        </Badge>
-        <div className="ml-auto flex items-center gap-2">
-          <Link to="/topology">
-            <Button size="sm" variant="ghost" icon={<FlowArrow className="h-4 w-4" />}>
-              {t('pages.topology.fleet.openFleet')}
-            </Button>
-          </Link>
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={<FlowArrow className="h-4 w-4" />}
-            onClick={autoLayout}
-          >
-            {t('pages.topology.autoLayout')}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            title={graphFullscreen ? t('common.exitFullscreen') : t('common.expand')}
-            icon={
-              graphFullscreen ? (
-                <ArrowsIn className="h-4 w-4" />
-              ) : (
-                <ArrowsOut className="h-4 w-4" />
-              )
-            }
-            onClick={() => void toggleGraphFullscreen()}
-          >
-            {graphFullscreen ? t('common.exitFullscreen') : t('common.expand')}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={<ArrowClockwise className="h-4 w-4" />}
-            loading={refreshing}
-            onClick={() => {
-              void queryClient.invalidateQueries({
-                queryKey: ['topology', siteId],
-              })
-            }}
-          >
-            {t('common.refresh')}
-          </Button>
-        </div>
-      </div>
-
-      <Callout
-        dismissKey="topology.site"
-        tone="brand"
-        className="mb-3"
-        icon={<FlowArrow weight="duotone" className="h-5 w-5" />}
-        title={t('pages.topology.overviewTitle')}
-      >
-        {t('pages.topology.overview')}
-      </Callout>
-
-      <div className="relative flex min-h-0 flex-1 gap-3">
-        {canWrite && (
-          <aside className="w-[188px] shrink-0 rounded-xl border border-line bg-elevated p-2.5">
-            <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">
-              {t('pages.topology.palette.title')}
-            </p>
-            <p className="mb-2 px-1 text-[11px] leading-4 text-fg-subtle">
-              {t('pages.topology.palette.hint')}
-            </p>
-            <div className="flex flex-col gap-1.5">
-              {PALETTE.map((item) => {
-                const Icon = item.icon
-                return (
-                  <div
-                    key={item.kind}
-                    draggable
-                    onDragStart={(event) => {
-                      event.dataTransfer.setData(
-                        'application/varman-topology',
-                        item.kind,
-                      )
-                      event.dataTransfer.effectAllowed = 'copy'
-                    }}
-                    className="flex cursor-grab items-center gap-2 rounded-lg border border-dashed border-line bg-recessed/40 px-2.5 py-2 text-[12px] text-fg hover:border-brand/40 hover:bg-brand/5"
-                  >
-                    <Icon weight="duotone" className="h-4 w-4 text-brand-ink" />
-                    <span className="truncate">{t(item.labelKey)}</span>
-                  </div>
-                )
-              })}
-            </div>
-            <p className="mt-2 flex items-center gap-1 px-1 text-[10px] text-fg-subtle">
-              <Plus weight="bold" className="h-3 w-3" />
-              {t('pages.topology.palette.dropHint')}
-            </p>
-          </aside>
-        )}
-
-        <div
-          ref={attachGraph}
-          className={`relative min-h-0 flex-1 overflow-hidden rounded-xl border border-line ${
-            graphFullscreen ? 'rounded-none border-0 bg-bg' : 'bg-recessed/30'
-          }`}
-        >
-          {graphFullscreen && (
-            <div className="absolute right-3 top-3 z-10">
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<ArrowsIn className="h-4 w-4" />}
-                onClick={() => void toggleGraphFullscreen()}
-              >
-                {t('common.exitFullscreen')}
-              </Button>
-            </div>
-          )}
+    <div
+      ref={attachGraph}
+      className={`topology-stage -mx-4 -my-6 flex h-[calc(100dvh-var(--topbar-height))] min-h-[620px] flex-col overflow-hidden sm:-mx-6 lg:-mx-8 ${
+        graphFullscreen ? 'bg-base' : 'bg-recessed'
+      }`}
+    >
+      <div className="relative flex min-h-0 flex-1">
+        <div className="relative min-w-0 flex-1">
           {graph === null ? (
-            <SkeletonCard />
+            <div className="flex h-full items-center justify-center p-6">
+              <SkeletonCard />
+            </div>
           ) : (
             <ReactFlow
               nodes={nodes}
@@ -924,85 +920,138 @@ function SiteTopology({ siteId }: { siteId: string }) {
               }}
               onEdgesChange={onEdgesChange}
               onNodeClick={onNodeClick}
+              onNodeDoubleClick={(_event, node) => {
+                void fitView({ nodes: [node], padding: 1.2, duration: 300 })
+              }}
+              onPaneClick={() => setSelection(null)}
               onNodeDragStop={persistLayout}
               onDragOver={onDragOver}
               onDrop={onDrop}
               nodeTypes={topologyNodeTypes}
+              edgeTypes={topologyEdgeTypes}
               fitView
-              fitViewOptions={{ padding: 0.15 }}
+              fitViewOptions={{ padding: 0.08 }}
               minZoom={0.2}
               maxZoom={2.5}
               nodesConnectable={false}
               proOptions={{ hideAttribution: true }}
-              className="[&_.react-flow__node]:cursor-grab"
+              className="topology-canvas [&_.react-flow__node]:cursor-grab"
             >
-              <Background variant={BackgroundVariant.Dots} gap={22} size={1} />
-              <Controls showInteractive={false} />
-              <MiniMap
-                pannable
-                zoomable
-                nodeColor={(node) => {
-                  const kind = (node.data as { kind?: string })?.kind
-                  switch (kind) {
-                    case 'client':
-                      return 'var(--color-graph-control)'
-                    case 'site':
-                      return 'var(--color-text-brand)'
-                    case 'waf':
-                      return 'var(--color-text-success)'
-                    case 'route':
-                      return 'var(--color-text-warning)'
-                    case 'upstream':
-                      return 'var(--color-text-success)'
-                    case 'layer':
-                      return 'var(--color-text-subtle)'
-                    default:
-                      return 'var(--color-border-fill)'
-                  }
-                }}
+              <Background
+                variant={BackgroundVariant.Dots}
+                gap={28}
+                size={1.2}
+                color="var(--color-border-fill)"
               />
+              <Controls showInteractive={false} />
             </ReactFlow>
           )}
 
-          <TopologyPanel
-            siteId={siteId}
-            selection={selection}
-            data={panelData ?? EMPTY_PANEL_DATA}
-            onClose={() => setSelection(null)}
-            onChanged={invalidate}
+          <div className="topology-vignette pointer-events-none absolute inset-0 z-10" />
+
+          <CanvasChrome
+            eyebrow={t('pages.topology.title')}
+            title={site ? site.name || site.domain : t('pages.topology.title')}
+            subtitle={
+              site
+                ? `${site.domain} · ${t('pages.topology.canvasHint')}`
+                : t('pages.topology.canvasHint')
+            }
+            meta={
+              <>
+                {site && <Badge tone="brand">{site.domain}</Badge>}
+                <Badge tone="neutral">
+                  {t('pages.topology.nodeCount', { n: nodes.length })}
+                </Badge>
+                <Badge tone="neutral">
+                  {t('pages.topology.edgeCount', { n: edges.length })}
+                </Badge>
+              </>
+            }
+            actions={
+              <>
+                <Link to={`/sites/${siteId}/overview`}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<CaretLeft className="h-4 w-4" />}
+                  >
+                    {t('pages.topology.backToSite')}
+                  </Button>
+                </Link>
+                <Link to="/topology">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<FlowArrow className="h-4 w-4" />}
+                  >
+                    {t('pages.topology.fleet.openFleet')}
+                  </Button>
+                </Link>
+              </>
+            }
           />
 
-          <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 rounded-lg border border-line bg-elevated/95 px-3 py-1.5 text-[10px] text-fg-subtle">
-            <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-brand-ink" />
-              {t('pages.topology.legend.site')}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-success" />
-              {t('pages.topology.legend.waf')}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-warning" />
-              {t('pages.topology.legend.route')}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-success" />
-              {t('pages.topology.legend.upstream')}
-            </span>
-            <span className="flex items-center gap-1">
-              <Tag className="h-3 w-3" />
-              {t('pages.topology.legend.animated')}
-            </span>
+          {canWrite && <AddRail onPick={openCreate} />}
+
+          <CanvasLegend
+            items={[
+              { label: t('pages.topology.legend.site'), className: 'bg-brand-ink' },
+              { label: t('pages.topology.legend.waf'), className: 'bg-success' },
+              { label: t('pages.topology.legend.route'), className: 'bg-warning' },
+              { label: t('pages.topology.legend.upstream'), className: 'bg-success' },
+            ]}
+          />
+
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center">
+            <div className="pointer-events-auto flex items-center gap-0.5 rounded-lg border border-line bg-elevated p-1 shadow-md">
+              <ToolButton
+                label={t('pages.topology.fit')}
+                icon={<ArrowsOut className="h-4 w-4" />}
+                onClick={fitAll}
+              />
+              <ToolButton
+                label={t('pages.topology.autoLayout')}
+                icon={<FlowArrow className="h-4 w-4" />}
+                onClick={autoLayout}
+              />
+              <ToolButton
+                label={graphFullscreen ? t('common.exitFullscreen') : t('common.expand')}
+                icon={
+                  graphFullscreen ? (
+                    <ArrowsIn className="h-4 w-4" />
+                  ) : (
+                    <ArrowsOut className="h-4 w-4" />
+                  )
+                }
+                onClick={() => void toggleGraphFullscreen()}
+              />
+              <ToolButton
+                label={t('common.refresh')}
+                icon={<ArrowClockwise className="h-4 w-4" />}
+                onClick={() => {
+                  void queryClient.invalidateQueries({
+                    queryKey: ['topology', siteId],
+                  })
+                }}
+              />
+            </div>
           </div>
         </div>
-      </div>
 
-      <p className="mt-2 text-[11px] text-fg-subtle">
-        {t('pages.topology.hint')}{' '}
-        <Link to={`/sites/${siteId}/origin`} className="font-medium text-link">
-          {t('pages.topology.openOrigin')}
-        </Link>
-      </p>
+        {selection && (
+          <div className="topology-inspector-wrap absolute inset-x-3 bottom-3 z-30 h-[min(70%,620px)] overflow-hidden rounded-xl border border-line bg-elevated shadow-xl xl:relative xl:inset-auto xl:z-auto xl:h-full xl:w-[420px] xl:shrink-0 xl:rounded-none xl:border-y-0 xl:border-r-0 xl:shadow-none">
+            <TopologyPanel
+              siteId={siteId}
+              selection={selection}
+              data={panelData ?? EMPTY_PANEL_DATA}
+              onClose={() => setSelection(null)}
+              onChanged={invalidate}
+              className="h-full"
+            />
+          </div>
+        )}
+      </div>
     </div>
   )
 }

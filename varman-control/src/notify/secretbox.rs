@@ -86,11 +86,6 @@ fn open_with(key: &LessSafeKey, sealed: &str) -> Option<String> {
     String::from_utf8(plain.to_vec()).ok()
 }
 
-/// True when the process has an encryption key configured.
-pub fn encryption_enabled() -> bool {
-    instance_key().is_some()
-}
-
 /// Seals a single standalone secret (e.g. the AI provider API key). Without
 /// the instance key the input is returned unchanged (no-op seal, same
 /// semantics as [`seal_config`]); a value that is already sealed is left as

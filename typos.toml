@@ -7,9 +7,26 @@ extend-ignore-re = [
 # (web/src/api/geo.ts country table), not a typo for BY/BE.
 # 'COSE' is CBOR Object Signing and Encryption (RFC 9052), the key format
 # WebAuthn authenticators report (varman-control/src/models/passkeys.rs).
+# 'PN' is the ISO 3166-1 alpha-2 code for the Pitcairn Islands
+# (web/src/components/charts/isoNumeric.ts), not a typo for PH/PNG.
 [default.extend-words]
 BA = "BA"
 COSE = "COSE"
+PN = "PN"
+# 'Hel' is a streaming delta in the assistant turn test
+# (web/src/components/assistant/turn.test.ts), not prose.
+# 'FO' is the ISO 3166-1 alpha-2 code for the Faroe Islands; 'Nam' is part of
+# the country name "Viet Nam" in the IP-list catalogue.
+Hel = "Hel"
+FO = "FO"
+Nam = "Nam"
+# 'allert' is an intentionally misspelled XSS payload token in the detector
+# tests (varman-waf), not prose.
+allert = "allert"
+# Accepted spelling used by the existing code and tests.
+unparseable = "unparseable"
+# '$nin' is a MongoDB query operator (NoSQL detector).
+nin = "nin"
 
 [files]
 extend-exclude = ["*.md", "*.toml"]

@@ -13,6 +13,7 @@ use sea_orm::{
     QueryOrder,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 use varman_protocol::control_plane::{
     BlockIpCommand, PurgeCacheCommand, RestartAgentCommand, ServerCommand,
@@ -20,28 +21,17 @@ use varman_protocol::control_plane::{
 
 use crate::api::common::{
     load_site_read, non_empty, parse_optional_datetime, parse_uuid, query_all,
-    require_write, scope_site, Page, Pagination,
+    require_write, Page, Pagination,
 };
 use crate::api::error::ApiError;
 use crate::api::keys::mint_key;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
+use crate::grpc::command_type;
 use crate::grpc::config::now_timestamp;
 use crate::models::{
     agent, agent_status, api_key, host_sample, permission, site,
 };
-
-/// `varman.CommandType` values, spelled out so the control plane does not depend
-/// on prost's enum variant naming.
-pub mod command_type {
-    pub const RULE_UPDATE: i32 = 1;
-    pub const CONFIG_RELOAD: i32 = 2;
-    pub const BLOCK_IP: i32 = 3;
-    pub const UNBLOCK_IP: i32 = 4;
-    pub const PURGE_CACHE: i32 = 5;
-    pub const UPDATE_SITE: i32 = 6;
-    pub const RESTART_AGENT: i32 = 7;
-}
 
 /// Agent row enriched with live connection information.
 #[derive(Debug, Serialize)]
@@ -49,6 +39,11 @@ pub struct AgentResponse {
     pub id: Uuid,
     pub site_id: Option<Uuid>,
     pub site_domain: Option<String>,
+    /// Sites this agent currently serves. A bound agent serves exactly its
+    /// site; an unbound agent (all-in-one, or a fleet node enrolled with a
+    /// key owned by an administrator) serves every site owned by its API
+    /// key's user.
+    pub served_site_ids: Vec<Uuid>,
     pub hostname: String,
     pub ip_address: String,
     /// Egress address as seen from the public internet, empty when unknown.
@@ -273,10 +268,14 @@ async fn list(
         Some(raw) => Some(parse_uuid(&raw, "site id")?),
         None => None,
     };
-    if let Some(id) = site_filter {
-        // Enforces visibility even when the caller passes a site they cannot see.
-        load_site_read(&state.db, id, &current).await?;
-    }
+    let site_row = match site_filter {
+        Some(id) => {
+            // Enforces visibility even when the caller passes a site they
+            // cannot see.
+            Some(load_site_read(&state.db, id, &current).await?)
+        },
+        None => None,
+    };
 
     let mut condition = Condition::all();
     if !current.is_admin() {
@@ -308,8 +307,25 @@ async fn list(
                 ),
         );
     }
-    if let Some(id) = site_filter {
-        condition = condition.add(agent::Column::SiteId.eq(id));
+    if let (Some(id), Some(row)) = (site_filter, site_row.as_ref()) {
+        // A bound agent appears under its site. An unbound agent serves every
+        // site owned by its API key's user, so it must appear here too — the
+        // previous exact `site_id` filter hid the all-in-one agent from every
+        // site-scoped view.
+        let owner_key_ids: Vec<Uuid> = api_key::Entity::find()
+            .filter(api_key::Column::UserId.eq(row.user_id))
+            .all(&state.db)
+            .await?
+            .into_iter()
+            .map(|key| key.id)
+            .collect();
+        condition = condition.add(
+            Condition::any().add(agent::Column::SiteId.eq(id)).add(
+                Condition::all()
+                    .add(agent::Column::SiteId.is_null())
+                    .add(agent::Column::ApiKeyId.is_in(owner_key_ids)),
+            ),
+        );
     }
     if let Some(status) = non_empty(&query.status) {
         if !agent_status::is_valid(&status) {
@@ -632,34 +648,83 @@ pub async fn load_agent(
     Ok(row)
 }
 
-/// Attaches live connection state and site domain to agent rows.
+/// Attaches live connection state and the set of sites each agent serves.
 async fn enrich(
     state: &AppState,
     rows: Vec<agent::Model>,
 ) -> Result<Vec<AgentResponse>, ApiError> {
-    let domains: std::collections::HashMap<Uuid, String> = {
-        let ids: Vec<Uuid> =
-            rows.iter().filter_map(|row| row.site_id).collect();
-        if ids.is_empty() {
-            Default::default()
-        } else {
-            site::Entity::find()
-                .filter(site::Column::Id.is_in(ids))
-                .all(&state.db)
-                .await?
-                .into_iter()
-                .map(|row| (row.id, row.domain))
-                .collect()
+    // Bound rows resolve to their one site. Unbound rows resolve through the
+    // API key that registered them: the key's owner is the tenant whose whole
+    // site list the edge carries (the same rule `agent_visible_site_ids`
+    // uses when it pushes config).
+    let unbound_key_ids: Vec<Uuid> = rows
+        .iter()
+        .filter(|row| row.site_id.is_none())
+        .filter_map(|row| row.api_key_id)
+        .collect();
+    let mut keys: HashMap<Uuid, Uuid> = HashMap::new();
+    if !unbound_key_ids.is_empty() {
+        keys = api_key::Entity::find()
+            .filter(api_key::Column::Id.is_in(unbound_key_ids))
+            .all(&state.db)
+            .await?
+            .into_iter()
+            .map(|key| (key.id, key.user_id))
+            .collect();
+    }
+    let mut user_ids: Vec<Uuid> = keys.values().copied().collect();
+    user_ids.sort();
+    user_ids.dedup();
+    let mut sites_by_user: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    if !user_ids.is_empty() {
+        for site in site::Entity::find()
+            .filter(site::Column::UserId.is_in(user_ids))
+            .all(&state.db)
+            .await?
+        {
+            sites_by_user.entry(site.user_id).or_default().push(site.id);
         }
+    }
+
+    let mut served_by_agent: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    for row in &rows {
+        let served = match row.site_id {
+            Some(site_id) => vec![site_id],
+            None => row
+                .api_key_id
+                .and_then(|key_id| keys.get(&key_id))
+                .and_then(|user_id| sites_by_user.get(user_id))
+                .cloned()
+                .unwrap_or_default(),
+        };
+        served_by_agent.insert(row.id, served);
+    }
+
+    let mut served_site_ids: Vec<Uuid> =
+        served_by_agent.values().flatten().copied().collect();
+    served_site_ids.sort();
+    served_site_ids.dedup();
+    let domains: HashMap<Uuid, String> = if served_site_ids.is_empty() {
+        HashMap::new()
+    } else {
+        site::Entity::find()
+            .filter(site::Column::Id.is_in(served_site_ids))
+            .all(&state.db)
+            .await?
+            .into_iter()
+            .map(|row| (row.id, row.domain))
+            .collect()
     };
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let connected = state.agents.is_connected(&row.id).await;
+        let agent_sites = served_by_agent.remove(&row.id).unwrap_or_default();
         out.push(AgentResponse {
             id: row.id,
             site_domain: row.site_id.and_then(|id| domains.get(&id).cloned()),
             site_id: row.site_id,
+            served_site_ids: agent_sites,
             hostname: row.hostname,
             ip_address: row.ip_address,
             public_ip: row.public_ip,
@@ -763,18 +828,6 @@ mod server_command_payload {
     pub use varman_protocol::control_plane::server_command::Payload::{
         BlockIp, PurgeCache, RestartAgent, UnblockIp,
     };
-}
-
-/// Filters a site scope for the log endpoints, shared with [`crate::api::logs`].
-pub fn resolve_site_scope(
-    requested: &Option<String>,
-    current: &AuthUser,
-) -> Result<Option<Uuid>, ApiError> {
-    let parsed = match non_empty(requested) {
-        Some(raw) => Some(parse_uuid(&raw, "site id")?),
-        None => None,
-    };
-    scope_site(parsed, current)
 }
 
 #[cfg(test)]

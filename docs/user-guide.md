@@ -419,7 +419,11 @@ Sites → [site] → Error Pages → Add
 
 **Security Events**: `Logs → Security`
 - Filtered by site, rule, action, time range
-- Shows matched rule, client IP, request details
+- Shows matched rule, client IP, request details; the **Rule** column names
+  the deciding rule and keeps the first match as a secondary line
+- Paste a 16-character request id into the search box (or use the global
+  search) to jump to the request; open the event to copy the id, switch to
+  its access log, or search every event for a matched rule
 
 **Access Logs**: `Logs → Access`
 - All proxied requests with timing information

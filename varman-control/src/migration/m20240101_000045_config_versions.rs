@@ -3,7 +3,7 @@
 //! Every configuration change that reaches the agents records a snapshot of
 //! the affected scope here: `site_id` is `NULL` for deployment-wide settings
 //! (defense mode, global error pages) and the site's UUID for site policies.
-//! The console and the `pingwaf config` CLI list these rows and restore a
+//! The console and the `varman config` CLI list these rows and restore a
 //! chosen snapshot back onto the policy tables.
 
 use sea_orm_migration::prelude::*;

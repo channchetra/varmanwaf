@@ -65,7 +65,7 @@ function Chips({ chips }: { chips?: TopologyNodeData['chips'] }) {
 
 /** Left/right connection points, by node kind. */
 function Handles({ kind }: { kind: TopologyNodeData['kind'] }) {
-  const dot = '!h-2.5 !w-2.5 !border-2 !border-elevated !bg-brand'
+  const dot = 'topology-handle'
   const left =
     kind === 'site' ||
     kind === 'waf' ||
@@ -99,20 +99,39 @@ function nodeIcon(kind: TopologyNodeData['kind'], layerKind?: LayerKind): Icon {
   return Gear
 }
 
+function delay(order?: number) {
+  return `${Math.min((order ?? 0) * 20, 280)}ms`
+}
+
+function nodeAria(data: TopologyNodeData) {
+  return [data.label, data.subtitle, ...(data.chips ?? []).map((c) => c.text)]
+    .filter(Boolean)
+    .join(', ')
+}
+
 /**
  * One node component for every kind: the shape is shared, the accent colour,
  * icon and chips vary. Placeholder nodes render dashed and muted so an empty
  * section is visibly "not configured" rather than missing.
+ *
+ * Leaf nodes use a pill silhouette; core stages use the console's 12 px card
+ * radius. The wrapper is keyboard-operable: Enter/Space dispatches the click
+ * React Flow already listens for, so the inspector is reachable without a
+ * pointer.
  */
-export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
-  const { kind, label, subtitle, chips, layerKind, placeholder, healthy } = data
-  // createElement keeps the icon out of a capitalized render-time variable
-  // (react-hooks/static-components).
+export function TopologyNode({
+  data,
+  selected,
+}: NodeProps<Node<TopologyNodeData>>) {
+  const { kind, label, subtitle, chips, layerKind, placeholder, healthy, order } =
+    data
   const icon = createElement(nodeIcon(kind, layerKind), {
     weight: 'duotone',
-    className: 'h-3.5 w-3.5',
+    className: 'h-4 w-4',
   })
 
+  const isLayer = kind === 'layer'
+  const isPill = kind === 'client' || kind === 'upstream'
   const accent =
     placeholder
       ? 'border-dashed border-line bg-recessed/60 text-fg-subtle'
@@ -134,15 +153,28 @@ export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
                       : 'border-success/30 bg-success/12'
                     : 'border-line bg-elevated'
 
-  const isLayer = kind === 'layer'
-
   // Layer rows are compact: one line - icon, label, state chip - so all ten
   // layers fit the canvas without shrinking the whole graph.
   if (isLayer) {
     const chip = chips?.[0]
     return (
-      <div className="flex w-[230px] items-center gap-2 rounded-lg border-2 border-line bg-elevated px-2.5 py-1.5 shadow-sm transition-shadow hover:shadow-md">
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-brand/12 text-brand-ink">
+      <div
+        className={cn(
+          'topology-node topology-node--row flex w-[272px] items-center gap-2 rounded-lg border border-line bg-elevated px-2.5 py-1.5 shadow-sm',
+          selected && 'topology-node--selected',
+        )}
+        style={{ animationDelay: delay(order) }}
+        tabIndex={0}
+        role="button"
+        aria-label={nodeAria(data)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            event.currentTarget.click()
+          }
+        }}
+      >
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-brand/12 text-brand-ink">
           {icon}
         </span>
         <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-fg-strong">
@@ -151,7 +183,7 @@ export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
         {chip && (
           <span
             className={cn(
-              'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium leading-4',
+              'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-4',
               TONE_CLASS[chip.tone] ?? TONE_CLASS.neutral,
             )}
           >
@@ -162,19 +194,72 @@ export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
     )
   }
 
+  if (isPill) {
+    return (
+      <div
+        className={cn(
+          'topology-node topology-node--pill flex w-[230px] items-center gap-2 rounded-full border-2 px-3 py-2 shadow-sm',
+          accent,
+          selected && 'topology-node--selected',
+        )}
+        style={{ animationDelay: delay(order) }}
+        tabIndex={0}
+        role="button"
+        aria-label={nodeAria(data)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            event.currentTarget.click()
+          }
+        }}
+      >
+        <Handles kind={kind} />
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-elevated text-brand-ink">
+          {icon}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[12px] font-semibold leading-4 text-fg-strong">
+            {label}
+          </p>
+          {subtitle && (
+            <p
+              className="truncate text-[10px] leading-4 text-fg-subtle"
+              title={subtitle}
+            >
+              {subtitle}
+            </p>
+          )}
+        </div>
+        {placeholder && (
+          <Warning weight="duotone" className="h-3.5 w-3.5 shrink-0 text-fg-warning" />
+        )}
+      </div>
+    )
+  }
+
   return (
     <div
       className={cn(
-        'rounded-xl border-2 px-3 py-2 shadow-sm transition-shadow hover:shadow-md',
-        isLayer ? 'w-[230px]' : 'w-[230px]',
+        'topology-node topology-node--core w-[260px] rounded-xl border-2 px-3.5 py-3 shadow-sm',
         accent,
+        selected && 'topology-node--selected',
       )}
+      style={{ animationDelay: delay(order) }}
+      tabIndex={0}
+      role="button"
+      aria-label={nodeAria(data)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          event.currentTarget.click()
+        }
+      }}
     >
       <Handles kind={kind} />
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2.5">
         <span
           className={cn(
-            'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
+            'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
             placeholder ? 'bg-recessed text-fg-subtle' : 'bg-elevated text-brand-ink',
           )}
         >
@@ -185,7 +270,10 @@ export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
             {label}
           </p>
           {subtitle && (
-            <p className="truncate text-[11px] leading-4 text-fg-subtle" title={subtitle}>
+            <p
+              className="truncate text-[11px] leading-4 text-fg-subtle"
+              title={subtitle}
+            >
               {subtitle}
             </p>
           )}
@@ -200,24 +288,46 @@ export function TopologyNode({ data }: NodeProps<Node<TopologyNodeData>>) {
 }
 
 /** Group frame: a titled box the child nodes live inside. */
-export function TopologyGroupNode({ data }: NodeProps<Node<TopologyNodeData>>) {
-  const { label, subtitle, chips, placeholder } = data
+export function TopologyGroupNode({
+  data,
+  selected,
+}: NodeProps<Node<TopologyNodeData>>) {
+  const { label, subtitle, chips, placeholder, order } = data
+  // The security-layers, routing and pool frames are real graph endpoints:
+  // the WAF enters the layers frame, layers feed routing, and a route lands on
+  // a pool. Without these handles React Flow silently drops those edges.
   return (
     <div
       className={cn(
-        'h-full w-full rounded-2xl border-2',
+        'topology-group relative h-full w-full rounded-xl border',
         placeholder
-          ? 'border-dashed border-line bg-recessed/40'
-          : 'border-line bg-recessed/50',
+          ? 'border-dashed border-line bg-recessed/30'
+          : 'border-line bg-recessed/40',
+        selected && 'topology-group--selected',
       )}
+      style={{ animationDelay: delay(order) }}
     >
-      <div className="flex items-start gap-2 px-3 py-2">
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="topology-handle"
+        isConnectable={false}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="topology-handle"
+        isConnectable={false}
+      />
+      <div className="flex items-start gap-2 px-4 py-3">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[12px] font-semibold uppercase tracking-wide text-fg-subtle">
+          <p className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-fg-subtle">
             {label}
           </p>
           {subtitle && (
-            <p className="truncate text-[11px] text-fg-subtle">{subtitle}</p>
+            <p className="mt-0.5 truncate text-[11px] text-fg-subtle">
+              {subtitle}
+            </p>
           )}
         </div>
         <Chips chips={chips} />

@@ -45,6 +45,8 @@ use pingap_certificate::{
 use pingap_config::PingapConfig;
 use pingap_config::{ConfigManager, ETCD_PROTOCOL};
 use pingap_core::BackgroundTaskService;
+// Link anchor: `pingap-imageoptim` registers its plugin from a `#[ctor]`, so
+// the crate has to be linked even though nothing here names a symbol from it.
 #[cfg(feature = "imageoptim")]
 #[allow(unused_imports)]
 use pingap_imageoptim::ImageOptim;

@@ -314,7 +314,6 @@ export const RULE_ACTIONS: RuleAction[] = [
   'allow',
 ]
 export const RULE_MODES: RuleMode[] = ['off', 'monitor', 'block']
-export const RULE_PHASES: RulePhase[] = ['request', 'response', 'custom']
 
 /** `models::rules::rule_groups::Model` */
 export interface RuleGroup {
@@ -842,6 +841,9 @@ export interface Agent {
   id: string
   site_id: string | null
   site_domain: string | null
+  /** Every site this agent serves; unbound agents serve all sites owned by
+   *  their API key's user. */
+  served_site_ids: string[]
   hostname: string
   ip_address: string
   /** Egress address as seen from the public internet; null when unknown. */
@@ -1171,8 +1173,6 @@ export interface GenerateControlPlaneCertificateRequest {
 }
 
 /* ── API keys ─────────────────────────────────────────────────────── */
-
-export type ApiKeyPermission = 'agent' | 'read' | 'write'
 
 /** `api::keys::ApiKeyResponse` — `key` is only set by `POST /keys`. */
 export interface ApiKey {

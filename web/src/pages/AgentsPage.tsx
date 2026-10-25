@@ -50,6 +50,14 @@ const STATUS_DOT: Record<AgentStatus, string> = {
   offline: 'bg-fg-subtle/50',
 }
 
+/** Site cell: a binding, the unbound agent's full tenant scope, or truly none. */
+function agentSiteLabel(agent: Agent, t: (key: string, opts?: Record<string, unknown>) => string): string {
+  if (agent.site_domain) return agent.site_domain
+  const served = agent.served_site_ids?.length ?? 0
+  if (served > 0) return t('pages.agents.allSitesCount', { count: served })
+  return t('pages.agents.unassigned')
+}
+
 /** 30s — matches the heartbeat cadence the agents report on. */
 const REFRESH_MS = 30_000
 
@@ -206,10 +214,18 @@ export function AgentsPage() {
     {
       key: 'site',
       header: t('pages.agents.site'),
-      accessor: (a) => a.site_domain ?? '',
+      accessor: (a) =>
+        a.site_domain ??
+        ((a.served_site_ids?.length ?? 0) > 0
+          ? `all sites (${a.served_site_ids.length})`
+          : ''),
       cell: (a) =>
         a.site_domain ? (
           <span className="pw-mono truncate text-[13px] text-fg">{a.site_domain}</span>
+        ) : (a.served_site_ids?.length ?? 0) > 0 ? (
+          <span className="text-[13px] text-fg" title={t('pages.agents.allSitesHint')}>
+            {t('pages.agents.allSitesCount', { count: a.served_site_ids.length })}
+          </span>
         ) : (
           <span className="text-[13px] text-fg-subtle">{t('pages.agents.unassigned')}</span>
         ),
@@ -576,7 +592,7 @@ export function AgentsPage() {
             </div>
 
             <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
-              <DetailRow label={t('pages.agents.site')} value={detail.site_domain ?? t('pages.agents.unassigned')} />
+              <DetailRow label={t('pages.agents.site')} value={agentSiteLabel(detail, t)} />
               <DetailRow label={t('pages.agents.publicIp')} value={detail.public_ip} mono />
               <DetailRow label={t('pages.agents.privateIp')} value={detail.private_ip} mono />
               <DetailRow label={t('pages.agents.ipAddress')} value={detail.ip_address} />
@@ -653,7 +669,11 @@ export function AgentsPage() {
             <p className="mt-1.5 text-xs text-fg-subtle">
               {pendingDelete.site_domain
                 ? t('pages.agents.removeSiteNote', { domain: pendingDelete.site_domain })
-                : t('pages.agents.removeUnassignedNote')}
+                : (pendingDelete.served_site_ids?.length ?? 0) > 0
+                  ? t('pages.agents.removeAllSitesNote', {
+                      count: pendingDelete.served_site_ids.length,
+                    })
+                  : t('pages.agents.removeUnassignedNote')}
             </p>
           </div>
         )}

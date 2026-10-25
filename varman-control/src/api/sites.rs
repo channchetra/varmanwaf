@@ -505,9 +505,7 @@ pub struct TlsPostureRequest {
 
 /// Wraps the deserialized value in `Some`, so `Option<Option<T>>` fields can
 /// tell "absent" (`None`) from "explicitly null" (`Some(None)`).
-fn deserialize_some<'de, T, D>(
-    deserializer: D,
-) -> Result<Option<T>, D::Error>
+fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     T: serde::Deserialize<'de>,
     D: serde::Deserializer<'de>,
@@ -2244,9 +2242,10 @@ mod tests {
         .expect("absent field parses");
         assert_eq!(absent.certificate_id, None);
 
-        let cleared: TlsPostureRequest =
-            serde_json::from_value(serde_json::json!({ "certificate_id": null }))
-                .expect("null parses");
+        let cleared: TlsPostureRequest = serde_json::from_value(
+            serde_json::json!({ "certificate_id": null }),
+        )
+        .expect("null parses");
         assert_eq!(cleared.certificate_id, Some(None));
 
         let selected: TlsPostureRequest =

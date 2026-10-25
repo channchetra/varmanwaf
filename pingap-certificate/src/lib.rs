@@ -240,20 +240,6 @@ impl Certificate {
         }
         self.not_after - ts > days * 24 * 3600
     }
-    /// Returns the PEM-encoded certificate data
-    ///
-    /// # Returns
-    /// * `Vec<u8>` - The certificate data as bytes
-    pub fn get_cert(&self) -> Vec<u8> {
-        self.pem.clone()
-    }
-    /// Returns the PEM-encoded private key data
-    ///
-    /// # Returns
-    /// * `Vec<u8>` - The private key data as bytes
-    pub fn get_key(&self) -> Vec<u8> {
-        self.key.clone()
-    }
 }
 
 pub use dynamic_certificate::*;

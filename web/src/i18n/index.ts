@@ -11,7 +11,6 @@ import en from './locales/en/common.json'
  * place so future locales can be added deliberately.
  */
 export const supportedLanguages = ['en'] as const
-export type SupportedLanguage = (typeof supportedLanguages)[number]
 
 void i18n.use(initReactI18next).init({
   resources: { en: { common: en } },
@@ -28,11 +27,6 @@ void i18n.use(initReactI18next).init({
     useSuspense: false,
   },
 })
-
-/** Always resolves to the sole supported base code. */
-export function normalizeLanguage(_code?: string): SupportedLanguage {
-  return 'en'
-}
 
 /** Region-tagged locale the date formatters use. */
 setDisplayLocale('en-US')

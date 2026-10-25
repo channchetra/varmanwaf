@@ -42,9 +42,28 @@ export interface ExplanationStep {
   data: unknown
 }
 
+/** One rule or signature that fired while evaluating the request. */
+export interface MatchedRule {
+  id: string
+  name: string
+  /** managed | signature | crs_import | policy | site_rule | patch | detector | unknown */
+  source: string
+  status: 'hit' | 'unknown'
+  severity: number | null
+  action: string | null
+  category: string | null
+  /** The rule whose action produced the verdict. */
+  deciding: boolean
+  evidence: string | null
+  detail: string
+  data: unknown
+}
+
 export interface EventExplanation {
   verdict: string
   blocked_by: string | null
+  /** Absent on older control planes; treat as an empty list. */
+  matched_rules?: MatchedRule[]
   steps: ExplanationStep[]
   notes: string[]
 }

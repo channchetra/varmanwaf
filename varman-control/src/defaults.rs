@@ -21,9 +21,6 @@ use crate::models::{cache_rules, ip_groups, mode, rule, rule_groups};
 
 /// Name of the group that holds the built-in WAF rules.
 pub const WAF_DEFAULT_GROUP_NAME: &str = "VarmanWAF built-in";
-/// Description shown next to the group in the dashboard.
-pub const WAF_DEFAULT_GROUP_DESCRIPTION: &str =
-    "Built-in managed rules seeded in monitor mode; enable per family as you tune.";
 
 /// Official Cloudflare IP list — the default subscription every install gets.
 pub const CLOUDFLARE_IPS_URL: &str = "https://api.cloudflare.com/client/v4/ips";

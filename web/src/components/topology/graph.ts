@@ -59,6 +59,8 @@ export interface TopologyNodeData extends Record<string, unknown> {
   layerKind?: LayerKind
   /** Entity id (site, route, pool, upstream, ...) for the panel editor. */
   entityId?: string
+  /** Layout order, used only for the one-time reveal stagger. */
+  order?: number
   placeholder?: boolean
   healthy?: boolean
 }
@@ -132,11 +134,11 @@ export interface TopologyGraph {
 /** Column origins (x) of the layered layout. */
 export const COLUMN = {
   client: 0,
-  site: 250,
-  waf: 520,
-  layers: 800,
-  routes: 1120,
-  pools: 1450,
+  site: 280,
+  waf: 590,
+  layers: 910,
+  routes: 1260,
+  pools: 1590,
 } as const
 
 export const LAYER_GROUP_ID = 'group-layers'
@@ -144,38 +146,35 @@ export const ROUTE_GROUP_ID = 'group-routes'
 export const DEFAULT_ROUTE_ID = 'route-default'
 export const PLACEHOLDER_POOL_ID = 'pool-placeholder'
 
-export const GROUP_WIDTH = 260
+export const GROUP_WIDTH = 300
 /** Compact rows: ten layers must fit one screen without shrinking the graph. */
-export const LAYER_NODE_HEIGHT = 46
-export const ROUTE_NODE_HEIGHT = 92
-export const UPSTREAM_NODE_HEIGHT = 60
-export const POOL_WIDTH = 300
-
-function edgeStyle(tls = false) {
-  return tls
-    ? { stroke: 'var(--color-text-warning)', strokeWidth: 2, strokeDasharray: '6 3' }
-    : { stroke: 'var(--color-text-subtle)', strokeWidth: 1.6 }
-}
+export const LAYER_NODE_HEIGHT = 48
+export const ROUTE_NODE_HEIGHT = 100
+export const UPSTREAM_NODE_HEIGHT = 64
+export const POOL_WIDTH = 320
 
 function link(
   id: string,
   source: string,
   target: string,
-  options: { label?: string; tls?: boolean } = {},
+  options: { label?: string; tls?: boolean; live?: boolean } = {},
 ): Edge {
   const tls = options.tls ?? false
   return {
     id,
     source,
     target,
-    animated: true,
+    type: 'signal',
+    animated: false,
     label: options.label,
+    data: { live: options.live ?? false, tls },
     labelStyle: { fill: tls ? 'var(--color-text-warning)' : 'var(--color-text-subtle)', fontSize: 10 },
     labelBgStyle: { fill: 'var(--color-bg-elevated)', fillOpacity: 0.85 },
-    style: edgeStyle(tls),
     markerEnd: {
       type: MarkerType.ArrowClosed,
       color: tls ? 'var(--color-text-warning)' : 'var(--color-text-subtle)',
+      width: 12,
+      height: 12,
     },
   }
 }
@@ -252,8 +251,14 @@ export function buildTopologyGraph(input: TopologyInput): TopologyGraph {
     },
   })
 
-  edges.push(link('client-site', 'client', 'site', { label: 'TLS' }))
-  edges.push(link('site-waf', 'site', 'waf'))
+  edges.push(
+    link('client-site', 'client', 'site', {
+      label: 'TLS',
+      tls: true,
+      live: site.status === 'active',
+    }),
+  )
+  edges.push(link('site-waf', 'site', 'waf', { live: waf.waf_enabled }))
 
   // --- Security layers group ---------------------------------------------
   const layerNodes = layers.map((layer, index) => ({
@@ -288,7 +293,7 @@ export function buildTopologyGraph(input: TopologyInput): TopologyGraph {
   })
   nodes.push(...layerNodes)
 
-  edges.push(link('waf-layers', 'waf', LAYER_GROUP_ID))
+  edges.push(link('waf-layers', 'waf', LAYER_GROUP_ID, { live: waf.waf_enabled }))
 
   // --- Routing group ------------------------------------------------------
   const routeNodes = (
@@ -355,7 +360,7 @@ export function buildTopologyGraph(input: TopologyInput): TopologyGraph {
   })
   nodes.push(...routeNodes)
 
-  edges.push(link('layers-routes', LAYER_GROUP_ID, ROUTE_GROUP_ID))
+  edges.push(link('layers-routes', LAYER_GROUP_ID, ROUTE_GROUP_ID, { live: true }))
 
   // --- Origin pools, each grouping its targets ----------------------------
   const poolsToRender: TopologyPool[] =
@@ -449,7 +454,9 @@ export function buildTopologyGraph(input: TopologyInput): TopologyGraph {
           ],
         },
       })
-      edges.push(link(`pool-${pool.id}-${up.id}`, poolId, `upstream-${up.id}`))
+      // Targets live inside the pool frame: containment is the pool→target
+      // relationship. A separate edge would leave the group's right-hand
+      // handle and loop backwards to a child inside the same frame.
     })
 
     // Route → pool edges (each route knows its pool; a route naming a pool
@@ -467,25 +474,21 @@ export function buildTopologyGraph(input: TopologyInput): TopologyGraph {
         ? targetPool == null
         : targetPool === pool.id
       if (isTarget) {
-        edges.push(link(`route-pool-${route.id}-${pool.id}`, route.id, poolId))
+        edges.push(
+          link(`route-pool-${route.id}-${pool.id}`, route.id, poolId, {
+            live: routeEntity?.enabled ?? false,
+          }),
+        )
       }
     }
 
     poolY += height + 28
   }
 
+  nodes.forEach((node, index) => {
+    node.data = { ...node.data, order: index }
+  })
   return { nodes, edges }
-}
-
-/** Fit the graph into a fixed viewport height for layout previews/tests. */
-export function graphBounds(graph: TopologyGraph) {
-  let maxX = 0
-  let maxY = 0
-  for (const node of graph.nodes) {
-    maxX = Math.max(maxX, node.position.x)
-    maxY = Math.max(maxY, node.position.y)
-  }
-  return { width: maxX, height: maxY }
 }
 
 /* ------------------------------------------------------------------ */
@@ -500,6 +503,9 @@ export interface FleetAgent {
   connected: boolean
   site_id: string | null
   site_domain: string | null
+  /** Every site this agent serves; unbound agents serve every site owned by
+   *  the API key's user. */
+  served_site_ids: string[]
   version: string | null
 }
 
@@ -522,17 +528,21 @@ export interface FleetInput {
 
 export const FLEET_COLUMN = {
   control: 0,
-  agents: 430,
-  sites: 900,
+  agents: 440,
+  sites: 960,
 } as const
 
-export const FLEET_ROW_HEIGHT = 92
+export const FLEET_ROW_HEIGHT = 104
 
 /**
  * The fleet graph: the control plane, every registered agent (edge node) and
- * every site in one view - instead of one site at a time. Each agent links to
- * the site it is bound to; unbound agents and sites without an agent are
- * shown as such rather than hidden.
+ * every site in one view - instead of one site at a time.
+ *
+ * Edges are control plane → agent → site. A bound agent links to its one site;
+ * an unbound agent (all-in-one, or a node enrolled with an administrator key)
+ * serves every site owned by its API key's user, so it links to all of them.
+ * There is deliberately no control-plane → site edge: the control plane pushes
+ * config to agents, never to a site directly.
  */
 export function buildFleetGraph(input: FleetInput): TopologyGraph {
   const { controlPlane, agents, sites } = input
@@ -602,21 +612,38 @@ export function buildFleetGraph(input: FleetInput): TopologyGraph {
             ...(agent.connected
               ? []
               : [{ text: 'disconnected', tone: 'warning' as ChipTone }]),
+            ...(agent.site_id
+              ? []
+              : agent.served_site_ids.length > 0
+                ? [{
+                    text: `all sites (${agent.served_site_ids.length})`,
+                    tone: 'info' as ChipTone,
+                  }]
+                : [{ text: 'unassigned', tone: 'warning' as ChipTone }]),
             ...(agent.version
               ? [{ text: `v${agent.version}`, tone: 'neutral' as ChipTone }]
               : []),
           ],
         },
       })
-      edges.push(link(`control-${agent.id}`, 'control', `agent-${agent.id}`))
+      edges.push(
+        link(`control-${agent.id}`, 'control', `agent-${agent.id}`, {
+          live: agent.connected,
+        }),
+      )
 
-      const boundSite = agent.site_id ? siteById.get(agent.site_id) : undefined
-      if (boundSite) {
+      const servedSiteIds = agent.site_id
+        ? [agent.site_id]
+        : agent.served_site_ids
+      for (const siteId of servedSiteIds) {
+        const servedSite = siteById.get(siteId)
+        if (!servedSite) continue
         edges.push(
           link(
-            `agent-${agent.id}-site-${boundSite.id}`,
+            `agent-${agent.id}-site-${servedSite.id}`,
             `agent-${agent.id}`,
-            `site-${boundSite.id}`,
+            `site-${servedSite.id}`,
+            { live: agent.connected && servedSite.status === 'active' },
           ),
         )
       }
@@ -637,7 +664,14 @@ export function buildFleetGraph(input: FleetInput): TopologyGraph {
     })
   } else {
     sites.forEach((site, index) => {
-      const agent = agents.find((a) => a.site_id === site.id)
+      const servingAgents = agents.filter(
+        (agent) =>
+          agent.site_id === site.id ||
+          (!agent.site_id && agent.served_site_ids.includes(site.id)),
+      )
+      const boundAgent = servingAgents.some(
+        (agent) => agent.site_id === site.id,
+      )
       nodes.push({
         id: `site-${site.id}`,
         type: 'topology',
@@ -655,20 +689,22 @@ export function buildFleetGraph(input: FleetInput): TopologyGraph {
               text: site.status,
               tone: site.status === 'active' ? 'success' : 'warning',
             },
-            // Bindings are only shown when the platform records one; in
-            // all-in-one deployments the single agent serves every site and
-            // no per-site binding row exists, so no chip is invented.
-            ...(agent
-              ? [{ text: 'agent bound', tone: 'success' as ChipTone }]
-              : []),
+            boundAgent
+              ? { text: 'agent bound', tone: 'success' as ChipTone }
+              : servingAgents.length > 0
+                ? {
+                    text: `served by ${servingAgents.length}`,
+                    tone: 'success' as ChipTone,
+                  }
+                : { text: 'no agent', tone: 'warning' as ChipTone },
           ],
         },
       })
-      // The control plane pushes every site's bundle to the edge fleet; draw
-      // that link so the flow is complete even without binding rows.
-      edges.push(link(`control-site-${site.id}`, 'control', `site-${site.id}`))
     })
   }
 
+  nodes.forEach((node, index) => {
+    node.data = { ...node.data, order: index }
+  })
   return { nodes, edges }
 }

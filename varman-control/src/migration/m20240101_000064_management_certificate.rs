@@ -64,8 +64,10 @@ impl MigrationTrait for Migration {
                             .timestamp_with_time_zone(),
                     )
                     .col(
-                        ColumnDef::new(ManagementCertificate::InstalledFingerprint)
-                            .text(),
+                        ColumnDef::new(
+                            ManagementCertificate::InstalledFingerprint,
+                        )
+                        .text(),
                     )
                     .col(
                         ColumnDef::new(ManagementCertificate::UpdatedAt)
@@ -81,9 +83,7 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .drop_table(
-                Table::drop()
-                    .table(ManagementCertificate::Table)
-                    .to_owned(),
+                Table::drop().table(ManagementCertificate::Table).to_owned(),
             )
             .await
     }

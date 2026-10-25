@@ -10,6 +10,7 @@ import { policiesApi, policyKeys } from '@/api/policies'
 import { crsApi, crsKeys } from '@/api/crs'
 import { alertsApi, alertKeys } from '@/api/alerts'
 import { ipGroupsApi, ipGroupKeys } from '@/api/ipGroups'
+import { isRequestId } from '@/lib/logQuery'
 import { cn } from '@/lib/utils'
 
 interface SearchItem {
@@ -35,6 +36,7 @@ const NAV_ITEMS: Array<{ labelKey: string; to: string }> = [
 ]
 
 const GROUP_ORDER = [
+  'request',
   'navigate',
   'sites',
   'policies',
@@ -83,8 +85,19 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
     staleTime: 60_000,
   })
 
+  const requestId = isRequestId(query) ? query.trim().toLowerCase() : ''
+
   const items = useMemo<SearchItem[]>(() => {
     const out: SearchItem[] = []
+    if (requestId) {
+      out.push({
+        key: `request:${requestId}`,
+        group: 'request',
+        title: t('search.requestIdTitle', { id: requestId }),
+        subtitle: t('search.requestIdHint'),
+        to: `/logs?q=request_id:${requestId}`,
+      })
+    }
     for (const { labelKey, to } of NAV_ITEMS) {
       out.push({ key: `nav:${to}`, group: 'navigate', title: t(labelKey), to })
     }
@@ -147,7 +160,15 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
       })
     }
     return out
-  }, [t, sites.data, policies.data, groups.data, rulesets.data, alertRules.data])
+  }, [
+    t,
+    requestId,
+    sites.data,
+    policies.data,
+    groups.data,
+    rulesets.data,
+    alertRules.data,
+  ])
 
   const needle = query.trim().toLowerCase()
   const filtered = useMemo(() => {

@@ -1788,9 +1788,8 @@ mod tests {
 
     #[test]
     fn needs_body_reports_body_targeting_rules() {
-        let compile = |source: &str| {
-            SecRuleSet::from_source(source).expect("compiles")
-        };
+        let compile =
+            |source: &str| SecRuleSet::from_source(source).expect("compiles");
 
         // Header-only rules never ask for the body.
         assert!(!compile("SecRule REQUEST_URI \"@contains /x\" \"id:1\"")
@@ -1799,8 +1798,9 @@ mod tests {
             "SecRule REQUEST_HEADERS:Content-Type \"@rx ^multipart\" \"id:2\""
         )
         .needs_body());
-        assert!(!compile("SecRule ARGS_GET:x \"@streq 1\" \"id:3\"")
-            .needs_body());
+        assert!(
+            !compile("SecRule ARGS_GET:x \"@streq 1\" \"id:3\"").needs_body()
+        );
 
         // Anything a body feeds does.
         for source in [
@@ -1821,12 +1821,10 @@ mod tests {
         }
 
         // A body-targeting rule in any chain member counts.
-        assert!(
-            compile(
-                "SecRule REQUEST_URI \"@contains /u\" \"id:30,chain\"\n\
+        assert!(compile(
+            "SecRule REQUEST_URI \"@contains /u\" \"id:30,chain\"\n\
                  SecRule REQUEST_BODY \"@contains x\" \"id:31\""
-            )
-            .needs_body()
-        );
+        )
+        .needs_body());
     }
 }

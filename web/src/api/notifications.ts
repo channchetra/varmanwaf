@@ -8,7 +8,6 @@ import { apiClient } from './client'
  * responses; send the `__REDACTED__` placeholder back to keep the stored
  * value.
  */
-
 export type ChannelKind =
   | 'email'
   | 'wecom'
@@ -86,11 +85,6 @@ export const NOTIFICATION_EVENT_TYPES = [
   'report.scheduled',
 ] as const
 
-export const REDACTED = '__REDACTED__'
-
-/** The placeholder the server substitutes for stored secrets. */
-export const NOTIFICATION_SECRET_MASK = REDACTED
-
 export const notificationsApi = {
   channels: () =>
     apiClient.get<NotificationChannel[]>('/notifications/channels'),
@@ -150,24 +144,6 @@ export const notificationKeys = {
   settings: () => [...notificationKeys.all, 'settings'] as const,
   events: (offset?: number) =>
     [...notificationKeys.all, 'events', offset ?? 0] as const,
-}
-
-/**
- * Prepares a channel config for saving. Our server masks stored secrets
- * with `__REDACTED__` and stores that placeholder as "keep the existing
- * value", so the mask round-trips as-is; the copy keeps form state from
- * being mutated by the request.
- */
-export function unmaskSecrets(
-  config: Record<string, unknown>,
-): Record<string, unknown> {
-  const output: Record<string, unknown> = { ...config }
-  for (const key of ['smtp_pass', 'secret', 'secret_token']) {
-    if (output[key] === NOTIFICATION_SECRET_MASK) {
-      output[key] = REDACTED
-    }
-  }
-  return output
 }
 
 export default notificationsApi

@@ -232,15 +232,6 @@ impl CanonicalRequest {
         self
     }
 
-    pub fn with_cookie(
-        mut self,
-        name: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
-        self.cookies.push((name.into(), value.into()));
-        self
-    }
-
     pub fn with_query_param(
         mut self,
         name: impl Into<String>,

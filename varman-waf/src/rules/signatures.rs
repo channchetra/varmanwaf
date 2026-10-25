@@ -1878,6 +1878,50 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     v
 }
 
+/// Cached full built-in table.
+///
+/// Both the engine and the dashboard catalogue read this one copy instead of
+/// rebuilding the vector for every lookup. `SignaturePattern` is `Copy`, so
+/// the engine can still own the filtered subset it scans.
+static BUILTIN_PATTERNS: Lazy<Vec<SignaturePattern>> =
+    Lazy::new(builtin_patterns);
+
+/// Dashboard-facing metadata for one built-in detection signature.
+///
+/// Built-in signatures live in the edge binary, not in the control-plane
+/// database. The why-chain resolves a signature hit through this metadata so
+/// an id such as `SSRF-006` is never reported as an unknown rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SignatureInfo {
+    pub id: &'static str,
+    pub category: AttackCategory,
+    /// 1 (info) … 5 (critical).
+    pub severity: u8,
+    /// Only loaded when the engine runs at [`WafLevel::Strict`].
+    pub strict_only: bool,
+    pub description: &'static str,
+}
+
+impl From<&SignaturePattern> for SignatureInfo {
+    fn from(pattern: &SignaturePattern) -> Self {
+        Self {
+            id: pattern.id,
+            category: pattern.category,
+            severity: pattern.severity,
+            strict_only: pattern.strict_only,
+            description: pattern.description,
+        }
+    }
+}
+
+/// Resolve one built-in signature id (case-insensitive).
+pub fn builtin_signature_info(id: &str) -> Option<SignatureInfo> {
+    BUILTIN_PATTERNS
+        .iter()
+        .find(|pattern| pattern.id.eq_ignore_ascii_case(id))
+        .map(SignatureInfo::from)
+}
+
 /// Aho-Corasick automaton over the built-in pattern table.
 ///
 /// The engine holds only the patterns active for its profile (level × stack
@@ -1916,8 +1960,9 @@ impl SignatureEngine {
     /// never registered in the automaton, so filtering them out saves work on
     /// every request rather than filtering hits afterwards.
     pub fn for_profile(level: WafLevel, stacks: StackSet) -> Self {
-        let patterns: Vec<SignaturePattern> = builtin_patterns()
-            .into_iter()
+        let patterns: Vec<SignaturePattern> = BUILTIN_PATTERNS
+            .iter()
+            .copied()
             .filter(|p| {
                 (level.is_strict() || !p.strict_only)
                     && stacks.contains(p.stack)
@@ -1988,11 +2033,6 @@ impl SignatureEngine {
         let mut hits = Vec::new();
         self.scan_into(haystack, &mut hits, &mut Vec::new());
         hits
-    }
-
-    /// Convenience: scan and return only the highest severity hit.
-    pub fn scan_top(&self, haystack: &str) -> Option<SignatureHit> {
-        self.scan(haystack).into_iter().max_by_key(|h| h.severity)
     }
 }
 
@@ -3451,5 +3491,15 @@ mod tests {
         let (hit, fp) = detect_xss("<IMG SRC=x ONERROR=alert(1)>");
         assert!(hit);
         assert!(fp.contains("event-handler"));
+    }
+
+    #[test]
+    fn signature_catalogue_resolves_ssrf_006() {
+        let info = builtin_signature_info("ssrf-006")
+            .expect("signature lookup is case-insensitive");
+        assert_eq!(info.id, "SSRF-006");
+        assert_eq!(info.category, AttackCategory::Ssrf);
+        assert_eq!(info.severity, 3);
+        assert_eq!(info.description, "wildcard IPv4");
     }
 }

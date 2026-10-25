@@ -256,8 +256,3 @@ export function parseExpression(expression: string): ParsedExpression | null {
   }
   return null
 }
-
-/** Human-readable one-liner for tables and confirmations. */
-export function describeExpression(expression: string): string {
-  return expression.trim() || '—'
-}

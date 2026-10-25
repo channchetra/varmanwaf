@@ -28,9 +28,6 @@ pub use error_template::ErrorTemplate;
 pub(crate) use headers::*;
 pub use server::*;
 pub use server_conf::*;
-#[allow(unused_imports)]
-#[cfg(feature = "tracing")]
-pub(crate) use tracing::*;
 
 pub use pingap_location::ServerLocationRoute;
 

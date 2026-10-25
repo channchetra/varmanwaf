@@ -57,9 +57,16 @@ describe('buildTopologyGraph', () => {
     const ruleLayer = graph.nodes.find((node) => node.id === 'layer-rules')
     expect(ruleLayer?.parentId).toBe(LAYER_GROUP_ID)
 
-    // Every link is animated.
+    // Every link is a signal edge; animation is driven by live path state,
+    // not React Flow's dashed `animated` flag.
     expect(graph.edges.length).toBeGreaterThan(0)
-    expect(graph.edges.every((edge) => edge.animated === true)).toBe(true)
+    expect(graph.edges.every((edge) => edge.type === 'signal')).toBe(true)
+    expect(graph.edges.every((edge) => edge.animated === false)).toBe(true)
+    // An active, protected site with a 2xx WAF state has live links.
+    expect(graph.edges.some((edge) => edge.data?.live === true)).toBe(true)
+    expect(
+      graph.edges.find((edge) => edge.id === 'client-site')?.data?.tls,
+    ).toBe(true)
 
     // The default route still reaches the placeholder pool.
     expect(
@@ -69,6 +76,24 @@ describe('buildTopologyGraph', () => {
           edge.target === `pool-${PLACEHOLDER_POOL_ID}`,
       ),
     ).toBe(true)
+
+    // The whole request path is connected through the group frames, not only
+    // through the normal nodes. A missing group handle used to drop these
+    // edges at render time even though the data contained them.
+    const chain: Array<[string, string]> = [
+      ['client', 'site'],
+      ['site', 'waf'],
+      ['waf', LAYER_GROUP_ID],
+      [LAYER_GROUP_ID, ROUTE_GROUP_ID],
+      [DEFAULT_ROUTE_ID, `pool-${PLACEHOLDER_POOL_ID}`],
+    ]
+    for (const [source, target] of chain) {
+      expect(
+        graph.edges.some(
+          (edge) => edge.source === source && edge.target === target,
+        ),
+      ).toBe(true)
+    }
   })
 
   it('groups targets under their pool and routes to the right pool', () => {
@@ -122,16 +147,12 @@ describe('buildTopologyGraph', () => {
     // Targets are grouped inside their pool.
     expect(graph.nodes.find((n) => n.id === 'upstream-u1')?.parentId).toBe('pool-p1')
 
-    // The route links to its pool; the pool links to each target.
+    // The route links to its pool; targets are contained by the pool frame
+    // instead of a backwards pool→child edge.
     expect(
       graph.edges.some((e) => e.source === 'route-r1' && e.target === 'pool-p1'),
     ).toBe(true)
-    expect(
-      graph.edges.some((e) => e.source === 'pool-p1' && e.target === 'upstream-u1'),
-    ).toBe(true)
-    expect(
-      graph.edges.some((e) => e.source === 'pool-p1' && e.target === 'upstream-u2'),
-    ).toBe(true)
+    expect(graph.nodes.find((n) => n.id === 'upstream-u2')?.parentId).toBe('pool-p1')
 
     // Unhealthy targets are marked, healthy ones are not.
     const u2 = graph.nodes.find((n) => n.id === 'upstream-u2')
@@ -183,6 +204,7 @@ describe('buildFleetGraph', () => {
           connected: true,
           site_id: 's1',
           site_domain: 'example.com',
+          served_site_ids: ['s1'],
           version: '1.1.1',
         },
         {
@@ -193,7 +215,19 @@ describe('buildFleetGraph', () => {
           connected: false,
           site_id: null,
           site_domain: null,
+          served_site_ids: ['s2'],
           version: '1.1.0',
+        },
+        {
+          id: 'a3',
+          hostname: 'edge-3',
+          ip_address: '10.0.0.12',
+          status: 'online',
+          connected: true,
+          site_id: null,
+          site_domain: null,
+          served_site_ids: [],
+          version: '1.1.1',
         },
       ],
       sites: [
@@ -206,24 +240,38 @@ describe('buildFleetGraph', () => {
     expect(ids).toContain('control')
     expect(ids).toContain('agent-a1')
     expect(ids).toContain('agent-a2')
+    expect(ids).toContain('agent-a3')
     expect(ids).toContain('site-s1')
     expect(ids).toContain('site-s2')
 
-    // Every agent links from the control plane; the bound agent links to its
-    // site, the unbound one does not. Every site links from the control plane
-    // (it pushes their bundles to the edge fleet).
+    // Every agent links from the control plane. A bound agent links to its
+    // site; an unbound agent links to every site its key owner owns. The
+    // control plane has no direct edge to a site.
     expect(graph.edges.some((e) => e.source === 'control' && e.target === 'agent-a1')).toBe(true)
+    expect(graph.edges.some((e) => e.source === 'control' && e.target === 'agent-a2')).toBe(true)
     expect(graph.edges.some((e) => e.source === 'agent-a1' && e.target === 'site-s1')).toBe(true)
-    expect(graph.edges.some((e) => e.source === 'agent-a2')).toBe(false)
-    expect(graph.edges.some((e) => e.source === 'control' && e.target === 'site-s1')).toBe(true)
-    expect(graph.edges.some((e) => e.source === 'control' && e.target === 'site-s2')).toBe(true)
+    expect(graph.edges.some((e) => e.source === 'agent-a2' && e.target === 'site-s2')).toBe(true)
+    expect(graph.edges.some((e) => e.source === 'agent-a3')).toBe(false)
+    expect(graph.edges.some((e) => e.source === 'control' && e.target.startsWith('site-'))).toBe(false)
 
-    // All links animated; statuses honest.
-    expect(graph.edges.every((e) => e.animated === true)).toBe(true)
+    // All links are signal edges; live follows connectivity.
+    expect(graph.edges.every((e) => e.type === 'signal')).toBe(true)
+    expect(
+      graph.edges.find((e) => e.source === 'control' && e.target === 'agent-a1')
+        ?.data?.live,
+    ).toBe(true)
+    expect(
+      graph.edges.find((e) => e.source === 'agent-a2' && e.target === 'site-s2')
+        ?.data?.live,
+    ).toBe(false)
     const a2 = graph.nodes.find((n) => n.id === 'agent-a2')
     expect(a2?.data.chips?.[0]?.tone).toBe('danger')
+    expect(a2?.data.chips?.some((c) => c.text === 'all sites (1)')).toBe(true)
+    const a3 = graph.nodes.find((n) => n.id === 'agent-a3')
+    expect(a3?.data.chips?.some((c) => c.text === 'unassigned')).toBe(true)
     const s2 = graph.nodes.find((n) => n.id === 'site-s2')
     expect(s2?.data.chips?.some((c) => c.text === 'agent bound')).toBe(false)
+    expect(s2?.data.chips?.some((c) => c.text === 'served by 1')).toBe(true)
   })
 
   it('renders explicit placeholders when the fleet is empty', () => {

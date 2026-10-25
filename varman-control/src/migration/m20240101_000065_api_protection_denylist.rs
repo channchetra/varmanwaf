@@ -18,10 +18,12 @@ impl MigrationTrait for Migration {
                 Table::alter()
                     .table(ApiProtectionSettings::Table)
                     .add_column(
-                        ColumnDef::new(ApiProtectionSettings::IpDenylistEnabled)
-                            .boolean()
-                            .not_null()
-                            .default(false),
+                        ColumnDef::new(
+                            ApiProtectionSettings::IpDenylistEnabled,
+                        )
+                        .boolean()
+                        .not_null()
+                        .default(false),
                     )
                     .add_column(
                         ColumnDef::new(ApiProtectionSettings::IpDenylistRanges)

@@ -9,6 +9,7 @@
 //! pushes a fresh `SiteConfig` to every agent that serves the changed site.
 
 pub mod cache_status;
+pub mod command_type;
 pub mod config;
 pub mod control_plane;
 pub mod registry;
@@ -26,7 +27,6 @@ use varman_protocol::control_plane::{
     server_command::Payload, ServerCommand, SiteConfig, UpdateSiteCommand,
 };
 
-use crate::api::agents::command_type;
 use crate::api::state::AppState;
 use crate::config_history::{self, VersionScope};
 use crate::grpc::config::{build_site_config, now_timestamp};

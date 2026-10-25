@@ -27,9 +27,6 @@ use varman_protocol::control_plane::{
     SitePolicy, SslConfig, UpstreamConfig, UpstreamPeer, WafConfig, WafRule,
 };
 
-use crate::api::challenge::challenge_level;
-use crate::api::ip_rules::ip_action;
-use crate::api::site_basic_auth as site_basic_auth_api;
 use crate::models::{
     acme_challenge, action, api_learned_schemas, bot_protection, cache_rules,
     challenge_settings, characteristic, client_cert_status, defense_settings,
@@ -41,6 +38,8 @@ use crate::models::{
 };
 use crate::pki::mtls::normalise_fingerprint;
 use crate::policy;
+use crate::site_credentials;
+use crate::waf_values::{challenge_level, ip_action};
 
 /// `varman.WafMode` values from control_plane.proto.
 ///
@@ -1366,7 +1365,7 @@ fn basic_auth_to_proto(
     row: Option<&site_basic_auth::Model>,
 ) -> Option<BasicAuthConfig> {
     let row = row?;
-    let credentials = match site_basic_auth_api::stored_credentials(row) {
+    let credentials = match site_credentials::stored_credentials(row) {
         Ok(credentials) => credentials,
         Err(error) => {
             tracing::warn!(

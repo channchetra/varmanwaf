@@ -16,25 +16,7 @@ use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::grpc::notify_config_changed;
 use crate::models::waf_settings;
-
-/// Attack categories a site can downgrade to monitor-only. Must stay in sync
-/// with `CategorySet::parse_name` in `varman-waf`.
-pub const CATEGORIES: [&str; 9] = [
-    "sqli", "xss", "rce", "lfi", "ssrf", "deser", "crlf", "xxe", "ssti",
-];
-
-/// Backend stacks a site can downgrade to monitor-only. Must stay in sync
-/// with `StackSet::parse_name` in `varman-waf`.
-pub const STACKS: [&str; 4] = ["java", "php", "python", "node"];
-
-/// Built-in managed rules a site can downgrade to monitor-only, by id.
-/// Mirrors `varman_waf::MANAGED_RULE_IDS` (whitelisted through the crate so
-/// a new managed rule cannot be configured before the engine knows it).
-pub const MANAGED_RULES: [&str; 14] = varman_waf::MANAGED_RULE_IDS;
-
-/// Engine modes a site can select. `inherit` keeps the process-wide
-/// `VARMAN_WAF_ENGINE`; the others override it for this site.
-pub const ENGINE_MODES: [&str; 4] = ["inherit", "legacy", "shadow", "varman"];
+use crate::waf_values::{CATEGORIES, ENGINE_MODES, MANAGED_RULES, STACKS};
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateWafSettingsRequest {
@@ -91,7 +73,8 @@ pub struct VirtualPatchTemplateEntry {
 /// policy's) `virtual_patches` field. They are defence in depth for a
 /// specific vulnerability - the template text states that the origin update
 /// remains the complete fix.
-async fn list_virtual_patch_templates() -> Json<Vec<VirtualPatchTemplateEntry>> {
+async fn list_virtual_patch_templates() -> Json<Vec<VirtualPatchTemplateEntry>>
+{
     Json(
         varman_waf::virtual_patch_templates()
             .iter()
@@ -648,11 +631,9 @@ mod tests {
                 "{} has no summary",
                 template.id
             );
-            validate_virtual_patches(template.source).unwrap_or_else(
-                |error| {
-                    panic!("template {} rejected: {error}", template.id)
-                },
-            );
+            validate_virtual_patches(template.source).unwrap_or_else(|error| {
+                panic!("template {} rejected: {error}", template.id)
+            });
         }
     }
 }

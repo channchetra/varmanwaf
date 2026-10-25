@@ -24,26 +24,6 @@ export const wafSettingsApi = {
     apiClient.get<VirtualPatchTemplate[]>('/virtual-patch-templates'),
 }
 
-/** Sensible defaults matching the server-side `find_or_create` row. */
-export function defaultWafSettings(): WafSettings {
-  return {
-    id: '',
-    site_id: '',
-    waf_enabled: true,
-    mode: 'block',
-    paranoia_level: 1,
-    advanced_mode: false,
-    engine_mode: 'inherit',
-    virtual_patches: '',
-    openapi_spec: '',
-    monitor_categories: [],
-    monitor_managed_rules: [],
-    monitor_stacks: [],
-    created_at: '',
-    updated_at: '',
-  }
-}
-
 export const wafSettingsKeys = {
   all: (siteId: string) => ['sites', siteId, 'waf-settings'] as const,
   settings: (siteId: string) =>

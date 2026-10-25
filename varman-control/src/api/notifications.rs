@@ -22,7 +22,6 @@ use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::models::{
     channel_kind, event_type, notification_channel, notification_event,
-    severity,
 };
 use crate::notify::NotificationSettings;
 
@@ -500,10 +499,4 @@ fn reload_channels() {
             manager.reload().await;
         }
     });
-}
-
-/// Severity labels the console offers for the event history filter.
-#[allow(dead_code)]
-fn severities() -> [&'static str; 3] {
-    severity::ALL
 }

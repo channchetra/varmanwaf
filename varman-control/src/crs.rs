@@ -545,7 +545,7 @@ SecRule ARGS \"@rx evil\" \"id:3,phase:2,block\"
     #[test]
     fn fingerprint_is_stable() {
         assert_eq!(sha256_hex(b"abc"), sha256_hex(b"abc"));
-        assert_ne!(sha256_hex(b"abc"), sha256_hex(b"abd"));
+        assert_ne!(sha256_hex(b"abc"), sha256_hex(b"abd")); // spellchecker:disable-line
         assert_eq!(sha256_hex(b"").len(), 64);
     }
 }

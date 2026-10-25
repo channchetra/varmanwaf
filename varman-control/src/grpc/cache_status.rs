@@ -142,12 +142,6 @@ impl CacheStatusRegistry {
             .get(&site_id)
             .map(|reports| aggregate(site_id, reports))
     }
-
-    /// Sites that have reported at least once. Used by the status endpoint to
-    /// tell "no data yet" from "no usage".
-    pub async fn known_sites(&self) -> Vec<Uuid> {
-        self.inner.read().await.sites.keys().copied().collect()
-    }
 }
 
 /// Sums one site's reports. The ceiling is the *largest* reported rather than

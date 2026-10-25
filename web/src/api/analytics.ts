@@ -52,47 +52,6 @@ export const analyticsApi = {
     apiClient.get<SiteOverview[]>('/analytics/sites', { query: params }),
 }
 
-/** Aggregate consumed by the dashboard hero row. */
-export interface DashboardOverview {
-  summary: AnalyticsSummary
-  sites: SiteOverview[]
-}
-
-/**
- * Fan-out used by the dashboard: one round trip per widget, resolved together so
- * a slow endpoint cannot block the fast ones from painting.
- */
-export async function fetchDashboardOverview(params: RangeQuery = {}): Promise<DashboardOverview> {
-  const [summary, sites] = await Promise.all([
-    analyticsApi.summary(params),
-    analyticsApi.sitesOverview(params),
-  ])
-  return { summary, sites }
-}
-
-/** RFC 3339 helper — the backend parses `from`/`to` with `DateTime::parse_from_rfc3339`. */
-export function toRfc3339(date: Date): string {
-  return date.toISOString()
-}
-
-/** Builds `{from,to}` for one of the preset dashboard windows. */
-export function rangeFor(hours: number): { from: string; to: string } {
-  const to = new Date()
-  const from = new Date(to.getTime() - hours * 3600_000)
-  return { from: toRfc3339(from), to: toRfc3339(to) }
-}
-
-/**
- * Picks a bucketing interval that keeps the series readable for a window.
- * The server caps `minute` buckets, so short windows only.
- */
-export function intervalForHours(hours: number): 'minute' | 'hour' | 'day' | 'week' {
-  if (hours <= 2) return 'minute'
-  if (hours <= 72) return 'hour'
-  if (hours <= 24 * 21) return 'day'
-  return 'week'
-}
-
 export const analyticsKeys = {
   all: ['analytics'] as const,
   summary: (params: RangeQuery) => [...analyticsKeys.all, 'summary', params] as const,

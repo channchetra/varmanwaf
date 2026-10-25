@@ -1069,7 +1069,7 @@ cookie_secret = "test-secret"
     use pingap_core::PluginStep as TestPluginStep;
     use pingora::proxy::Session as TestSession;
 
-    use crate::waf::tests::lock_agent;
+    use crate::test_support::lock_agent;
     use varman_agent::cache::RuleCache;
     use varman_agent::client::ControlPlaneClient;
     use varman_agent::config::AgentConfig;

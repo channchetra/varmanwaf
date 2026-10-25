@@ -29,17 +29,15 @@ use std::time::Duration;
 
 use arc_swap::ArcSwapOption;
 use chrono::Utc;
-use sea_orm::{
-    ActiveModelTrait, DatabaseConnection, EntityTrait, Set,
-};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::api::state::AppState;
 use crate::api::system_tls::store_and_activate;
-use crate::models::management_certificate::management_certificate as model;
 use crate::models::certificate_events;
+use crate::models::management_certificate::management_certificate as model;
 
 /// Name of the certificate entry the data plane adds for the dashboard.
 pub const CERT_NAME: &str = "__management";
@@ -146,9 +144,7 @@ pub fn normalize_identity(input: &str) -> Result<String, String> {
         && value.split('.').all(|label| {
             !label.is_empty()
                 && label.len() <= 63
-                && label
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-')
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
                 && !label.starts_with('-')
                 && !label.ends_with('-')
         });
@@ -316,8 +312,10 @@ pub async fn tick(state: &AppState) -> anyhow::Result<()> {
     let Some(issued) = issued() else {
         return fail_if_stale(&state.db, &row).await;
     };
-    let (meta, sans) = crate::pki::tls::describe(&issued.cert_pem)
-        .map_err(|err| anyhow::anyhow!("unreadable issued certificate: {err}"))?;
+    let (meta, sans) =
+        crate::pki::tls::describe(&issued.cert_pem).map_err(|err| {
+            anyhow::anyhow!("unreadable issued certificate: {err}")
+        })?;
     if !install_needed(
         &issued.identity,
         &request.identity,
@@ -465,7 +463,14 @@ mod tests {
             normalize_email(" ops@example.com ").expect("ok"),
             "ops@example.com"
         );
-        for value in ["", "ops", "ops@", "@example.com", "ops@localhost", "a b@example.com"] {
+        for value in [
+            "",
+            "ops",
+            "ops@",
+            "@example.com",
+            "ops@localhost",
+            "a b@example.com",
+        ] {
             assert!(
                 normalize_email(value).is_err(),
                 "{value:?} must be rejected"
@@ -503,7 +508,12 @@ mod tests {
     #[test]
     fn installation_requires_the_same_identity_and_a_new_fingerprint() {
         // Fresh issuance: install.
-        assert!(install_needed("waf.example.com", "waf.example.com", None, "aa"));
+        assert!(install_needed(
+            "waf.example.com",
+            "waf.example.com",
+            None,
+            "aa"
+        ));
         // Renewal: the fingerprint changed, install once.
         assert!(install_needed(
             "waf.example.com",

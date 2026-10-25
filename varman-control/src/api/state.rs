@@ -5,11 +5,11 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use sea_orm::DatabaseConnection;
 
-use crate::api::self_protection::SelfProtection;
 use crate::config::ServerConfig;
 use crate::es::ElasticsearchClient;
 use crate::grpc::cache_status::CacheStatusRegistry;
-use crate::grpc::AgentRegistry;
+use crate::grpc::registry::AgentRegistry;
+use crate::self_protection::SelfProtection;
 use crate::tls::ControlPlaneTls;
 
 /// Everything an HTTP handler needs.
@@ -54,25 +54,6 @@ impl AppState {
         }
     }
 
-    /// Same as [`AppState::new`] but sharing an existing cache status registry,
-    /// which is what the gRPC service feeds.
-    pub fn with_cache_status(
-        db: DatabaseConnection,
-        config: ServerConfig,
-        agents: AgentRegistry,
-        cache_status: CacheStatusRegistry,
-    ) -> Self {
-        Self {
-            db,
-            config: Arc::new(config),
-            agents,
-            es: None,
-            cache_status,
-            control_tls: Arc::new(ControlPlaneTls::new(false)),
-            protection: Arc::new(SelfProtection::new()),
-        }
-    }
-
     /// JWT signing secret.
     pub fn jwt_secret(&self) -> &str {
         &self.config.jwt_secret
@@ -93,9 +74,4 @@ impl AppState {
 /// gRPC log shipper are directly comparable.
 pub fn now() -> DateTime<Utc> {
     Utc::now()
-}
-
-/// Formats an optional timestamp as RFC 3339 for JSON responses.
-pub fn format_timestamp(value: &Option<DateTime<Utc>>) -> Option<String> {
-    value.map(|ts| ts.to_rfc3339())
 }

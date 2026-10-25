@@ -15,6 +15,7 @@ use super::super::{
     Action, AttackCategory, Confidence, Detector, DetectorId, DetectorResult,
     EvidenceSource, Finding, Severity,
 };
+use super::contains_word;
 
 use crate::canonical::CanonicalRequest;
 use crate::pipeline::safe_window;
@@ -58,23 +59,6 @@ const LITERAL_ATTACKS: &[&str] = &[
 
 /// Shell metacharacters that introduce a second command.
 const METACHARS: &[char] = &[';', '|', '&', '`', '\n', '\r'];
-
-fn contains_word(haystack: &str, word: &str) -> bool {
-    let mut start = 0;
-    while let Some(pos) = haystack[start..].find(word) {
-        let absolute = start + pos;
-        let before_ok = absolute == 0
-            || !haystack.as_bytes()[absolute - 1].is_ascii_alphanumeric();
-        let after = absolute + word.len();
-        let after_ok = after >= haystack.len()
-            || !haystack.as_bytes()[after].is_ascii_alphanumeric();
-        if before_ok && after_ok {
-            return true;
-        }
-        start = absolute + word.len().max(1);
-    }
-    false
-}
 
 fn find_word(low: &str, words: &[&'static str]) -> Option<&'static str> {
     words.iter().copied().find(|word| contains_word(low, word))

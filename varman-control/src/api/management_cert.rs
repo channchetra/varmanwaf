@@ -10,9 +10,7 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
-use sea_orm::{
-    ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
-};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 use serde::{Deserialize, Serialize};
 
 use crate::api::error::ApiError;
@@ -143,6 +141,11 @@ async fn retry(
     let row = management_cert::load(&state.db)
         .await
         .map_err(ApiError::from)?;
+    if row.identity.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "set an identity before retrying".to_string(),
+        ));
+    }
     let row = management_cert::retry(&state.db, row)
         .await
         .map_err(ApiError::from)?;

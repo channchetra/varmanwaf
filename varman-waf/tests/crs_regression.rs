@@ -33,9 +33,6 @@ struct TestFile {
 struct TestCase {
     #[serde(default)]
     test_id: Option<serde_yaml::Value>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    desc: Option<String>,
     stages: Vec<Stage>,
 }
 

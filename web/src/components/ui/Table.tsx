@@ -198,6 +198,28 @@ export function Table<T>({
                 <tr
                   key={rowKey(row, i)}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onKeyDown={
+                    onRowClick
+                      ? (event) => {
+                          if (event.key !== 'Enter' && event.key !== ' ') {
+                            return
+                          }
+                          // Let a real control inside the row handle its own
+                          // activation instead of also opening the detail.
+                          const target = event.target as HTMLElement
+                          if (
+                            target.closest(
+                              'button, a, input, select, textarea, [role="button"]',
+                            )
+                          ) {
+                            return
+                          }
+                          event.preventDefault()
+                          onRowClick(row)
+                        }
+                      : undefined
+                  }
                   className={cn(
                     'border-b border-line last:border-0 transition-colors',
                     onRowClick && 'cursor-pointer hover:bg-recessed',

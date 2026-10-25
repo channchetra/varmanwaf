@@ -195,15 +195,6 @@ impl VarmanAgent {
         self.rule_cache.get_site_rules(domain)
     }
 
-    /// Get rules for a specific site by ID.
-    #[inline]
-    pub fn get_rules_for_site(
-        &self,
-        site_id: &str,
-    ) -> Option<Arc<cache::SiteRules>> {
-        self.rule_cache.get_site_rules_by_id(site_id)
-    }
-
     /// Check if an IP is dynamically blocked for a site.
     #[inline]
     pub fn is_ip_blocked(&self, site_id: &str, ip: &str) -> bool {
@@ -420,11 +411,6 @@ pub async fn start_agent(
     config: AgentConfig,
 ) -> anyhow::Result<Arc<VarmanAgent>> {
     VarmanAgent::start(config).await
-}
-
-/// Get the global agent instance (shorthand for [`VarmanAgent::instance`]).
-pub fn agent_instance() -> Option<Arc<VarmanAgent>> {
-    VarmanAgent::instance()
 }
 
 #[cfg(test)]

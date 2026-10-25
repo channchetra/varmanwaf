@@ -82,3 +82,6 @@ Thumbs.db
 # Python bytecode from tools/waf-bench scripts
 __pycache__/
 review-*
+
+# Kept E2E evidence (reports, screenshots, DB dump, harness)
+/e2e-artifacts/

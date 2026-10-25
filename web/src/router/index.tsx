@@ -133,7 +133,7 @@ function NotFoundPage() {
 }
 
 /** Legacy deep links: keep their query string while moving to the merged tab. */
-function LegacyProtectionRedirect({ tab }: { tab: 'rules' | 'cc' }) {
+function LegacyProtectionRedirect({ tab }: { tab: 'rules' | 'cc' | 'policy' }) {
   const { siteId = '' } = useParams<{ siteId: string }>()
   const location = useLocation()
   const params = new URLSearchParams(location.search)
@@ -185,7 +185,7 @@ export const router = createBrowserRouter([
           // keep working.
           {
             path: 'security/policy',
-            element: <Navigate to="../protection?tab=policy" replace />,
+            element: <LegacyProtectionRedirect tab="policy" />,
           },
           // WAF and CC were separate tabs before they were merged; keep old
           // links (including the `?rule=` deep link) working.

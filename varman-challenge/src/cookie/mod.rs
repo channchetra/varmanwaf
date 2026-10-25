@@ -210,11 +210,6 @@ impl CookieManager {
         &self.cookie_name
     }
 
-    /// Set the cookie name
-    pub fn set_cookie_name(&mut self, name: &str) {
-        self.cookie_name = name.to_string();
-    }
-
     /// Generate cookie attributes string (HttpOnly, Secure, SameSite, Path, Max-Age).
     ///
     /// `Secure` is only attached for TLS origins: browsers reject storing a

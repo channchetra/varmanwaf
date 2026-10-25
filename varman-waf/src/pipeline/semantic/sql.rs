@@ -25,6 +25,7 @@ use super::super::{
     Action, AttackCategory, Confidence, Detector, DetectorId, DetectorResult,
     EvidenceSource, Finding, Severity,
 };
+use super::contains_word;
 
 use crate::canonical::CanonicalRequest;
 use crate::pipeline::safe_window;
@@ -172,23 +173,6 @@ fn collapse_spaces(input: &str) -> String {
 }
 
 /// Word-boundary `contains` (no regex dependency here on purpose).
-fn contains_word(haystack: &str, word: &str) -> bool {
-    let mut start = 0;
-    while let Some(pos) = haystack[start..].find(word) {
-        let absolute = start + pos;
-        let before_ok = absolute == 0
-            || !haystack.as_bytes()[absolute - 1].is_ascii_alphanumeric();
-        let after = absolute + word.len();
-        let after_ok = after >= haystack.len()
-            || !haystack.as_bytes()[after].is_ascii_alphanumeric();
-        if before_ok && after_ok {
-            return true;
-        }
-        start = absolute + word.len().max(1);
-    }
-    false
-}
-
 /// `true` when a stacked statement follows a `;`.
 fn has_stacked_statement(low: &str) -> bool {
     let Some(semicolon) = low.find(';') else {

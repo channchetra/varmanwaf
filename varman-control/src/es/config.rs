@@ -1,7 +1,7 @@
 //! Configuration for the Elasticsearch log shipper.
 //!
 //! [`EsConfig`] is deliberately flat and fully `serde`-driven so it can be
-//! embedded in [`crate::config::ServerConfig`] (TOML / env), returned verbatim
+//! embedded in the server configuration (TOML / env), returned verbatim
 //! by the settings API and round-tripped through JSON without a second type.
 //!
 //! Every field carries a `#[serde(default = …)]` so a partial configuration —

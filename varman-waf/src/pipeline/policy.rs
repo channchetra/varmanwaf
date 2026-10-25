@@ -11,11 +11,6 @@
 
 use super::{Action, AttackCategory, PipelineVerdict};
 
-/// Monitor-set names a site can configure (dashboard order).
-pub const MONITOR_CATEGORY_NAMES: [&str; 9] = [
-    "sqli", "xss", "rce", "lfi", "ssrf", "deser", "crlf", "xxe", "ssti",
-];
-
 /// Map a pipeline category onto its monitor-set name. `None` for categories
 /// the dashboard cannot downgrade.
 pub const fn monitor_name(category: AttackCategory) -> Option<&'static str> {

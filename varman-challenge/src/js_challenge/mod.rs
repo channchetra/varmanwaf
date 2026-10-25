@@ -6,10 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cookie::{ClearanceLevel, ClearancePayload, CookieManager};
 use crate::fingerprint::BrowserFingerprint;
-use page::{
-    generate_interactive_challenge_html, generate_js_challenge_html,
-    ChallengePageParams,
-};
+use page::{generate_js_challenge_html, ChallengePageParams};
 use verify::{
     check_browser_integrity, verify_proof_of_work, verify_timestamp,
     IntegrityResult,
@@ -157,41 +154,6 @@ impl ChallengeEngine {
         };
 
         let body = generate_js_challenge_html(&params);
-
-        ChallengeResponse {
-            status_code: 503,
-            content_type: "text/html; charset=utf-8".to_string(),
-            body,
-            headers: vec![
-                (
-                    "Cache-Control".to_string(),
-                    "no-store, no-cache, must-revalidate".to_string(),
-                ),
-                ("Pragma".to_string(), "no-cache".to_string()),
-                ("X-Frame-Options".to_string(), "DENY".to_string()),
-                ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
-                ("X-VarmanWAF-Ray".to_string(), request_id.to_string()),
-            ],
-        }
-    }
-
-    /// Generate the interactive challenge page (CAPTCHA-style)
-    pub fn generate_interactive_challenge_page(
-        &self,
-        request_id: &str,
-        original_url: &str,
-    ) -> ChallengeResponse {
-        let challenge_nonce = generate_nonce();
-        let params = ChallengePageParams {
-            request_id: request_id.to_string(),
-            challenge_nonce,
-            difficulty: self.config.pow_difficulty,
-            verify_endpoint: "/_varman/challenge/verify".to_string(),
-            original_url: original_url.to_string(),
-            brand_name: "VarmanWAF".to_string(),
-        };
-
-        let body = generate_interactive_challenge_html(&params);
 
         ChallengeResponse {
             status_code: 503,

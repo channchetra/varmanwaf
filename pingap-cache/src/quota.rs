@@ -41,6 +41,7 @@
 //! enforced at all.
 
 use crate::LOG_TARGET;
+use crate::fs_util::remove_empty_dirs;
 use chrono::{DateTime, TimeZone, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -357,17 +358,6 @@ impl DiskQuotaManager {
                 "set domain cache disk quota"
             );
             self.persist_quotas();
-        }
-    }
-
-    /// Sets several ceilings at once (the agent applies a whole rule bundle).
-    pub fn set_quotas<I, K>(&self, quotas: I)
-    where
-        I: IntoIterator<Item = (K, u64)>,
-        K: AsRef<str>,
-    {
-        for (domain, max_mb) in quotas {
-            self.set_quota(domain.as_ref(), max_mb);
         }
     }
 
@@ -914,19 +904,6 @@ async fn list_files(dir: PathBuf) -> Vec<(PathBuf, u64)> {
 }
 
 /// Removes every empty directory under `dir`, deepest first. Best effort.
-fn remove_empty_dirs(dir: &Path) {
-    let mut dirs: Vec<PathBuf> = WalkDir::new(dir)
-        .into_iter()
-        .filter_map(|item| item.ok())
-        .filter(|item| item.file_type().is_dir())
-        .map(|item| item.into_path())
-        .collect();
-    dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
-    for dir in dirs {
-        let _ = std::fs::remove_dir(&dir);
-    }
-}
-
 /// Walks the cache root and groups what it finds by domain (the first path
 /// component under the root, which is the namespace the file backend uses).
 ///

@@ -241,11 +241,6 @@ impl ElasticsearchClient {
         )
     }
 
-    /// Daily index name for a document type as of now.
-    pub fn get_index_name(&self, doc_type: &DocumentType) -> String {
-        self.index_name(*doc_type, Utc::now())
-    }
-
     /// Truncates a body to `max_body_size`, returning the bytes and whether a
     /// truncation happened. The cut is backed off to a UTF-8 boundary so the
     /// lossy decode never emits a stray replacement character.

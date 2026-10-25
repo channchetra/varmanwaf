@@ -20,8 +20,9 @@ pub use managed::{
     MANAGED_RULE_IDS,
 };
 pub use signatures::{
-    detect_expr_injection, detect_sqli, detect_xss, AttackCategory,
-    SignatureEngine, SignatureHit, SignaturePattern,
+    builtin_signature_info, detect_expr_injection, detect_sqli, detect_xss,
+    AttackCategory, SignatureEngine, SignatureHit, SignatureInfo,
+    SignaturePattern,
 };
 
 use serde::{Deserialize, Serialize};

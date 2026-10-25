@@ -56,10 +56,6 @@ export function notifyError(title: string, description?: string): void {
   emitNotice({ title, description, tone: 'error' })
 }
 
-export function notifyInfo(title: string, description?: string): void {
-  emitNotice({ title, description, tone: 'info' })
-}
-
 /* ──────────────────────────────────────────────────────────────── */
 
 const t = (key: string, fallback: string): string => {

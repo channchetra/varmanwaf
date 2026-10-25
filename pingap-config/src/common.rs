@@ -1487,21 +1487,6 @@ impl PingapConfig {
 
         Ok((path, toml_string))
     }
-    pub fn get_storage_value(&self, name: &str) -> Result<String> {
-        let Some(item) = self.storages.get(name) else {
-            return Ok(String::new());
-        };
-        match &item.secret {
-            Some(key) => {
-                pingap_util::aes_decrypt(key, &item.value).map_err(|e| {
-                    Error::Invalid {
-                        message: e.to_string(),
-                    }
-                })
-            },
-            None => Ok(item.value.clone()),
-        }
-    }
 }
 
 /// Deserializes one entry straight from its `toml::Value`, naming the

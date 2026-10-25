@@ -40,3 +40,24 @@ pub use ti::{TiDetector, TiIndicators};
 pub use websocket::WebSocketDetector;
 pub use xss::HtmlXssDetector;
 pub use xxe::XxeDetector;
+
+/// Whole-word match: `word` must not be flanked by ASCII alphanumerics.
+///
+/// Structural SQL and command detectors share this so `union` does not match
+/// `reunion` while punctuation around a keyword still counts.
+pub(crate) fn contains_word(haystack: &str, word: &str) -> bool {
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(word) {
+        let absolute = start + pos;
+        let before_ok = absolute == 0
+            || !haystack.as_bytes()[absolute - 1].is_ascii_alphanumeric();
+        let after = absolute + word.len();
+        let after_ok = after >= haystack.len()
+            || !haystack.as_bytes()[after].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        start = absolute + word.len().max(1);
+    }
+    false
+}

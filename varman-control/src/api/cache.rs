@@ -18,7 +18,6 @@ use uuid::Uuid;
 use varman_protocol::control_plane::server_command::Payload as CommandPayload;
 use varman_protocol::control_plane::{PurgeCacheCommand, ServerCommand};
 
-use crate::api::agents::command_type;
 use crate::api::common::{
     load_site_read, load_site_write, non_empty, parse_uuid, scope_site, Page,
     Pagination,
@@ -28,6 +27,7 @@ use crate::api::sites::touch_site;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::grpc::cache_status::SiteCacheStatus;
+use crate::grpc::command_type;
 use crate::grpc::config::now_timestamp;
 use crate::grpc::notify_config_changed;
 use crate::models::{agent, cache_rules, site};

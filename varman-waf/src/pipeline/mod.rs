@@ -221,10 +221,6 @@ impl SecurityPipeline {
         Self { detectors, config }
     }
 
-    pub fn detector_count(&self) -> usize {
-        self.detectors.len()
-    }
-
     /// Run every detector (in registration order) against one request.
     pub fn inspect(&self, request: &CanonicalRequest) -> PipelineVerdict {
         let mut ctx = DetectionContext::new();

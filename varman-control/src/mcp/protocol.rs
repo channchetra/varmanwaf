@@ -20,7 +20,6 @@ pub const PARSE_ERROR: i64 = -32700;
 pub const INVALID_REQUEST: i64 = -32600;
 pub const METHOD_NOT_FOUND: i64 = -32601;
 pub const INVALID_PARAMS: i64 = -32602;
-pub const INTERNAL_ERROR: i64 = -32603;
 
 /// Text sent in the `initialize` result; it is the server's one chance to
 /// explain itself to a fresh agent, so keep it operational rather than

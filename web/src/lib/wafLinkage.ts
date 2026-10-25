@@ -30,10 +30,3 @@ export function applyCategoryLinkage(
       : withoutFamily,
   }
 }
-
-/** The categories whose managed rules follow the category switch. */
-export function linkageCategories(managedRules: ManagedRuleInfo[]): Set<string> {
-  return new Set(
-    managedRules.filter((r) => r.category !== null).map((r) => r.category as string),
-  )
-}

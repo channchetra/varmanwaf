@@ -222,7 +222,7 @@ mod tests {
         assert_eq!(shape.max_depth, 1);
         assert_eq!(shape.max_array_elements, 0);
 
-        // Truncated input must not panic or mis-count.
+        // Truncated input must not panic or miscount.
         let shape = scan_shape(br#"{"a":[1,2"#);
         assert_eq!(shape.max_depth, 2);
         assert_eq!(shape.max_array_elements, 0);
