@@ -696,7 +696,7 @@ function docsHome() {
   <section class="docs-hero">
     <div class="docs-hero-copy">
       <p class="docs-eyebrow"><span></span>VarmanWAF documentation</p>
-      <h1>Run a WAF you can explain.</h1>
+      <h1>Run a WAF you can <span>explain.</span></h1>
       <p class="docs-hero-lead">A distributed, self-hosted Web Application Firewall. Learn the request path, choose the deployment shape, and give every role the surface it actually needs.</p>
       <div class="docs-hero-actions">
         <button type="button" class="docs-hero-search" data-docs-search>${ICONS.search}<span>Search the documentation</span><kbd>Ctrl K</kbd></button>

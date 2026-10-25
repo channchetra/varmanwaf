@@ -7,30 +7,33 @@
    ========================================================================== */
 
 :root {
-  --bg: #0b1220;
-  --bg-soft: #0d1728;
-  --surface: #111d30;
-  --surface-2: #16243a;
-  --surface-3: #1b2c45;
-  --ink: #edf4ff;
-  --ink-2: #c5d4e8;
-  --body: #b3c3d8;
-  --muted: #93a7c0;
-  --subtle: #7d92ab;
-  --line: #22324a;
-  --line-strong: #324966;
-  --accent: #8ec5ff;
-  --accent-2: #5aa9ff;
-  --accent-ink: #0b2241;
-  --accent-soft: #13283f;
-  --good: #79dcae;
-  --warn: #ebcb84;
-  --bad: #ff9b89;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .24);
-  --shadow-lg: 0 18px 48px rgba(0, 0, 0, .42);
+  --bg: #1d1d1d;
+  --bg-soft: #161616;
+  --surface: #2a2a2a;
+  --surface-2: #333333;
+  --surface-3: #3a3a3a;
+  --ink: #e8e8e8;
+  --ink-2: #d0d0d0;
+  --body: #b4b4b4;
+  --muted: #a0a0a0;
+  --subtle: #9a9a9a;
+  --line: #3a3a3a;
+  --line-strong: #4a4a4a;
+  --accent: #f6821f;
+  --accent-2: #ff9a4d;
+  --accent-ink: #1d1d1d;
+  --accent-soft: #423529;
+  --link: #52a9ff;
+  --brand-ink: #ffb066;
+  --good: #30a46c;
+  --warn: #ffc53d;
+  --bad: #ff6340;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .28);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, .45);
   --font-sans: 'Google Sans', 'Noto Sans Khmer', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-display: 'Google Sans', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-mono: 'Google Sans', system-ui, sans-serif;
+  --font-code: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sidebar-w: 288px;
   --header-h: 64px;
   --radius: 10px;
@@ -39,27 +42,29 @@
 }
 
 :root[data-theme='light'] {
-  --bg: #f7f9fc;
-  --bg-soft: #f2f6fb;
+  --bg: #ffffff;
+  --bg-soft: #f7f7f8;
   --surface: #ffffff;
-  --surface-2: #eef4fb;
-  --surface-3: #e6eef8;
-  --ink: #14283f;
-  --ink-2: #31465f;
-  --body: #465d75;
-  --muted: #5b7088;
-  --subtle: #5f7389;
-  --line: #dfe7f1;
-  --line-strong: #c9d6e6;
-  --accent: #2165c5;
-  --accent-2: #0f4f9e;
-  --accent-ink: #ffffff;
-  --accent-soft: #eaf2fd;
+  --surface-2: #f7f7f8;
+  --surface-3: #f1f1f1;
+  --ink: #1d1d1d;
+  --ink-2: #333333;
+  --body: #4a4a4a;
+  --muted: #666666;
+  --subtle: #6b6b6b;
+  --line: #e8e8e8;
+  --line-strong: #d6d6d6;
+  --accent: #f6821f;
+  --accent-2: #e5731a;
+  --accent-ink: #1d1d1d;
+  --accent-soft: #fef0e4;
+  --link: #0051c3;
+  --brand-ink: #a34700;
   --good: #18794e;
   --warn: #805b09;
   --bad: #b83c2c;
-  --shadow: 0 1px 2px rgba(15, 35, 60, .06);
-  --shadow-lg: 0 18px 48px rgba(15, 35, 60, .16);
+  --shadow: 0 1px 2px rgba(29, 29, 29, .06);
+  --shadow-lg: 0 18px 48px rgba(29, 29, 29, .14);
   color-scheme: light;
 }
 
@@ -86,7 +91,7 @@ a:hover { color: var(--accent); }
 button, input { font: inherit; }
 button { cursor: pointer; }
 img, svg { display: block; max-width: 100%; }
-code, kbd, pre { font-family: var(--font-mono); }
+code, kbd, pre { font-family: var(--font-code); }
 h1, h2, h3, h4 {
   margin: 0;
   color: var(--ink);
@@ -775,7 +780,7 @@ p { margin: 0; }
 .docs-home-section:last-child { border-bottom: 0; }
 .docs-section-head { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
 .docs-section-head h2 { font-size: 26px; letter-spacing: -.04em; }
-.docs-section-head p { max-width: 48ch; color: var(--muted); font-size: 13.5px; text-align: right; }
+.docs-section-head p { max-width: 48ch; color: var(--muted); font-size: 13.5px; text-align: left; }
 .docs-role-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .docs-role-card {
   display: flex;
@@ -998,3 +1003,89 @@ p { margin: 0; }
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   .docs-role-card:hover, .docs-deploy-card:hover, .docs-shot-card:hover, .release-card:hover { transform: none; }
 }
+
+
+/* ==========================================================================
+   WAF application system on the docs surface
+   Signal Ember for selection/live/action; cool blue for links and focus.
+   ========================================================================== */
+
+a:hover { color: var(--link); }
+:focus-visible { outline-color: var(--link); }
+
+.docs-body a {
+  color: var(--link);
+  text-decoration-color: color-mix(in srgb, var(--link) 42%, transparent);
+}
+.docs-body a:hover { color: var(--brand-ink); text-decoration-color: currentColor; }
+.docs-hero-link,
+.docs-home-khmer a,
+.docs-footer-links a:hover,
+.docs-breadcrumb a:hover,
+.docs-edit:hover,
+.docs-back-top:hover,
+.docs-sidebar-foot a:hover,
+.docs-home-group a:hover {
+  color: var(--link);
+}
+.docs-hero-link:hover { color: var(--brand-ink); }
+
+.docs-eyebrow { color: var(--brand-ink); }
+.docs-eyebrow > span,
+.status-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.docs-brand-mark {
+  border-color: var(--accent);
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.docs-brand-pill {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  background: var(--accent-soft);
+  color: var(--brand-ink);
+}
+
+.docs-nav-link.is-active {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--brand-ink);
+}
+.docs-toc a.is-active { color: var(--brand-ink); }
+
+.docs-role-icon,
+.docs-path-node .node-icon { color: var(--brand-ink); }
+.docs-role-copy em { color: var(--link); }
+.docs-deploy-badge {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--accent-soft);
+  color: var(--brand-ink);
+}
+.release-version { color: var(--brand-ink); }
+.docs-body .doc-figure .fig-hint { color: var(--link); }
+.docs-role-card:hover,
+.docs-deploy-card:hover,
+.docs-shot-card:hover,
+.release-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+}
+.docs-pager-link:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: var(--surface-2);
+}
+
+.docs-hero {
+  background: radial-gradient(ellipse 78% 90% at 76% 26%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 72%);
+}
+.docs-hero h1 { letter-spacing: -.045em; }
+.docs-hero h1 span { color: var(--brand-ink); }
+.docs-hero-visual::before { border-radius: 12px; }
+
+.docs-search-dialog::backdrop { background: rgba(0, 0, 0, .56); }
+.docs-mobile-scrim { background: rgba(0, 0, 0, .52); }
+
+.docs-deploy-card em svg { color: var(--brand-ink); }
+.docs-body .doc-step::before { color: var(--brand-ink); }

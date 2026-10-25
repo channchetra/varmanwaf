@@ -20,7 +20,7 @@ default all-in-one deployment (`docker compose up -d`).
 The dashboard summarises traffic, blocked requests, cache, WAF activity and
 agent health for the selected site and time window.
 
-![Dashboard](images/dashboard.png)
+![Dashboard](images/console/dashboard.webp)
 
 - **Auto-refresh** can be paused; the window selector switches between 1h/24h/7d.
 - **Collapse** hides the sidebar.
@@ -37,7 +37,7 @@ Open **Sites → Add site** and fill in:
 | Domain | `www.example.com` | The hostname clients use; alternate domains are supported |
 | Upstream | `10.0.0.10:8080` | The origin the proxy forwards to |
 
-![Sites](images/sites.png)
+![Sites](images/console/sites.webp)
 
 The first request through the site appears on the dashboard within seconds.
 
@@ -61,7 +61,7 @@ curl -s -X POST http://localhost:9080/api/v1/sites \
 
 The **Origin** tab of a site manages origin pools and path routes.
 
-![Origin tab](images/site-origin.png)
+![Origin tab](images/console/origin.webp)
 
 - **Add pool** — a group of origin servers with a load-balancing algorithm
   (round robin, consistent hash, least connections, random), optional TLS to
@@ -75,7 +75,7 @@ The **Origin** tab of a site manages origin pools and path routes.
 
 **Sites → your site → Protection** is where detection and enforcement live.
 
-![Protection](images/web-protection.png)
+![Protection](images/console/protection.webp)
 
 - **Protection mode** — the control at the top of every site page. **Block**
   answers matching attacks with a 403, **Monitor** records everything without
@@ -109,7 +109,7 @@ details are in [`docs/api.md`](./api.md).
 **Logs** shows security events, access logs and control-plane audit logs, with
 a search language for filtering.
 
-![Logs](images/logs.png)
+![Logs](images/console/logs.webp)
 
 - **Security events** — WAF detections with rule id, action (`block`,
   `challenge`, `monitor`), score and client IP; the event detail explains which
@@ -129,7 +129,7 @@ curl -s "http://localhost:9080/api/v1/logs/security?limit=50" \
 
 ## 6. Settings
 
-![Settings](images/settings.png)
+![Settings](images/console/settings.webp)
 
 - **Appearance** — light/dark/system theme. The console is **English only**.
 - **Account** — display name and password change.
