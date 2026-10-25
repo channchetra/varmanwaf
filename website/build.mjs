@@ -9,6 +9,7 @@
  *
  * Usage: node build.mjs
  */
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1093,8 +1094,34 @@ function main() {
     ),
   )
 
+  // The static server sends assets with `immutable` for a year, so a content
+  // change must produce a new URL. Hash the shared bundles once and rewrite
+  // every version marker instead of relying on manually bumped dates.
+  const assetVersion = crypto
+    .createHash('sha256')
+    .update(
+      ['site.css', 'site.js', 'docs.css', 'docs.js']
+        .map((name) => fs.readFileSync(path.join(dist, 'assets', name)))
+        .join('\n'),
+    )
+    .digest('hex')
+    .slice(0, 10)
+  const rewriteVersions = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const target = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        rewriteVersions(target)
+      } else if (entry.name.endsWith('.html')) {
+        const html = fs.readFileSync(target, 'utf8')
+        const rewritten = html.replace(/\?v=\d{8}/g, `?v=${assetVersion}`)
+        if (rewritten !== html) fs.writeFileSync(target, rewritten)
+      }
+    }
+  }
+  rewriteVersions(dist)
+
   console.log(
-    `site built: ${SEARCH.length} searchable pages · ${releaseFiles.length} releases · landing · docs shell`,
+    `site built: ${SEARCH.length} searchable pages · ${releaseFiles.length} releases · landing · docs shell · assets ${assetVersion}`,
   )
 }
 
