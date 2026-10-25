@@ -280,7 +280,7 @@ function transformFigures(html) {
     const clean = attrs.replace(/\s*(src|alt)="[^"]*"/g, '').trim()
     return `<figure class="doc-figure">
   <a href="${source}" target="_blank" rel="noreferrer"><img ${clean} src="${source}" alt="${caption}" loading="lazy" decoding="async"></a>
-  ${caption ? `<figcaption>${caption}</figcaption>` : ''}
+  <figcaption>${caption ? `<span>${caption}</span>` : '<span></span>'}<span class="fig-hint">Open full size ↗</span></figcaption>
 </figure>`
   })
 }

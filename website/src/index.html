@@ -392,6 +392,34 @@
   </section>
 
   <!-- -------------------------------------------------------------- deploy -->
+  <!-- ------------------------------------------------------- performance -->
+  <section class="section container performance-section" id="performance">
+    <div class="performance-layout">
+      <div class="performance-copy">
+        <span class="eyebrow">FAST ENOUGH TO STAY INLINE</span>
+        <h2>Security that does not<br>become the bottleneck.</h2>
+        <p>Every request crosses the WAF once: canonicalisation, signatures, managed rules and the verdict. The benchmark measures the whole edge path, not a micro-kernel in isolation.</p>
+        <div class="performance-metrics">
+          <div><strong>0.85<span>ms</span></strong><small>median SQLi block verdict</small></div>
+          <div><strong>5,835<span>req/s</span></strong><small>pass-through · c=25</small></div>
+          <div><strong>9,836<span>req/s</span></strong><small>auto-block refusal lane</small></div>
+        </div>
+        <a class="text-link" href="/docs/benchmarks-v1.0.0.html">Read the full benchmark <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></a>
+      </div>
+      <div class="benchmark-card">
+        <div class="benchmark-head"><span>BENCHMARK · 1.0.0</span><span class="benchmark-ok"><span class="status-dot" aria-hidden="true"></span> all 200</span></div>
+        <div class="benchmark-table">
+          <div class="benchmark-row benchmark-labels"><span>Lane</span><span>p50</span><span>p95</span><span>Throughput</span></div>
+          <div class="benchmark-row"><span>Pass-through · c=25</span><strong>4.10 ms</strong><strong>6.20 ms</strong><em>5,835 req/s</em></div>
+          <div class="benchmark-row"><span>SQLi block</span><strong>0.85 ms</strong><strong>1.00 ms</strong><em>40 samples</em></div>
+          <div class="benchmark-row"><span>Refusal lane</span><strong>2.01 ms</strong><strong>4.99 ms</strong><em>9,836 req/s</em></div>
+          <div class="benchmark-row"><span>GET /sites (API)</span><strong>1.15 ms</strong><strong>2.24 ms</strong><em>50 samples</em></div>
+        </div>
+        <div class="benchmark-foot">Measured on a shared Windows Docker Desktop host. Relative numbers, not capacity guarantees. The block path avoids the upstream round trip, so a blocked request is answered faster than an allowed one.</div>
+      </div>
+    </div>
+  </section>
+
   <section class="section container" id="deploy">
     <div class="section-intro">
       <div>
