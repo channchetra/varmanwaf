@@ -7,10 +7,15 @@ centrally-controlled Web Application Firewall built on
 
 > Project home: [`README.md`](../README.md)
 
-**Release 1.1.9** — the current reference set:
+**Release 1.2.1** — the current reference set. The public docs site (`/docs/`) adds a role-based entry point, deployment paths, search and screenshots on top of these source documents.
 
 | Document | What you'll find |
 | --- | --- |
+| [roles/site-user.md](./roles/site-user.md) | Start here if you own a site: protection mode, origin, caching, TLS, logs |
+| [roles/administrator.md](./roles/administrator.md) | Users, policies, CRS, IP intelligence, alerts, reports and the audit trail |
+| [roles/developer.md](./roles/developer.md) | Build, test and ship the platform |
+| [roles/system-administrator.md](./roles/system-administrator.md) | Hosts, PostgreSQL, edge fleets, HA, backup and upgrades |
+| [deployment-paths.md](./deployment-paths.md) | Choose all-in-one, split control plane + edges, or an HA fleet |
 | [features.md](./features.md) | The complete feature inventory: every console surface, how it works, its API, its honest limits |
 | [user-guide-km/index.html](./user-guide-km/index.html) | **ណែនាំអ្នកប្រើប្រាស់ (ភាសាខ្មែរ)** — the full Khmer user guide with screenshots of every feature |
 | [security-engine.md](./security-engine.md) | Pipeline, canonicalization, detectors, scoring, limits |

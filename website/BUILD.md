@@ -1,68 +1,77 @@
 # Building the documentation site
 
-Bilingual documentation for Pingap, built with **[VitePress](https://vitepress.dev/)**
-and deployed to GitHub Pages (custom domain <https://pingap.io/>).
+The VarmanWAF docs are generated from the repository markdown by
+[`build.mjs`](./build.mjs). There is no separate docs source tree: the website
+and `docs/` cannot drift.
 
-## Languages
+## Requirements
 
-| URL | Language | Source of truth |
-| --- | --- | --- |
-| <https://pingap.io/> | English (default) | `pingap-*/README.md`, `pingap-plugin/docs/*`, `docs/`, `examples/` |
-| <https://pingap.io/zh/> | 中文 | `docs/zh/**` |
+- Node 22+
+- npm
+- Python 3 only for a quick local static server (optional)
 
-## Layout
+## Build
 
-| Path | Role |
+```bash
+cd website
+npm ci
+npm run build
+```
+
+`build.mjs` reads `docs/`, renders every page, and writes:
+
+| Output | Source |
 | --- | --- |
-| `.vitepress/config.mts` | VitePress config (nav, sidebar, i18n, mermaid) |
-| `.vitepress/theme/` | Brand colours and layout tweaks |
-| `public/logo.png` | Site logo |
-| `index.md`, `plugins/`, `crates/`, `guide/` | **Generated** English content |
-| `zh/**` | **Generated** Chinese content |
-| `package.json` | VitePress + mermaid deps |
+| `dist/index.html` | `src/index.html` (landing) |
+| `dist/docs/*.html` | every document in `docs/` |
+| `dist/docs/index.html` | the role/deployment/console hub |
+| `dist/docs/search-index.json` | page + section search index |
+| `dist/releases/*.html` | every release note, auto-discovered |
+| `dist/khmer/` | `docs/user-guide-km/` copied verbatim |
 
-Do **not** edit generated markdown under `plugins/`, `crates/`, `guide/` or
-`zh/` by hand — re-run the build script.
+## Docs shell
 
-## Local development
+- `src/assets/docs.css` — tokens, sticky top bar, grouped sidebar, article
+  typography, callouts, numbered steps, figures, TOC, search dialog, home hub,
+  releases, light/dark and responsive rules.
+- `src/assets/docs.js` — theme persistence, sidebar groups/collapse, mobile
+  drawer, docs search (`Ctrl/⌘ K`), scroll-spy, copy buttons and Mermaid.
+- `build.mjs` — the `NAV` array defines the sidebar and search metadata;
+  `LEADS` holds the page summaries. Add a document to `NAV` to publish it.
+
+Headings use GitHub-compatible anchors, so cross-document `#anchors` copied
+from the repository keep working. Images live in `docs/images/console/` and
+are referenced from markdown as `images/console/<name>.webp`; the build
+rewrites them to `/images/console/<name>.webp` and wraps standalone images in
+`<figure>` captions.
+
+## Local preview
 
 ```bash
-# 1. Assemble markdown from the monorepo
-./scripts/build-website.sh
+python3 -m http.server -d dist 8082
+# http://127.0.0.1:8082/docs/
+```
 
-# 2. Install deps (once) and start the VitePress dev server
+## Container
+
+```bash
 cd website
-npm install
-npm run docs:dev
-# open the printed local URL (usually http://127.0.0.1:5173/)
+npm run build
+docker build -f Dockerfile -t varmanwaf-website:local .
+docker run --rm -p 8081:8080 varmanwaf-website:local
+# http://localhost:8081/docs/
 ```
 
-Production build:
+The runtime image is `scratch` + a static server from `server/server.rs`
+(standard library only). The image is built locally and is not published to
+Docker Hub.
 
-```bash
-./scripts/build-website.sh
-cd website
-npm run docs:build
-# output: website/.vitepress/dist
-npm run docs:preview
-```
+## Docs QA
 
-If you deploy under a subpath (e.g. `username.github.io/pingap/` without a
-custom domain):
+Before shipping a docs change:
 
-```bash
-DOCS_BASE=/pingap/ npm run docs:build
-```
-
-## Updating Chinese docs
-
-Edit files under `docs/zh/` (not under `website/zh/`). Then re-run
-`./scripts/build-website.sh`.
-
-## CI
-
-`.github/workflows/pages.yml`:
-
-1. Runs `scripts/build-website.sh`
-2. `npm ci && npm run docs:build` in `website/`
-3. Uploads `website/.vitepress/dist` to GitHub Pages
+- `node build.mjs` must report the expected page/release counts.
+- Every internal `href`/`src` and every `#anchor` must resolve.
+- Check the docs home, one role page, the deployment page and one release page
+  in light and dark at 1440 px and 390 px.
+- Open search (`Ctrl/⌘ K`), search for a feature, and follow a result.

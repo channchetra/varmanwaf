@@ -19,6 +19,8 @@
 
 ### Dashboard Overview
 
+![Dashboard overview](images/console/dashboard.webp)
+
 The dashboard provides:
 - **Analytics**: Request trends, per-site traffic over time, top rules triggered, status codes
 - **Sites**: Manage protected websites
@@ -42,6 +44,8 @@ The dashboard provides:
 ## Adding a Website
 
 ### Step 1: Create a Site
+
+![Create and open a site](images/console/sites.webp)
 
 Navigate to **Sites → Add Site**:
 - **Name**: Human-readable label (e.g., "Production API")
@@ -79,6 +83,8 @@ Point your domain's DNS to the VarmanWAF server:
 - **CNAME**: If behind a load balancer
 
 ### Step 4: SSL Certificate
+
+![Certificate state and ACME events](images/console/ssl.webp)
 
 See [SSL Certificate Management](#ssl-certificate-management) below.
 
@@ -274,6 +280,8 @@ Requests missing the header, cookie or query parameter bucket together, so they 
 
 ## Flood protection & challenges
 
+![Flood protection and challenge controls](images/console/protection-cc.webp)
+
 ### Challenge Settings
 
 ```
@@ -292,6 +300,8 @@ Sites → [site] → Protection → Flood protection
 ## Cache Configuration
 
 ### Cache Rules
+
+![Cache rules and hit ratio](images/console/caching.webp)
 
 ```
 Sites → [site] → Cache Rules
@@ -383,6 +393,8 @@ The SSL/TLS page also keeps an event log per certificate — created, renewal re
 
 ## Request/Response Rewriting
 
+![Request and response rewrite rules](images/console/rewrite.webp)
+
 ### Rewrite Rules
 
 ```
@@ -416,6 +428,8 @@ Sites → [site] → Error Pages → Add
 ## Log Management
 
 ### Viewing Logs
+
+![Security events with request IDs](images/console/logs.webp)
 
 **Security Events**: `Logs → Security`
 - Filtered by site, rule, action, time range
@@ -460,6 +474,8 @@ Logs → Purge (select age threshold)
 ```
 
 ## Agent Management
+
+![Agent heartbeat, version and served sites](images/console/agents.webp)
 
 ### Adding Agents
 
@@ -512,6 +528,8 @@ Switch between the **IP rules** and **Geo restrictions** tabs with `?tab=ip` / `
 IP rules are evaluated before the WAF. Bulk import accepts one IP or CIDR per line.
 
 ### Geo Restrictions
+
+![Geo and ASN access rules](images/console/access-geo.webp)
 
 Block or allow traffic by country and ASN:
 

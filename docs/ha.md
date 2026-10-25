@@ -18,6 +18,8 @@ internal deployments. Failure of the host stops traffic.
 
 ### 1.2 Control plane + N edge nodes (the standard production shape)
 
+![Fleet topology: control plane → agent → site](images/console/fleet-topology.webp)
+
 ```text
                   DNS / LB / anycast
                           │
@@ -68,6 +70,8 @@ promotion time. Without it, RPO = your last backup. Edge nodes keep serving
 regardless; only configuration changes are blocked.
 
 ## 2. Adding an edge node
+
+![Agents page after an edge node registers](images/console/agents.webp)
 
 1. Install the agent on the new host (Docker image or binary + systemd).
 2. Point it at the control plane (`VARMAN_SERVER_URL` / config file) with its

@@ -27,21 +27,6 @@ protect your first website.
 
 ---
 
-## Table of Contents
-
-1. [What is VarmanWAF](#what-is-varman)
-2. [Prerequisites](#prerequisites)
-3. [Path 1: Docker Compose (recommended)](#path-1-docker-compose-recommended)
-4. [Path 2: Build from source](#path-2-build-from-source)
-5. [Path 3: Binary + systemd (production)](#path-3-binary--systemd-production)
-6. [First login and your first protected site](#first-login-and-your-first-protected-site)
-7. [Choosing a run mode](#choosing-a-run-mode)
-8. [Configuration cheat sheet](#configuration-cheat-sheet)
-9. [Troubleshooting](#troubleshooting)
-10. [Next steps](#next-steps)
-
----
-
 ## What is VarmanWAF
 
 VarmanWAF is a distributed, centrally managed Web Application Firewall built on
@@ -232,6 +217,8 @@ If `"database"` is not `"up"`, see
 [Database connection failed](#database-connection-failed).
 
 ### Step 5 — Open the dashboard
+
+![First sign-in to the console](images/console/login.webp)
 
 Browse to **<https://localhost:9080>** and log in with:
 
@@ -534,6 +521,8 @@ password (Profile → Change Password).
 
 ### 2. Create a site
 
+![The sites list after the first site is added](images/console/sites.webp)
+
 **Sites → Add Site**
 
 | Field | Example | Notes |
@@ -546,6 +535,8 @@ Then add at least one origin under **Sites → Local Demo → Upstreams → Add*
 (e.g. `127.0.0.1:8080`). Ports `80`/`443` start listening once a site exists.
 
 ### 3. Enable the WAF
+
+![Protection: one mode and the rules behind it](images/console/protection.webp)
 
 **Sites → Local Demo → Rules → Security Mode**
 
@@ -560,6 +551,8 @@ Managed rulesets (SQLi, XSS, RCE, path traversal, command injection) can be
 toggled individually.
 
 ### 4. Send traffic and observe
+
+![Traffic and security events after the first request](images/console/traffic.webp)
 
 Resolve the site domain to the VarmanWAF host (a `/etc/hosts` entry is enough for
 a local test):
@@ -694,7 +687,7 @@ one:
 | — | `VARMAN_DB_MAX_CONNECTIONS` | `20` | Connection pool maximum |
 | — | `VARMAN_METRIC_RETENTION_DAYS` | `7` | Days of edge-metric samples kept |
 | — | `VARMAN_CORS_ORIGINS` | `[]` (all) | Allowed CORS origins, comma-separated |
-| — | `VARMAN_PASSKEY_ENABLED` / `_RP_NAME` / `_RP_ID` / `_ORIGIN` / `_TRUST_FORWARDED_PROTO` | see [deployment guide](./deployment.md#server-configuration-server) | Passkey (WebAuthn) settings |
+| — | `VARMAN_PASSKEY_ENABLED` / `_RP_NAME` / `_RP_ID` / `_ORIGIN` / `_TRUST_FORWARDED_PROTO` | see [deployment guide](./deployment.md#server-configuration--server) | Passkey (WebAuthn) settings |
 
 A dash means the setting has no counterpart in that column: the server rows
 with a dash are **environment-only** (no flag, so no file key either), while

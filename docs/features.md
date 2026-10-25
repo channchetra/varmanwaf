@@ -20,6 +20,8 @@ Conventions used below:
 
 ### 1.1 Login and sessions
 
+![Sign in to the console](images/console/login.webp)
+
 - **Where** — `/login`.
 - **API** — `auth.rs` (`/auth/login`, `/auth/refresh`, `/auth/logout`,
   `/auth/me`), `passkeys.rs` (WebAuthn), `login_security.rs`.
@@ -35,6 +37,8 @@ Conventions used below:
 
 ### 1.2 Dashboard
 
+![Dashboard: 24-hour traffic, blocked requests and site health](images/console/dashboard.webp)
+
 - **Where** — `/dashboard`.
 - **API** — `analytics.rs`, `agents.rs`.
 - **How it works** — Fleet health (agents online/offline), traffic and
@@ -44,6 +48,8 @@ Conventions used below:
   the full report (that is `/reports`, on demand).
 
 ### 1.3 Fleet / agents
+
+![Agents: heartbeat, version and served-site scope](images/console/agents.webp)
 
 - **Where** — `/agents`.
 - **API** — `agents.rs`, `mtls.rs`.
@@ -55,6 +61,8 @@ Conventions used below:
 
 ### 1.4 Config history
 
+![Configuration history with versions, diff and rollback](images/console/config-history.webp)
+
 - **Where** — `/config-history`.
 - **API** — `config_versions.rs`.
 - **How it works** — Every change that produces a new bundle is versioned.
@@ -64,6 +72,8 @@ Conventions used below:
 
 ### 1.5 Lifecycle
 
+![The request lifecycle shows the real order of WAF checks](images/console/lifecycle.webp)
+
 - **Where** — `/lifecycle`.
 - **How it works** — The site lifecycle view: creation → configured →
   receiving traffic → protected, with what is missing at each stage. It is a
@@ -72,6 +82,8 @@ Conventions used below:
 ---
 
 ### 1.6 Console accessibility and loading
+
+![The same console in the dark theme](images/console/dashboard-dark.webp)
 
 - **Where** — the app shell, tables, dialogs and every route.
 - **Keyboard** — a skip link targets `main#main`; sortable table headers are
@@ -90,6 +102,8 @@ Conventions used below:
 
 ### 2.1 Sites list
 
+![Sites list with status, requests and blocked counters](images/console/sites.webp)
+
 - **Where** — `/sites`.
 - **API** — `sites.rs`.
 - **How it works** - Create a site (name, domains), see its status, engine
@@ -98,6 +112,8 @@ Conventions used below:
   site's Overview. Deleting a site removes its bundles from every agent.
 
 ### 2.2 Site overview
+
+![Site overview: protection, origin, certificate and findings](images/console/site-overview.webp)
 
 - **Where** — `/sites/:siteId/overview` (the site's default tab).
 - **API** — `sites.rs`, `analytics.rs`, `waf.rs`, certificates, logs.
@@ -123,6 +139,8 @@ Conventions used below:
 
 ### 2.3 Site detail — Origin
 
+![Origin pools, nodes and route dispatch](images/console/origin.webp)
+
 - **Where** — `/sites/:siteId/origin`.
 - **API** — `sites.rs`, `site_failover.rs`.
 - **How it works** — Upstream definition: address, TLS to origin, SNI, Host
@@ -143,6 +161,8 @@ Conventions used below:
 ## 3. Protection (per site)
 
 ### 3.1 Protection — the single security surface
+
+![Protection: one enforcement mode, rules and recent decisions](images/console/protection.webp)
 
 - **Where** — `/sites/:siteId/security/protection`.
 - **Legacy links** — `/security/waf` → Rules tab, `/security/cc` → Flood
@@ -210,6 +230,8 @@ Conventions used below:
 
 ### 3.2 Advanced settings (formerly policy tuning)
 
+![Advanced policy tuning and shared policy state](images/console/protection-policy.webp)
+
 - **Where** — `/sites/:siteId/security/protection?tab=tuning` (legacy
   `?tab=settings|policy|exclusions` resolve here). The tab is labelled
   **Advanced**.
@@ -251,6 +273,8 @@ Conventions used below:
 
 ### 3.4 Access control
 
+![Access control: IP rules, geo and challenge actions](images/console/access-control.webp)
+
 - **Where** — `/sites/:siteId/security/access` (tabs IP / Geo; legacy
   `/security/ip-rules` and `/security/geo` redirect here).
 - **API** — `ip_rules.rs`, `ip_groups.rs`, `ip_lists.rs`, `geo.rs`,
@@ -273,6 +297,8 @@ Conventions used below:
 
 ### 3.5 Rate limiting
 
+![Rate limiting rules and their live counters](images/console/rate-limiting.webp)
+
 - **Where** — `/sites/:siteId/security/rate-limiting`.
 - **API** — `rate_limiting.rs`.
 - **How it works** — Named limiters (key: IP / header / cookie / path;
@@ -281,6 +307,8 @@ Conventions used below:
 
 ### 3.6 Bot protection
 
+![Bot protection posture and verified crawlers](images/console/bot-protection.webp)
+
 - **Where** — `/sites/:siteId/security/bot`.
 - **API** — `bot.rs`.
 - **How it works** — Bot posture (off / monitor / challenge / block),
@@ -288,6 +316,8 @@ Conventions used below:
   heuristics and reputation signals feeding the CC layer.
 
 ### 2.4 Routing topology (the flow views)
+
+![Site topology with the docked editor and live signal edges](images/console/topology-docked.webp)
 
 - **Where** — `/topology` (fleet view: control plane, every agent and every
   site in one graph) and `/sites/:siteId/topology` (one site's full request
@@ -338,6 +368,8 @@ Conventions used below:
   complete flow instead of a single lonely node.
 
 ### 3.7 API assets
+
+![API assets: learned schema and OpenAPI draft](images/console/api-assets.webp)
 - **Where** — `/sites/:siteId/security/api-assets`.
 - **API** — `api_assets.rs`, `api_protection.rs`.
 - **How it works** —
@@ -356,6 +388,8 @@ Conventions used below:
 
 ### 3.8 Caching
 
+![Cache rules, quota and hit ratio](images/console/caching.webp)
+
 - **Where** — `/sites/:siteId/caching`.
 - **API** — `cache.rs`, `cache_settings.rs`.
 - **How it works** — Cache rules by path/extension with TTL and key
@@ -363,6 +397,8 @@ Conventions used below:
   caches responses it blocked or personalised.
 
 ### 3.9 SSL / ACME
+
+![Site certificate, expiry and ACME events](images/console/ssl.webp)
 
 - **Where** — `/sites/:siteId/ssl`; global view at `/ssl`.
 - **API** — `ssl.rs`, `system_tls.rs`.
@@ -384,6 +420,8 @@ Conventions used below:
 
 ### 3.10 Traffic analytics
 
+![Traffic analytics for the selected window](images/console/traffic.webp)
+
 - **Where** — `/sites/:siteId/traffic`; global view at `/traffic`.
 - **API** — `analytics.rs`.
 - **How it works** — Requests, status classes, bandwidth, top paths,
@@ -391,6 +429,8 @@ Conventions used below:
   access-log pipeline with daily buckets in the configured timezone.
 
 ### 3.11 Rewrite / routes
+
+![Request and response rewrite rules](images/console/rewrite.webp)
 
 - **Where** — `/sites/:siteId/rules/rewrite`.
 - **API** — `rewrite.rs`.
@@ -400,6 +440,8 @@ Conventions used below:
   sample URL.
 
 ### 3.12 Logs
+
+![Security logs with request IDs and decision state](images/console/logs.webp)
 
 - **Where** — `/logs` (global), per-site logs inside the site workspace.
 - **API** — `logs.rs`, `log_retention.rs`.
@@ -450,6 +492,8 @@ Conventions used below:
 
 ### 4.1 Policies
 
+![WAF policies with scope, version and assignment](images/console/policies.webp)
+
 - **Where** — `/policies`, detail at `/policies/:policyId`.
 - **API** — `policies.rs` (17 routes).
 - **How it works** — A policy is a revisioned document of **layers**
@@ -461,6 +505,8 @@ Conventions used below:
   preview of the compiled result.
 
 ### 4.2 CRS
+
+![CRS rulesets with import and validation state](images/console/crs.webp)
 
 - **Where** — `/crs` (import + catalogue) and the policy detail page's
   **CRS ruleset** layer (binding + paranoia ceiling).
@@ -490,6 +536,8 @@ Conventions used below:
 
 ### 4.3 Alerts and notifications
 
+![Alerts, silences and notification channels](images/console/alerts.webp)
+
 - **Where** — `/alerts` (legacy `/notifications` redirects).
 - **API** — `alerts.rs`, `notifications.rs`, `login_security.rs`.
 - **How it works** — **Alert rules** (condition → severity), **silences**
@@ -499,6 +547,8 @@ Conventions used below:
   says so.
 
 ### 4.4 Reports
+
+![Interception report with the selected window](images/console/reports.webp)
 
 - **Where** — `/reports`.
 - **API** — `reports.rs`.
@@ -512,6 +562,8 @@ Conventions used below:
 
 ### 4.5 Blocked IPs
 
+![Blocked IPs with source, reason and expiry](images/console/blocked-ips.webp)
+
 - **Where** — `/blocked-ips`.
 - **API** — `blocked_ips.rs`.
 - **How it works** — Every auto-block (reputation/CC escalation) and manual
@@ -519,6 +571,8 @@ Conventions used below:
   Auto-blocks expire on their TTL.
 
 ### 4.6 IP groups
+
+![Global IP groups: manual, country, ASN and subscriptions](images/console/ip-groups.webp)
 
 - **Where** — `/ip-groups`.
 - **API** — `ip_groups.rs`, `ip_lists.rs`.
@@ -528,6 +582,8 @@ Conventions used below:
 
 ### 4.7 AI assistant
 
+![AI assistant explaining an event with tool calls inline](images/console/assistant.webp)
+
 - **Where** — `/assistant`.
 - **API** — `ai.rs`, `mcp.rs`.
 - **How it works** — Optional AI assistant for operators (explain an event,
@@ -536,6 +592,8 @@ Conventions used below:
   default; nothing is sent anywhere unless configured.
 
 ### 4.8 Settings
+
+![Global settings: identity, TLS, logging and providers](images/console/settings.webp)
 
 - **Where** — `/settings`.
 - **API** — `settings.rs`, `display.rs`, `users.rs`, `passkeys.rs`,

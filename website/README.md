@@ -35,8 +35,9 @@ dominated by the site files (screenshots + the mermaid runtime).
 | Path | Source |
 | --- | --- |
 | `/` | `src/index.html` (landing: features, architecture, engine, performance, quick start) |
-| `/docs/` | index of all documents, grouped by audience |
-| `/docs/<slug>.html` | rendered `docs/*.md` (links rewritten, headings anchored, TOC generated) |
+| `/docs/` | role/deployment/console hub with search and screenshots |
+| `/docs/<slug>.html` | rendered `docs/*.md` in the docs shell (grouped sidebar, TOC, search, figures) |
+| `/docs/search-index.json` | page + section index used by the client search |
 | `/khmer/index.html` | `docs/user-guide-km/` copied verbatim (Khmer guide with screenshots) |
 | `/releases/` | rendered `docs/releases/*.md` |
 | `/images/` | `docs/images/` |
