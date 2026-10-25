@@ -63,6 +63,9 @@ const crumbKeys: Record<string, string> = {
 export function AppLayout() {
   const { t, i18n } = useTranslation()
   const location = useLocation()
+  const isTopologyCanvas =
+    location.pathname === '/topology' ||
+    /^\/sites\/[^/]+\/topology\/?$/.test(location.pathname)
   const navigate = useNavigate()
   const { resolved, toggle } = useThemeStore()
   const user = useAuthStore((s) => s.user)
@@ -318,7 +321,14 @@ export function AppLayout() {
         </header>
 
         <main id="main" tabIndex={-1} className="flex-1 overflow-y-auto outline-none">
-          <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
+          {/* The topology canvas owns the whole main column; every other
+              surface keeps the 1400px reading measure. */}
+          <div
+            className={cn(
+              'w-full px-4 py-6 sm:px-6 lg:px-8',
+              !isTopologyCanvas && 'mx-auto max-w-[1400px]',
+            )}
+          >
             <Suspense
               fallback={
                 <div
