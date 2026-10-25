@@ -2,7 +2,8 @@
  *
  * Rebuilt from the guardianwaf.com runtime teardown: a three-state theme
  * panel, an animations/mouse-effects preference, a pointer-reactive SVG
- * overlay (trails, relays, lifts, pulses), the interactive request pipeline,
+ * overlay (security constellation, links, pulses, trails), the interactive
+ * request pipeline,
  * deployment tabs, copy buttons and the mobile navigation. Everything is
  * vanilla DOM state - no framework and no build step for the behavior.
  */
@@ -152,7 +153,29 @@
   let relayRing = null
   let pointerGlow = null
   let trailsGroup = null
+  let cursorOrbit = null
+  let shownAt = 0
+  let pointerPresent = false
   let pulseCount = 0
+  let constellationLinks = []
+  let linkPulses = []
+
+  // Security glyphs are drawn on a 24x24 grid so they stay legible at node
+  // size and can be picked at random without loading icon files.
+  const securityGlyphs = [
+    { name: 'shield', paths: ['M12 2 20 5.5V12c0 4.6-3.4 7.7-8 9.5-4.6-1.8-8-4.9-8-9.5V5.5Z', 'm9 11.6 2 2 4-4.2'] },
+    { name: 'lock', paths: ['M6 10.5h12V21H6Z', 'M9 10.5V7.8a3 3 0 0 1 6 0v2.7', 'M12 14.5v2.4'] },
+    { name: 'key', paths: ['M8 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z', 'M11.5 12H21', 'M17 12v2.6', 'M20 12v1.8'] },
+    { name: 'bug', paths: ['M8.2 7.6a3.8 3.8 0 0 1 7.6 0', 'M7 11.5h10v3.8a5 5 0 0 1-10 0Z', 'M3.5 13h3.5M17 13h3.5', 'M5 8l2.2 2M19 8l-2.2 2', 'M6 18.5 8 16.6M18 18.5 16 16.6'] },
+    { name: 'eye', paths: ['M2 12s4.2-7 10-7 10 7 10 7-4.2 7-10 7S2 12 2 12Z', 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z'] },
+    { name: 'terminal', paths: ['M3 4.5h18v15H3Z', 'm7 9 3 3-3 3', 'M13 15h4'] },
+    { name: 'fingerprint', paths: ['M8 19.5c-1.6-2.1-2.5-4.6-2.5-7.3a6.5 6.5 0 0 1 13 0c0 2.7-.9 5.2-2.5 7.3', 'M12 21c-1.2-2-1.9-4.3-1.9-6.7a1.9 1.9 0 0 1 3.8 0c0 1.4.2 2.7.6 4', 'M5.6 10.2A6.8 6.8 0 0 1 12 4.4'] },
+    { name: 'network', paths: ['M12 4v4.5', 'M5.2 18.2 10 13.5', 'M18.8 18.2 14 13.5', 'M12 8.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z', 'M5.2 20a2.3 2.3 0 1 0 0-4.6 2.3 2.3 0 0 0 0 4.6Z', 'M18.8 20a2.3 2.3 0 1 0 0-4.6 2.3 2.3 0 0 0 0 4.6Z'] },
+    { name: 'database', paths: ['M4 6c0 1.7 3.6 3 8 3s8-1.3 8-3-3.6-3-8-3-8 1.3-8 3Z', 'M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6', 'M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'] },
+    { name: 'code', paths: ['m8 8-4.2 4L8 16', 'm16 8 4.2 4L16 16', 'm13.5 5-3 14'] },
+    { name: 'radar', paths: ['M12 3a9 9 0 1 0 9 9', 'M12 7a5 5 0 1 0 5 5', 'm12 12 6.5-6.5', 'M12 11.8h.4'] },
+    { name: 'cloud', paths: ['M6.4 18h10.9a3.8 3.8 0 0 0 .6-7.6 5.8 5.8 0 0 0-11-1.9A3.2 3.2 0 0 0 6.4 18Z', 'M9 14.5h6'] },
+  ]
 
   function el(name, attrs = {}) {
     const node = document.createElementNS(SVG_NS, name)
@@ -189,31 +212,43 @@
     const inner = el('g', { mask: 'url(#ambient-mask-y)' })
     outer.appendChild(inner)
 
+    const constellation = el('g', { class: 'ambient-constellation' })
+    for (let i = 0; i < 16; i++) {
+      const link = el('line', { class: 'ambient-constellation-link', opacity: '0' })
+      constellation.appendChild(link)
+      constellationLinks.push(link)
+    }
+
     const liftsGroup = el('g', { class: 'ambient-lifts' })
-    const glyphs = [
-      'M-16 0H16M0-16V16M-9-9 9 9M9-9-9 9',
-      'M0-16 14-8V8L0 16-14 8V-8ZM0-7V7M-6 0H6',
-      'M-14 8V-8L0-16 14-8V8L0 16ZM-6 0H6M0-6V6',
-      'M-16 8H-6V-8H4V8H14M-2-12V-2',
-    ]
     const positions = [
-      [18, 26, -18], [78, 18, 12], [10, 66, 8], [86, 60, -10],
-      [36, 82, 15], [64, 78, -15], [50, 14, 6], [28, 48, -6],
+      [12, 21], [34, 13], [62, 18], [86, 26],
+      [18, 47], [43, 39], [70, 45], [90, 60],
+      [10, 74], [32, 69], [57, 81], [82, 77],
     ]
-    for (const [px, py, rotate] of positions) {
-      const group = el('g', { class: 'ambient-lift', display: 'none', transform: `translate(0 0) rotate(${rotate})`, opacity: '0' })
-      group.appendChild(el('path', { class: 'ambient-trace', d: 'M-100-22H-64L-42 0H-20M20 0H54L76 24H110' }))
-      group.appendChild(el('path', { class: 'ambient-glyph', d: glyphs[Math.floor(Math.random() * glyphs.length)] }))
-      group.appendChild(el('circle', { class: 'ambient-node', cx: '-90', cy: '-22', r: '1.8' }))
-      group.appendChild(el('rect', { class: 'ambient-node', x: '108', y: '22', width: '3', height: '3' }))
+    const start = Math.floor(Math.random() * securityGlyphs.length)
+    for (const [index, [px, py]] of positions.entries()) {
+      const glyph = securityGlyphs[(start + index) % securityGlyphs.length]
+      const group = el('g', { class: 'ambient-lift', display: 'none', opacity: '0', 'data-icon': glyph.name })
+      group.appendChild(el('circle', { class: 'ambient-icon-orbit', r: '30' }))
+      group.appendChild(el('circle', { class: 'ambient-icon-disc', r: '22' }))
+      const icon = el('svg', { class: 'ambient-icon', x: '-13', y: '-13', width: '26', height: '26', viewBox: '0 0 24 24' })
+      for (const d of glyph.paths) icon.appendChild(el('path', { d }))
+      group.appendChild(icon)
       liftsGroup.appendChild(group)
-      lifts.push({ node: group, x: px, y: py, rotate, opacity: 0 })
+      lifts.push({ node: group, x: px, y: py, seed: Math.random() * 6.28, opacity: 0 })
+    }
+
+    const pulses = el('g', { class: 'ambient-link-pulses' })
+    for (let i = 0; i < 8; i++) {
+      const pulse = el('circle', { class: 'ambient-link-pulse', r: '1.8', opacity: '0' })
+      pulses.appendChild(pulse)
+      linkPulses.push(pulse)
     }
 
     const effects = el('g', { class: 'ambient-effects' })
     const trails = el('g', { class: 'ambient-trails' })
     trailsGroup = trails
-    for (let i = 0; i < 18; i++) {
+    for (let i = 0; i < 22; i++) {
       const soft = el('path', { class: 'ambient-trail-soft' })
       const core = el('path', { class: 'ambient-trail-core' })
       trails.append(soft, core)
@@ -221,13 +256,15 @@
     }
     pointerGlow = el('circle', { class: 'ambient-cursor-glow', r: '80', fill: 'url(#ambient-glow)', opacity: '0' })
     relayLine = el('line', { class: 'ambient-relay-link', opacity: '0' })
-    relayRing = el('circle', { class: 'ambient-relay-ring', r: '26', fill: 'none', opacity: '0' })
-    cursorRing = el('circle', { class: 'ambient-cursor-ring', r: '15', fill: 'none' })
-    cursorCore = el('circle', { class: 'ambient-cursor-core', r: '2.5' })
+    relayRing = el('circle', { class: 'ambient-relay-ring', r: '30', fill: 'none', opacity: '0' })
+    cursorOrbit = el('circle', { class: 'ambient-cursor-orbit', r: '31', fill: 'none' })
+    cursorRing = el('circle', { class: 'ambient-cursor-ring', r: '18', fill: 'none' })
+    cursorCore = el('circle', { class: 'ambient-cursor-core', r: '3' })
 
-    effects.append(trails, pointerGlow, relayLine, relayRing, cursorRing, cursorCore)
-    inner.append(liftsGroup, effects)
+    effects.append(trails, pointerGlow, relayLine, relayRing, cursorOrbit, cursorRing, cursorCore)
+    inner.append(constellation, liftsGroup, pulses, effects)
     ambient.appendChild(outer)
+    ambient.setAttribute('data-nodes', String(lifts.length))
     document.body.appendChild(ambient)
     resizeAmbient()
     return ambient
@@ -248,6 +285,7 @@
     if (!ambient) buildAmbient()
     ambient.style.display = 'block'
     ambientVisible = true
+    shownAt = performance.now()
   }
 
   function ambientAllowed() {
@@ -259,9 +297,10 @@
     if (!ambient || !ambientVisible) return
     const now = performance.now()
     const idle = now - lastMove
-    const fade = Math.max(0, 1 - idle / 1200)
+    const fade = Math.max(0, 1 - idle / 2600)
+    const reveal = Math.min(1, Math.max(0, (now - shownAt) / 500))
 
-    if (idle > 1400) {
+    if (idle > 3000) {
       points = []
       for (const pair of trailPairs) {
         pair.soft.setAttribute('opacity', '0')
@@ -269,10 +308,13 @@
       }
       cursorRing.setAttribute('opacity', '0')
       cursorCore.setAttribute('opacity', '0')
+      cursorOrbit.setAttribute('opacity', '0')
       pointerGlow.setAttribute('opacity', '0')
       relayLine.setAttribute('opacity', '0')
       relayRing.setAttribute('opacity', '0')
       for (const lift of lifts) lift.node.setAttribute('display', 'none')
+      for (const link of constellationLinks) link.setAttribute('opacity', '0')
+      for (const pulse of linkPulses) pulse.setAttribute('opacity', '0')
       return
     }
 
@@ -286,56 +328,98 @@
         pair.core.setAttribute('opacity', '0')
         continue
       }
+      if (Math.hypot(b.x - a.x, b.y - a.y) > 110) {
+        pair.soft.setAttribute('opacity', '0')
+        pair.core.setAttribute('opacity', '0')
+        continue
+      }
       const d = `M${a.x.toFixed(1)} ${a.y.toFixed(1)}L${b.x.toFixed(1)} ${b.y.toFixed(1)}`
       pair.soft.setAttribute('d', d)
       pair.core.setAttribute('d', d)
       const age = (i + 1) / trailPairs.length
-      pair.soft.setAttribute('opacity', (age * 0.45 * fade).toFixed(3))
-      pair.core.setAttribute('opacity', (age * 0.75 * fade).toFixed(3))
+      pair.soft.setAttribute('opacity', (age * 0.55 * fade).toFixed(3))
+      pair.core.setAttribute('opacity', (age * 0.9 * fade).toFixed(3))
     }
 
     cursorRing.setAttribute('cx', pointer.x)
     cursorRing.setAttribute('cy', pointer.y)
-    cursorRing.setAttribute('opacity', (0.6 * fade).toFixed(3))
+    cursorRing.setAttribute('opacity', (0.75 * fade * reveal).toFixed(3))
     cursorCore.setAttribute('cx', pointer.x)
     cursorCore.setAttribute('cy', pointer.y)
-    cursorCore.setAttribute('opacity', (0.9 * fade).toFixed(3))
+    cursorCore.setAttribute('opacity', (fade * reveal).toFixed(3))
+    cursorOrbit.setAttribute('cx', pointer.x)
+    cursorOrbit.setAttribute('cy', pointer.y)
+    cursorOrbit.setAttribute('stroke-dashoffset', (-(now * 0.018) % 12).toFixed(2))
+    cursorOrbit.setAttribute('opacity', (0.55 * fade * reveal).toFixed(3))
     pointerGlow.setAttribute('cx', pointer.x)
     pointerGlow.setAttribute('cy', pointer.y)
-    pointerGlow.setAttribute('opacity', (0.22 * fade).toFixed(3))
+    pointerGlow.setAttribute('opacity', (0.28 * fade * reveal).toFixed(3))
     if (trailsGroup) trailsGroup.setAttribute('opacity', fade.toFixed(3))
 
-    let nearest = null
-    let nearestDistance = Infinity
-    const edge = 170
+    // Icons drift very slowly, then brighten near the pointer.
+    const nodes = []
     for (const lift of lifts) {
-      const x = (lift.x / 100) * window.innerWidth
-      const y = (lift.y / 100) * window.innerHeight
+      const x = (lift.x / 100) * window.innerWidth + Math.sin(now / 4200 + lift.seed) * 5
+      const y = (lift.y / 100) * window.innerHeight + Math.cos(now / 5000 + lift.seed) * 4
       const distance = Math.hypot(pointer.x - x, pointer.y - y)
-      const visible = distance < edge && fade > 0.05
-      if (visible) {
-        lift.node.setAttribute('display', 'inline')
-        lift.node.setAttribute('transform', `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${lift.rotate})`)
-        const opacity = Math.max(0.15, 1 - distance / edge) * 0.9 * fade
-        lift.node.setAttribute('opacity', opacity.toFixed(3))
-        if (distance < nearestDistance) {
-          nearestDistance = distance
-          nearest = { x, y }
-        }
-      } else if (lift.node.getAttribute('display') !== 'none') {
-        lift.node.setAttribute('display', 'none')
-      }
+      const proximity = Math.max(0, 1 - distance / 360)
+      const opacity = (0.24 + 0.7 * proximity) * fade * reveal
+      lift.node.setAttribute('display', 'inline')
+      lift.node.setAttribute('transform', `translate(${x.toFixed(1)} ${y.toFixed(1)})`)
+      lift.node.setAttribute('opacity', opacity.toFixed(3))
+      nodes.push({ x, y, distance, opacity })
     }
 
-    if (nearest) {
+    const near = nodes
+      .filter((node) => node.distance < 480)
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 7)
+    const active = []
+    let linkIndex = 0
+    const drawLink = (a, b, opacity) => {
+      const link = constellationLinks[linkIndex++]
+      if (!link) return
+      link.setAttribute('x1', a.x.toFixed(1))
+      link.setAttribute('y1', a.y.toFixed(1))
+      link.setAttribute('x2', b.x.toFixed(1))
+      link.setAttribute('y2', b.y.toFixed(1))
+      link.setAttribute('stroke-dashoffset', (-(now * 0.012) % 9).toFixed(2))
+      link.setAttribute('opacity', opacity.toFixed(3))
+      active.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, opacity })
+    }
+
+    for (const node of near) {
+      drawLink(pointer, node, (0.32 + 0.4 * (1 - node.distance / 480)) * fade * reveal)
+    }
+    for (let i = 1; i < near.length; i++) {
+      drawLink(near[i - 1], near[i], 0.28 * fade * reveal)
+    }
+    for (; linkIndex < constellationLinks.length; linkIndex++) {
+      constellationLinks[linkIndex].setAttribute('opacity', '0')
+    }
+
+    for (let i = 0; i < linkPulses.length; i++) {
+      const pulse = linkPulses[i]
+      const link = active[i]
+      if (!link) {
+        pulse.setAttribute('opacity', '0')
+        continue
+      }
+      const t = (now * 0.00055 + i * 0.17) % 1
+      pulse.setAttribute('cx', (link.x1 + (link.x2 - link.x1) * t).toFixed(1))
+      pulse.setAttribute('cy', (link.y1 + (link.y2 - link.y1) * t).toFixed(1))
+      pulse.setAttribute('opacity', Math.min(0.95, link.opacity * 1.4).toFixed(3))
+    }
+
+    if (near[0]) {
       relayLine.setAttribute('x1', pointer.x)
       relayLine.setAttribute('y1', pointer.y)
-      relayLine.setAttribute('x2', nearest.x)
-      relayLine.setAttribute('y2', nearest.y)
-      relayLine.setAttribute('opacity', (0.35 * fade).toFixed(3))
-      relayRing.setAttribute('cx', nearest.x)
-      relayRing.setAttribute('cy', nearest.y)
-      relayRing.setAttribute('opacity', (0.4 * fade).toFixed(3))
+      relayLine.setAttribute('x2', near[0].x)
+      relayLine.setAttribute('y2', near[0].y)
+      relayLine.setAttribute('opacity', (0.45 * fade * reveal).toFixed(3))
+      relayRing.setAttribute('cx', near[0].x)
+      relayRing.setAttribute('cy', near[0].y)
+      relayRing.setAttribute('opacity', (0.5 * fade * reveal).toFixed(3))
     } else {
       relayLine.setAttribute('opacity', '0')
       relayRing.setAttribute('opacity', '0')
@@ -381,21 +465,28 @@
       if (ambientVisible) hideAmbient()
       return
     }
+    // Chromium emits a synthetic (0,0) move when a page settles. Ignore it so
+    // the constellation only appears once the visitor actually moves.
+    if (!pointerPresent) {
+      pointerPresent = true
+      if (event.clientX === 0 && event.clientY === 0) return
+    }
     const now = performance.now()
     pointer = { x: event.clientX, y: event.clientY }
     lastMove = now
     points.push({ x: pointer.x, y: pointer.y, t: now })
-    if (points.length > 18) points.shift()
+    if (points.length > 22) points.shift()
     if (!ambientVisible) showAmbient()
     if (!ambientFrame) ambientFrame = requestAnimationFrame(updateAmbient)
   }
 
   function onPointerDown(event) {
     if (!ambientAllowed()) return
+    pointerPresent = true
     pointer = { x: event.clientX, y: event.clientY }
     lastMove = performance.now()
     points.push({ x: pointer.x, y: pointer.y, t: lastMove })
-    if (points.length > 18) points.shift()
+    if (points.length > 22) points.shift()
     if (!ambientVisible) showAmbient()
     spawnPulse(event.clientX, event.clientY)
     if (!ambientFrame) ambientFrame = requestAnimationFrame(updateAmbient)
@@ -667,6 +758,90 @@ varman all-in-one --db-url "postgres://…" \
       if (event.key === 'Escape') closeMenu()
     })
   }
+
+  /* ------------------------------------------------------ scroll reveals */
+
+  function initReveals() {
+    if (reduceMotion.matches) return
+
+    const groups = [
+      ['.stats-grid .stat', 70],
+      ['#features .section-intro', 0],
+      ['#features .feature-card', 65],
+      ['#features .capabilities', 80],
+      ['#features .protection-strip', 60],
+      ['#how-it-works .section-intro', 0],
+      ['#how-it-works .pipeline-demo', 50],
+      ['#how-it-works .pipeline-footnote', 90],
+      ['#performance .performance-copy', 0],
+      ['#performance .benchmark-card', 80],
+      ['#deploy .section-intro', 0],
+      ['#deploy .deployment-tabs', 30],
+      ['#deploy .deployment-info > h3', 60],
+      ['#deploy .deployment-info > p', 90],
+      ['#deploy .deployment-info > .text-link', 120],
+      ['#deploy .code-window', 80],
+      ['.observability-copy', 0],
+      ['.observability-product', 80],
+      ['.faq-section > div:first-child', 0],
+      ['.faq-list details', 55],
+      ['.final-cta', 0],
+      ['.site-footer .footer-main', 0],
+      ['.site-footer .footer-bottom', 60],
+    ]
+
+    const seen = new Set()
+    const targets = []
+    for (const [selector, stagger] of groups) {
+      const list = Array.from(document.querySelectorAll(selector))
+      list.forEach((node, index) => {
+        if (seen.has(node)) return
+        seen.add(node)
+        targets.push({ node, delay: Math.min(index * stagger, 260) })
+      })
+    }
+    if (targets.length === 0) return
+
+    const cleanup = (node) => {
+      const delay = parseFloat(node.style.getPropertyValue('--reveal-delay')) || 0
+      window.setTimeout(() => {
+        node.classList.remove('reveal', 'is-revealed')
+        node.style.removeProperty('--reveal-delay')
+      }, 950 + delay)
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          const node = entry.target
+          observer.unobserve(node)
+          node.classList.add('is-revealed')
+          cleanup(node)
+        }
+      },
+      { threshold: 0.02, rootMargin: '0px 0px -2% 0px' },
+    )
+
+    for (const { node, delay } of targets) {
+      const rect = node.getBoundingClientRect()
+      if (rect.top < window.innerHeight - 24) continue
+      node.classList.add('reveal')
+      node.style.setProperty('--reveal-delay', `${delay}ms`)
+      observer.observe(node)
+    }
+
+    reduceMotion.addEventListener('change', () => {
+      if (!reduceMotion.matches) return
+      observer.disconnect()
+      for (const { node } of targets) {
+        node.classList.remove('reveal', 'is-revealed')
+        node.style.removeProperty('--reveal-delay')
+      }
+    })
+  }
+
+  initReveals()
 
   /* ------------------------------------------------ docs TOC + copy code */
 
