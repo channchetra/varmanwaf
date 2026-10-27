@@ -171,7 +171,8 @@ export function CertificateLiveLog({
     anchor.href = url
     anchor.download = `${domain ?? certificateId ?? 'certificate'}-issuance.log`
     anchor.click()
-    URL.revokeObjectURL(url)
+    // Give the browser a tick to start the download before releasing the blob.
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   const onScroll = () => {
