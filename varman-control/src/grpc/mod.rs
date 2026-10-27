@@ -27,16 +27,26 @@ use varman_protocol::control_plane::{
     server_command::Payload, ServerCommand, SiteConfig, UpdateSiteCommand,
 };
 
+use crate::api::keys::BOOTSTRAP_KEY_NAME;
 use crate::api::state::AppState;
 use crate::config_history::{self, VersionScope};
 use crate::grpc::config::{build_site_config, now_timestamp};
 use crate::models::{agent, api_key, config_version, site};
 
+/// An unbound agent holding the all-in-one bootstrap key is the embedded data
+/// plane of this instance, so it serves every site rather than one tenant's.
+fn serves_every_site(key_name: &str) -> bool {
+    key_name == BOOTSTRAP_KEY_NAME
+}
+
 /// The sites an agent serves: its binding when it has one, otherwise every
-/// site owned by its API key's user. Mirrors the gRPC `visible_sites`, and is
-/// what an `UpdateSite` payload must carry — the agent applies the payload
-/// authoritatively, dropping any cached site the payload does not list.
-async fn agent_visible_site_ids(
+/// site owned by its API key's user — except the embedded all-in-one agent,
+/// which serves every site on the instance.
+///
+/// This is what an `UpdateSite` payload must carry — the agent applies the
+/// payload authoritatively, dropping any cached site the payload does not
+/// list. Mirrored by the gRPC `visible_sites`.
+pub(crate) async fn agent_visible_site_ids(
     db: &DatabaseConnection,
     agent_row: &agent::Model,
 ) -> Result<Vec<Uuid>, DbErr> {
@@ -49,6 +59,15 @@ async fn agent_visible_site_ids(
     let Some(key) = api_key::Entity::find_by_id(key_id).one(db).await? else {
         return Ok(Vec::new());
     };
+    // The bootstrap key is minted by `seed_bootstrap_api_key` for the agent
+    // embedded in this process: it is the data plane of the whole instance,
+    // not a tenant agent. Scoping it to the key owner's sites meant a site
+    // created by another admin never reached the edge, its ACME order sat
+    // `pending`, and TLS failed with no certificate to serve.
+    if serves_every_site(&key.name) {
+        let sites = site::Entity::find().all(db).await?;
+        return Ok(sites.iter().map(|row| row.id).collect());
+    }
     let sites = site::Entity::find()
         .filter(site::Column::UserId.eq(key.user_id))
         .all(db)
@@ -361,4 +380,19 @@ pub async fn notify_all_config_changed(state: &AppState, actor: Option<&str>) {
         delivered,
         "global config change pushed to agents"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_bootstrap_key_serves_every_site() {
+        assert!(serves_every_site(BOOTSTRAP_KEY_NAME));
+        // Enrollment keys and operator keys stay scoped to their owner: an
+        // unbound agent registered with one must not see other tenants.
+        assert!(!serves_every_site("agent-enrollment-20261027-081500"));
+        assert!(!serves_every_site("production-agent"));
+        assert!(!serves_every_site(""));
+    }
 }

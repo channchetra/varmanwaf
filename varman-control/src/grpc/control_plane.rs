@@ -41,8 +41,7 @@ use crate::grpc::config::{
 use crate::grpc::registry::{AgentRegistry, COMMAND_CHANNEL_CAPACITY};
 use crate::models::{
     access_log, action, agent, agent_blocked_ip, agent_metric, agent_status,
-    api_key, certificate_events, host_sample, security_event, site,
-    site_certificates,
+    certificate_events, host_sample, security_event, site, site_certificates,
 };
 
 /// Stream type returned by the server-streaming RPCs.
@@ -162,31 +161,21 @@ impl ControlPlaneService {
             .to_string()
     }
 
-    /// Sites this agent is allowed to see: its own binding, or every site owned
-    /// by the user that issued its API key.
+    /// Sites this agent is allowed to see: its own binding, or every site
+    /// owned by the user that issued its API key. The embedded all-in-one
+    /// agent (bootstrap key) sees every site — see `agent_visible_site_ids`.
     async fn visible_sites(
         &self,
         row: &agent::Model,
     ) -> Result<Vec<site::Model>, Status> {
-        if let Some(site_id) = row.site_id {
-            let owned = site::Entity::find_by_id(site_id)
-                .one(&self.db)
-                .await
-                .map_err(db_status)?;
-            return Ok(owned.into_iter().collect());
-        }
-
-        let Some(key_id) = row.api_key_id else {
-            return Ok(Vec::new());
-        };
-        let key = api_key::Entity::find_by_id(key_id)
-            .one(&self.db)
+        let ids = crate::grpc::agent_visible_site_ids(&self.db, row)
             .await
-            .map_err(db_status)?
-            .ok_or_else(|| Status::unauthenticated("API key was revoked"))?;
-
+            .map_err(db_status)?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
         site::Entity::find()
-            .filter(site::Column::UserId.eq(key.user_id))
+            .filter(site::Column::Id.is_in(ids))
             .all(&self.db)
             .await
             .map_err(db_status)
