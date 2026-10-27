@@ -35,7 +35,7 @@ use crate::models::{agent, api_key, config_version, site};
 
 /// An unbound agent holding the all-in-one bootstrap key is the embedded data
 /// plane of this instance, so it serves every site rather than one tenant's.
-fn serves_every_site(key_name: &str) -> bool {
+pub(crate) fn serves_every_site(key_name: &str) -> bool {
     key_name == BOOTSTRAP_KEY_NAME
 }
 

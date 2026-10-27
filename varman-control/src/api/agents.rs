@@ -24,11 +24,12 @@ use crate::api::common::{
     require_write, Page, Pagination,
 };
 use crate::api::error::ApiError;
-use crate::api::keys::mint_key;
+use crate::api::keys::{mint_key, BOOTSTRAP_KEY_NAME};
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::grpc::command_type;
 use crate::grpc::config::now_timestamp;
+use crate::grpc::serves_every_site;
 use crate::models::{
     agent, agent_status, api_key, host_sample, permission, site,
 };
@@ -40,9 +41,9 @@ pub struct AgentResponse {
     pub site_id: Option<Uuid>,
     pub site_domain: Option<String>,
     /// Sites this agent currently serves. A bound agent serves exactly its
-    /// site; an unbound agent (all-in-one, or a fleet node enrolled with a
-    /// key owned by an administrator) serves every site owned by its API
-    /// key's user.
+    /// site; an unbound agent serves every site owned by its API key's user,
+    /// except the embedded all-in-one agent (bootstrap key), which serves
+    /// every site on the instance.
     pub served_site_ids: Vec<Uuid>,
     pub hostname: String,
     pub ip_address: String,
@@ -309,9 +310,10 @@ async fn list(
     }
     if let (Some(id), Some(row)) = (site_filter, site_row.as_ref()) {
         // A bound agent appears under its site. An unbound agent serves every
-        // site owned by its API key's user, so it must appear here too — the
-        // previous exact `site_id` filter hid the all-in-one agent from every
-        // site-scoped view.
+        // site owned by its API key's user, and the embedded all-in-one agent
+        // serves every site regardless of owner, so both must appear here too
+        // — the previous exact `site_id` filter hid them from site-scoped
+        // views.
         let owner_key_ids: Vec<Uuid> = api_key::Entity::find()
             .filter(api_key::Column::UserId.eq(row.user_id))
             .all(&state.db)
@@ -319,12 +321,26 @@ async fn list(
             .into_iter()
             .map(|key| key.id)
             .collect();
+        let bootstrap_key_ids: Vec<Uuid> = api_key::Entity::find()
+            .filter(api_key::Column::Name.eq(BOOTSTRAP_KEY_NAME))
+            .all(&state.db)
+            .await?
+            .into_iter()
+            .map(|key| key.id)
+            .collect();
         condition = condition.add(
-            Condition::any().add(agent::Column::SiteId.eq(id)).add(
-                Condition::all()
-                    .add(agent::Column::SiteId.is_null())
-                    .add(agent::Column::ApiKeyId.is_in(owner_key_ids)),
-            ),
+            Condition::any()
+                .add(agent::Column::SiteId.eq(id))
+                .add(
+                    Condition::all()
+                        .add(agent::Column::SiteId.is_null())
+                        .add(agent::Column::ApiKeyId.is_in(owner_key_ids)),
+                )
+                .add(
+                    Condition::all()
+                        .add(agent::Column::SiteId.is_null())
+                        .add(agent::Column::ApiKeyId.is_in(bootstrap_key_ids)),
+                ),
         );
     }
     if let Some(status) = non_empty(&query.status) {
@@ -648,6 +664,26 @@ pub async fn load_agent(
     Ok(row)
 }
 
+/// Resolves the sites one agent serves from its binding or its API key.
+/// Pure so the all-in-one exception is testable without a database.
+fn served_site_ids(
+    bound_site: Option<Uuid>,
+    key: Option<(Uuid, &str)>,
+    all_site_ids: &[Uuid],
+    sites_by_user: &HashMap<Uuid, Vec<Uuid>>,
+) -> Vec<Uuid> {
+    if let Some(site_id) = bound_site {
+        return vec![site_id];
+    }
+    match key {
+        Some((_, name)) if serves_every_site(name) => all_site_ids.to_vec(),
+        Some((user_id, _)) => {
+            sites_by_user.get(&user_id).cloned().unwrap_or_default()
+        },
+        None => Vec::new(),
+    }
+}
+
 /// Attaches live connection state and the set of sites each agent serves.
 async fn enrich(
     state: &AppState,
@@ -655,48 +691,46 @@ async fn enrich(
 ) -> Result<Vec<AgentResponse>, ApiError> {
     // Bound rows resolve to their one site. Unbound rows resolve through the
     // API key that registered them: the key's owner is the tenant whose whole
-    // site list the edge carries (the same rule `agent_visible_site_ids`
-    // uses when it pushes config).
+    // site list the edge carries — except the embedded all-in-one agent
+    // (bootstrap key), which carries every site on the instance. This must
+    // match `agent_visible_site_ids`; otherwise the inventory under-reports
+    // what the data plane is actually serving.
     let unbound_key_ids: Vec<Uuid> = rows
         .iter()
         .filter(|row| row.site_id.is_none())
         .filter_map(|row| row.api_key_id)
         .collect();
-    let mut keys: HashMap<Uuid, Uuid> = HashMap::new();
+    let mut keys: HashMap<Uuid, (Uuid, String)> = HashMap::new();
     if !unbound_key_ids.is_empty() {
         keys = api_key::Entity::find()
             .filter(api_key::Column::Id.is_in(unbound_key_ids))
             .all(&state.db)
             .await?
             .into_iter()
-            .map(|key| (key.id, key.user_id))
+            .map(|key| (key.id, (key.user_id, key.name)))
             .collect();
     }
-    let mut user_ids: Vec<Uuid> = keys.values().copied().collect();
-    user_ids.sort();
-    user_ids.dedup();
+    // Only unbound agents need the site universe; a fleet of bound agents
+    // resolves from the binding and never pays for this scan.
+    let mut all_site_ids: Vec<Uuid> = Vec::new();
     let mut sites_by_user: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
-    if !user_ids.is_empty() {
-        for site in site::Entity::find()
-            .filter(site::Column::UserId.is_in(user_ids))
-            .all(&state.db)
-            .await?
-        {
+    if !keys.is_empty() {
+        for site in site::Entity::find().all(&state.db).await? {
+            all_site_ids.push(site.id);
             sites_by_user.entry(site.user_id).or_default().push(site.id);
         }
     }
+    all_site_ids.sort();
+    all_site_ids.dedup();
 
     let mut served_by_agent: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
     for row in &rows {
-        let served = match row.site_id {
-            Some(site_id) => vec![site_id],
-            None => row
-                .api_key_id
-                .and_then(|key_id| keys.get(&key_id))
-                .and_then(|user_id| sites_by_user.get(user_id))
-                .cloned()
-                .unwrap_or_default(),
-        };
+        let key = row
+            .api_key_id
+            .and_then(|key_id| keys.get(&key_id))
+            .map(|(user_id, name)| (*user_id, name.as_str()));
+        let served =
+            served_site_ids(row.site_id, key, &all_site_ids, &sites_by_user);
         served_by_agent.insert(row.id, served);
     }
 
@@ -955,5 +989,53 @@ mod tests {
     fn aggregation_of_empty_window_is_empty() {
         let series = series_from_buckets(Utc::now(), 60, Vec::new());
         assert!(series.is_empty());
+    }
+
+    #[test]
+    fn unbound_bootstrap_agent_lists_every_site() {
+        use crate::api::keys::BOOTSTRAP_KEY_NAME;
+
+        let owner = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let own_site = Uuid::new_v4();
+        let other_site = Uuid::new_v4();
+        let third_site = Uuid::new_v4();
+        let mut by_user = HashMap::new();
+        by_user.insert(owner, vec![own_site]);
+        by_user.insert(other, vec![other_site, third_site]);
+        let all = vec![own_site, other_site, third_site];
+
+        // The embedded agent (bootstrap key) serves the whole instance.
+        assert_eq!(
+            served_site_ids(
+                None,
+                Some((owner, BOOTSTRAP_KEY_NAME)),
+                &all,
+                &by_user
+            ),
+            all
+        );
+        // An ordinary or enrollment key stays scoped to its owner.
+        assert_eq!(
+            served_site_ids(
+                None,
+                Some((owner, "production-agent")),
+                &all,
+                &by_user
+            ),
+            vec![own_site]
+        );
+        // A bound agent ignores the key scope entirely.
+        assert_eq!(
+            served_site_ids(
+                Some(third_site),
+                Some((owner, BOOTSTRAP_KEY_NAME)),
+                &all,
+                &by_user
+            ),
+            vec![third_site]
+        );
+        // A row without a key serves nothing.
+        assert!(served_site_ids(None, None, &all, &by_user).is_empty());
     }
 }
