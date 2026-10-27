@@ -269,7 +269,10 @@ export function CertificateLiveLog({
                 key={event.id}
                 className="flex items-start gap-2 border-b border-line/50 py-1 last:border-0"
               >
-                <span className="shrink-0 whitespace-nowrap text-[11px] text-fg-subtle">
+                <span
+                  className="shrink-0 whitespace-nowrap text-[11px] text-fg-subtle"
+                  title={formatDateTime(event.created_at)}
+                >
                   {new Date(event.created_at).toLocaleTimeString(undefined, {
                     hour12: false,
                   })}
