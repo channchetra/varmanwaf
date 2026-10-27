@@ -1071,16 +1071,6 @@ export function OriginPage() {
                   }
                   action={
                     <div className="flex items-center gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="whitespace-nowrap"
-                        loading={runProbe.isPending && probePool?.id === pool.id}
-                        onClick={() => openProbe(pool)}
-                        icon={<Pulse weight="duotone" className="h-4 w-4" />}
-                      >
-                        {t('pages.origin.testNow')}
-                      </Button>
                       {canWrite && (
                         <Button
                           size="icon"
@@ -1136,8 +1126,8 @@ export function OriginPage() {
                             : undefined
                         }
                       />
-                      {canWrite && (
-                        <div className="border-t border-line px-5 py-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-5 py-2">
+                        {canWrite ? (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -1146,8 +1136,20 @@ export function OriginPage() {
                           >
                             {t('pages.origin.addNode')}
                           </Button>
-                        </div>
-                      )}
+                        ) : (
+                          <span />
+                        )}
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="whitespace-nowrap"
+                          loading={runProbe.isPending && probePool?.id === pool.id}
+                          onClick={() => openProbe(pool)}
+                          icon={<Pulse weight="duotone" className="h-4 w-4" />}
+                        >
+                          {t('pages.origin.testNow')}
+                        </Button>
+                      </div>
                     </>
                   )}
                 </CardBody>
