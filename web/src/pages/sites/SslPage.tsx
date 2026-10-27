@@ -384,7 +384,10 @@ export function SslPage() {
       align: 'right',
       width: '1%',
       cell: (c) => (
-        <div className="flex items-center justify-end gap-1">
+        <div
+          className="flex items-center justify-end gap-1"
+          onClick={(event) => event.stopPropagation()}
+        >
           <Button
             size="icon"
             variant="ghost"
