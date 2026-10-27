@@ -156,6 +156,10 @@ join users u on u.id = k.user_id;"
   `_all-in-one-bootstrap` key serves every site, regardless of owner. The log
   should show `Updated rule cache from full site config sites=N` and every
   `_cert` entry.
+- **v1.2.4 only:** the Agents page and fleet topology could still show
+  `all sites (1)` and `no agent` for the second site even though the data plane
+  served it. That was an inventory bug in the REST agents API, fixed in
+  **v1.2.5**; trust the `sites=N` log line and the `_cert` list over the count.
 - **v1.2.3 and earlier:** if the site owner differs from the key owner, the
   edge will not receive the site. Upgrade to 1.2.4. As a temporary workaround
   only, transfer the site to the key owner and restart the container; remember
