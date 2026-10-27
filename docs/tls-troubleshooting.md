@@ -267,6 +267,102 @@ curl -sL -o /dev/null -w "%{http_code} %{ssl_verify_result}\n" \
 
 A `200 0` on the last line means the CDN trusts the origin certificate.
 
+## 10. Origin TLS: HTTP backends and self-signed HTTPS backends
+
+The proxy has **two independent TLS legs**, and they are configured in
+different places:
+
+```text
+browser ──TLS 1──▶ Cloudflare ──TLS 1──▶ WAF edge ──TLS 2 (optional)──▶ private app
+              site certificate                     origin pool SNI / verify
+```
+
+- **TLS 1 (client-facing)** uses the site certificate under **SSL/TLS** and is
+  what Cloudflare validates in Full (strict). A 525/526 belongs to this leg.
+- **TLS 2 (origin-facing)** is per upstream pool under **Origins**. It is
+  completely separate: the origin's certificate is never the certificate the
+  browser sees. A failure here is a `502`/`504` from the WAF, not a 525.
+
+### HTTP origin — no TLS to the private app
+
+This is the normal choice when the app listens on plain HTTP:
+
+- **Origins → pool → HTTPS to origin = off** (leave the SNI field empty).
+- Node address stays `private_ip:port`; the WAF connects with `http://`.
+- Enable the pool health check against a path that the app serves over HTTP.
+- Make sure the app does not redirect `http://` to `https://` on its own; that
+  would create a redirect loop with the client-facing HTTPS.
+
+Nothing else is required. In the database this is a pool with an empty `sni`
+and peers whose addresses are `private_ip:port`.
+
+### HTTPS origin — private app with a self-signed certificate
+
+This is also supported. Configure the pool like this:
+
+1. **Origins → pool → HTTPS to origin = on.**
+2. **SNI hostname** = a name that appears in the app's certificate. It must be
+   a bare hostname: no `https://`, no port, and `$host` is rejected for static
+   pools. The node address remains `private_ip:port`; SNI is only the name sent
+   in the handshake.
+3. **Verify origin certificate = off** for a self-signed certificate.
+
+That last point matters. Verification is on by default in the console. A
+self-signed origin with verification on fails the handshake and the WAF returns
+**502**, with an `InvalidCert`/certificate-verify error in the data-plane log —
+not a 525.
+
+```text
+# the WAF log tells the two apart
+502 + InvalidCert / certificate verify failed  -> origin TLS (leg 2)
+525 from Cloudflare                            -> WAF site certificate (leg 1)
+```
+
+Security trade-off: turning verification off keeps the traffic encrypted but
+stops authenticating the origin. Anyone who can intercept traffic inside the
+private network could impersonate the app. Prefer, in order:
+
+1. A certificate from an internal CA whose trust anchor the WAF can use.
+2. A publicly trusted certificate for a real internal DNS name (DNS-01 works
+   without exposing the app).
+3. Verification off, only on a network segment you already trust.
+
+The underlying proxy engine supports a per-upstream **CA bundle** so a private
+or self-signed backend can keep verification on, but the console/API does not
+expose that field yet. Today the supported control-plane setting for a
+self-signed app certificate is **Verify origin certificate = off**. If you need
+private-CA pinning, that is a small API/UI addition; the data-plane option
+already exists (`upstream.ca`).
+
+Other details that matter for private apps:
+
+- **Certificate names, not addresses.** Issue the app certificate for a DNS
+  name (for example `mail.internal`) and use that name as the SNI. Certificates
+  that only carry an IP SAN are fragile across TLS stacks.
+- **Host header.** The WAF forwards the client's `Host` header. A private app
+  that serves multiple virtual hosts may need a request-header rewrite, or it
+  must accept the public hostname.
+- **Health checks** use the same pool TLS mode. With verification on and a
+  self-signed cert, every probe fails and the node is marked unhealthy; fix the
+  certificate or turn verification off for that pool.
+- **Redirects.** If the app redirects to its own internal hostname, browsers
+  will leave the public domain. Prefer relative redirects, or rewrite the
+  `Location` header.
+
+### Which leg is failing?
+
+| Symptom | Leg | First check |
+| --- | --- | --- |
+| Cloudflare **525** | Client → WAF | Site certificate loaded for the SNI |
+| Cloudflare **526** | Client → WAF | Site certificate trusted by Full (strict) |
+| WAF **502** + `InvalidCert` | WAF → origin | Origin SNI and `verify_cert` vs app certificate |
+| WAF **502** + connection refused | WAF → origin | `private_ip:port`, app listening, firewall |
+| WAF **504** | WAF → origin | App response time, pool timeout |
+
+A self-signed certificate on the **private app** is therefore not a problem for
+Cloudflare and does not require Full (Flexible). It only affects leg 2, and it
+is handled entirely under **Origins**.
+
 ## The management listener is separate
 
 The dashboard on `:9080` has its own certificate (`management_certificate`),

@@ -103,6 +103,13 @@ An origin pool is a set of origin nodes sharing one load-balancing algorithm and
 | SNI hostname | Non-empty enables **HTTPS to origin**; must be a bare hostname covered by the origin certificate (`$host` is not supported) |
 | Verify origin certificate | Turning this off skips certificate validation (not recommended) |
 
+An empty SNI means the WAF talks plain HTTP to `private_ip:port`. A non-empty
+SNI switches that pool to HTTPS; with a self-signed app certificate you also
+need **Verify origin certificate = off**, and the WAF→origin failure appears as
+a **502**, not a 525. The two TLS legs, the log signatures and the security
+trade-off are covered in
+[TLS troubleshooting §10](./tls-troubleshooting.md#10-origin-tls-http-backends-and-self-signed-https-backends).
+
 Load-balancing algorithms:
 
 | Algorithm | Spec | Behavior |
