@@ -1660,6 +1660,28 @@ async fn test_pool(
     }))
 }
 
+/// Ports this process listens on: the data plane and the admin listeners.
+/// A loopback origin on one of them would make the WAF proxy to itself.
+fn is_waf_listener_port(port: u16) -> bool {
+    matches!(port, 80 | 443 | 9080 | 9090)
+}
+
+/// True when a literal origin host is loopback/unspecified on a WAF listener
+/// port. DNS names are checked after resolution by the probe.
+fn points_at_waf_listener(host: &str, port: u16) -> bool {
+    if !is_waf_listener_port(port) {
+        return false;
+    }
+    let host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified())
+}
+
 /// Splits a stored origin address (`host:port`, optionally with a pasted
 /// scheme) into a host and port.
 fn split_origin_address(address: &str) -> Result<(String, u16), String> {
@@ -1735,6 +1757,21 @@ async fn probe_origin(
         Ok(value) => value,
         Err(error) => return failure(error, started),
     };
+
+    // A loopback origin on a WAF listener port would recursively proxy the
+    // request back into this process. Refuse to probe it (and report it as
+    // unreachable) instead of starting a loop.
+    if points_at_waf_listener(&origin_host, port)
+        || (is_waf_listener_port(port)
+            && (socket.ip().is_loopback() || socket.ip().is_unspecified()))
+    {
+        return failure(
+            format!(
+                "origin {origin_host}:{port} points at the WAF listener; use the application's private address"
+            ),
+            started,
+        );
+    }
 
     let sni = pool.sni.as_deref().unwrap_or("").trim().to_string();
     let https = !sni.is_empty();
@@ -2181,6 +2218,17 @@ fn normalize_origin_address(raw: &str) -> Result<String, ApiError> {
             "upstream host must be an IP address or hostname".to_string(),
         ));
     }
+    // Loopback on a listener port is the WAF itself. Saving it makes the
+    // proxy recurse into the same site; reject it at the edge of the API.
+    let port_number = port
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(80);
+    if points_at_waf_listener(host, port_number) {
+        return Err(ApiError::BadRequest(
+            "upstream address points at the WAF listener (loopback on 80/443/9080/9090); use the application's private address"
+                .to_string(),
+        ));
+    }
 
     Ok(address)
 }
@@ -2604,6 +2652,26 @@ mod tests {
         assert!(normalize_origin_address("origin.example.com:70000").is_err());
         assert!(normalize_origin_address("::1").is_err());
         assert!(normalize_origin_address("").is_err());
+    }
+
+    #[test]
+    fn origin_addresses_reject_the_waf_listener() {
+        for bad in [
+            "localhost:80",
+            "127.0.0.1:443",
+            "[::1]:9080",
+            "0.0.0.0:9090",
+        ] {
+            assert!(
+                normalize_origin_address(bad).is_err(),
+                "{bad} must be rejected as the WAF listener"
+            );
+        }
+        // A local app on a non-listener port and a remote app on port 80 are
+        // both legitimate; only loopback listener ports are the WAF itself.
+        assert!(normalize_origin_address("127.0.0.1:3001").is_ok());
+        assert!(normalize_origin_address("10.1.18.5:80").is_ok());
+        assert!(normalize_origin_address("origin.example.com:80").is_ok());
     }
 
     #[test]

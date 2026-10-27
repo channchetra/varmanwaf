@@ -410,6 +410,11 @@ node in the pool from the control plane (the WAF host in all-in-one mode) and
 reports the HTTP status, latency and the connection/TLS error. The node’s
 Health column keeps the result: Reachable, Reachable · 5xx or Unreachable.
 
+Never point an origin at the WAF itself. A loopback address on ports 80, 443,
+9080 or 9090 (`localhost:80`, `127.0.0.1:443`, `[::1]:9080`, `0.0.0.0:9090`)
+is rejected by the API and by Test now: it would proxy every request back into
+the same listener and recurse. Use the application's private `IP:port`.
+
 ### Which leg is failing?
 
 | Symptom | Leg | First check |

@@ -133,6 +133,11 @@ from the WAF host, so it answers “can the WAF reach this origin?”. In a spli
 deployment it runs from the control-plane host; the edge’s own network path can
 still differ.
 
+An origin that points back at the WAF is refused. `localhost`, `127.0.0.1`,
+`::1` or `0.0.0.0` on ports **80, 443, 9080 or 9090** would proxy every request
+back into the same listener; use the application's private `IP:port` instead.
+A local app on another port (for example `127.0.0.1:3001`) is still allowed.
+
 Load-balancing algorithms:
 
 | Algorithm | Spec | Behavior |
