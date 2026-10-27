@@ -3,7 +3,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, put};
+use axum::routing::{get, post, put};
 use axum::Json;
 use axum::Router;
 use chrono::{DateTime, Utc};
@@ -13,6 +13,8 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::api::common::{
@@ -805,6 +807,10 @@ pub fn routes() -> Router<AppState> {
             put(update_pool).delete(delete_pool),
         )
         .route(
+            "/sites/{site_id}/upstream-pools/{pool_id}/test",
+            post(test_pool),
+        )
+        .route(
             "/sites/{site_id}/routes",
             get(list_routes).post(create_route),
         )
@@ -1542,6 +1548,267 @@ async fn delete_pool(
     notify_config_changed(&state, id, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// One node's result from a manual origin reachability probe.
+#[derive(Debug, Serialize)]
+pub struct OriginProbeNode {
+    pub id: Uuid,
+    pub name: String,
+    pub address: String,
+    pub reachable: bool,
+    pub status_code: Option<u16>,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+    /// Persisted into `site_upstreams.health_status`: healthy, degraded or
+    /// unhealthy. Degraded means the TCP/TLS path worked but the app answered
+    /// with 5xx.
+    pub health_status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OriginProbeResult {
+    pub pool_id: Uuid,
+    pub pool_name: String,
+    pub checked_at: DateTime<Utc>,
+    pub nodes: Vec<OriginProbeNode>,
+}
+
+struct ProbeOutcome {
+    reachable: bool,
+    status_code: Option<u16>,
+    latency_ms: u64,
+    error: Option<String>,
+    health_status: &'static str,
+}
+
+/// `POST /api/v1/sites/{site_id}/upstream-pools/{pool_id}/test`
+///
+/// Probes every node in a pool from the control-plane host. In all-in-one
+/// mode that host is the WAF edge, so this answers "can the WAF reach the
+/// origin?"; in a split deployment it tests the control-plane network path,
+/// which is still useful for DNS, firewall and listener mistakes. The result
+/// is persisted on each node as `health_status`.
+async fn test_pool(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Path((site_id, pool_id)): Path<(String, String)>,
+) -> Result<Json<OriginProbeResult>, ApiError> {
+    let id = parse_uuid(&site_id, "site id")?;
+    let target = parse_uuid(&pool_id, "pool id")?;
+    load_site_read(&state.db, id, &current).await?;
+
+    let site_row = site::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("site {id} not found")))?;
+    let pool = site_upstream_pools::Entity::find_by_id(target)
+        .filter(site_upstream_pools::Column::SiteId.eq(id))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("pool {target} not found"))
+        })?;
+    let nodes = site_upstreams::Entity::find()
+        .filter(site_upstreams::Column::PoolId.eq(target))
+        .order_by_asc(site_upstreams::Column::CreatedAt)
+        .all(&state.db)
+        .await?;
+
+    let mut results = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let outcome =
+            probe_origin(&node.address, &pool, &site_row.domain).await;
+
+        // Persist the result so the node badge survives a page reload. This is
+        // display metadata only; it does not change routing or the edge's own
+        // health-check state.
+        let mut active: site_upstreams::ActiveModel = node.clone().into();
+        active.health_status = Set(outcome.health_status.to_string());
+        if let Err(err) = active.update(&state.db).await {
+            tracing::warn!(
+                node_id = %node.id,
+                error = %err,
+                "could not persist origin probe status"
+            );
+        }
+
+        results.push(OriginProbeNode {
+            id: node.id,
+            name: node.name,
+            address: node.address,
+            reachable: outcome.reachable,
+            status_code: outcome.status_code,
+            latency_ms: outcome.latency_ms,
+            error: outcome.error,
+            health_status: outcome.health_status.to_string(),
+        });
+    }
+
+    tracing::info!(
+        site_id = %id,
+        pool = %target,
+        nodes = results.len(),
+        "origin reachability probe completed"
+    );
+
+    Ok(Json(OriginProbeResult {
+        pool_id: target,
+        pool_name: pool.name,
+        checked_at: Utc::now(),
+        nodes: results,
+    }))
+}
+
+/// Splits a stored origin address (`host:port`, optionally with a pasted
+/// scheme) into a host and port.
+fn split_origin_address(address: &str) -> Result<(String, u16), String> {
+    let raw = address.trim();
+    let raw = raw
+        .strip_prefix("http://")
+        .or_else(|| raw.strip_prefix("https://"))
+        .unwrap_or(raw);
+    let parsed = reqwest::Url::parse(&format!("http://{raw}"))
+        .map_err(|_| format!("invalid origin address '{address}'"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| format!("invalid origin address '{address}'"))?;
+    // `url` keeps the brackets around an IPv6 literal; strip them so the
+    // address can be parsed as an `IpAddr`.
+    let host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+    Ok((
+        host.to_string(),
+        parsed.port_or_known_default().unwrap_or(80),
+    ))
+}
+
+/// Resolves an origin host to one socket address, accepting IP literals
+/// without a DNS round trip.
+async fn resolve_origin(host: &str, port: u16) -> Result<SocketAddr, String> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(SocketAddr::new(ip, port));
+    }
+    tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|err| format!("DNS lookup for {host} failed: {err}"))?
+        .next()
+        .ok_or_else(|| format!("DNS lookup for {host} returned no address"))
+}
+
+fn describe_probe_error(err: &reqwest::Error, timeout_ms: u64) -> String {
+    if err.is_timeout() {
+        format!("timed out after {timeout_ms} ms")
+    } else if err.is_connect() {
+        format!("connection failed: {err}")
+    } else {
+        err.to_string()
+    }
+}
+
+/// Probes one origin node from this process. TLS uses the pool's SNI and
+/// verification setting, matching what the edge is configured to do.
+async fn probe_origin(
+    address: &str,
+    pool: &site_upstream_pools::Model,
+    host_header: &str,
+) -> ProbeOutcome {
+    let started = Instant::now();
+    let timeout_ms = pool.health_check_timeout_ms.clamp(100, 30_000) as u64;
+    let timeout = Duration::from_millis(timeout_ms);
+
+    let failure = |error: String, started: Instant| ProbeOutcome {
+        reachable: false,
+        status_code: None,
+        latency_ms: started.elapsed().as_millis() as u64,
+        error: Some(error),
+        health_status: "unhealthy",
+    };
+
+    let (origin_host, port) = match split_origin_address(address) {
+        Ok(value) => value,
+        Err(error) => return failure(error, started),
+    };
+    let socket = match resolve_origin(&origin_host, port).await {
+        Ok(value) => value,
+        Err(error) => return failure(error, started),
+    };
+
+    let sni = pool.sni.as_deref().unwrap_or("").trim().to_string();
+    let https = !sni.is_empty();
+    let mut builder = reqwest::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent("VarmanWAF-origin-check/1.0");
+    if https {
+        builder = builder.resolve(&sni, socket);
+        if pool.verify_cert == Some(false) {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+    }
+    let client = match builder.build() {
+        Ok(value) => value,
+        Err(err) => {
+            return failure(
+                format!("could not build probe client: {err}"),
+                started,
+            )
+        },
+    };
+
+    let path = if pool.health_check_path.starts_with('/') {
+        pool.health_check_path.clone()
+    } else {
+        "/".to_string()
+    };
+    let url_host = if https {
+        sni
+    } else if origin_host.contains(':') {
+        format!("[{origin_host}]")
+    } else {
+        origin_host
+    };
+    let url = format!(
+        "{}://{}:{}{}",
+        if https { "https" } else { "http" },
+        url_host,
+        port,
+        path
+    );
+
+    let response = client
+        .get(url)
+        .header(reqwest::header::HOST, host_header)
+        .send()
+        .await;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    match response {
+        Ok(response) => {
+            let status = response.status().as_u16();
+            ProbeOutcome {
+                reachable: true,
+                status_code: Some(status),
+                latency_ms,
+                error: None,
+                // A 5xx means the host is reachable but the application is
+                // unhealthy; 4xx is a response and not a connectivity failure.
+                health_status: if status >= 500 {
+                    "degraded"
+                } else {
+                    "healthy"
+                },
+            }
+        },
+        Err(err) => ProbeOutcome {
+            reachable: false,
+            status_code: None,
+            latency_ms,
+            error: Some(describe_probe_error(&err, timeout_ms)),
+            health_status: "unhealthy",
+        },
+    }
 }
 
 /// `GET /api/v1/sites/{site_id}/routes`
@@ -2516,5 +2783,27 @@ mod tests {
                 ..Default::default()
             })
             .is_err());
+    }
+
+    #[test]
+    fn origin_probe_addresses_parse() {
+        assert_eq!(
+            split_origin_address("10.1.18.5:3001").expect("plain address"),
+            ("10.1.18.5".to_string(), 3001)
+        );
+        assert_eq!(
+            split_origin_address("http://origin.local:8080")
+                .expect("pasted scheme"),
+            ("origin.local".to_string(), 8080)
+        );
+        assert_eq!(
+            split_origin_address("[::1]:8443").expect("ipv6 address"),
+            ("::1".to_string(), 8443)
+        );
+        // A host without a port falls back to the HTTP default.
+        assert_eq!(
+            split_origin_address("origin.local").expect("default port"),
+            ("origin.local".to_string(), 80)
+        );
     }
 }

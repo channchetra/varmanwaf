@@ -4,6 +4,7 @@ import type {
   CreateRouteRequest,
   CreateSiteRequest,
   CreateUpstreamRequest,
+  OriginProbeResult,
   Page,
   Route,
   Site,
@@ -64,6 +65,12 @@ export const sitesApi = {
 
   deletePool: (siteId: string, poolId: string) =>
     apiClient.delete<void>(`/sites/${siteId}/upstream-pools/${poolId}`),
+
+  /** Probes every node in the pool from the control-plane/WAF host. */
+  testPool: (siteId: string, poolId: string) =>
+    apiClient.post<OriginProbeResult>(
+      `/sites/${siteId}/upstream-pools/${poolId}/test`,
+    ),
 
   /* ── Routes ──────────────────────────────────────────────────────── */
   listRoutes: (siteId: string) => apiClient.get<Route[]>(`/sites/${siteId}/routes`),

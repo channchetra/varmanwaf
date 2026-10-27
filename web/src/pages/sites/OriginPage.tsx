@@ -9,6 +9,7 @@ import {
   Network,
   Plus,
   PencilSimple,
+  Pulse,
   Trash,
   ArrowClockwise,
 } from '@phosphor-icons/react'
@@ -18,7 +19,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Switch } from '@/components/ui/Switch'
-import { Badge } from '@/components/ui/Badge'
+import { Badge, type BadgeTone } from '@/components/ui/Badge'
 import { Dialog } from '@/components/ui/Dialog'
 import { Table, type Column } from '@/components/ui/Table'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -36,6 +37,7 @@ import type {
   CreateRouteRequest,
   CreateUpstreamRequest,
   IpGroupResponse,
+  OriginProbeResult,
   Route,
   Upstream,
   UpstreamPool,
@@ -75,6 +77,12 @@ interface PoolFormState {
   httpsOrigin: boolean
   sni: string
   verifyCert: boolean
+  healthCheckEnabled: boolean
+  healthCheckPath: string
+  healthCheckInterval: string
+  healthCheckTimeout: string
+  healthCheckUnhealthy: string
+  healthCheckHealthy: string
 }
 
 const emptyPoolForm = (): PoolFormState => ({
@@ -84,6 +92,12 @@ const emptyPoolForm = (): PoolFormState => ({
   httpsOrigin: false,
   sni: '',
   verifyCert: true,
+  healthCheckEnabled: false,
+  healthCheckPath: '/',
+  healthCheckInterval: '10',
+  healthCheckTimeout: '3000',
+  healthCheckUnhealthy: '2',
+  healthCheckHealthy: '1',
 })
 
 function poolFormFromPool(pool: UpstreamPool): PoolFormState {
@@ -95,6 +109,25 @@ function poolFormFromPool(pool: UpstreamPool): PoolFormState {
     httpsOrigin: Boolean(pool.sni),
     sni: pool.sni ?? '',
     verifyCert: pool.verify_cert ?? true,
+    healthCheckEnabled: pool.health_check_enabled,
+    healthCheckPath: pool.health_check_path || '/',
+    healthCheckInterval: String(pool.health_check_interval_seconds),
+    healthCheckTimeout: String(pool.health_check_timeout_ms),
+    healthCheckUnhealthy: String(pool.health_check_unhealthy_threshold),
+    healthCheckHealthy: String(pool.health_check_healthy_threshold),
+  }
+}
+
+function healthBadge(status: string): { tone: BadgeTone; key: string } {
+  switch (status) {
+    case 'healthy':
+      return { tone: 'success', key: 'pages.origin.healthHealthy' }
+    case 'degraded':
+      return { tone: 'warning', key: 'pages.origin.healthDegraded' }
+    case 'unhealthy':
+      return { tone: 'danger', key: 'pages.origin.healthUnhealthy' }
+    default:
+      return { tone: 'neutral', key: 'pages.origin.healthUnknown' }
   }
 }
 
@@ -314,6 +347,29 @@ export function OriginPage() {
     },
   })
 
+  /* ── Origin reachability probe ─────────────────────────────────── */
+
+  const [probeOpen, setProbeOpen] = useState(false)
+  const [probePool, setProbePool] = useState<UpstreamPool | null>(null)
+  const [probe, setProbe] = useState<OriginProbeResult | null>(null)
+
+  const runProbe = useMutation({
+    mutationFn: (pool: UpstreamPool) => sitesApi.testPool(siteId, pool.id),
+    onSuccess: (result) => {
+      setProbe(result)
+      invalidate()
+    },
+    onError: (e) =>
+      toast.error(t('pages.origin.testFailed'), errorMessage(e)),
+  })
+
+  const openProbe = (pool: UpstreamPool) => {
+    setProbePool(pool)
+    setProbe(null)
+    setProbeOpen(true)
+    runProbe.mutate(pool)
+  }
+
   const openCreatePool = () => {
     setEditingPool(null)
     setPoolForm(emptyPoolForm())
@@ -368,6 +424,48 @@ export function OriginPage() {
       }
     }
 
+    const healthPath = poolForm.healthCheckPath.trim() || '/'
+    if (
+      !healthPath.startsWith('/') ||
+      /[\s?#]/.test(healthPath) ||
+      healthPath.length > 255
+    ) {
+      setPoolError(t('pages.origin.errors.healthPath'))
+      return
+    }
+    const healthInterval = Number.parseInt(poolForm.healthCheckInterval, 10)
+    if (Number.isNaN(healthInterval) || healthInterval < 5 || healthInterval > 3600) {
+      setPoolError(t('pages.origin.errors.healthInterval'))
+      return
+    }
+    const healthTimeout = Number.parseInt(poolForm.healthCheckTimeout, 10)
+    if (Number.isNaN(healthTimeout) || healthTimeout < 100 || healthTimeout > 30_000) {
+      setPoolError(t('pages.origin.errors.healthTimeout'))
+      return
+    }
+    const healthUnhealthy = Number.parseInt(poolForm.healthCheckUnhealthy, 10)
+    const healthHealthy = Number.parseInt(poolForm.healthCheckHealthy, 10)
+    if (
+      Number.isNaN(healthUnhealthy) ||
+      healthUnhealthy < 1 ||
+      healthUnhealthy > 10 ||
+      Number.isNaN(healthHealthy) ||
+      healthHealthy < 1 ||
+      healthHealthy > 10
+    ) {
+      setPoolError(t('pages.origin.errors.healthThreshold'))
+      return
+    }
+
+    const health = {
+      health_check_enabled: poolForm.healthCheckEnabled,
+      health_check_path: healthPath,
+      health_check_interval_seconds: healthInterval,
+      health_check_timeout_ms: healthTimeout,
+      health_check_unhealthy_threshold: healthUnhealthy,
+      health_check_healthy_threshold: healthHealthy,
+    }
+
     if (editingPool) {
       // Empty SNI clears the field server-side, disabling HTTPS origin.
       savePool.mutate({
@@ -377,6 +475,7 @@ export function OriginPage() {
           lb_algorithm: lbAlgorithm,
           sni: sni ?? '',
           verify_cert: sni ? poolForm.verifyCert : null,
+          ...health,
         },
       })
       return
@@ -388,6 +487,7 @@ export function OriginPage() {
         lb_algorithm: lbAlgorithm,
         sni,
         verify_cert: sni ? poolForm.verifyCert : null,
+        ...health,
       },
     })
   }
@@ -780,6 +880,19 @@ export function OriginPage() {
       cell: (n) => <span className="text-[13px] text-fg-subtle">{n.name}</span>,
     },
     {
+      key: 'health_status',
+      header: t('pages.origin.health'),
+      width: '130px',
+      cell: (n) => {
+        const badge = healthBadge(n.health_status)
+        return (
+          <Badge tone={badge.tone} size="sm" dot>
+            {t(badge.key)}
+          </Badge>
+        )
+      },
+    },
+    {
       key: 'weight',
       header: t('pages.origin.nodeWeight'),
       align: 'right',
@@ -945,10 +1058,29 @@ export function OriginPage() {
                           {t('pages.origin.httpOrigin')}
                         </span>
                       )}
+                      <span className="flex items-center gap-1">
+                        <Pulse weight="duotone" className="h-3.5 w-3.5" />
+                        {pool.health_check_enabled
+                          ? t('pages.origin.healthActive', {
+                              path: pool.health_check_path,
+                              seconds: pool.health_check_interval_seconds,
+                            })
+                          : t('pages.origin.healthOff')}
+                      </span>
                     </span>
                   }
                   action={
                     <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="whitespace-nowrap"
+                        loading={runProbe.isPending && probePool?.id === pool.id}
+                        onClick={() => openProbe(pool)}
+                        icon={<Pulse weight="duotone" className="h-4 w-4" />}
+                      >
+                        {t('pages.origin.testNow')}
+                      </Button>
                       {canWrite && (
                         <Button
                           size="icon"
@@ -1074,6 +1206,113 @@ export function OriginPage() {
         )}
       </div>
 
+      {/* ── Origin reachability probe ── */}
+      <Dialog
+        open={probeOpen}
+        onClose={runProbe.isPending ? () => undefined : () => setProbeOpen(false)}
+        title={t('pages.origin.testTitle', { pool: probePool?.name ?? '' })}
+        description={t('pages.origin.testHint')}
+        size="lg"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => probePool && runProbe.mutate(probePool)}
+              loading={runProbe.isPending}
+              icon={<Pulse weight="duotone" className="h-4 w-4" />}
+            >
+              {t('pages.origin.testAgain')}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={runProbe.isPending}
+              onClick={() => setProbeOpen(false)}
+            >
+              {t('common.close')}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          {runProbe.isPending && (
+            <div className="flex items-center gap-2 rounded-lg border border-line bg-recessed px-3 py-4 text-[13px] text-fg-subtle">
+              <Pulse weight="duotone" className="h-4 w-4 animate-pulse" />
+              {t('pages.origin.testRunning')}
+            </div>
+          )}
+          {runProbe.isError && (
+            <p
+              role="alert"
+              className="rounded-md border border-danger/40 bg-danger/8 px-3 py-2 text-[13px] text-fg-danger"
+            >
+              {errorMessage(runProbe.error)}
+            </p>
+          )}
+          {probe && !runProbe.isPending && (
+            <>
+              <p className="text-xs text-fg-subtle">
+                {t('pages.origin.testChecked', {
+                  time: formatDateTime(probe.checked_at),
+                })}
+              </p>
+              {probe.nodes.length === 0 ? (
+                <EmptyState
+                  className="border-0 py-6"
+                  icon={<Globe weight="duotone" className="h-7 w-7" />}
+                  title={t('pages.origin.testEmpty')}
+                />
+              ) : (
+                probe.nodes.map((node) => {
+                  const badge = healthBadge(node.health_status)
+                  return (
+                    <div
+                      key={node.id}
+                      className="rounded-lg border border-line px-3 py-3"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="pw-mono truncate text-[13px] font-medium text-fg-strong">
+                            {node.address}
+                          </p>
+                          <p className="text-xs text-fg-subtle">{node.name}</p>
+                        </div>
+                        <Badge tone={badge.tone} size="sm" dot>
+                          {t(badge.key)}
+                        </Badge>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <p className="text-fg-subtle">
+                            {t('pages.origin.testStatus')}
+                          </p>
+                          <p className="pw-mono text-fg">
+                            {node.status_code ?? '—'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-fg-subtle">
+                            {t('pages.origin.testLatency')}
+                          </p>
+                          <p className="pw-mono text-fg">{node.latency_ms} ms</p>
+                        </div>
+                      </div>
+                      {node.error && (
+                        <p className="mt-2 rounded-md bg-danger/8 px-2 py-1.5 text-xs text-fg-danger">
+                          {node.error}
+                        </p>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </>
+          )}
+          <p className="text-[11px] text-fg-subtle">
+            {t('pages.origin.testControlPlane')}
+          </p>
+        </div>
+      </Dialog>
+
       {/* ── Pool dialog ── */}
       <Dialog
         open={poolDialogOpen}
@@ -1150,6 +1389,79 @@ export function OriginPage() {
               />
             </>
           )}
+
+          <div className="rounded-lg border border-line bg-recessed/40 px-3 py-3">
+            <Switch
+              checked={poolForm.healthCheckEnabled}
+              onCheckedChange={(healthCheckEnabled) =>
+                setPoolForm((f) => ({ ...f, healthCheckEnabled }))
+              }
+              label={t('pages.origin.healthCheckEnabled')}
+              description={t('pages.origin.healthCheckEnabledHint')}
+            />
+            {poolForm.healthCheckEnabled && (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <Input
+                  label={t('pages.origin.healthCheckPath')}
+                  value={poolForm.healthCheckPath}
+                  placeholder="/health"
+                  hint={t('pages.origin.healthCheckPathHint')}
+                  containerClassName="pw-mono"
+                  onChange={(e) =>
+                    setPoolForm((f) => ({ ...f, healthCheckPath: e.target.value }))
+                  }
+                />
+                <Input
+                  label={t('pages.origin.healthCheckInterval')}
+                  type="number"
+                  min={5}
+                  max={3600}
+                  value={poolForm.healthCheckInterval}
+                  hint={t('pages.origin.healthCheckIntervalHint')}
+                  onChange={(e) =>
+                    setPoolForm((f) => ({ ...f, healthCheckInterval: e.target.value }))
+                  }
+                />
+                <Input
+                  label={t('pages.origin.healthCheckTimeout')}
+                  type="number"
+                  min={100}
+                  max={30000}
+                  value={poolForm.healthCheckTimeout}
+                  hint={t('pages.origin.healthCheckTimeoutHint')}
+                  onChange={(e) =>
+                    setPoolForm((f) => ({ ...f, healthCheckTimeout: e.target.value }))
+                  }
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    label={t('pages.origin.healthCheckUnhealthyThreshold')}
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={poolForm.healthCheckUnhealthy}
+                    onChange={(e) =>
+                      setPoolForm((f) => ({ ...f, healthCheckUnhealthy: e.target.value }))
+                    }
+                  />
+                  <Input
+                    label={t('pages.origin.healthCheckHealthyThreshold')}
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={poolForm.healthCheckHealthy}
+                    onChange={(e) =>
+                      setPoolForm((f) => ({ ...f, healthCheckHealthy: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+            )}
+            <p className="mt-2 text-xs text-fg-subtle">
+              {t('pages.origin.testControlPlane')}
+            </p>
+          </div>
+
           {poolError && (
             <p
               role="alert"

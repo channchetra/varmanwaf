@@ -405,6 +405,11 @@ Other details that matter for private apps:
   will leave the public domain. Prefer relative redirects, or rewrite the
   `Location` header.
 
+To test leg 2 directly, open **Origins → pool → Test now**. It probes every
+node in the pool from the control plane (the WAF host in all-in-one mode) and
+reports the HTTP status, latency and the connection/TLS error. The node’s
+Health column keeps the result: Reachable, Reachable · 5xx or Unreachable.
+
 ### Which leg is failing?
 
 | Symptom | Leg | First check |

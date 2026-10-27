@@ -374,7 +374,7 @@ export function GlobalSslPage() {
       key: 'actions',
       header: '',
       align: 'right',
-      width: '200px',
+      width: '232px',
       cell: actionCell,
     },
   ]

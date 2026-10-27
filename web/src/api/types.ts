@@ -151,8 +151,36 @@ export interface UpstreamPool {
   /** Non-empty SNI enables HTTPS origin; `null` means plain HTTP. */
   sni: string | null
   verify_cert: boolean | null
+  /** Active HTTP health check for this pool's nodes. */
+  health_check_enabled: boolean
+  /** Path the edge probes, e.g. `/health`. */
+  health_check_path: string
+  health_check_interval_seconds: number
+  health_check_timeout_ms: number
+  health_check_unhealthy_threshold: number
+  health_check_healthy_threshold: number
   is_default: boolean
   created_at: string
+}
+
+/** One node's result from a manual origin reachability probe. */
+export interface OriginProbeNode {
+  id: string
+  name: string
+  address: string
+  reachable: boolean
+  status_code: number | null
+  latency_ms: number
+  error: string | null
+  /** `healthy`, `degraded` or `unhealthy`. */
+  health_status: string
+}
+
+export interface OriginProbeResult {
+  pool_id: string
+  pool_name: string
+  checked_at: string
+  nodes: OriginProbeNode[]
 }
 
 /** `models::sites::site_routes::Model` */
@@ -246,6 +274,12 @@ export interface CreatePoolRequest {
   lb_algorithm?: string
   sni?: string | null
   verify_cert?: boolean | null
+  health_check_enabled?: boolean
+  health_check_path?: string
+  health_check_interval_seconds?: number
+  health_check_timeout_ms?: number
+  health_check_unhealthy_threshold?: number
+  health_check_healthy_threshold?: number
 }
 
 export interface UpdatePoolRequest {
@@ -254,6 +288,12 @@ export interface UpdatePoolRequest {
   /** Empty string clears SNI (disables HTTPS origin). */
   sni?: string | null
   verify_cert?: boolean | null
+  health_check_enabled?: boolean
+  health_check_path?: string
+  health_check_interval_seconds?: number
+  health_check_timeout_ms?: number
+  health_check_unhealthy_threshold?: number
+  health_check_healthy_threshold?: number
 }
 
 export interface CreateRouteRequest {

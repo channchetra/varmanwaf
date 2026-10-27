@@ -110,6 +110,29 @@ a **502**, not a 525. The two TLS legs, the log signatures and the security
 trade-off are covered in
 [TLS troubleshooting §10](./tls-troubleshooting.md#10-origin-tls-http-backends-and-self-signed-https-backends).
 
+### Origin health checks
+
+Each pool can probe its nodes with an HTTP health check. A node that fails the
+probe is taken out of rotation by the edge until it recovers.
+
+| Field | Description |
+|-------|-------------|
+| Active health check | Turns the periodic probe on for this pool |
+| Probe path | Path the edge requests, e.g. `/health`; must start with `/` |
+| Interval | Seconds between probes (5–3600; the edge aligns to 10-second steps) |
+| Timeout | Connect/read timeout in milliseconds (100–30000) |
+| Failures to unhealthy | Consecutive failed probes before a node is removed (1–10) |
+| Successes to healthy | Consecutive successful probes before it returns (1–10) |
+
+The pool card shows the active-check path and interval. Every node has a
+**Health** column: **Reachable**, **Reachable · 5xx** or **Unreachable**.
+
+Use **Test now** on a pool to probe every node immediately and see the HTTP
+status, latency and any connection/TLS error. In all-in-one mode the probe runs
+from the WAF host, so it answers “can the WAF reach this origin?”. In a split
+deployment it runs from the control-plane host; the edge’s own network path can
+still differ.
+
 Load-balancing algorithms:
 
 | Algorithm | Spec | Behavior |
