@@ -10,7 +10,50 @@ not presenting a certificate for that hostname, or the certificate it presents
 is not trusted by the CDN. WAF rules, DNS and the origin application are not
 involved yet.
 
+## Is there a CDN in front?
+
+The guidance splits by topology, because the certificate is validated by a
+different party in each one:
+
+| Topology | Who validates the WAF certificate | Error you see on failure |
+| --- | --- | --- |
+| **Direct DNS** — A/AAAA record points at the WAF | The browser | Browser TLS error (`ERR_SSL_PROTOCOL_ERROR`, `ERR_CERT_*`, `SSL_ERROR_*`); **no 525/526** |
+| **Cloudflare proxied** — orange cloud, DNS points at Cloudflare | Cloudflare | **525 / 526** / 521 / 522 / 524 |
+
+- **No CDN (direct DNS):** there is no Cloudflare leg, so 525, 526 and the
+  Full / Full (strict) / Flexible modes do not exist for that hostname. The
+  browser talks straight to the WAF; the WAF must simply present a valid
+  certificate whose SAN covers the hostname. ACME HTTP-01 still works — Let's
+  Encrypt reaches the WAF on port 80 directly, so DNS must point at the WAF and
+  port 80 must be reachable. Make sure any **AAAA** record also points at the
+  WAF (or is removed), or IPv6 clients will fail even when IPv4 works.
+- **Cloudflare proxied:** use sections 1–6 below. Section 6 (Full/strict) only
+  applies to this topology.
+- **Both topologies:** sections 3–5 (certificate loaded, agent scope, ACME
+  status), section 7 (“Unknown issuer”) and section 10 (WAF → private app TLS)
+  are identical. The origin TLS leg is independent of the CDN.
+
+A direct-domain check from any client:
+
+```bash
+# The WAF itself is the endpoint; this is what the browser sees.
+openssl s_client -connect varman.example.com:443 \
+  -servername varman.example.com </dev/null 2>&1 \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+
+curl -sI https://varman.example.com/
+```
+
+`varman.unitywork.space` in the production deployment is a direct-DNS site:
+it resolves to the WAF and responds with `server: varmanwaf`, with no
+Cloudflare headers. `mail-bridge.unity-workspace.com` is the proxied case and
+responds with `server: cloudflare`. Both are supported.
+
 ## 1. Read the CDN error code first
+
+> This section only applies when Cloudflare (or another TLS-terminating CDN) is
+> in front of the WAF. For direct DNS, skip to section 2 — the browser reports
+> the TLS failure itself.
 
 | Code | Meaning | Usual cause |
 | --- | --- | --- |
@@ -179,6 +222,9 @@ If HTTP-01 is not possible, use **DNS-01** with a provider token
 avoids exposing port 80 and works for wildcard certificates.
 
 ## 6. Trust at the CDN: Full, Full (strict), and Origin CA
+
+> Only relevant when a CDN is proxying the hostname. With direct DNS, the
+> browser validates the WAF certificate and this section does not apply.
 
 | Mode | What Cloudflare accepts | Use it? |
 | --- | --- | --- |
