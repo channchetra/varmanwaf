@@ -12,12 +12,17 @@
 //! answer instead of a connection reset. [`ConnInfo`] tells the request
 //! middleware which half a connection arrived on, which is what drives the
 //! redirect to HTTPS in [`crate::api`].
+//!
+//! Protocol detection and the TLS handshake run in bounded per-connection
+//! tasks, never inline in `accept()`. An idle TCP client must not be able to
+//! head-of-line block the console or its health probe.
 
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use axum::extract::connect_info::Connected;
 use axum::serve::{IncomingStream, Listener};
@@ -25,6 +30,8 @@ use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, Semaphore};
+use tokio::time::timeout;
 use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
 
@@ -33,6 +40,18 @@ use crate::pki::tls::{certified_key, crypto_provider};
 
 /// First byte of a TLS record carrying a handshake (the ClientHello).
 const TLS_HANDSHAKE_RECORD: u8 = 0x16;
+
+/// A client must send its first byte this quickly. This is also the
+/// slowloris guard: an idle TCP connection must never occupy the listener.
+const PROTOCOL_PEEK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Bounds a TLS handshake. A client that cannot finish in this window is
+/// dropped instead of holding a classification worker forever.
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Maximum number of connections being classified or handshaking at once.
+/// The accept loop keeps running while these tasks are in flight.
+const MAX_CONCURRENT_HANDSHAKES: usize = 64;
 
 /// Holds the certificate the listener presents, swappable at runtime.
 ///
@@ -197,11 +216,25 @@ impl AsyncWrite for MaybeTlsStream {
 pub struct MixedListener {
     listener: TcpListener,
     acceptor: TlsAcceptor,
+    /// Fully classified connections, handed to axum by [`accept`].
+    ready: mpsc::Receiver<(MaybeTlsStream, SocketAddr)>,
+    /// Clone held by the listener so classification tasks can enqueue.
+    ready_tx: mpsc::Sender<(MaybeTlsStream, SocketAddr)>,
+    /// Bounds concurrent idle/TLS handshakes. Without this, a burst of slow
+    /// clients could exhaust memory even though the accept loop stays live.
+    slots: Arc<Semaphore>,
 }
 
 impl MixedListener {
     pub fn new(listener: TcpListener, acceptor: TlsAcceptor) -> Self {
-        Self { listener, acceptor }
+        let (ready_tx, ready) = mpsc::channel(MAX_CONCURRENT_HANDSHAKES);
+        Self {
+            listener,
+            acceptor,
+            ready,
+            ready_tx,
+            slots: Arc::new(Semaphore::new(MAX_CONCURRENT_HANDSHAKES)),
+        }
     }
 }
 
@@ -210,36 +243,76 @@ impl Listener for MixedListener {
     type Addr = SocketAddr;
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        // Classify connections concurrently. The previous implementation
+        // awaited `peek` and the TLS handshake inline, so one client that
+        // connected and sent nothing froze the whole admin listener — a
+        // single idle TCP connection could take the dashboard down.
+        let Self {
+            listener,
+            acceptor,
+            ready,
+            ready_tx,
+            slots,
+        } = self;
         loop {
-            let (stream, addr) = match self.listener.accept().await {
-                Ok(accepted) => accepted,
-                Err(err) => {
-                    tracing::error!(error = %err, "control-plane accept failed");
-                    // Mirroring axum: an accept error is usually a transient
-                    // resource shortage (e.g. EMFILE), so pause instead of
-                    // spinning.
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    continue;
-                },
-            };
-            let _ = stream.set_nodelay(true);
+            tokio::select! {
+                biased;
+                Some(classified) = ready.recv() => return classified,
+                accepted = TcpListener::accept(listener) => {
+                    let (stream, addr) = match accepted {
+                        Ok(accepted) => accepted,
+                        Err(err) => {
+                            tracing::error!(error = %err, "control-plane accept failed");
+                            // Mirroring axum: an accept error is usually a
+                            // transient resource shortage (e.g. EMFILE), so
+                            // pause instead of spinning.
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            continue;
+                        },
+                    };
 
-            match looks_like_tls(&stream).await {
-                Ok(true) => match self.acceptor.accept(stream).await {
-                    Ok(tls) => {
-                        return (MaybeTlsStream::Tls(Box::new(tls)), addr)
-                    },
-                    Err(err) => {
-                        // A client that does not trust the certificate drops
-                        // the handshake; that is routine, not an outage.
-                        tracing::debug!(%addr, error = %err, "TLS handshake failed");
-                        continue;
-                    },
-                },
-                Ok(false) => return (MaybeTlsStream::Plain(stream), addr),
-                Err(err) => {
-                    tracing::debug!(%addr, error = %err, "cannot read from the new connection");
-                    continue;
+                    // Loopback is reserved for the container health probe and
+                    // an SSH tunnel. It must survive an external slow-client
+                    // flood; external connections are bounded by `slots`.
+                    let permit = if addr.ip().is_loopback() {
+                        None
+                    } else {
+                        match slots.clone().try_acquire_owned() {
+                            Ok(permit) => Some(permit),
+                            Err(_) => {
+                                tracing::debug!(
+                                    %addr,
+                                    "control-plane connection dropped: too many \
+                                     pending handshakes"
+                                );
+                                drop(stream);
+                                continue;
+                            },
+                        }
+                    };
+
+                    let acceptor = acceptor.clone();
+                    let sender = ready_tx.clone();
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        let _ = stream.set_nodelay(true);
+                        match classify(stream, acceptor).await {
+                            Ok(io) => {
+                                if sender.send((io, addr)).await.is_err() {
+                                    tracing::debug!(
+                                        %addr,
+                                        "control-plane listener closed while \
+                                         classifying a connection"
+                                    );
+                                }
+                            },
+                            Err(err) => tracing::debug!(
+                                %addr,
+                                error = %err,
+                                "control-plane connection setup failed"
+                            ),
+                        }
+                    });
                 },
             }
         }
@@ -248,6 +321,34 @@ impl Listener for MixedListener {
     fn local_addr(&self) -> io::Result<Self::Addr> {
         self.listener.local_addr()
     }
+}
+
+/// Classifies and, for TLS clients, completes the handshake before handing
+/// the connection to axum. Both waits are bounded so a silent client cannot
+/// hold a worker indefinitely.
+async fn classify(
+    stream: TcpStream,
+    acceptor: TlsAcceptor,
+) -> io::Result<MaybeTlsStream> {
+    let is_tls = timeout(PROTOCOL_PEEK_TIMEOUT, looks_like_tls(&stream))
+        .await
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                "timed out waiting for the first byte",
+            )
+        })??;
+
+    if !is_tls {
+        return Ok(MaybeTlsStream::Plain(stream));
+    }
+
+    let tls = timeout(TLS_HANDSHAKE_TIMEOUT, acceptor.accept(stream))
+        .await
+        .map_err(|_| {
+            io::Error::new(io::ErrorKind::TimedOut, "TLS handshake timed out")
+        })??;
+    Ok(MaybeTlsStream::Tls(Box::new(tls)))
 }
 
 /// Peeks the first byte to tell a TLS handshake from a cleartext request.
@@ -403,5 +504,46 @@ mod tests {
         let mut handshakes: Vec<bool> = server.await.unwrap();
         handshakes.sort_unstable();
         assert_eq!(handshakes, vec![false, true]);
+    }
+
+    /// Regression: a client that connects and sends nothing must not head-of-
+    /// line block a valid health probe or dashboard request. Previously the
+    /// listener awaited `peek` inline, so one idle TCP connection froze 9080
+    /// until the process was restarted.
+    #[tokio::test]
+    async fn idle_connection_does_not_block_a_valid_client() {
+        let (cert_pem, key_pem) = test_certificate();
+        let tls = ControlPlaneTls::new(true);
+        tls.activate(&cert_pem, &key_pem).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut listener = MixedListener::new(listener, tls.acceptor());
+
+        let server = tokio::spawn(async move {
+            let (mut io, _) = listener.accept().await;
+            let mut ping = [0u8; 4];
+            io.read_exact(&mut ping).await.unwrap();
+            assert_eq!(&ping, b"PING");
+            io.write_all(b"PLAIN").await.unwrap();
+            io.flush().await.unwrap();
+        });
+
+        // Hold a connection open without sending a single byte.
+        let idle = TcpStream::connect(addr).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // A normal cleartext client must still be accepted and answered.
+        let mut plain = TcpStream::connect(addr).await.unwrap();
+        plain.write_all(b"PING").await.unwrap();
+        let mut reply = [0u8; 5];
+        timeout(Duration::from_secs(2), plain.read_exact(&mut reply))
+            .await
+            .expect("an idle connection blocked a valid client")
+            .unwrap();
+        assert_eq!(&reply, b"PLAIN");
+
+        drop(idle);
+        server.await.unwrap();
     }
 }
