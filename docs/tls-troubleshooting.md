@@ -191,6 +191,12 @@ select created_at, event_type, message
 from certificate_events order by created_at desc limit 20;"
 ```
 
+In the console, **SSL/TLS → live log** (the terminal button on the
+certificate row, or the window that opens after **Renew now**) tails the same
+rows every 1.5 seconds. It is the quickest way to watch an order without
+watching the container log, and it survives the dialog being closed because
+the rows are persisted.
+
 Trigger a renewal from the console (**SSL/TLS → Renew now**) or the API:
 
 ```bash

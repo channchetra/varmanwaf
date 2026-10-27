@@ -1028,8 +1028,42 @@ pub struct EventsQuery {
     pub certificate_id: Option<String>,
     #[serde(default)]
     pub event_type: Option<String>,
+    /// Only events at or after this RFC 3339 timestamp. The live log sends the
+    /// timestamp of the last row it rendered so each poll returns only new
+    /// lines; `>=` (not `>`) keeps rows that share a timestamp.
+    #[serde(default)]
+    pub since: Option<String>,
+    /// `asc` returns oldest first. The default stays newest first so the
+    /// paginated log tab keeps its current order.
+    #[serde(default)]
+    pub order: Option<String>,
     #[serde(flatten)]
     pub pagination: Pagination,
+}
+
+/// Applies the shared event filters and returns whether the caller asked for
+/// ascending order (the live log) or the default newest-first page.
+fn apply_event_query(
+    mut condition: Condition,
+    query: &EventsQuery,
+) -> Result<(Condition, bool), ApiError> {
+    if let Some(ref et) = non_empty(&query.event_type) {
+        condition = condition
+            .add(certificate_events::Column::EventType.eq(et.as_str()));
+    }
+    if let Some(raw) = non_empty(&query.since) {
+        let since = DateTime::parse_from_rfc3339(&raw)
+            .map(|ts| ts.with_timezone(&Utc))
+            .map_err(|_| {
+                ApiError::BadRequest(
+                    "since must be an RFC 3339 timestamp".to_string(),
+                )
+            })?;
+        condition =
+            condition.add(certificate_events::Column::CreatedAt.gte(since));
+    }
+    let ascending = matches!(non_empty(&query.order).as_deref(), Some("asc"));
+    Ok((condition, ascending))
 }
 
 /// `GET /api/v1/certificates/{cert_id}/events`
@@ -1044,17 +1078,17 @@ async fn list_certificate_events(
     load_site_read(&state.db, row.site_id, &current).await?;
 
     let pagination = query.pagination.normalise();
-    let mut condition = Condition::all()
+    let condition = Condition::all()
         .add(certificate_events::Column::CertificateId.eq(target));
-    if let Some(ref et) = non_empty(&query.event_type) {
-        condition = condition
-            .add(certificate_events::Column::EventType.eq(et.as_str()));
-    }
+    let (condition, ascending) = apply_event_query(condition, &query)?;
 
-    let paginator = certificate_events::Entity::find()
-        .filter(condition)
-        .order_by_desc(certificate_events::Column::CreatedAt)
-        .paginate(&state.db, pagination.limit());
+    let mut finder = certificate_events::Entity::find().filter(condition);
+    finder = if ascending {
+        finder.order_by_asc(certificate_events::Column::CreatedAt)
+    } else {
+        finder.order_by_desc(certificate_events::Column::CreatedAt)
+    };
+    let paginator = finder.paginate(&state.db, pagination.limit());
 
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(pagination.index()).await?;
@@ -1096,15 +1130,15 @@ async fn list_all_events(
         condition = condition
             .add(certificate_events::Column::CertificateId.eq(cert_uuid));
     }
-    if let Some(ref et) = non_empty(&query.event_type) {
-        condition = condition
-            .add(certificate_events::Column::EventType.eq(et.as_str()));
-    }
+    let (condition, ascending) = apply_event_query(condition, &query)?;
 
-    let paginator = certificate_events::Entity::find()
-        .filter(condition)
-        .order_by_desc(certificate_events::Column::CreatedAt)
-        .paginate(&state.db, pagination.limit());
+    let mut finder = certificate_events::Entity::find().filter(condition);
+    finder = if ascending {
+        finder.order_by_asc(certificate_events::Column::CreatedAt)
+    } else {
+        finder.order_by_desc(certificate_events::Column::CreatedAt)
+    };
+    let paginator = finder.paginate(&state.db, pagination.limit());
 
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(pagination.index()).await?;
@@ -1150,4 +1184,50 @@ async fn list_all_events(
         })
         .collect();
     Ok(Json(Page::new(items, total, pagination)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn events_query(since: Option<&str>, order: Option<&str>) -> EventsQuery {
+        EventsQuery {
+            certificate_id: None,
+            event_type: None,
+            since: since.map(str::to_string),
+            order: order.map(str::to_string),
+            pagination: Pagination {
+                page: 1,
+                page_size: 50,
+            },
+        }
+    }
+
+    #[test]
+    fn live_event_query_accepts_rfc3339_and_ascending_order() {
+        let query = events_query(Some("2026-10-27T08:00:00Z"), Some("asc"));
+        let (_, ascending) =
+            apply_event_query(Condition::all(), &query).expect("valid query");
+        assert!(ascending);
+
+        let (_, ascending) =
+            apply_event_query(Condition::all(), &events_query(None, None))
+                .expect("valid query");
+        assert!(!ascending);
+    }
+
+    #[test]
+    fn live_event_query_rejects_a_bad_timestamp() {
+        let err = apply_event_query(
+            Condition::all(),
+            &events_query(Some("yesterday"), None),
+        )
+        .expect_err("invalid timestamp must be rejected");
+        match err {
+            ApiError::BadRequest(message) => {
+                assert!(message.contains("RFC 3339"), "{message}");
+            },
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+    }
 }

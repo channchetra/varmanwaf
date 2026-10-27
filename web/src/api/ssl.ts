@@ -68,6 +68,10 @@ export const sslApi = {
 
   summary: () => apiClient.get<CertificateSummary>('/certificates/summary'),
 
+  /** One certificate by id, across sites (the live log polls its status). */
+  getGlobal: (id: string) =>
+    apiClient.get<SslCertificate>(`/certificates/${id}`),
+
   /** Uploads a certificate, or applies for one, on a site's behalf. */
   createGlobal: (data: CreateSslRequest & { site_id: string }) =>
     apiClient.post<SslCertificate>('/certificates', data),

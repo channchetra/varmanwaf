@@ -1425,16 +1425,20 @@ export type CertEventType =
   | 'renewal_requested'
   | 'renewed'
   | 'failed'
+  | 'issuance_failed'
   | 'deleted'
   | 'acme_raw'
+  | 'management_certificate'
 
 export const CERT_EVENT_TYPES: CertEventType[] = [
   'created',
   'renewal_requested',
   'renewed',
   'failed',
+  'issuance_failed',
   'deleted',
   'acme_raw',
+  'management_certificate',
 ]
 
 export interface CertificateEvent {
@@ -1452,6 +1456,10 @@ export interface CertificateEvent {
 export interface CertificateEventListQuery extends PaginationQuery {
   certificate_id?: string
   event_type?: string
+  /** Only events at or after this RFC 3339 timestamp (live log tailing). */
+  since?: string
+  /** `asc` returns oldest first; the default is newest first. */
+  order?: 'asc' | 'desc'
 }
 
 /* ── Cache rules ──────────────────────────────────────────────────── */

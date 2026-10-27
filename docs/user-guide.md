@@ -398,6 +398,24 @@ Agents report each site's certificate status in every heartbeat, shown on the SS
 
 The SSL/TLS page also keeps an event log per certificate — created, renewal requested, renewed, failed, deleted, plus raw ACME output — so issuance attempts can be followed from the console.
 
+### Live issuance log
+
+Applying for an ACME certificate or clicking **Renew now** opens a live log
+window. It tails the certificate's events every 1.5 seconds and refreshes the
+certificate status, so the order can be watched without leaving the page:
+
+- **Order queued** — `renewal_requested` appears immediately.
+- **Order running** — raw `acme_raw` lines show authorization creation, the
+  challenge token being served, validation and “renew certificate success”.
+- **Finished or failed** — the certificate badge moves to **Active** or
+  **Failed**; `issuance_failed` explains a stale order.
+
+The window can be paused, copied or downloaded, and follows the newest line
+unless you scroll up. Every certificate row also has a terminal button to open
+its log at any time. A queued renewal is picked up at the next ACME window
+(about 10 minutes), so an empty log at first is normal — the window says so.
+The event log is retained after the dialog is closed.
+
 If the CDN returns **525/526**, the origin serves no certificate, or the list says **Unknown issuer**, follow [TLS troubleshooting](./tls-troubleshooting.md). It explains which check to run first and when the label is only cosmetic.
 
 ## Request/Response Rewriting

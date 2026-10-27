@@ -10,10 +10,12 @@ import {
   Info,
   Lock,
   ShieldCheck,
+  Terminal,
   Trash,
   Warning,
 } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
+import { CertificateLiveLog } from '@/components/CertificateLiveLog'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -129,6 +131,7 @@ export function SslPage() {
   const [mtlsError, setMtlsError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<SslCertificate | null>(null)
   const [details, setDetails] = useState<SslCertificate | null>(null)
+  const [liveCert, setLiveCert] = useState<SslCertificate | null>(null)
 
   const certsQuery = useQuery({
     queryKey: sslKeys.list(siteId),
@@ -221,6 +224,7 @@ export function SslPage() {
     mutationFn: (cert: SslCertificate) => sslApi.renew(siteId, cert.id),
     onSuccess: (ack, cert) => {
       toast.success(t('pages.ssl.renewStarted'), ack.message || cert.domain)
+      setLiveCert(cert)
       invalidateCerts()
     },
   })
@@ -395,6 +399,14 @@ export function SslPage() {
             disabled={!canWrite || isCurrent(c) || saveSettings.isPending}
             onClick={() => setAsCurrent(c)}
             icon={<Check weight="duotone" className="h-4 w-4" />}
+          />
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label={t('pages.ssl.liveAction')}
+            title={t('pages.ssl.liveAction')}
+            onClick={() => setLiveCert(c)}
+            icon={<Terminal weight="duotone" className="h-4 w-4" />}
           />
           <Button
             size="icon"
@@ -899,6 +911,13 @@ export function SslPage() {
           </div>
         )}
       </ConfirmDialog>
+
+      <CertificateLiveLog
+        open={liveCert !== null}
+        certificateId={liveCert?.id ?? null}
+        domain={liveCert?.domain}
+        onClose={() => setLiveCert(null)}
+      />
     </div>
   )
 }

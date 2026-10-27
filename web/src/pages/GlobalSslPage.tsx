@@ -9,10 +9,12 @@ import {
   Info,
   Lightning,
   Plus,
+  Terminal,
   Trash,
 } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { ErrorState } from '@/components/ErrorState'
+import { CertificateLiveLog } from '@/components/CertificateLiveLog'
 import { Badge, type BadgeTone } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
@@ -63,6 +65,7 @@ interface FormState {
   certPem: string
   keyPem: string
   activate: boolean
+  followLog: boolean
 }
 
 const emptyForm = (): FormState => ({
@@ -77,6 +80,7 @@ const emptyForm = (): FormState => ({
   certPem: '',
   keyPem: '',
   activate: true,
+  followLog: true,
 })
 
 /** ACME-issued rows carry an email or auto-renewal; the rest were uploaded. */
@@ -99,6 +103,7 @@ export function GlobalSslPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<CertificateWithSite | null>(null)
   const [eventTypeFilter, setEventTypeFilter] = useState('')
+  const [liveCert, setLiveCert] = useState<{ id: string; domain: string } | null>(null)
 
   const sitesQuery = useSitesList()
   const sites = sitesQuery.data ?? []
@@ -147,6 +152,9 @@ export function GlobalSslPage() {
           : cert.domain,
       )
       setDialogOpen(false)
+      if (form.mode === 'acme' && form.followLog) {
+        setLiveCert({ id: cert.id, domain: cert.domain })
+      }
       setForm(emptyForm())
       invalidate()
     },
@@ -155,8 +163,10 @@ export function GlobalSslPage() {
 
   const renewCert = useMutation({
     mutationFn: (id: string) => sslApi.renewGlobal(id),
-    onSuccess: (_ack, _id) => {
+    onSuccess: (_ack, id) => {
       toast.success(t('pages.ssl.renewStarted'), t('pages.sslGlobal.renewHint'))
+      const cert = certs.find((item) => item.id === id)
+      setLiveCert({ id, domain: cert?.domain ?? '' })
       invalidate()
     },
     onError: (e) => toast.error(t('pages.sslGlobal.renewFailed'), errorMessage(e)),
@@ -241,6 +251,15 @@ export function GlobalSslPage() {
 
   const actionCell = (cert: CertificateWithSite) => (
     <div className="flex items-center justify-end gap-1">
+      <Button
+        size="icon"
+        variant="ghost"
+        aria-label={t('pages.ssl.liveAction')}
+        title={t('pages.ssl.liveAction')}
+        onClick={() => setLiveCert({ id: cert.id, domain: cert.domain })}
+      >
+        <Terminal weight="duotone" className="h-4 w-4" />
+      </Button>
       {isAcme(cert) && (
         <Button
           size="sm"
@@ -365,8 +384,10 @@ export function GlobalSslPage() {
     renewal_requested: 'info',
     renewed: 'success',
     failed: 'danger',
+    issuance_failed: 'danger',
     deleted: 'warning',
     acme_raw: 'brand',
+    management_certificate: 'info',
   }
 
   const events = useMemo(() => eventsQuery.data?.items ?? [], [eventsQuery.data])
@@ -818,6 +839,12 @@ export function GlobalSslPage() {
                 label={t('pages.ssl.autoRenew')}
                 description={t('pages.ssl.autoRenewHint')}
               />
+              <Switch
+                checked={form.followLog}
+                onCheckedChange={(v) => setForm((f) => ({ ...f, followLog: v }))}
+                label={t('pages.ssl.liveFollow')}
+                description={t('pages.ssl.liveFollowHint')}
+              />
             </>
           ) : (
             <>
@@ -877,6 +904,13 @@ export function GlobalSslPage() {
           </div>
         )}
       </ConfirmDialog>
+
+      <CertificateLiveLog
+        open={liveCert !== null}
+        certificateId={liveCert?.id ?? null}
+        domain={liveCert?.domain}
+        onClose={() => setLiveCert(null)}
+      />
     </div>
   )
 }
