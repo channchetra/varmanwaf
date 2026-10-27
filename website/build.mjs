@@ -66,6 +66,7 @@ const NAV = [
       { slug: 'sizing', label: 'Sizing & capacity' },
       { slug: 'http-lifecycle', label: 'Request lifecycle' },
       { slug: 'acme_chart', label: 'ACME certificate flow' },
+      { slug: 'tls-troubleshooting', label: 'TLS & 525 troubleshooting' },
       { slug: 'profiling', label: 'Profiling' },
     ],
   },

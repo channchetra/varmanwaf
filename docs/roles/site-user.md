@@ -142,7 +142,9 @@ Never paste production secrets into a conversation.
   protection mode and the edge agent status; escalate to the system
   administrator.
 - **Certificate issuance fails** → open **SSL/TLS → Events**; ACME needs a
-  public DNS name and reachable HTTP-01/DNS-01 path.
+  public DNS name and reachable HTTP-01/DNS-01 path. If the CDN reports 525 or
+  the certificate says **Unknown issuer**, use the
+  [TLS troubleshooting guide](../tls-troubleshooting.md).
 - **The origin is healthy but the edge returns 502** → check the origin address
   from the agent's network, not just from your laptop.
 - **A rule fires but you cannot edit it** → it may be managed by a shared

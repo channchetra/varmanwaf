@@ -391,6 +391,8 @@ Agents report each site's certificate status in every heartbeat, shown on the SS
 
 The SSL/TLS page also keeps an event log per certificate — created, renewal requested, renewed, failed, deleted, plus raw ACME output — so issuance attempts can be followed from the console.
 
+If the CDN returns **525/526**, the origin serves no certificate, or the list says **Unknown issuer**, follow [TLS troubleshooting](./tls-troubleshooting.md). It explains which check to run first and when the label is only cosmetic.
+
 ## Request/Response Rewriting
 
 ![Request and response rewrite rules](images/console/rewrite.webp)

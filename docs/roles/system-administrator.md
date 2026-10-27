@@ -149,6 +149,11 @@ application log holds the raw ACME transcript.
 Do not debug ACME by restarting the control plane. Check DNS, port 80, and the
 challenge path first.
 
+For a 525/526, a certificate the edge never loaded, or an “Unknown issuer”
+label, follow the [TLS troubleshooting guide](../tls-troubleshooting.md). It
+walks through the origin TLS test, the embedded-agent scope check, the ACME
+events and the Cloudflare trust modes.
+
 ## Step 9 — Upgrade safely
 
 The order matters in a distributed deployment:
@@ -193,6 +198,7 @@ round. See [Releases](../releases/index.html).
 | Agent offline | Agents page, `:9090` reachability, key | Re-register or replace the node |
 | Config not applying | Config history / applied hash | Control-plane → agent sync, then retry |
 | ACME stuck | DNS, port 80, challenge path | SSL events, application log |
+| CDN returns 525 / 526 | Origin cert with `openssl s_client -servername` | [TLS troubleshooting](../tls-troubleshooting.md), then renew |
 | High memory | Cache quota, process metrics | Profiling, cache eviction, restart plan |
 | Upgrade regression | Previous image tag | Restore DB only if the schema changed |
 
