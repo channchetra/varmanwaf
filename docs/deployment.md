@@ -37,6 +37,24 @@ or replaced (**Settings → Control plane HTTPS**). Set `TLS_SANS` to the hostna
 you use if it is not `localhost`.  
 Default credentials: `admin@varman.local` / value of `$ADMIN_PASSWORD`
 
+### Container logs
+
+The compose file caps the WAF container's `json-file` log at **20 MB × 5
+files**:
+
+```yaml
+logging:
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+```
+
+Keep a cap in any custom compose file. A misconfigured origin that points back
+at the WAF, or a client retry loop, can produce status-499 lines fast enough to
+fill an uncapped disk. Use `docker logs --since 5m varman` to inspect recent
+output without replaying the whole buffer.
+
 ### Environment Variables (docker-compose)
 
 | Variable | Default | Description |
