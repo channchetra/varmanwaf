@@ -765,6 +765,7 @@ varman all-in-one --db-url "postgres://…" \
     if (reduceMotion.matches) return
 
     const groups = [
+      ['.name-grid', 0],
       ['.stats-grid .stat', 70],
       ['#features .section-intro', 0],
       ['#features .feature-card', 65],
