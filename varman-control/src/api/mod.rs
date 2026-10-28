@@ -42,6 +42,7 @@ pub mod mtls;
 pub mod notifications;
 pub mod passkeys;
 pub mod policies;
+pub mod port_forwards;
 pub mod rate_limit;
 pub mod rate_limiting;
 pub mod reports;
@@ -134,6 +135,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(notifications::routes())
         .merge(login_security::routes())
         .merge(policies::routes())
+        .merge(port_forwards::routes())
         .route("/health", get(health))
         .route("/version", get(version))
         .fallback(api_not_found)

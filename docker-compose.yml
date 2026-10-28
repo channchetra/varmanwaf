@@ -28,6 +28,9 @@ services:
       - "443:443"     # HTTPS traffic (proxied)
       - "9080:9080"   # Admin dashboard + REST API
       - "9090:9090"   # gRPC control plane (agents connect here)
+      # Per-site TCP port forwards. Keep this range in lockstep with
+      # LISTEN_PORT_MIN/MAX in varman-control/src/api/port_forwards.rs.
+      - "10000-10099:10000-10099"
     environment:
       - VARMAN_DB_URL=postgres://varman:${POSTGRES_PASSWORD:-varman}@postgres:5432/varman
       - VARMAN_MODE=all-in-one

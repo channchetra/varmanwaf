@@ -60,9 +60,41 @@ pub struct CachedRules {
     /// bundle's hash for a single-site push.
     #[serde(default)]
     pub data_plane_hash: Arc<str>,
+    /// TCP port forwards from the last full config. Single-site bundle
+    /// updates leave this list untouched.
+    #[serde(default)]
+    pub port_forwards: Vec<PortForward>,
     /// Revision of the policy bundle last applied (0 = none / never).
     #[serde(default)]
     pub policy_revision: i32,
+}
+
+/// Serializable cache mirror of the protocol's `PortForward`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PortForward {
+    pub id: String,
+    pub site_id: String,
+    pub name: String,
+    pub listen_port: u32,
+    pub target_host: String,
+    pub target_port: u32,
+    pub allowed_cidrs: Vec<String>,
+    pub enabled: bool,
+}
+
+impl From<&proto::PortForward> for PortForward {
+    fn from(value: &proto::PortForward) -> Self {
+        Self {
+            id: value.id.clone(),
+            site_id: value.site_id.clone(),
+            name: value.name.clone(),
+            listen_port: value.listen_port,
+            target_host: value.target_host.clone(),
+            target_port: value.target_port,
+            allowed_cidrs: value.allowed_cidrs.clone(),
+            enabled: value.enabled,
+        }
+    }
 }
 
 impl Default for CachedRules {
@@ -76,6 +108,7 @@ impl Default for CachedRules {
             updated_at: Utc::now(),
             config_hash: Arc::from(""),
             data_plane_hash: Arc::from(""),
+            port_forwards: Vec::new(),
             policy_revision: 0,
         }
     }
@@ -1326,6 +1359,11 @@ impl RuleCache {
                 .map(|rules| rules.policy_revision)
                 .max()
                 .unwrap_or(0);
+            // A full config is authoritative for the forward list. A
+            // single-site bundle update does not carry it and leaves the list
+            // alone.
+            updated.port_forwards =
+                config.port_forwards.iter().map(PortForward::from).collect();
             updated.updated_at = Utc::now();
 
             // The bundles embed the same registry in every site; one pass
@@ -1511,6 +1549,11 @@ impl RuleCache {
         } else {
             rules.data_plane_hash.clone()
         }
+    }
+
+    /// Current TCP port-forward list from the last full config.
+    pub fn port_forwards(&self) -> Vec<PortForward> {
+        self.inner.load().port_forwards.clone()
     }
 
     /// Revision of the policy bundle last applied (0 = none / never), for
@@ -2520,6 +2563,7 @@ mod tests {
             }],
             config_hash: "config-hash".to_string(),
             updated_at: None,
+            port_forwards: Vec::new(),
         };
         cache.update_from_site_config(&config).unwrap();
         // The per-site bundle fingerprint is what SyncRules and
@@ -2561,6 +2605,7 @@ mod tests {
             ],
             config_hash: outer.to_string(),
             updated_at: None,
+            port_forwards: Vec::new(),
         };
 
         cache
@@ -2640,6 +2685,7 @@ mod tests {
             updated_at: Utc::now(),
             config_hash: "abc".into(),
             data_plane_hash: "abc".into(),
+            port_forwards: Vec::new(),
             policy_revision: 0,
         };
         let json = serde_json::to_string(&cached).expect("serialize");
@@ -2785,6 +2831,7 @@ mod tests {
                 updated_at: Utc::now(),
                 config_hash: Arc::from(""),
                 data_plane_hash: Arc::from(""),
+                port_forwards: Vec::new(),
                 policy_revision: 0,
             }));
         };

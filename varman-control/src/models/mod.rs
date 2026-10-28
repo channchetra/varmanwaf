@@ -42,6 +42,7 @@ pub mod management_certificate;
 pub mod mtls;
 pub mod notifications;
 pub mod passkeys;
+pub mod port_forwards;
 pub mod rate_limit_stats;
 pub mod rewrite_rules;
 pub mod rules;
@@ -92,6 +93,7 @@ pub use notifications::{
 pub use passkeys::{
     passkey_credentials as passkey_credential, passkey_states as passkey_state,
 };
+pub use port_forwards::port_forwards as port_forward;
 pub use rules::{
     action, cache_rules, characteristic, mode, rate_limit_rules, rule_groups,
     rules as rule,

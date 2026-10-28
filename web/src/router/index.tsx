@@ -56,6 +56,11 @@ const CachingPage = lazy(() =>
 const SslPage = lazy(() =>
   import('@/pages/sites/SslPage').then((m) => ({ default: m.SslPage })),
 )
+const PortForwardingPage = lazy(() =>
+  import('@/pages/sites/PortForwardingPage').then((m) => ({
+    default: m.PortForwardingPage,
+  })),
+)
 const TrafficPage = lazy(() =>
   import('@/pages/sites/TrafficPage').then((m) => ({ default: m.TrafficPage })),
 )
@@ -209,6 +214,7 @@ export const router = createBrowserRouter([
           },
           { path: 'caching', element: <CachingPage /> },
           { path: 'ssl', element: <SslPage /> },
+          { path: 'port-forwards', element: <PortForwardingPage /> },
           { path: 'traffic', element: <TrafficPage /> },
           { path: 'rules/rewrite', element: <RewritePage /> },
           { path: 'settings', element: <SiteSettingsPage /> },
