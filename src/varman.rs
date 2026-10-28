@@ -1334,12 +1334,12 @@ pub async fn start_data_plane(
     // key) and set as current, so the ACME renewal task keeps working.
     let watcher_cache = Arc::clone(&rule_cache);
     let watcher_config_manager = Arc::clone(&config_manager);
-    let mut last_hash = watcher_cache.config_hash();
+    let mut last_hash = watcher_cache.data_plane_hash();
     let mut last_management = varman_control::management_cert::revision();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let hash = watcher_cache.config_hash();
+            let hash = watcher_cache.data_plane_hash();
             let management = varman_control::management_cert::revision();
             if hash == last_hash && management == last_management {
                 continue;

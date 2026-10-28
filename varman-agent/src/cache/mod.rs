@@ -52,6 +52,14 @@ pub struct CachedRules {
     /// Hash of the configuration (for delta sync). An `Arc` so the hot path
     /// reads it without a heap copy.
     pub config_hash: Arc<str>,
+    /// Fingerprint of the whole applied configuration, used by the data-plane
+    /// reload watcher. `config_hash` is a per-site bundle hash for delta sync;
+    /// an unbound agent receives several sites and the first one's hash does
+    /// not move when another site's certificate or origin changes. This value
+    /// is the outer `SiteConfig` fingerprint for a full push, and the changed
+    /// bundle's hash for a single-site push.
+    #[serde(default)]
+    pub data_plane_hash: Arc<str>,
     /// Revision of the policy bundle last applied (0 = none / never).
     #[serde(default)]
     pub policy_revision: i32,
@@ -67,6 +75,7 @@ impl Default for CachedRules {
             global_cache: None,
             updated_at: Utc::now(),
             config_hash: Arc::from(""),
+            data_plane_hash: Arc::from(""),
             policy_revision: 0,
         }
     }
@@ -1230,6 +1239,9 @@ impl RuleCache {
                     Some(Self::convert_global_cache(global_cache));
             }
             updated.config_hash = bundle.config_hash.as_str().into();
+            // A single-site push changes only this bundle; its hash is the
+            // reload signal (the full-config fingerprint does not exist here).
+            updated.data_plane_hash = bundle.config_hash.as_str().into();
             updated.policy_revision = bundle.policy_revision;
             updated.updated_at = Utc::now();
             Arc::new(updated)
@@ -1298,6 +1310,15 @@ impl RuleCache {
                 .next()
                 .unwrap_or(config.config_hash.as_str())
                 .into();
+            // The reported `config_hash` above is one site's bundle hash, but
+            // the reload watcher must see a change to ANY site. Use the outer
+            // full-config fingerprint; a cert/origin edit on a non-first site
+            // changes it while the first site's bundle hash stays put.
+            updated.data_plane_hash = if config.config_hash.is_empty() {
+                updated.config_hash.clone()
+            } else {
+                config.config_hash.as_str().into()
+            };
             updated.policy_revision = config
                 .sites
                 .iter()
@@ -1478,6 +1499,18 @@ impl RuleCache {
     /// the string.
     pub fn config_hash(&self) -> Arc<str> {
         self.inner.load().config_hash.clone()
+    }
+
+    /// Full-configuration fingerprint for the data-plane reload watcher.
+    /// Falls back to the per-site hash for caches written before the field
+    /// existed.
+    pub fn data_plane_hash(&self) -> Arc<str> {
+        let rules = self.inner.load();
+        if rules.data_plane_hash.is_empty() {
+            rules.config_hash.clone()
+        } else {
+            rules.data_plane_hash.clone()
+        }
     }
 
     /// Revision of the policy bundle last applied (0 = none / never), for
@@ -2493,7 +2526,56 @@ mod tests {
         // apply-status compare; the full-config fingerprint is a different
         // value and must not overwrite it.
         assert_eq!(&*cache.config_hash(), "bundle-hash");
+        assert_eq!(&*cache.data_plane_hash(), "config-hash");
         assert_eq!(cache.policy_revision(), 7);
+    }
+
+    #[test]
+    fn data_plane_hash_tracks_every_site_not_just_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache =
+            RuleCache::new(dir.path().to_path_buf(), "test".to_string())
+                .expect("cache");
+        let config = |second_hash: &str, outer: &str| proto::SiteConfig {
+            sites: vec![
+                proto::Site {
+                    id: "site-a".to_string(),
+                    domain: "a.example.com".to_string(),
+                    rules: Some(proto::RuleBundle {
+                        site_id: "site-a".to_string(),
+                        config_hash: "first-hash".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                proto::Site {
+                    id: "site-b".to_string(),
+                    domain: "b.example.com".to_string(),
+                    rules: Some(proto::RuleBundle {
+                        site_id: "site-b".to_string(),
+                        config_hash: second_hash.to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
+            config_hash: outer.to_string(),
+            updated_at: None,
+        };
+
+        cache
+            .update_from_site_config(&config("second-hash", "outer-1"))
+            .unwrap();
+        assert_eq!(&*cache.config_hash(), "first-hash");
+        let first = cache.data_plane_hash();
+
+        // Only the second site changes. The per-site hash used for delta sync
+        // stays on the first bundle; the reload fingerprint must move.
+        cache
+            .update_from_site_config(&config("second-hash-2", "outer-2"))
+            .unwrap();
+        assert_eq!(&*cache.config_hash(), "first-hash");
+        assert_ne!(first, cache.data_plane_hash());
     }
 
     #[test]
@@ -2557,6 +2639,7 @@ mod tests {
             global_cache: None,
             updated_at: Utc::now(),
             config_hash: "abc".into(),
+            data_plane_hash: "abc".into(),
             policy_revision: 0,
         };
         let json = serde_json::to_string(&cached).expect("serialize");
@@ -2701,6 +2784,7 @@ mod tests {
                 }),
                 updated_at: Utc::now(),
                 config_hash: Arc::from(""),
+                data_plane_hash: Arc::from(""),
                 policy_revision: 0,
             }));
         };
