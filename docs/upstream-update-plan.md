@@ -200,7 +200,7 @@ branch are all attributable to these seven files.
 | Pingap upstream main | `c23b491d` (2026-10-25) |
 | Delta | 274 commits; ~15k lines added across the vendored foundation |
 
-### Landed in v1.2.12 (security batch 1)
+### Landed in v1.3.x (security batch 1, shipped as 1.3.0/1.3.1)
 
 - Certificate-only config changes now reload the data plane (`data_plane_hash`
   in the agent cache; watcher compares the full-config fingerprint). This
