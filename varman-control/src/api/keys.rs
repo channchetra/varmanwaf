@@ -313,6 +313,19 @@ fn normalise_permissions(raw: &[String]) -> Result<Vec<String>, ApiError> {
     Ok(out)
 }
 
+/// First `KEY_PREFIX_LENGTH` bytes of a presented key, when they are a valid
+/// ASCII prefix.
+///
+/// `RegisterAgent` is unauthenticated, so a key with a multi-byte character on
+/// the prefix boundary must be rejected rather than panicking while slicing.
+/// Release builds abort on panic, which would let one request stop the
+/// control plane.
+fn key_prefix(raw: &str) -> Option<&str> {
+    let raw = raw.trim();
+    let prefix = raw.get(..KEY_PREFIX_LENGTH)?;
+    prefix.is_ascii().then_some(prefix)
+}
+
 /// Resolves a raw API key to the key row and its owning user.
 ///
 /// The key prefix narrows the candidate set (it is indexed) and each candidate is
@@ -323,12 +336,12 @@ pub async fn authenticate_api_key(
     raw_key: &str,
 ) -> Result<(api_key::Model, user::Model), ApiError> {
     let raw_key = raw_key.trim();
-    if raw_key.len() < KEY_PREFIX_LENGTH {
+    let Some(prefix) = key_prefix(raw_key) else {
         return Err(ApiError::Unauthorized("invalid API key".to_string()));
-    }
+    };
 
     let candidates = api_key::Entity::find()
-        .filter(api_key::Column::KeyPrefix.eq(&raw_key[..KEY_PREFIX_LENGTH]))
+        .filter(api_key::Column::KeyPrefix.eq(prefix))
         .all(db)
         .await?;
 
@@ -445,5 +458,16 @@ mod tests {
         let mut empty = key.clone();
         empty.permissions = Vec::new();
         assert!(key_allows_agent(&empty));
+    }
+
+    #[test]
+    fn malformed_key_prefixes_are_rejected_without_panicking() {
+        let key = generate_key();
+        assert_eq!(key_prefix(&key), Some(&key[..KEY_PREFIX_LENGTH]));
+        assert_eq!(key_prefix("short"), None);
+        // Byte 8 falls inside a multi-byte character: slicing would panic.
+        assert_eq!(key_prefix("aéééé"), None);
+        // A valid UTF-8 boundary is still rejected unless it is ASCII.
+        assert_eq!(key_prefix("ééééé"), None);
     }
 }

@@ -191,3 +191,45 @@ the interconnected core, in dependency order:
 
 Then: full sweep, deploy, smoke, release. The 229 compile errors on the WIP
 branch are all attributable to these seven files.
+## 2026-10-28 delta: v0.25.10 → v0.32.2
+
+| Item | Value |
+|---|---|
+| Previous baseline | `aa597371` (PingWAF v0.25.10) |
+| Latest upstream main | `351db15e` (v0.32.2, 2026-10-28) |
+| Pingap upstream main | `c23b491d` (2026-10-25) |
+| Delta | 274 commits; ~15k lines added across the vendored foundation |
+
+### Landed in v1.2.12 (security batch 1)
+
+- Certificate-only config changes now reload the data plane (`data_plane_hash`
+  in the agent cache; watcher compares the full-config fingerprint). This
+  fixed the `calendar.unity-workspace.com` 525 where a valid Cloudflare Origin
+  CA certificate was never loaded until a restart.
+- API-key prefix slicing is ASCII-checked and panic-free (unauthenticated
+  `RegisterAgent` crash).
+- Explicit `site_id` log queries validate site ownership for non-admin
+  callers (cross-tenant read).
+- ACME scans every minute and backs off 5m → 15m → 30m → 1h → 6h per failed
+  certificate/domain pair.
+
+### Remaining batches (not merged)
+
+1. **Dependencies:** `zstd` advisories and the vendored
+   `pingora-header-serde` from upstream `f22183b`; run `cargo audit` and bump
+   the lockfile. Pingap `c23b491d` RustSec fixes and brotli stream fix.
+2. **WAF resource bounds:** UTF-16/multipart inspection, compressed-body
+   policy, staged-body quotas/deadlines, regex/expression limits, Cow
+   normalization, shared site contexts. These touch our custom engine and need
+   a corpus/E2E pass.
+3. **Control-plane features:** OIDC, visitor auth/remarks, encrypted backup and
+   restore, refresh-token single use (+ `refresh_tokens` migration), bcrypt
+   offload/rate limits, per-site downstream timeout, config rollback lock.
+4. **Pingap foundation:** plugin registration without `ctor`, Google Rust style
+   lints, header-serde vendoring, recent upstream proxy/upstream fixes.
+5. **Dashboard:** upstream account/profile/world-map/backup pages. Our rebranded
+   pages remain authoritative where they overlap.
+
+Each batch must land as a whole with the verification protocol in §4: fmt,
+check --workspace, full test sweep, clippy -D warnings, release build, deploy,
+E2E smoke, then publish.

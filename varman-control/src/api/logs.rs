@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::api::common::{
-    non_empty, parse_optional_datetime, parse_uuid, scope_site, Page,
+    load_site_read, non_empty, parse_optional_datetime, parse_uuid, Page,
     Pagination,
 };
 use crate::api::error::ApiError;
@@ -143,16 +143,18 @@ async fn resolve_scope(
         Some(raw) => Some(parse_uuid(&raw, "site id")?),
         None => None,
     };
-    // Errors out when a non-admin asks for "everything".
-    scope_site(requested_id, current)?;
-
+    // An explicit site filter must still be visible to the caller. Without
+    // this check a non-admin could read another tenant's logs by naming its
+    // site id; `load_site_read` answers 404 for a site the caller cannot see.
     if let Some(id) = requested_id {
+        load_site_read(db, id, current).await?;
         return Ok(Some(vec![id]));
     }
     if current.is_admin() {
         return Ok(None);
     }
-
+    // A non-admin asking for "everything" is narrowed to its own sites, so
+    // the no-site case never becomes an all-tenant read.
     let owned: Vec<Uuid> = site::Entity::find()
         .filter(site::Column::UserId.eq(current.id))
         .all(db)

@@ -50,7 +50,8 @@ use std::sync::Arc;
 #[cfg(feature = "openssl")]
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 static WELL_KNOWN_PATH_PREFIX: &str = "/.well-known/acme-challenge/";
@@ -175,31 +176,62 @@ struct UpdateCertificateParams {
     dns_service_url: String,
 }
 
+/// Failure state for one certificate/domain set.
+struct RetryState {
+    failures: u32,
+    next_attempt: Instant,
+}
+
+/// Backoff after a failed order. The first retry is soon (a transient DNS or
+/// HTTP hiccup should recover quickly), then backs off to six hours so a
+/// persistent misconfiguration cannot exhaust CA quotas.
+fn retry_delay(failures: u32) -> Duration {
+    match failures {
+        0 | 1 => Duration::from_secs(5 * 60),
+        2 => Duration::from_secs(15 * 60),
+        3 => Duration::from_secs(30 * 60),
+        4 => Duration::from_secs(60 * 60),
+        _ => Duration::from_secs(6 * 60 * 60),
+    }
+}
+
 /// Periodically checks and updates certificates that need renewal.
 /// A certificate needs renewal if:
 /// - It is invalid or expired
 /// - The configured domains have changed
 /// - The certificate cannot be loaded
 ///
-/// The check runs every UPDATE_INTERVAL iterations to avoid excessive checks.
+/// The scan runs every tick so a newly created site is attempted within a
+/// minute. Failed certificate/domain pairs are skipped until their own
+/// exponential-backoff deadline, so retries stay bounded.
 async fn do_update_certificates(
     count: u32,
     config_manager: Arc<ConfigManager>,
     params: &[UpdateCertificateParams],
     provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
+    retries: &mut HashMap<String, RetryState>,
 ) -> Result<bool, ServiceError> {
     if params.is_empty() {
-        return Ok(false);
-    }
-    const UPDATE_INTERVAL: u32 = 10;
-    if !count.is_multiple_of(UPDATE_INTERVAL) {
         return Ok(false);
     }
     let config = config_manager.get_current_config();
     for item in params.iter() {
         let name = &item.name;
         let domains = &item.domains;
+        let retry_key = format!("{name}|{}", domains.join(","));
+        if retries
+            .get(&retry_key)
+            .is_some_and(|state| state.next_attempt > Instant::now())
+        {
+            debug!(
+                target: LOG_TARGET,
+                name,
+                domains = domains.join(","),
+                "certificate retry is backing off"
+            );
+            continue;
+        }
         let is_manual = item.dns_provider == DNS_PROVIDER_MANUAL;
         // manual dns challenge is only run once
         if item.dns_challenge && is_manual && count > 0 {
@@ -232,6 +264,7 @@ async fn do_update_certificates(
         };
 
         if !should_renew {
+            retries.remove(&retry_key);
             debug!(
                 target: LOG_TARGET,
                 domains = domains.join(","),
@@ -241,7 +274,7 @@ async fn do_update_certificates(
             continue;
         }
 
-        if let Err(e) = renew_certificate(
+        match renew_certificate(
             config_manager.clone(),
             item.clone(),
             provider.clone(),
@@ -249,13 +282,30 @@ async fn do_update_certificates(
         )
         .await
         {
-            error!(
-                target: LOG_TARGET,
-                error = %e,
-                domains = domains.join(","),
-                name,
-                "certificate renewal failed, will retry later"
-            );
+            Ok(()) => {
+                retries.remove(&retry_key);
+            },
+            Err(e) => {
+                let failures = retries
+                    .get(&retry_key)
+                    .map_or(1, |state| state.failures.saturating_add(1));
+                let delay = retry_delay(failures);
+                retries.insert(
+                    retry_key,
+                    RetryState {
+                        failures,
+                        next_attempt: Instant::now() + delay,
+                    },
+                );
+                error!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    domains = domains.join(","),
+                    name,
+                    retry_in_secs = delay.as_secs(),
+                    "certificate renewal failed, will retry later"
+                );
+            },
         }
     }
     Ok(true)
@@ -358,6 +408,8 @@ struct LetsEncryptTask {
     certificate_provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
     running: AtomicBool,
+    /// Per certificate/domain backoff after a failed order.
+    retries: Mutex<HashMap<String, RetryState>>,
 }
 
 #[async_trait]
@@ -400,12 +452,14 @@ impl BackgroundTask for LetsEncryptTask {
                 dns_service_url,
             });
         }
+        let mut retries = self.retries.lock().await;
         do_update_certificates(
             count,
             self.config_manager.clone(),
             &params,
             self.certificate_provider.clone(),
             self.sender.clone(),
+            &mut retries,
         )
         .await?;
 
@@ -524,6 +578,7 @@ pub fn new_lets_encrypt_service(
         certificate_provider,
         sender,
         running: AtomicBool::new(false),
+        retries: Mutex::new(HashMap::new()),
     })
 }
 
@@ -1176,11 +1231,23 @@ async fn new_lets_encrypt(
 #[cfg(test)]
 mod tests {
     use super::is_valid_challenge_token;
+    use super::retry_delay;
     use super::{UpdateCertificateParams, update_certificate_lets_encrypt};
     use super::{order_identifiers, order_profile};
     use instant_acme::Identifier;
     use pingap_config::new_file_config_manager;
     use std::sync::Arc;
+    use std::time::Duration;
+
+    #[test]
+    fn retry_backoff_grows_and_caps() {
+        assert_eq!(retry_delay(0), Duration::from_secs(5 * 60));
+        assert_eq!(retry_delay(1), Duration::from_secs(5 * 60));
+        assert_eq!(retry_delay(2), Duration::from_secs(15 * 60));
+        assert_eq!(retry_delay(3), Duration::from_secs(30 * 60));
+        assert_eq!(retry_delay(4), Duration::from_secs(60 * 60));
+        assert_eq!(retry_delay(9), Duration::from_secs(6 * 60 * 60));
+    }
 
     /// Issue #213: a certificate defined in a combined file loads and serves,
     /// but cannot be addressed by the canonical key the save path uses. That
