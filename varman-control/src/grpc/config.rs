@@ -31,10 +31,10 @@ use crate::models::{
     acme_challenge, action, api_learned_schemas, bot_protection, cache_rules,
     challenge_settings, characteristic, client_cert_status, defense_settings,
     error_pages, exclusion_packages, geo_rules, ip_access_rules,
-    ip_group_sites, ip_groups, mode, mtls_client_certificate, port_forward,
-    rate_limit_rules, rewrite_rules, rule, rule_groups, site, site_basic_auth,
-    site_certificates, site_routes, site_ssl, site_status, site_upstream_pools,
-    site_upstreams, waf_settings,
+    ip_group_sites, ip_groups, mode, mtls_client_certificate, rate_limit_rules,
+    rewrite_rules, rule, rule_groups, site, site_basic_auth, site_certificates,
+    site_routes, site_ssl, site_status, site_upstream_pools, site_upstreams,
+    waf_settings,
 };
 use crate::pki::mtls::normalise_fingerprint;
 use crate::policy;
@@ -1815,34 +1815,6 @@ fn merge_trusted_proxy_ranges(
 
 /// Builds a [`SiteConfig`] for the given sites, or for every site when
 /// `site_ids` is `None`.
-/// Loads the TCP port forwards for the requested sites. A forward carries a
-/// site id so the agent can keep the site ownership/audit association.
-async fn load_port_forwards(
-    db: &DatabaseConnection,
-    site_ids: &[Uuid],
-) -> Result<Vec<varman_protocol::control_plane::PortForward>, sea_orm::DbErr> {
-    if site_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let rows = port_forward::Entity::find()
-        .filter(port_forward::Column::SiteId.is_in(site_ids.iter().copied()))
-        .all(db)
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| varman_protocol::control_plane::PortForward {
-            id: row.id.to_string(),
-            site_id: row.site_id.to_string(),
-            name: row.name,
-            listen_port: row.listen_port.max(0) as u32,
-            target_host: row.target_host,
-            target_port: row.target_port.max(0) as u32,
-            allowed_cidrs: row.allowed_cidrs,
-            enabled: row.enabled,
-        })
-        .collect())
-}
-
 pub async fn build_site_config(
     db: &DatabaseConnection,
     site_ids: Option<&[Uuid]>,
@@ -1856,7 +1828,6 @@ pub async fn build_site_config(
                 sites: Vec::new(),
                 updated_at: to_timestamp(Utc.timestamp_opt(0, 0).unwrap()),
                 config_hash: String::new(),
-                port_forwards: Vec::new(),
             };
             config.config_hash = fingerprint(&config);
             return Ok(config);
@@ -1864,8 +1835,6 @@ pub async fn build_site_config(
         query = query.filter(site::Column::Id.is_in(ids.iter().copied()));
     }
     let rows = query.all(db).await?;
-    let site_ids: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
-    let port_forwards = load_port_forwards(db, &site_ids).await?;
 
     // Resolve every trusted-proxy IP group the sites reference in one query;
     // disabled groups are skipped so they stop widening the trust scope.
@@ -1917,7 +1886,6 @@ pub async fn build_site_config(
         sites,
         updated_at: to_timestamp(updated_at),
         config_hash: String::new(),
-        port_forwards,
     };
     config.config_hash = fingerprint(&config);
     Ok(config)

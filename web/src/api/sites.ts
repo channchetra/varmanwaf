@@ -4,9 +4,7 @@ import type {
   CreateRouteRequest,
   CreateSiteRequest,
   CreateUpstreamRequest,
-  CreatePortForwardRequest,
   OriginProbeResult,
-  PortForward,
   Page,
   Route,
   Site,
@@ -14,7 +12,6 @@ import type {
   SiteListQuery,
   SslConfig,
   UpdatePoolRequest,
-  UpdatePortForwardRequest,
   UpdateRouteRequest,
   UpdateSiteRequest,
   UpdateUpstreamRequest,
@@ -75,29 +72,6 @@ export const sitesApi = {
       `/sites/${siteId}/upstream-pools/${poolId}/test`,
     ),
 
-  /* ── TCP port forwarding ─────────────────────────────────────────── */
-  listPortForwards: (siteId: string) =>
-    apiClient.get<PortForward[]>(`/sites/${siteId}/port-forwards`),
-
-  createPortForward: (
-    siteId: string,
-    data: CreatePortForwardRequest,
-  ) =>
-    apiClient.post<PortForward>(`/sites/${siteId}/port-forwards`, data),
-
-  updatePortForward: (
-    siteId: string,
-    id: string,
-    data: UpdatePortForwardRequest,
-  ) =>
-    apiClient.put<PortForward>(
-      `/sites/${siteId}/port-forwards/${id}`,
-      data,
-    ),
-
-  deletePortForward: (siteId: string, id: string) =>
-    apiClient.delete<void>(`/sites/${siteId}/port-forwards/${id}`),
-
   /* ── Routes ──────────────────────────────────────────────────────── */
   listRoutes: (siteId: string) => apiClient.get<Route[]>(`/sites/${siteId}/routes`),
 
@@ -126,8 +100,6 @@ export const siteKeys = {
   pools: (id: string) => [...siteKeys.all, id, 'pools'] as const,
   routes: (id: string) => [...siteKeys.all, id, 'routes'] as const,
   ssl: (id: string) => [...siteKeys.all, id, 'ssl'] as const,
-  portForwards: (id: string) =>
-    [...siteKeys.all, id, 'port-forwards'] as const,
 }
 
 export default sitesApi

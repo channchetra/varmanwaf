@@ -4,7 +4,6 @@ pub mod cert_status;
 pub mod client;
 pub mod config;
 pub mod heartbeat;
-pub mod port_forward;
 pub mod probe;
 
 use std::sync::Arc;
@@ -167,9 +166,6 @@ impl VarmanAgent {
             error!(error = %e, "Failed to start client background tasks");
             // Don't fail ΓÇö agent can still operate from cached rules
         }
-
-        // TCP port forwards are managed by the agent, not the HTTP proxy.
-        port_forward::spawn(Arc::clone(&agent.rule_cache));
 
         info!(agent_id = %agent_id, "VarmanWAF agent started");
         Ok(agent)

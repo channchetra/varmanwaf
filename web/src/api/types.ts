@@ -163,30 +163,6 @@ export interface UpstreamPool {
   created_at: string
 }
 
-export interface PortForward {
-  id: string
-  site_id: string
-  name: string
-  listen_port: number
-  target_host: string
-  target_port: number
-  allowed_cidrs: string[]
-  enabled: boolean
-  created_at: string
-  updated_at: string
-}
-
-export interface CreatePortForwardRequest {
-  name: string
-  listen_port: number
-  target_host: string
-  target_port: number
-  allowed_cidrs: string[]
-  enabled?: boolean
-}
-
-export type UpdatePortForwardRequest = Partial<CreatePortForwardRequest>
-
 /** One node's result from a manual origin reachability probe. */
 export interface OriginProbeNode {
   id: string

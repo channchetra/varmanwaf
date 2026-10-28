@@ -71,6 +71,7 @@ mod m20240101_000063_api_response_learning;
 mod m20240101_000064_management_certificate;
 mod m20240101_000065_api_protection_denylist;
 mod m20240101_000066_port_forwards;
+mod m20240101_000067_drop_port_forwards;
 
 use sea_orm_migration::prelude::*;
 
@@ -153,6 +154,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000064_management_certificate::Migration),
             Box::new(m20240101_000065_api_protection_denylist::Migration),
             Box::new(m20240101_000066_port_forwards::Migration),
+            Box::new(m20240101_000067_drop_port_forwards::Migration),
         ]
     }
 }
@@ -164,7 +166,7 @@ mod tests {
     #[test]
     fn migrations_are_ordered_and_unique() {
         let migrations = Migrator::migrations();
-        assert_eq!(migrations.len(), 66);
+        assert_eq!(migrations.len(), 67);
         let names: Vec<String> =
             migrations.iter().map(|m| m.name().to_owned()).collect();
         let mut sorted = names.clone();

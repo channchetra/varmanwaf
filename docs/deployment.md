@@ -55,22 +55,6 @@ at the WAF, or a client retry loop, can produce status-499 lines fast enough to
 fill an uncapped disk. Use `docker logs --since 5m varman` to inspect recent
 output without replaying the whole buffer.
 
-### TCP port forwarding
-
-The compose file publishes `10000-10099` for per-site TCP port forwards
-(SSH, RDP, databases). Keep the range in lockstep with
-`LISTEN_PORT_MIN`/`LISTEN_PORT_MAX` in
-`varman-control/src/api/port_forwards.rs`:
-
-```yaml
-ports:
-  - "10000-10099:10000-10099"
-```
-
-Open the range in the host firewall, and keep each forward's allowed source
-list as narrow as possible. Port forwarding is raw TCP; the target protocol's
-own encryption still applies.
-
 ### Environment Variables (docker-compose)
 
 | Variable | Default | Description |

@@ -755,23 +755,8 @@ message SiteConfig {
   repeated Site sites = 1;
   google.protobuf.Timestamp updated_at = 2;
   string config_hash = 3;
-  // TCP port forwards for private services. Full-config only: a single-site
-  // UPDATE_SITE payload keeps the agent's existing list.
-  repeated PortForward port_forwards = 4;
 }
 
-// A TCP forward exposed by the edge: listen_port -> target_host:target_port.
-// The agent enforces allowed_cidrs on the accepted peer address.
-message PortForward {
-  string id = 1;
-  string site_id = 2;
-  string name = 3;
-  uint32 listen_port = 4;
-  string target_host = 5;
-  uint32 target_port = 6;
-  repeated string allowed_cidrs = 7;
-  bool enabled = 8;
-}
 
 message Site {
   string id = 1;

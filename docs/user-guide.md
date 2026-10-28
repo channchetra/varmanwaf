@@ -446,38 +446,6 @@ The event log is retained after the dialog is closed.
 
 If the CDN returns **525/526**, the origin serves no certificate, or the list says **Unknown issuer**, follow [TLS troubleshooting](./tls-troubleshooting.md). It explains which check to run first and when the label is only cosmetic.
 
-## TCP Port Forwarding
-
-**Sites → [site] → Port forwarding** exposes a private TCP service (SSH, RDP,
-a database, an internal admin port) on a published edge port. The WAF/agent
-listens on the chosen port and copies bytes to the private target; the target
-itself is never published.
-
-| Field | Description |
-|-------|-------------|
-| Name | Label for the forward |
-| Listen port | Public edge port, **10000–10099** |
-| Target host | Private IP or hostname (for example `10.1.18.200`) |
-| Target port | Port the private service listens on (for example `22`) |
-| Allowed source addresses | One IP or CIDR per line; **at least one is required** |
-| Enabled | Open or close the listener |
-
-The agent checks the accepted client address against the allowlist before it
-connects to the target. A connection from any other address is dropped and
-logged.
-
-Deployment requirements:
-
-- The Docker/host firewall must publish the same range. The shipped compose
-  maps `10000-10099:10000-10099`; a custom deployment must do the same.
-- Open the range in the host firewall. Do not expose it more widely than the
-  allowlist requires.
-- This is raw TCP. The target protocol's own encryption (SSH, RDP, TLS) still
-  applies; do not send plaintext protocols over the internet.
-
-Exposing SSH/RDP/databases directly is high risk. Prefer a VPN or zero-trust
-access layer, and keep the allowed source list as narrow as possible.
-
 ## Request/Response Rewriting
 
 ![Request and response rewrite rules](images/console/rewrite.webp)
