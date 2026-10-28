@@ -2624,6 +2624,41 @@ mod tests {
     }
 
     #[test]
+    fn full_config_carries_port_forwards_and_bundle_updates_keep_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache =
+            RuleCache::new(dir.path().to_path_buf(), "test".to_string())
+                .expect("cache");
+        let config = proto::SiteConfig {
+            port_forwards: vec![proto::PortForward {
+                id: "f1".to_string(),
+                site_id: "site-1".to_string(),
+                name: "ssh".to_string(),
+                listen_port: 10_000,
+                target_host: "10.1.18.5".to_string(),
+                target_port: 22,
+                allowed_cidrs: vec!["203.0.113.7".to_string()],
+                enabled: true,
+            }],
+            ..Default::default()
+        };
+        cache.update_from_site_config(&config).unwrap();
+        let forwards = cache.port_forwards();
+        assert_eq!(forwards.len(), 1);
+        assert_eq!(forwards[0].listen_port, 10_000);
+        assert_eq!(forwards[0].target_host, "10.1.18.5");
+
+        // A single-site bundle push must not clear the forward list.
+        cache
+            .update_from_bundle(&proto::RuleBundle {
+                site_id: "site-1".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(cache.port_forwards().len(), 1);
+    }
+
+    #[test]
     fn new_format_roundtrips() {
         let cached = CachedRules {
             sites: [(

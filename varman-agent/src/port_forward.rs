@@ -20,7 +20,7 @@ const RECONCILE_INTERVAL: Duration = Duration::from_secs(2);
 /// Target connect budget for one accepted client.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// A listen port that is still in use is retried after this delay.
-const BIND_RETRY: Duration = Duration::from_secs(30);
+const BIND_RETRY: Duration = Duration::from_secs(5);
 
 struct Active {
     handle: JoinHandle<()>,
@@ -61,6 +61,11 @@ pub fn spawn(cache: Arc<RuleCache>) {
                             listen_port = current.rule.listen_port,
                             "port forward listener stopped"
                         );
+                        // `abort` completes asynchronously; binding the same
+                        // port in this iteration races the old socket. Wait
+                        // one reconcile cycle before rebinding.
+                        retry_at
+                            .insert(id, Instant::now() + RECONCILE_INTERVAL);
                     }
                 }
             }
