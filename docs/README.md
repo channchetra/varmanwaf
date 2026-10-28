@@ -7,7 +7,7 @@ centrally-controlled Web Application Firewall built on
 
 > Project home: [`README.md`](../README.md)
 
-**Release 1.3.0** — the current reference set. The public docs site (`/docs/`) adds a role-based entry point, deployment paths, search and screenshots on top of these source documents.
+**Release 1.3.1** — the current reference set. The public docs site (`/docs/`) adds a role-based entry point, deployment paths, search and screenshots on top of these source documents.
 
 | Document | What you'll find |
 | --- | --- |
