@@ -382,9 +382,10 @@ impl SiteContext {
 
 /// A cached per-domain context plus the fingerprint it was built from.
 struct CachedSite {
-    /// Config fingerprint the context was built from. An `Arc` so the per
-    /// request fingerprint check stays allocation-free.
-    fingerprint: Arc<str>,
+    /// Per-site bundle fingerprint the context was built from. Keying on the
+    /// site's own hash (not the agent's global first-site hash) is what makes
+    /// a rule or mode change invalidate this context.
+    fingerprint: String,
     context: Arc<SiteContext>,
 }
 
@@ -2296,22 +2297,27 @@ impl WafPlugin {
             return fallback(host.to_string());
         };
 
-        let fingerprint = agent.config_hash();
-        let cached = self.site_contexts.get(host).map(|cached| {
-            (cached.fingerprint.clone(), Arc::clone(&cached.context))
+        // Prefer the site's own bundle fingerprint. The agent-level hash is
+        // the first site's bundle hash and stays put when another site
+        // changes, which would leave this domain pinned to an old context.
+        let global_hash = agent.config_hash();
+        let fingerprint = if site_rules.config_hash.is_empty() {
+            global_hash.as_ref()
+        } else {
+            site_rules.config_hash.as_str()
+        };
+        let cached = self.site_contexts.get(host).and_then(|cached| {
+            (cached.fingerprint.as_str() == fingerprint)
+                .then(|| Arc::clone(&cached.context))
         });
         let context = match cached {
-            Some((cached_fingerprint, context))
-                if cached_fingerprint == fingerprint =>
-            {
-                context
-            },
-            _ => {
+            Some(context) => context,
+            None => {
                 let context = Arc::new(SiteContext::build(&site_rules));
                 self.site_contexts.insert(
                     host.to_string(),
                     CachedSite {
-                        fingerprint,
+                        fingerprint: fingerprint.to_string(),
                         context: Arc::clone(&context),
                     },
                 );
@@ -4648,10 +4654,61 @@ advanced_mode = true
         }
     }
 
+    /// Two sites, where only the second one changes. The first site's bundle
+    /// hash is what the agent reports globally, so the second site's context
+    /// must key on its own hash.
+    fn two_site_varman_config(mode: i32, site_hash: &str) -> proto::SiteConfig {
+        proto::SiteConfig {
+            sites: vec![
+                proto::Site {
+                    id: "site-a".to_string(),
+                    name: "first".to_string(),
+                    domain: "aaa.com".to_string(),
+                    alternate_domains: Vec::new(),
+                    rules: Some(proto::RuleBundle {
+                        site_id: "site-a".to_string(),
+                        config_hash: "hash-first".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                proto::Site {
+                    id: "site-1".to_string(),
+                    name: "example".to_string(),
+                    domain: "example.com".to_string(),
+                    alternate_domains: Vec::new(),
+                    rules: Some(proto::RuleBundle {
+                        site_id: "site-1".to_string(),
+                        config_hash: site_hash.to_string(),
+                        waf: Some(proto::WafConfig {
+                            enabled: true,
+                            mode,
+                            engine_mode: "varman".to_string(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
+            config_hash: format!("full-{site_hash}"),
+            updated_at: None,
+        }
+    }
+
     /// Runs the union-select probe through the plugin for `example.com`.
     async fn run_query_probe(plugin: &WafPlugin) -> RequestPluginResult {
-        let input_header = "GET /?id=1'%20UNION%20SELECT%20username,password%20FROM%20users-- \
-                            HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        run_query_probe_for(plugin, "example.com").await
+    }
+
+    async fn run_query_probe_for(
+        plugin: &WafPlugin,
+        host: &str,
+    ) -> RequestPluginResult {
+        let input_header = format!(
+            "GET /?id=1'%20UNION%20SELECT%20username,password%20FROM%20users-- \
+             HTTP/1.1\r\nHost: {host}\r\n\r\n"
+        );
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -4693,6 +4750,43 @@ advanced_mode = true
         assert!(
             run_query_probe(&plugin).await == RequestPluginResult::Continue
         );
+    }
+
+    /// Changing one site's mode must not leave another site's compiled
+    /// context pinned to the old mode when the global (first-site) hash is
+    /// unchanged.
+    #[tokio::test]
+    async fn test_site_context_keys_on_its_own_bundle_hash() {
+        let (_guard, agent, _dir) = install_test_agent().await;
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+
+        agent
+            .rule_cache
+            .update_from_site_config(&two_site_varman_config(1, "hash-1"))
+            .unwrap();
+        assert_eq!(agent.config_hash().as_ref(), "hash-first");
+        // Prime example.com's context while it runs monitor.
+        assert!(
+            run_query_probe_for(&plugin, "example.com").await
+                == RequestPluginResult::Continue
+        );
+
+        // Only the second site changes. The agent-level hash stays at the
+        // first site's bundle, so a global cache key would miss this update.
+        agent
+            .rule_cache
+            .update_from_site_config(&two_site_varman_config(2, "hash-2"))
+            .unwrap();
+        assert_eq!(agent.config_hash().as_ref(), "hash-first");
+        let RequestPluginResult::Respond(resp) =
+            run_query_probe_for(&plugin, "example.com").await
+        else {
+            panic!("expected the mode change to be enforced");
+        };
+        assert_eq!(http::StatusCode::FORBIDDEN, resp.status);
     }
 
     /// A paused site answers with a 503 maintenance page (and a Retry-After

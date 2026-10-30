@@ -1715,6 +1715,7 @@ mod tests {
             site_id: site_id.to_string(),
             domain: domain.to_string(),
             alternate_domains: vec![],
+            config_hash: String::new(),
             status: "active".to_string(),
             waf_config: None,
             rate_limit_rules: vec![],

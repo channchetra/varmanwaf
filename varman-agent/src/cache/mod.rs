@@ -87,6 +87,12 @@ pub struct SiteRules {
     pub site_id: String,
     pub domain: String,
     pub alternate_domains: Vec<String>,
+    /// Fingerprint of the rule bundle this site was built from. The WAF
+    /// plugin keys its compiled per-domain context on it, so changing one
+    /// site invalidates that site's context without touching the rest.
+    /// Empty for caches written before the field existed.
+    #[serde(default)]
+    pub config_hash: String,
     /// Lifecycle status (`active`/`paused`/`pending`); caches written before
     /// the edge consumed it default to `active`.
     #[serde(default = "default_site_status")]
@@ -1811,6 +1817,7 @@ impl RuleCache {
             site_id: bundle.site_id.clone(),
             domain: String::new(), // Will be set from Site if available
             alternate_domains: Vec::new(),
+            config_hash: bundle.config_hash.clone(),
             // Set from the owning `Site` in `update_from_site_config`.
             status: default_site_status(),
             waf_config: bundle.waf.as_ref().map(Self::convert_waf_config),
@@ -2587,6 +2594,7 @@ mod tests {
                     site_id: "site-1".to_string(),
                     domain: "example.com".to_string(),
                     alternate_domains: Vec::new(),
+                    config_hash: String::new(),
                     status: site_status::PAUSED.to_string(),
                     waf_config: None,
                     rate_limit_rules: Vec::new(),
@@ -2737,6 +2745,7 @@ mod tests {
                 site_id: "site-1".to_string(),
                 domain: DOMAIN.to_string(),
                 alternate_domains: Vec::new(),
+                config_hash: String::new(),
                 status: site_status::ACTIVE.to_string(),
                 waf_config: None,
                 rate_limit_rules: Vec::new(),
