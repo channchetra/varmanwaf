@@ -77,6 +77,7 @@
     "refresh": "Refresh",
     "comingSoon": "Coming soon",
     "retry": "Retry",
+    "reload": "Reload",
     "details": "Details",
     "name": "Name",
     "status": "Status",
@@ -215,7 +216,9 @@
     "networkTitle": "Connection lost",
     "networkHint": "Cannot reach the server. Check your network connection.",
     "unknownTitle": "Unknown error",
-    "unknownHint": "An unexpected error occurred. Please try again."
+    "unknownHint": "An unexpected error occurred. Please try again.",
+    "staleBuildTitle": "A new version is available",
+    "staleBuildHint": "The console was updated while this tab was open. Reload the page to load the new files."
   },
   "auth": {
     "loginTitle": "Sign in to VarmanWAF",

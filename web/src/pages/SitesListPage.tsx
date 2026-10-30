@@ -29,6 +29,10 @@ import { sitesApi, siteKeys } from '@/api/sites'
 import { analyticsApi, analyticsKeys } from '@/api/analytics'
 import { useCanWrite, useDebouncedValue } from '@/hooks'
 import { formatCompactNumber, formatDateTime, formatNumber } from '@/lib/format'
+import {
+  protectionModeLabelKey,
+  protectionModeOf,
+} from '@/lib/protectionMode'
 import { liveSiteUrl } from '@/lib/siteUrl'
 import type {
   CreateSiteRequest,
@@ -51,18 +55,6 @@ const STATUS_RANK: Record<SiteProtectionMode, number> = {
   paused: 2,
   off: 1,
   pending: 1,
-}
-
-/**
- * The list shows what the edge enforces, not the lifecycle row. Servers that
- * predate `protection_mode` fall back to the old active/paused mapping.
- */
-function protectionModeOf(site: Site): SiteProtectionMode {
-  const mode = site.protection_mode as SiteProtectionMode | undefined
-  if (mode && mode in STATUS_TONE) return mode
-  if (site.status === 'paused') return 'paused'
-  if (site.status === 'pending') return 'pending'
-  return 'block'
 }
 
 interface SiteFormState {
@@ -290,7 +282,7 @@ export function SitesListPage() {
         const mode = protectionModeOf(r)
         return (
           <Badge tone={STATUS_TONE[mode]} dot>
-            {t(`status.${mode}`, mode)}
+            {t(protectionModeLabelKey(mode), mode)}
           </Badge>
         )
       },

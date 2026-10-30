@@ -24,6 +24,10 @@ import {
   formatDateTime,
   formatNumber,
 } from '@/lib/format'
+import {
+  protectionModeLabelKey,
+  protectionModeOf,
+} from '@/lib/protectionMode'
 
 const MODE_TONE: Record<string, BadgeTone> = {
   block: 'success',
@@ -95,6 +99,7 @@ export function SiteOverviewPage() {
   }
 
   const site = detail.data.site
+  const protectionMode = protectionModeOf(site)
   const certs = certificates.data?.items ?? []
   // Prefer the certificate actually serving the site: the active row in the
   // certificate list, otherwise the site's own configured certificate (the
@@ -328,8 +333,8 @@ export function SiteOverviewPage() {
             <p className="text-[12px] text-fg-subtle">
               {t('pages.siteOverview.siteStatus', {
                 status: t(
-                  `status.${site.protection_mode ?? site.status}`,
-                  site.protection_mode ?? site.status,
+                  protectionModeLabelKey(protectionMode),
+                  protectionMode,
                 ),
               })}
             </p>

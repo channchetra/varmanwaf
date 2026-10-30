@@ -10,6 +10,7 @@ import { AppLayout } from '@/layouts/AppLayout'
 import { useAuthStore } from '@/stores/authStore'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Button } from '@/components/ui/Button'
+import { RouteErrorPage } from '@/pages/RouteErrorPage'
 
 // Keep the login screen and app shell eager; load route surfaces on demand.
 import { LoginPage } from '@/pages/LoginPage'
@@ -157,6 +158,7 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginPage />,
+    errorElement: <RouteErrorPage />,
   },
   {
     path: '/',
@@ -165,6 +167,7 @@ export const router = createBrowserRouter([
         <AppLayout />
       </RequireAuth>
     ),
+    errorElement: <RouteErrorPage />,
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },
