@@ -1063,6 +1063,7 @@ const EMPTY_PANEL_DATA: TopologyPanelData = {
     domain: '',
     alternate_domains: [],
     status: 'active',
+    protection_mode: 'block',
     plan: 'free',
     cache_quota_mb: 0,
     user_id: '',

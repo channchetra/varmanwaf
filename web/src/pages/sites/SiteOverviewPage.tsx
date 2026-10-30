@@ -327,7 +327,10 @@ export function SiteOverviewPage() {
             )}
             <p className="text-[12px] text-fg-subtle">
               {t('pages.siteOverview.siteStatus', {
-                status: t(`status.${site.status}`, site.status),
+                status: t(
+                  `status.${site.protection_mode ?? site.status}`,
+                  site.protection_mode ?? site.status,
+                ),
               })}
             </p>
           </CardBody>

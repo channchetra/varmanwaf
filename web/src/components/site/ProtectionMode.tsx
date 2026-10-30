@@ -66,6 +66,25 @@ const OFF_META: ModeMeta = {
 
 const CHOICES: Array<Exclude<ProtectionState, 'off'>> = ['block', 'monitor', 'paused']
 
+/** Maps the server-reported effective mode onto this control's states. */
+function reportedProtectionState(
+  value: string | undefined,
+): ProtectionState | null {
+  switch (value) {
+    case 'block':
+    case 'monitor':
+    case 'off':
+      return value
+    case 'paused':
+    case 'pending':
+      // A pending site is not serving either; Paused is the closest control
+      // state and saving Block or Monitor activates it.
+      return 'paused'
+    default:
+      return null
+  }
+}
+
 /**
  * The one enforcement control for a site: Block, Monitor or Paused.
  *
@@ -93,15 +112,22 @@ export function ProtectionMode({ siteId }: { siteId: string }) {
   const source = effective.data?.source ?? 'site'
   const policy = effective.data?.policy ?? null
   const policyManaged = source === 'policy' && Boolean(policy)
+  // The backend resolves the same builder the edge consumes, so this matches
+  // the sites list and includes the rule-derived fallback in one place. The
+  // older effective-config derivation stays as a fallback for cached rows.
+  const reported = reportedProtectionState(
+    detail.data?.site.protection_mode,
+  )
   const current: ProtectionState | null = !ready
     ? null
-    : detail.data?.site.status !== 'active'
-      ? 'paused'
-      : effective.data && !effective.data.effective.waf_enabled
-        ? 'off'
-        : effective.data?.effective.mode === 'monitor'
-          ? 'monitor'
-          : 'block'
+    : (reported ??
+      (detail.data?.site.status !== 'active'
+        ? 'paused'
+        : effective.data && !effective.data.effective.waf_enabled
+          ? 'off'
+          : effective.data?.effective.mode === 'monitor'
+            ? 'monitor'
+            : 'block'))
 
   const meta = current ? (current === 'off' ? OFF_META : MODES[current]) : null
   const Icon = meta?.icon ?? ShieldWarning

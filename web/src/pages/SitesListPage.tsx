@@ -30,12 +30,39 @@ import { analyticsApi, analyticsKeys } from '@/api/analytics'
 import { useCanWrite, useDebouncedValue } from '@/hooks'
 import { formatCompactNumber, formatDateTime, formatNumber } from '@/lib/format'
 import { liveSiteUrl } from '@/lib/siteUrl'
-import type { CreateSiteRequest, Site, SiteStatus, UpdateSiteRequest } from '@/api/types'
+import type {
+  CreateSiteRequest,
+  Site,
+  SiteProtectionMode,
+  UpdateSiteRequest,
+} from '@/api/types'
 
-const STATUS_TONE: Record<SiteStatus, BadgeTone> = {
-  active: 'success',
-  paused: 'warning',
+const STATUS_TONE: Record<SiteProtectionMode, BadgeTone> = {
+  block: 'success',
+  monitor: 'info',
+  paused: 'neutral',
+  off: 'warning',
   pending: 'neutral',
+}
+
+const STATUS_RANK: Record<SiteProtectionMode, number> = {
+  block: 4,
+  monitor: 3,
+  paused: 2,
+  off: 1,
+  pending: 1,
+}
+
+/**
+ * The list shows what the edge enforces, not the lifecycle row. Servers that
+ * predate `protection_mode` fall back to the old active/paused mapping.
+ */
+function protectionModeOf(site: Site): SiteProtectionMode {
+  const mode = site.protection_mode as SiteProtectionMode | undefined
+  if (mode && mode in STATUS_TONE) return mode
+  if (site.status === 'paused') return 'paused'
+  if (site.status === 'pending') return 'pending'
+  return 'block'
 }
 
 interface SiteFormState {
@@ -257,13 +284,16 @@ export function SitesListPage() {
     {
       key: 'status',
       header: t('common.status'),
-      accessor: (r) => (r.status === 'active' ? 1 : 0),
-      width: '120px',
-      cell: (r) => (
-        <Badge tone={STATUS_TONE[r.status as SiteStatus] ?? 'neutral'} dot>
-          {t(`status.${r.status}`, r.status)}
-        </Badge>
-      ),
+      accessor: (r) => STATUS_RANK[protectionModeOf(r)],
+      width: '130px',
+      cell: (r) => {
+        const mode = protectionModeOf(r)
+        return (
+          <Badge tone={STATUS_TONE[mode]} dot>
+            {t(`status.${mode}`, mode)}
+          </Badge>
+        )
+      },
     },
     {
       key: 'requests',

@@ -275,8 +275,6 @@ struct SiteContext {
     basic_auth: Option<BasicAuthGate>,
     /// Custom rule id → name.
     rule_names: HashMap<String, String>,
-    /// Site paused from the dashboard: every request gets the maintenance page.
-    paused: bool,
     /// Observation mode: every protection keeps detecting but only records —
     /// WAF, IP/geo rules, bot protection and rate limiting stop enforcing.
     /// Access control (mTLS, basic auth, a paused site) is never downgraded.
@@ -353,7 +351,6 @@ impl SiteContext {
                         .collect()
                 })
                 .unwrap_or_default(),
-            paused: site_rules.is_paused(),
             observation_mode: site_rules.observation_mode,
             inspect_body: waf_cfg
                 .filter(|cfg| cfg.enabled)
@@ -395,6 +392,10 @@ struct CachedSite {
 struct ResolvedSite {
     choice: EngineChoice,
     site_id: String,
+    /// Read from the live rule cache, not the compiled context: a status
+    /// change is not part of the bundle fingerprint, so caching it would let
+    /// a paused site keep serving until the process restarts.
+    paused: bool,
     context: Option<Arc<SiteContext>>,
 }
 
@@ -2282,6 +2283,7 @@ impl WafPlugin {
         let fallback = |site_id: String| ResolvedSite {
             choice: EngineChoice::Base,
             site_id,
+            paused: false,
             context: None,
         };
         let Some(agent) = VarmanAgent::instance() else {
@@ -2321,6 +2323,7 @@ impl WafPlugin {
         ResolvedSite {
             choice,
             site_id: site_rules.site_id.clone(),
+            paused: site_rules.is_paused(),
             context: Some(context),
         }
     }
@@ -2702,6 +2705,7 @@ impl Plugin for WafPlugin {
         // ── Resolve the engine and access restrictions for this domain ──
         let resolved = self.resolve_site(&host);
         let site_id = resolved.site_id.clone();
+        let paused = resolved.paused;
         let context = resolved.context.clone();
         let choice = resolved.choice;
         // Observation mode: detections keep running but nothing is enforced.
@@ -2985,7 +2989,7 @@ impl Plugin for WafPlugin {
         // ── Paused sites answer with a maintenance page before any other
         // rule runs. TLS termination and the log pipeline stay untouched, so
         // the certificate keeps serving and the traffic remains visible. ──
-        if context.as_ref().is_some_and(|site| site.paused) {
+        if paused {
             let response = paused_page(&request_id);
             emit_generated_access(agent.as_ref(), &request_id, &response);
             return Ok(RequestPluginResult::Respond(response));
@@ -4750,6 +4754,61 @@ advanced_mode = true
         );
         assert!(!entry.response_body_truncated);
         assert!(agent.client.pop_log().await.is_none());
+    }
+
+    /// A status change carries no bundle-hash change. The cached site context
+    /// must not keep serving a site the operator just paused.
+    #[tokio::test]
+    async fn test_pause_applies_without_a_new_bundle_hash() {
+        fn config(status: i32) -> proto::SiteConfig {
+            proto::SiteConfig {
+                sites: vec![proto::Site {
+                    id: "site-1".to_string(),
+                    name: "example".to_string(),
+                    domain: "example.com".to_string(),
+                    alternate_domains: Vec::new(),
+                    status,
+                    rules: Some(proto::RuleBundle {
+                        site_id: "site-1".to_string(),
+                        config_hash: "hash-1".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                config_hash: "hash-1".to_string(),
+                updated_at: None,
+            }
+        }
+
+        let (_guard, agent, _dir) = install_test_agent().await;
+        agent
+            .rule_cache
+            .update_from_site_config(&config(0))
+            .unwrap();
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+
+        // Prime the per-domain context while the site is active.
+        assert!(
+            run_request(&plugin, "203.0.113.7").await
+                == RequestPluginResult::Continue
+        );
+
+        // Same hash, paused status: the context cache stays valid but the
+        // live rule cache must win.
+        agent
+            .rule_cache
+            .update_from_site_config(&config(1))
+            .unwrap();
+        assert_eq!(agent.config_hash().as_ref(), "hash-1");
+        let RequestPluginResult::Respond(resp) =
+            run_request(&plugin, "203.0.113.7").await
+        else {
+            panic!("expected the paused site to answer");
+        };
+        assert_eq!(http::StatusCode::SERVICE_UNAVAILABLE, resp.status);
     }
 
     /// A blocked request logs the page the client received, so the dashboard

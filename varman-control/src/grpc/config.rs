@@ -815,6 +815,48 @@ fn waf_config_to_proto(
     }
 }
 
+/// The enforcement posture the next bundle will carry for `site_row`.
+///
+/// Mirrors [`waf_config_with_policy`] rather than reading `waf_settings`
+/// directly: a site without a posture row derives its mode from the enabled
+/// rules (the historical default), and an assigned policy can override the
+/// row. The dashboard's status column and the Protection mode control must
+/// report the same value the edge enforces.
+pub async fn effective_protection_mode(
+    db: &DatabaseConnection,
+    site_row: &site::Model,
+) -> Result<&'static str, sea_orm::DbErr> {
+    if site_row.status == site_status::PAUSED {
+        return Ok("paused");
+    }
+    if site_row.status == site_status::PENDING {
+        return Ok("pending");
+    }
+
+    let rule_rows = load_rules(db, site_row.id).await?;
+    let groups = load_rule_groups(db, site_row.id).await?;
+    let settings = load_waf_settings(db, site_row.id).await?;
+    let resolved = policy::resolve(db, site_row.id).await?;
+    let mut rules: Vec<WafRule> = rule_rows.iter().map(rule_to_proto).collect();
+    if let Some(policy_id) = resolved.policy_id {
+        rules.extend(policy_rules_to_proto(policy_id, &resolved.rules));
+    }
+
+    let config = waf_config_with_policy(
+        &rules,
+        &groups,
+        settings.as_ref(),
+        Some(&resolved),
+    );
+    Ok(if !config.enabled || config.mode == WAF_MODE_OFF {
+        "off"
+    } else if config.mode == WAF_MODE_MONITOR {
+        "monitor"
+    } else {
+        "block"
+    })
+}
+
 /// Builds the site's WAF configuration with the resolved policy layers
 /// applied over the site's own posture row.
 ///

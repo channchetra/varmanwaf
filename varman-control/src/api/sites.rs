@@ -8,8 +8,9 @@ use axum::Json;
 use axum::Router;
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait,
+    DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    Set,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -42,6 +43,10 @@ pub struct SiteResponse {
     /// Extra hostnames served by the same site configuration.
     pub alternate_domains: Vec<String>,
     pub status: String,
+    /// What the edge currently enforces: `block`, `monitor`, `paused`, `off`
+    /// or `pending`. Derived from the site status, the effective WAF engine
+    /// and the enabled rule groups, not from `status` alone.
+    pub protection_mode: String,
     pub plan: String,
     /// Disk budget, in MiB, the agents may use for this site's cache.
     pub cache_quota_mb: i32,
@@ -71,12 +76,21 @@ pub struct SiteResponse {
 
 impl From<site::Model> for SiteResponse {
     fn from(model: site::Model) -> Self {
+        // `SiteResponse::load` resolves the full effective mode; this
+        // status-only fallback keeps a direct conversion from ever returning
+        // an empty field.
+        let protection_mode = match model.status.as_str() {
+            site_status::PAUSED => "paused",
+            site_status::PENDING => "pending",
+            _ => "block",
+        };
         Self {
             id: model.id,
             name: model.name,
             domain: model.domain,
             alternate_domains: model.alternate_domains,
             status: model.status,
+            protection_mode: protection_mode.to_string(),
             plan: model.plan,
             cache_quota_mb: model.cache_quota_mb,
             cache_max_file_size_mb: model.cache_max_file_size_mb,
@@ -92,6 +106,21 @@ impl From<site::Model> for SiteResponse {
             created_at: model.created_at,
             updated_at: model.updated_at,
         }
+    }
+}
+
+impl SiteResponse {
+    /// Builds the wire response with the effective protection mode resolved
+    /// from the same builder the data plane consumes.
+    async fn load(
+        db: &DatabaseConnection,
+        model: site::Model,
+    ) -> Result<Self, sea_orm::DbErr> {
+        let mode =
+            crate::grpc::config::effective_protection_mode(db, &model).await?;
+        let mut response = Self::from(model);
+        response.protection_mode = mode.to_string();
+        Ok(response)
     }
 }
 
@@ -861,11 +890,12 @@ async fn list(
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(pagination.index()).await?;
 
-    Ok(Json(Page::new(
-        rows.into_iter().map(SiteResponse::from).collect(),
-        total,
-        pagination,
-    )))
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(SiteResponse::load(&state.db, row).await?);
+    }
+
+    Ok(Json(Page::new(items, total, pagination)))
 }
 
 /// `POST /api/v1/sites`
@@ -1019,7 +1049,11 @@ async fn create(
     tracing::info!(%id, %domain, upstream = %upstream_address, owner = %current.id, "site created");
     notify_config_changed(&state, id, Some(&current.email)).await;
 
-    Ok((StatusCode::CREATED, Json(SiteResponse::from(model))).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(SiteResponse::load(&state.db, model).await?),
+    )
+        .into_response())
 }
 
 /// `GET /api/v1/sites/{site_id}`
@@ -1060,7 +1094,7 @@ async fn show(
         .await?;
 
     Ok(Json(SiteDetail {
-        site: model.into(),
+        site: SiteResponse::load(&state.db, model).await?,
         upstreams,
         ssl,
         rule_count,
@@ -1189,7 +1223,7 @@ async fn update(
     tracing::info!(%id, "site updated");
     notify_config_changed(&state, id, Some(&current.email)).await;
 
-    Ok(Json(updated.into()))
+    Ok(Json(SiteResponse::load(&state.db, updated).await?))
 }
 
 /// `DELETE /api/v1/sites/{site_id}`

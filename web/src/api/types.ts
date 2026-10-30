@@ -111,6 +111,19 @@ export interface UpdateProfileRequest {
 
 export type SiteStatus = 'active' | 'paused' | 'pending'
 
+/**
+ * Effective edge posture for one site, as resolved by the control plane:
+ * `block` and `monitor` come from the WAF engine, `paused` from the site
+ * lifecycle, `off` when inspection is disabled and `pending` while a site is
+ * still being provisioned.
+ */
+export type SiteProtectionMode =
+  | 'block'
+  | 'monitor'
+  | 'paused'
+  | 'off'
+  | 'pending'
+
 /** `api::sites::SiteResponse` */
 export interface Site {
   id: string
@@ -120,6 +133,8 @@ export interface Site {
   /** Extra hostnames served by the same site configuration. */
   alternate_domains: string[]
   status: SiteStatus | string
+  /** What the edge enforces right now; use this for the status column. */
+  protection_mode: SiteProtectionMode | string
   plan: string
   /** Disk budget, in MiB, the agents may use for this site's cache. */
   cache_quota_mb: number
