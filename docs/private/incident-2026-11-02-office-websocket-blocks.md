@@ -110,14 +110,45 @@ inspector was enforcing a log-only rule directly.
     Block+Varman.
 - `pingap-plugin`: 207 tests passed.
 
-## Expected production behaviour after deploy
+## Production verification (2026-11-02 08:59 UTC)
 
-- `/ws` and `/cool/ws` no longer return 403 for the low-confidence rule.
-- The same payloads are visible in Security events as `action=monitor`,
-  `rule_id=sem.cmd.command_context`, score 5.
-- If the site is later switched to **Block + Varman**, only high-confidence
-  stream findings (`Block`/`Challenge`) close the tunnel; log-only findings
-  remain monitor events.
+The fix was deployed as **1.4.2** at `08:59:49Z`.
+
+```text
+/ws  (office.unity-workspace.com)  -> 101
+/ws  (uoffice...)                  -> 101
+sem.cmd.command_context events     -> action=monitor, score=5
+stream logs                        -> "recorded a monitor-only finding"
+office/uoffice 403s after deploy   -> 0
+dynamic blocks for office/uoffice  -> 0
+site_waf_policies                  -> 0 rows
+```
+
+The repeated `/ws` 101s prove the upgrade now reaches the origin. The same
+payloads are visible in Security events as monitor findings instead of 403s.
+No production setting was changed; both sites remain **Monitor + legacy**.
+
+### Related production E2E in the same deploy
+
+- Multi-SAN certificate (three SANs) created, served for two sites with
+  `200` over HTTPS; shared binding used on the second site; deleting the
+  certificate cleared both selections.
+- Policy export/import single and bundle, invalid-layer rejection, and cleanup
+  all passed.
+- `POST /blocked-ips/unblock-current` removed a production dynamic block
+  (`172.18.0.1`, the host’s port-mapping peer) and the mirror row.
+
+### SSH host key
+
+The host rebooted and presented a new ED25519 key:
+
+```text
+SHA256:NGRNAAFpJ2vByISNkM4YmYG+TVCNXozmtf5mMwizU+Q
+```
+
+The old known-hosts entry was replaced after SSH was confirmed reachable.
+Verify this fingerprint from the provider console if a reinstall was not
+intended.
 
 ## Notes
 
