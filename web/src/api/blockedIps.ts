@@ -4,6 +4,7 @@ import type {
   GlobalBlockedIp,
   ManualBlockIpRequest,
   ManualBlockIpResponse,
+  UnblockCurrentIpResponse,
   UnblockIpResponse,
 } from './types'
 
@@ -23,6 +24,13 @@ export const blockedIpsApi = {
     apiClient.post<UnblockIpResponse>(
       `/sites/${siteId}/blocked-ips/unblock`,
       { ip },
+    ),
+
+  /** Lifts every dynamic block for the dashboard's TCP peer address. */
+  unblockCurrent: () =>
+    apiClient.post<UnblockCurrentIpResponse>(
+      '/blocked-ips/unblock-current',
+      {},
     ),
 
   /**

@@ -3,6 +3,9 @@
 //! commands) and offers a one-click unblock that fans out to every agent
 //! reporting the block.
 
+use std::collections::BTreeSet;
+
+use axum::extract::connect_info::ConnectInfo;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -21,6 +24,8 @@ use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::models::{agent, agent_blocked_ip, security_event, site};
+use crate::self_protection::normalize_ip;
+use crate::tls::ConnInfo;
 use sea_orm::Set;
 
 /// Per-IP attack rollup over `security_events`, grouped by client IP.
@@ -51,12 +56,22 @@ pub struct UnblockRequest {
     pub ip: String,
 }
 
+/// Result of the one-click "unblock my IP" action.
+#[derive(Debug, Serialize)]
+pub struct UnblockCurrentResponse {
+    pub ip: String,
+    pub sites: usize,
+    pub agents: usize,
+    pub delivered: usize,
+}
+
 /// Routes contributed to `/api/v1`.
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/sites/{site_id}/blocked-ips", get(list))
         .route("/sites/{site_id}/blocked-ips/unblock", post(unblock))
         .route("/blocked-ips", get(global_list))
+        .route("/blocked-ips/unblock-current", post(unblock_current))
         .route("/blocked-ips/block", post(manual_block))
 }
 
@@ -205,6 +220,79 @@ async fn unblock(
         })),
     )
         .into_response())
+}
+
+/// `POST /api/v1/blocked-ips/unblock-current` — lifts every dynamic block for
+/// the TCP peer address of this dashboard request.
+///
+/// The peer address, not a forwarding header, is used: the control plane's
+/// self-protection explicitly does not trust `X-Forwarded-For`, so this is the
+/// same address the dashboard's own allowlist sees. For a proxied dashboard,
+/// the response reports the proxy's address; use the per-row unblock instead.
+async fn unblock_current(
+    State(state): State<AppState>,
+    current: AuthUser,
+    ConnectInfo(conn): ConnectInfo<ConnInfo>,
+) -> Result<Json<UnblockCurrentResponse>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
+    let ip = normalize_ip(&conn.peer_addr.ip()).to_string();
+
+    let rows = agent_blocked_ip::Entity::find()
+        .filter(agent_blocked_ip::Column::Ip.eq(&ip))
+        .all(&state.db)
+        .await?;
+    let site_ids: BTreeSet<Uuid> = rows.iter().map(|row| row.site_id).collect();
+    let agent_ids: BTreeSet<Uuid> =
+        rows.iter().map(|row| row.agent_id).collect();
+
+    // The command carries one site; an agent that enforces blocks for several
+    // sites receives one command per site.
+    let mut delivered = 0usize;
+    for site_id in &site_ids {
+        let agents_for_site: BTreeSet<Uuid> = rows
+            .iter()
+            .filter(|row| row.site_id == *site_id)
+            .map(|row| row.agent_id)
+            .collect();
+        let request = crate::api::agents::CommandRequest {
+            command: "unblock_ip".to_string(),
+            site_id: Some(site_id.to_string()),
+            ip_addresses: vec![ip.clone()],
+            urls: Vec::new(),
+            tags: Vec::new(),
+            duration_seconds: None,
+            reason: Some("unblocked current IP from dashboard".to_string()),
+            graceful: true,
+        };
+        let command =
+            crate::api::agents::build_command(&request, Some(*site_id))?;
+        for agent_id in agents_for_site {
+            if state.agents.send_command(&agent_id, command.clone()).await {
+                delivered += 1;
+            }
+        }
+    }
+
+    agent_blocked_ip::Entity::delete_many()
+        .filter(agent_blocked_ip::Column::Ip.eq(&ip))
+        .exec(&state.db)
+        .await?;
+
+    tracing::info!(
+        %ip,
+        sites = site_ids.len(),
+        agents = agent_ids.len(),
+        delivered,
+        requested_by = %current.id,
+        "current IP unblocked"
+    );
+
+    Ok(Json(UnblockCurrentResponse {
+        ip,
+        sites: site_ids.len(),
+        agents: agent_ids.len(),
+        delivered,
+    }))
 }
 
 // ── Global surfaces ────────────────────────────────────────────────────────

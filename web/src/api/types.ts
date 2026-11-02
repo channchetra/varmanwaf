@@ -1709,6 +1709,14 @@ export interface UnblockIpResponse {
   delivered: number
 }
 
+/** `POST /blocked-ips/unblock-current` — the dashboard's TCP peer IP. */
+export interface UnblockCurrentIpResponse {
+  ip: string
+  sites: number
+  agents: number
+  delivered: number
+}
+
 /**
  * One IP blocked at any site, for the global cross-site view. `site_id` /
  * `site_name` name the site the block belongs to; blocks of different sites

@@ -2,7 +2,12 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Prohibit, ShieldWarning } from '@phosphor-icons/react'
+import {
+  Plus,
+  Prohibit,
+  ShieldCheck,
+  ShieldWarning,
+} from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
 import { Callout } from '@/components/ui/Callout'
 import { Card, CardBody } from '@/components/ui/Card'
@@ -83,6 +88,31 @@ export function BlockedIpsPage() {
     },
     onError: (e) =>
       toast.error(e instanceof Error ? e.message : String(e)),
+  })
+
+  const unblockCurrent = useMutation({
+    mutationFn: () => blockedIpsApi.unblockCurrent(),
+    onSuccess: (result) => {
+      if (result.sites === 0) {
+        toast.success(
+          t('pages.blockedIps.unblockCurrentNone', { ip: result.ip }),
+        )
+      } else {
+        toast.success(
+          t('pages.blockedIps.unblockedCurrent', {
+            ip: result.ip,
+            sites: result.sites,
+            agents: result.agents,
+          }),
+        )
+      }
+      invalidate()
+    },
+    onError: (e) =>
+      toast.error(
+        t('pages.blockedIps.unblockCurrentFailed'),
+        e instanceof Error ? e.message : String(e),
+      ),
   })
 
   const columns: Column<GlobalBlockedIp>[] = useMemo(
@@ -230,10 +260,20 @@ export function BlockedIpsPage() {
         description={t('pages.blockedIps.description')}
         actions={
           canWrite ? (
-            <Button variant="primary" onClick={() => setBlockOpen(true)}>
-              <Plus className="h-4 w-4" />
-              {t('pages.blockedIps.blockManual')}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                icon={<ShieldCheck weight="duotone" className="h-4 w-4" />}
+                loading={unblockCurrent.isPending}
+                onClick={() => unblockCurrent.mutate()}
+              >
+                {t('pages.blockedIps.unblockCurrent')}
+              </Button>
+              <Button variant="primary" onClick={() => setBlockOpen(true)}>
+                <Plus className="h-4 w-4" />
+                {t('pages.blockedIps.blockManual')}
+              </Button>
+            </div>
           ) : undefined
         }
       />
