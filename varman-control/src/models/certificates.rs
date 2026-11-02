@@ -37,6 +37,45 @@ pub mod site_certificates {
         pub updated_at: DateTimeUtc,
     }
 
+    impl Model {
+        /// Hostnames this certificate covers, as stored in the comma-separated
+        /// `domain` column. Empty entries and duplicates are dropped.
+        pub fn domains(&self) -> Vec<String> {
+            let mut out = Vec::new();
+            for part in self.domain.split(',') {
+                let domain = part.trim().to_ascii_lowercase();
+                if !domain.is_empty() && !out.contains(&domain) {
+                    out.push(domain);
+                }
+            }
+            out
+        }
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// `site_certificate_bindings` — imported certificates shared with another
+/// site. The owner stays `site_certificates.site_id`; a binding is the grant
+/// that lets the site select the certificate in its TLS posture.
+pub mod site_certificate_bindings {
+    use super::*;
+
+    #[derive(
+        Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize,
+    )]
+    #[sea_orm(table_name = "site_certificate_bindings")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub certificate_id: Uuid,
+        pub site_id: Uuid,
+        pub created_at: DateTimeUtc,
+    }
+
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {}
 

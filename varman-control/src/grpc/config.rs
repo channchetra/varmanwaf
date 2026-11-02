@@ -13,8 +13,8 @@ use chrono::{DateTime, TimeZone, Utc};
 use prost::Message;
 use prost_types::Timestamp;
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, QueryTrait,
+    ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter,
+    QueryOrder, QuerySelect, QueryTrait,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -32,9 +32,9 @@ use crate::models::{
     challenge_settings, characteristic, client_cert_status, defense_settings,
     error_pages, exclusion_packages, geo_rules, ip_access_rules,
     ip_group_sites, ip_groups, mode, mtls_client_certificate, rate_limit_rules,
-    rewrite_rules, rule, rule_groups, site, site_basic_auth, site_certificates,
-    site_routes, site_ssl, site_status, site_upstream_pools, site_upstreams,
-    waf_settings,
+    rewrite_rules, rule, rule_groups, site, site_basic_auth,
+    site_certificate_bindings, site_certificates, site_routes, site_ssl,
+    site_status, site_upstream_pools, site_upstreams, waf_settings,
 };
 use crate::pki::mtls::normalise_fingerprint;
 use crate::policy;
@@ -229,8 +229,24 @@ async fn load_certificates(
     db: &DatabaseConnection,
     site_id: Uuid,
 ) -> Result<Vec<site_certificates::Model>, sea_orm::DbErr> {
+    // Owned rows plus imported rows another site shared with this one. The
+    // selected certificate must be visible here even when this site is not
+    // its owner, otherwise `load_ssl` cannot backfill the PEM.
+    let bound_ids: Vec<Uuid> = site_certificate_bindings::Entity::find()
+        .filter(site_certificate_bindings::Column::SiteId.eq(site_id))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|binding| binding.certificate_id)
+        .collect();
+    let mut condition =
+        Condition::any().add(site_certificates::Column::SiteId.eq(site_id));
+    if !bound_ids.is_empty() {
+        condition =
+            condition.add(site_certificates::Column::Id.is_in(bound_ids));
+    }
     site_certificates::Entity::find()
-        .filter(site_certificates::Column::SiteId.eq(site_id))
+        .filter(condition)
         .order_by_desc(site_certificates::Column::UpdatedAt)
         .all(db)
         .await
@@ -527,6 +543,7 @@ fn ssl_to_proto(
         .or(selected.map(|cert| cert.id))
         .map(|id| id.to_string())
         .unwrap_or_default();
+    let domains = selected.map(|cert| cert.domains()).unwrap_or_default();
     SslConfig {
         cert_pem,
         key_pem,
@@ -545,6 +562,7 @@ fn ssl_to_proto(
         mtls_enabled: row.mtls_enabled,
         mtls_client_ca: row.mtls_client_ca.clone().unwrap_or_default(),
         certificate_id,
+        domains,
         // Revocations and the expected organization come from the managed-CA
         // tables loaded by the caller.
         mtls_revoked_fingerprints: mtls.revoked_fingerprints.clone(),

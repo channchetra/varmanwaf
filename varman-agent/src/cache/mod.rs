@@ -799,6 +799,10 @@ pub struct SslConfig {
     pub mtls_client_ca: String,
     /// Id of the `site_certificates` row this posture selects, when any.
     pub certificate_id: String,
+    /// Hostnames the selected certificate covers. Empty keeps the historical
+    /// fallback to the site's primary and alternate domains.
+    #[serde(default)]
+    pub domains: Vec<String>,
     /// Lowercase-hex SHA-256 fingerprints of revoked client certificates.
     #[serde(default)]
     pub mtls_revoked_fingerprints: Vec<String>,
@@ -2151,6 +2155,7 @@ impl RuleCache {
             mtls_enabled: s.mtls_enabled,
             mtls_client_ca: s.mtls_client_ca.clone(),
             certificate_id: s.certificate_id.clone(),
+            domains: s.domains.clone(),
             mtls_revoked_fingerprints: s
                 .mtls_revoked_fingerprints
                 .iter()

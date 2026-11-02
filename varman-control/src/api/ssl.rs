@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::api::common::{
     ensure_acme_wildcard_supported, load_site_read, load_site_write, non_empty,
-    parse_uuid, scope_site, Page, Pagination,
+    normalise_domain, parse_uuid, scope_site, Page, Pagination,
 };
 use crate::api::error::ApiError;
 use crate::api::sites::{
@@ -29,7 +29,8 @@ use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::grpc::notify_config_changed;
 use crate::models::{
-    acme_challenge, certificate_events, site, site_certificates, site_ssl,
+    acme_challenge, certificate_events, site, site_certificate_bindings,
+    site_certificates, site_ssl,
 };
 
 /// Certificate status values.
@@ -50,6 +51,13 @@ pub struct CertificateResponse {
     pub id: Uuid,
     pub site_id: Uuid,
     pub domain: String,
+    /// Normalised SAN list derived from `domain`; always populated.
+    pub domains: Vec<String>,
+    /// Owner site when this row was shown as a shared candidate; `None` on
+    /// the owner's own list.
+    pub owner_site_domain: Option<String>,
+    /// True when the requesting site is not the certificate's owner.
+    pub shared: bool,
     pub issuer: Option<String>,
     pub not_before: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
@@ -70,10 +78,14 @@ pub struct CertificateResponse {
 
 impl From<site_certificates::Model> for CertificateResponse {
     fn from(m: site_certificates::Model) -> Self {
+        let domains = m.domains();
         Self {
             id: m.id,
             site_id: m.site_id,
             domain: m.domain,
+            domains,
+            owner_site_domain: None,
+            shared: false,
             issuer: m.issuer,
             not_before: m.not_before,
             expires_at: m.expires_at,
@@ -136,7 +148,12 @@ pub struct ListQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateCertificateRequest {
+    /// Comma-separated hostnames (legacy shape) or a single hostname.
+    #[serde(default)]
     pub domain: String,
+    /// Preferred multi-domain shape. When non-empty it wins over `domain`.
+    #[serde(default)]
+    pub domains: Vec<String>,
     #[serde(default)]
     pub cert_pem: Option<String>,
     #[serde(default)]
@@ -170,6 +187,8 @@ pub struct CreateCertificateRequest {
 pub struct UpdateCertificateRequest {
     #[serde(default)]
     pub domain: Option<String>,
+    #[serde(default)]
+    pub domains: Option<Vec<String>>,
     #[serde(default)]
     pub cert_pem: Option<String>,
     #[serde(default)]
@@ -209,6 +228,67 @@ fn split_domains(value: &str) -> Vec<String> {
         .map(|part| part.trim().to_string())
         .filter(|part| !part.is_empty())
         .collect()
+}
+
+/// Normalises the SAN list for a multi-domain certificate. Accepts both the
+/// array shape and comma-separated entries inside it.
+fn normalise_certificate_domains(
+    raw: &[String],
+) -> Result<Vec<String>, ApiError> {
+    let mut out = Vec::new();
+    for value in raw {
+        for part in value.split(',') {
+            let domain = normalise_domain(part)?;
+            if !out.contains(&domain) {
+                out.push(domain);
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err(ApiError::BadRequest(
+            "at least one certificate domain is required".to_string(),
+        ));
+    }
+    if out.len() > 100 {
+        return Err(ApiError::BadRequest(
+            "a certificate may cover at most 100 domains".to_string(),
+        ));
+    }
+    Ok(out)
+}
+
+fn site_domains(site: &site::Model) -> Vec<String> {
+    let mut domains = vec![site.domain.to_ascii_lowercase()];
+    domains.extend(
+        site.alternate_domains
+            .iter()
+            .map(|domain| domain.to_ascii_lowercase()),
+    );
+    domains
+}
+
+/// TLS wildcard matching: `*.example.com` covers exactly one extra label.
+fn wildcard_matches(pattern: &str, host: &str) -> bool {
+    if pattern == host {
+        return true;
+    }
+    let Some(base) = pattern.strip_prefix("*.") else {
+        return false;
+    };
+    let Some(prefix) = host.strip_suffix(&format!(".{base}")) else {
+        return false;
+    };
+    !prefix.is_empty() && !prefix.contains('.')
+}
+
+/// Every hostname the site serves must be covered by the certificate.
+fn certificate_covers_site(
+    cert_domains: &[String],
+    site_domains: &[String],
+) -> bool {
+    site_domains.iter().all(|site| {
+        cert_domains.iter().any(|cert| wildcard_matches(cert, site))
+    })
 }
 
 /// Routes contributed to `/api/v1`.
@@ -265,18 +345,80 @@ async fn list_certificates(
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Page<CertificateResponse>>, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
-    load_site_read(&state.db, id, &current).await?;
+    let site = load_site_read(&state.db, id, &current).await?;
     let pagination = query.pagination.normalise();
 
-    let paginator = site_certificates::Entity::find()
-        .filter(site_certificates::Column::SiteId.eq(id))
-        .order_by_desc(site_certificates::Column::CreatedAt)
-        .paginate(&state.db, pagination.limit());
+    // The owner's rows plus every imported certificate whose SAN list covers
+    // this site. The latter is what lets a wildcard from another site appear
+    // in this site's TLS picker before it is selected.
+    let mut site_condition = Condition::all();
+    if !current.is_admin() {
+        site_condition =
+            site_condition.add(site::Column::UserId.eq(current.id));
+    }
+    let visible_sites = site::Entity::find()
+        .filter(site_condition)
+        .all(&state.db)
+        .await?;
+    let visible_ids: Vec<Uuid> =
+        visible_sites.iter().map(|row| row.id).collect();
+    let owner_domains: HashMap<Uuid, String> = visible_sites
+        .into_iter()
+        .map(|row| (row.id, row.domain))
+        .collect();
 
-    let total = paginator.num_items().await?;
-    let rows = paginator.fetch_page(pagination.index()).await?;
-    let items: Vec<CertificateResponse> =
-        rows.into_iter().map(Into::into).collect();
+    let bindings = site_certificate_bindings::Entity::find()
+        .filter(site_certificate_bindings::Column::SiteId.eq(id))
+        .all(&state.db)
+        .await?;
+    let bound_ids: Vec<Uuid> =
+        bindings.iter().map(|row| row.certificate_id).collect();
+
+    let mut cert_condition = Condition::any()
+        .add(site_certificates::Column::SiteId.is_in(visible_ids.clone()));
+    if !bound_ids.is_empty() {
+        cert_condition = cert_condition
+            .add(site_certificates::Column::Id.is_in(bound_ids.clone()));
+    }
+    let rows = site_certificates::Entity::find()
+        .filter(cert_condition)
+        .order_by_desc(site_certificates::Column::CreatedAt)
+        .all(&state.db)
+        .await?;
+
+    let hosts = site_domains(&site);
+    let filtered: Vec<site_certificates::Model> = rows
+        .into_iter()
+        .filter(|row| {
+            let owned = row.site_id == id;
+            let bound = bound_ids.contains(&row.id);
+            let shareable = row
+                .cert_pem
+                .as_deref()
+                .is_some_and(|pem| !pem.trim().is_empty());
+            owned
+                || bound
+                || (shareable
+                    && certificate_covers_site(&row.domains(), &hosts))
+        })
+        .collect();
+
+    let total = filtered.len() as u64;
+    let limit = pagination.limit() as usize;
+    let start = pagination.index() as usize * limit;
+    let items: Vec<CertificateResponse> = filtered
+        .into_iter()
+        .skip(start)
+        .take(limit)
+        .map(|row| {
+            let shared = row.site_id != id;
+            let owner_site_domain = owner_domains.get(&row.site_id).cloned();
+            let mut response = CertificateResponse::from(row);
+            response.owner_site_domain = owner_site_domain;
+            response.shared = shared;
+            response
+        })
+        .collect();
     Ok(Json(Page::new(items, total, pagination)))
 }
 
@@ -312,24 +454,25 @@ async fn insert_certificate<C: ConnectionTrait>(
     payload: CreateCertificateRequest,
 ) -> Result<site_certificates::Model, ApiError> {
     let site_id = site.id;
-    let domain = payload.domain.trim().to_lowercase();
-    if domain.is_empty() || domain.len() > 255 {
-        return Err(ApiError::BadRequest(
-            "domain must be 1-255 characters".to_string(),
-        ));
-    }
+    let raw_domains = if payload.domains.is_empty() {
+        split_domains(&payload.domain)
+    } else {
+        payload.domains
+    };
+    let domains = normalise_certificate_domains(&raw_domains)?;
+    let domain = domains.join(",");
     if !acme_challenge::is_valid(&payload.acme_challenge_type) {
         return Err(ApiError::BadRequest(format!(
             "invalid acme_challenge_type '{}'",
             payload.acme_challenge_type
         )));
     }
-    // An ACME order without an uploaded PEM is issued against the site's whole
-    // hostname set, which a wildcard may not contain under http-01.
+    // An ACME order without an uploaded PEM is issued against the certificate's
+    // SAN list, which a wildcard may not contain under http-01.
     if payload.cert_pem.is_none() && payload.acme_email.is_some() {
         ensure_acme_wildcard_supported(
             site,
-            &split_domains(&domain),
+            &domains,
             Some(&payload.acme_challenge_type),
         )?;
     }
@@ -440,23 +583,34 @@ async fn update_certificate(
         Some(email) => non_empty(&Some(email.clone())),
         None => non_empty(&row.acme_email),
     };
+    let effective_domains = match payload.domains.as_deref() {
+        Some(domains) if !domains.is_empty() => {
+            normalise_certificate_domains(domains)?
+        },
+        _ => normalise_certificate_domains(&split_domains(
+            &non_empty(&payload.domain).unwrap_or_else(|| row.domain.clone()),
+        ))?,
+    };
     if cert_missing && acme_email.is_some() {
         let challenge = non_empty(&payload.acme_challenge_type)
             .unwrap_or_else(|| row.acme_challenge_type.clone());
-        let cert_domain = non_empty(&payload.domain)
-            .map(|value| value.to_lowercase())
-            .unwrap_or_else(|| row.domain.clone());
         ensure_acme_wildcard_supported(
             &site,
-            &split_domains(&cert_domain),
+            &effective_domains,
             Some(&challenge),
         )?;
     }
 
     let mut active: site_certificates::ActiveModel = row.into();
 
-    if let Some(domain) = non_empty(&payload.domain) {
-        active.domain = Set(domain.to_lowercase());
+    if let Some(domains) = payload.domains {
+        if !domains.is_empty() {
+            let domains = normalise_certificate_domains(&domains)?;
+            active.domain = Set(domains.join(","));
+        }
+    } else if let Some(domain) = non_empty(&payload.domain) {
+        let domains = normalise_certificate_domains(&split_domains(&domain))?;
+        active.domain = Set(domains.join(","));
     }
     if let Some(cert) = payload.cert_pem {
         active.cert_pem = Set(Some(cert));
@@ -513,6 +667,23 @@ async fn update_certificate(
     touch_site(&state, id).await?;
     notify_config_changed(&state, id, Some(&current.email)).await;
 
+    // A bound site serves the same PEM; refresh its configuration when the
+    // owner replaces the certificate material.
+    let bindings = site_certificate_bindings::Entity::find()
+        .filter(site_certificate_bindings::Column::CertificateId.eq(target))
+        .all(&state.db)
+        .await?;
+    for binding in bindings {
+        if binding.site_id == id {
+            continue;
+        }
+        if let Err(err) = touch_site(&state, binding.site_id).await {
+            tracing::warn!(%err, site_id = %binding.site_id, "could not touch a bound certificate site");
+        }
+        notify_config_changed(&state, binding.site_id, Some(&current.email))
+            .await;
+    }
+
     Ok(Json(CertificateResponse::from(updated)))
 }
 
@@ -526,6 +697,18 @@ async fn delete_certificate(
     let target = parse_uuid(&cert_id, "certificate id")?;
     load_site_write(&state.db, id, &current).await?;
     find_certificate(&state, id, target).await?;
+
+    // Capture the bound sites before the cascade removes their binding rows.
+    let bindings = site_certificate_bindings::Entity::find()
+        .filter(site_certificate_bindings::Column::CertificateId.eq(target))
+        .all(&state.db)
+        .await?;
+    let mut affected = vec![id];
+    for binding in bindings {
+        if !affected.contains(&binding.site_id) {
+            affected.push(binding.site_id);
+        }
+    }
 
     site_certificates::Entity::delete_by_id(target)
         .exec(&state.db)
@@ -551,45 +734,57 @@ async fn delete_certificate(
     // A posture that selected *this* certificate would otherwise keep pointing
     // at a deleted row: the site would carry a certificate id that no longer
     // exists (TLS serves nothing, and raw ACME lines attribute to a ghost).
-    // Clear the selection only when it pointed at the deleted row, and say so.
-    let selected = site_ssl::Entity::find()
-        .filter(site_ssl::Column::SiteId.eq(id))
-        .one(&state.db)
-        .await?;
-    if selected
-        .as_ref()
-        .and_then(|row| row.certificate_id)
-        .is_some_and(|selected_id| selected_id == target)
-    {
+    // Clear the selection on the owner and every bound site, and say so.
+    for site_id in affected {
+        let selected = site_ssl::Entity::find()
+            .filter(site_ssl::Column::SiteId.eq(site_id))
+            .one(&state.db)
+            .await?;
+        if !selected
+            .as_ref()
+            .and_then(|row| row.certificate_id)
+            .is_some_and(|selected_id| selected_id == target)
+        {
+            continue;
+        }
         let posture = TlsPostureRequest {
             certificate_id: Some(None),
             ..Default::default()
         };
-        match site_row(&state, id).await {
+        match site_row(&state, site_id).await {
             Ok(site) => {
                 if let Err(err) =
-                    save_tls_posture(&state.db, &site, &posture).await
+                    save_tls_posture(&state.db, &site, &posture, None).await
                 {
-                    tracing::warn!(%err, site_id = %id, "could not clear the deleted certificate selection");
-                } else {
-                    let cleared = certificate_events::ActiveModel {
-                        id: Set(Uuid::new_v4()),
-                        certificate_id: Set(None),
-                        site_id: Set(Some(id)),
-                        event_type: Set("posture_cleared".to_string()),
-                        message: Set(format!(
-                            "Certificate {target} was selected by this site; the selection was cleared"
-                        )),
-                        details: Set(None),
-                        created_at: Set(Utc::now()),
-                    };
-                    if let Err(err) = cleared.insert(&state.db).await {
-                        tracing::warn!(%err, "failed to write certificate event");
-                    }
+                    tracing::warn!(%err, %site_id, "could not clear the deleted certificate selection");
+                    continue;
+                }
+                let cleared = certificate_events::ActiveModel {
+                    id: Set(Uuid::new_v4()),
+                    certificate_id: Set(None),
+                    site_id: Set(Some(site_id)),
+                    event_type: Set("posture_cleared".to_string()),
+                    message: Set(format!(
+                        "Shared certificate {target} was deleted; the selection was cleared"
+                    )),
+                    details: Set(None),
+                    created_at: Set(Utc::now()),
+                };
+                if let Err(err) = cleared.insert(&state.db).await {
+                    tracing::warn!(%err, "failed to write certificate event");
+                }
+                touch_site(&state, site_id).await?;
+                if site_id != id {
+                    notify_config_changed(
+                        &state,
+                        site_id,
+                        Some(&current.email),
+                    )
+                    .await;
                 }
             },
             Err(err) => {
-                tracing::warn!(%err, site_id = %id, "could not load the site to clear its certificate selection");
+                tracing::warn!(%err, %site_id, "could not load the site to clear its certificate selection");
             },
         }
     }
@@ -685,7 +880,8 @@ async fn update_ssl_settings(
     let id = parse_uuid(&site_id, "site id")?;
     let site = load_site_write(&state.db, id, &current).await?;
 
-    let posture = save_tls_posture(&state.db, &site, &payload).await?;
+    let posture =
+        save_tls_posture(&state.db, &site, &payload, Some(&current)).await?;
     tracing::info!(site_id = %id, "SSL settings updated");
     touch_site(&state, id).await?;
     notify_config_changed(&state, id, Some(&current.email)).await;
@@ -805,8 +1001,10 @@ async fn list_all_certificates(
         .map(|row| {
             let (site_domain, site_name) =
                 sites.get(&row.site_id).cloned().unwrap_or_default();
+            let mut certificate = CertificateResponse::from(row);
+            certificate.owner_site_domain = Some(site_domain.clone());
             CertificateWithSite {
-                certificate: CertificateResponse::from(row),
+                certificate,
                 site_domain,
                 site_name,
             }
@@ -846,7 +1044,7 @@ async fn create_global_certificate(
             certificate_id: Some(Some(model.id)),
             ..Default::default()
         };
-        save_tls_posture(&txn, &site, &posture).await?;
+        save_tls_posture(&txn, &site, &posture, Some(&current)).await?;
     }
     txn.commit().await?;
 
@@ -1229,5 +1427,45 @@ mod tests {
             },
             other => panic!("expected BadRequest, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod domain_tests {
+    use super::*;
+
+    #[test]
+    fn wildcard_covers_exactly_one_label() {
+        assert!(wildcard_matches("*.example.com", "mail.example.com"));
+        assert!(!wildcard_matches("*.example.com", "deep.mail.example.com"));
+        assert!(!wildcard_matches("*.example.com", "example.com"));
+        assert!(wildcard_matches("example.com", "example.com"));
+    }
+
+    #[test]
+    fn a_multi_san_certificate_must_cover_every_site_host() {
+        let wildcard = vec!["*.example.com".to_string()];
+        assert!(certificate_covers_site(
+            &wildcard,
+            &[
+                "mail.example.com".to_string(),
+                "drive.example.com".to_string()
+            ]
+        ));
+        let apex = vec!["example.com".to_string()];
+        assert!(!certificate_covers_site(
+            &apex,
+            &["mail.example.com".to_string()]
+        ));
+    }
+
+    #[test]
+    fn certificate_domains_normalise_and_dedupe() {
+        let domains = normalise_certificate_domains(&[
+            " Example.COM ".to_string(),
+            "example.com, WWW.example.com".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(domains, vec!["example.com", "www.example.com"]);
     }
 }

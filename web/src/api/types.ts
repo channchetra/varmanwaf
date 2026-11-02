@@ -1304,6 +1304,12 @@ export interface SslCertificate {
   id: string
   site_id: string
   domain: string
+  /** Every SAN on the certificate; includes `domain` for legacy rows. */
+  domains: string[]
+  /** Owner site when this row is a shared candidate on another site. */
+  owner_site_domain: string | null
+  /** True when the requesting site does not own this certificate. */
+  shared: boolean
   issuer: string | null
   not_before: string | null
   expires_at: string | null
@@ -1348,6 +1354,8 @@ export interface CreateSslRequest {
   /** Required by the global `/certificates` endpoint, ignored by the per-site one. */
   site_id?: string
   domain: string
+  /** Multi-domain SAN list; takes precedence over `domain` when present. */
+  domains?: string[]
   /** ACME automation. */
   auto_renew?: boolean
   acme_email?: string | null

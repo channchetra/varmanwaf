@@ -30,7 +30,14 @@ import { Tabs } from '@/components/ui/Tabs'
 import { Textarea } from '@/components/ui/Textarea'
 import { useToast } from '@/components/ui/Toast'
 import { errorMessage } from '@/api/errors'
-import { sslApi, sslKeys, daysUntilExpiry, expiryTone } from '@/api/ssl'
+import {
+  sslApi,
+  sslKeys,
+  certificateLabel,
+  daysUntilExpiry,
+  isAcmeCertificate,
+  expiryTone,
+} from '@/api/ssl'
 import { useCanWrite, useNow, useSitesList } from '@/hooks'
 import { formatDateTime } from '@/lib/format'
 import {
@@ -82,11 +89,6 @@ const emptyForm = (): FormState => ({
   activate: true,
   followLog: true,
 })
-
-/** ACME-issued rows carry an email or auto-renewal; the rest were uploaded. */
-function isAcme(cert: CertificateWithSite): boolean {
-  return cert.auto_renew || Boolean(cert.acme_email)
-}
 
 export function GlobalSslPage() {
   const { t } = useTranslation()
@@ -148,12 +150,12 @@ export function GlobalSslPage() {
       toast.success(
         t('pages.ssl.certCreated'),
         form.mode === 'acme'
-          ? t('pages.sslGlobal.acmeStarted', { domain: cert.domain })
-          : cert.domain,
+          ? t('pages.sslGlobal.acmeStarted', { domain: certificateLabel(cert) })
+          : certificateLabel(cert),
       )
       setDialogOpen(false)
       if (form.mode === 'acme' && form.followLog) {
-        setLiveCert({ id: cert.id, domain: cert.domain })
+        setLiveCert({ id: cert.id, domain: certificateLabel(cert) })
       }
       setForm(emptyForm())
       invalidate()
@@ -166,7 +168,10 @@ export function GlobalSslPage() {
     onSuccess: (_ack, id) => {
       toast.success(t('pages.ssl.renewStarted'), t('pages.sslGlobal.renewHint'))
       const cert = certs.find((item) => item.id === id)
-      setLiveCert({ id, domain: cert?.domain ?? '' })
+      setLiveCert({
+        id,
+        domain: cert ? certificateLabel(cert) : '',
+      })
       invalidate()
     },
     onError: (e) => toast.error(t('pages.sslGlobal.renewFailed'), errorMessage(e)),
@@ -175,7 +180,10 @@ export function GlobalSslPage() {
   const deleteCert = useMutation({
     mutationFn: (id: string) => sslApi.deleteGlobal(id),
     onSuccess: () => {
-      toast.success(t('pages.ssl.certDeleted'), pendingDelete?.domain)
+      toast.success(
+        t('pages.ssl.certDeleted'),
+        pendingDelete ? certificateLabel(pendingDelete) : undefined,
+      )
       setPendingDelete(null)
       invalidate()
     },
@@ -189,18 +197,22 @@ export function GlobalSslPage() {
   }
 
   const submit = () => {
-    const domain = form.domain.trim()
+    const domains = form.domain
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
     if (!form.siteId) {
       setFormError(t('pages.sslGlobal.siteRequired'))
       return
     }
-    if (!domain) {
+    if (domains.length === 0) {
       setFormError(t('pages.ssl.domainRequired'))
       return
     }
     const payload: CreateSslRequest & { site_id: string } = {
       site_id: form.siteId,
-      domain,
+      domain: domains.join(','),
+      domains,
       activate: form.activate,
     }
     if (form.mode === 'acme') {
@@ -256,11 +268,11 @@ export function GlobalSslPage() {
         variant="ghost"
         aria-label={t('pages.ssl.liveAction')}
         title={t('pages.ssl.liveAction')}
-        onClick={() => setLiveCert({ id: cert.id, domain: cert.domain })}
+        onClick={() => setLiveCert({ id: cert.id, domain: certificateLabel(cert) })}
       >
         <Terminal weight="duotone" className="h-4 w-4" />
       </Button>
-      {isAcme(cert) && (
+      {isAcmeCertificate(cert) && (
         <Button
           size="sm"
           variant="ghost"
@@ -288,11 +300,13 @@ export function GlobalSslPage() {
     {
       key: 'domain',
       header: t('pages.ssl.domain'),
-      accessor: (r) => r.domain,
+      accessor: (r) => certificateLabel(r),
       sortable: true,
       cell: (r) => (
         <div className="flex flex-col gap-0.5">
-          <span className="font-medium text-fg-strong">{r.domain}</span>
+          <span className="font-medium text-fg-strong">
+            {certificateLabel(r)}
+          </span>
           <span className="text-xs text-fg-subtle">
             {t(`pages.sslGlobal.status_${r.status}`, { defaultValue: r.status })}
           </span>
@@ -314,9 +328,9 @@ export function GlobalSslPage() {
     {
       key: 'type',
       header: t('common.type'),
-      accessor: (r) => (isAcme(r) ? 'acme' : 'manual'),
+      accessor: (r) => (isAcmeCertificate(r) ? 'acme' : 'manual'),
       cell: (r) =>
-        isAcme(r) ? (
+        isAcmeCertificate(r) ? (
           <Badge tone="brand" size="sm">
             <Lightning weight="duotone" className="h-3.5 w-3.5" />
             {t('pages.ssl.acme')}
@@ -719,11 +733,26 @@ export function GlobalSslPage() {
                 ...sites.map((s) => ({ value: s.id, label: `${s.domain} · ${s.name}` })),
               ]}
               value={form.siteId}
-              onChange={(e) => setForm((f) => ({ ...f, siteId: e.target.value }))}
+              onChange={(e) => {
+                const siteId = e.target.value
+                const selected = sites.find((site) => site.id === siteId)
+                setForm((current) => ({
+                  ...current,
+                  siteId,
+                  // Seed the SAN list with the site's hostnames; the operator
+                  // can add or remove entries before submitting.
+                  domain: current.domain.trim()
+                    ? current.domain
+                    : selected
+                      ? [selected.domain, ...(selected.alternate_domains ?? [])].join(', ')
+                      : '',
+                }))
+              }}
             />
             <Input
-              label={t('pages.ssl.domain')}
-              placeholder="example.com"
+              label={t('pages.ssl.domains')}
+              hint={t('pages.ssl.domainsHint')}
+              placeholder="example.com, www.example.com"
               containerClassName="pw-mono"
               value={form.domain}
               onChange={(e) => setForm((f) => ({ ...f, domain: e.target.value }))}
@@ -897,7 +926,9 @@ export function GlobalSslPage() {
         {pendingDelete && (
           <div className="flex items-center gap-2 rounded-md bg-recessed px-3 py-2 text-[13px]">
             <Globe weight="duotone" className="h-4 w-4 shrink-0 text-fg-subtle" />
-            <span className="pw-mono text-fg">{pendingDelete.domain}</span>
+            <span className="pw-mono text-fg">
+              {pendingDelete ? certificateLabel(pendingDelete) : ''}
+            </span>
             <span className="ml-auto text-xs text-fg-subtle">
               {pendingDelete.site_domain}
             </span>

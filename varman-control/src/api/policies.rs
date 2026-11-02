@@ -46,6 +46,9 @@ pub fn routes() -> Router<AppState> {
         .route("/policies/templates", get(list_templates))
         .route("/policies/recipes", get(list_recipes))
         .route("/policies/from-template", post(create_from_template))
+        .route("/policies/export", get(export_all_policies))
+        .route("/policies/import", post(import_policies))
+        .route("/policies/{id}/export", get(export_policy))
         .route("/policies/{id}/recipes", post(apply_recipe))
         .route(
             "/policies/{id}",
@@ -238,6 +241,58 @@ pub struct UpdatePolicyRequest {
     pub expected_revision: Option<i32>,
 }
 
+/// One policy as it travels in an export/import JSON document. The id and
+/// revision are deliberately omitted: an import always creates a new policy
+/// and starts its revision history at 1.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExportedPolicy {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub layers: BTreeMap<String, Value>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// `GET /policies/{id}/export` and one entry in a bundle.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PolicyExportDocument {
+    pub schema: String,
+    pub exported_at: DateTime<Utc>,
+    pub policy: ExportedPolicy,
+}
+
+/// `GET /policies/export` — every policy in one backup file.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PolicyBundleExport {
+    pub schema: String,
+    pub exported_at: DateTime<Utc>,
+    pub policies: Vec<ExportedPolicy>,
+}
+
+/// Accepts either a single-policy document or a bundle. `schema` is checked
+/// when present so a future incompatible format fails loudly instead of
+/// importing half-understood data.
+#[derive(Debug, Deserialize)]
+pub struct PolicyImportRequest {
+    #[serde(default)]
+    pub schema: Option<String>,
+    #[serde(default)]
+    pub policy: Option<ExportedPolicy>,
+    #[serde(default)]
+    pub policies: Option<Vec<ExportedPolicy>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PolicyImportResult {
+    pub imported: Vec<PolicyDetail>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct LayerRequest {
     pub config: Value,
@@ -421,6 +476,167 @@ async fn list_policies(
         })
         .collect();
     Ok(Json(items))
+}
+
+fn exported_policy_from(
+    policy: &waf_policy::Model,
+    layers: &[waf_policy_layer::Model],
+) -> ExportedPolicy {
+    ExportedPolicy {
+        name: policy.name.clone(),
+        description: policy.description.clone(),
+        enabled: policy.enabled,
+        layers: layers
+            .iter()
+            .map(|layer| (layer.kind.clone(), layer.config.clone()))
+            .collect(),
+    }
+}
+
+/// `GET /api/v1/policies/{id}/export` — one policy as a portable JSON file.
+async fn export_policy(
+    State(state): State<AppState>,
+    _current: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<PolicyExportDocument>, ApiError> {
+    let id = parse_uuid(&id, "policy id")?;
+    let policy = load_policy(&state, id).await?;
+    let layers = load_layers(&state, id).await?;
+    Ok(Json(PolicyExportDocument {
+        schema: "varmanwaf.policy/v1".to_string(),
+        exported_at: Utc::now(),
+        policy: exported_policy_from(&policy, &layers),
+    }))
+}
+
+/// `GET /api/v1/policies/export` — every policy in one backup document.
+async fn export_all_policies(
+    State(state): State<AppState>,
+    _current: AuthUser,
+) -> Result<Json<PolicyBundleExport>, ApiError> {
+    let policies = waf_policy::Entity::find()
+        .order_by_asc(waf_policy::Column::Name)
+        .all(&state.db)
+        .await?;
+    let layers = waf_policy_layer::Entity::find().all(&state.db).await?;
+    Ok(Json(PolicyBundleExport {
+        schema: "varmanwaf.policy-bundle/v1".to_string(),
+        exported_at: Utc::now(),
+        policies: policies
+            .iter()
+            .map(|policy| {
+                let own: Vec<waf_policy_layer::Model> = layers
+                    .iter()
+                    .filter(|layer| layer.policy_id == policy.id)
+                    .cloned()
+                    .collect();
+                exported_policy_from(policy, &own)
+            })
+            .collect(),
+    }))
+}
+
+/// Finds a free name for an imported policy. A collision gets a readable
+/// suffix instead of overwriting the live policy.
+async fn unique_policy_name(
+    state: &AppState,
+    requested: &str,
+) -> Result<String, ApiError> {
+    let base: String = requested.trim().chars().take(100).collect();
+    let exists = |name: &str| {
+        waf_policy::Entity::find()
+            .filter(waf_policy::Column::Name.eq(name.to_string()))
+            .one(&state.db)
+    };
+    if exists(&base).await?.is_none() {
+        return Ok(base);
+    }
+    for n in 1..1000 {
+        let candidate = if n == 1 {
+            format!("{base} (imported)")
+        } else {
+            format!("{base} (imported {n})")
+        };
+        if exists(&candidate).await?.is_none() {
+            return Ok(candidate);
+        }
+    }
+    Err(ApiError::Conflict(format!(
+        "could not find a free name for imported policy '{requested}'"
+    )))
+}
+
+/// `POST /api/v1/policies/import` — restores one policy or a full bundle.
+///
+/// Import never overwrites a live policy: name collisions get an
+/// `(imported)` suffix. Layer payloads are validated before anything is
+/// written, so a malformed backup cannot leave half a policy behind.
+async fn import_policies(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Json(payload): Json<PolicyImportRequest>,
+) -> Result<Json<PolicyImportResult>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
+
+    if let Some(schema) = payload.schema.as_deref() {
+        if !schema.starts_with("varmanwaf.policy") {
+            return Err(ApiError::BadRequest(format!(
+                "unsupported policy export schema '{schema}'"
+            )));
+        }
+    }
+
+    let specs = match (payload.policy, payload.policies) {
+        (Some(_), Some(_)) => {
+            return Err(ApiError::BadRequest(
+                "provide either 'policy' or 'policies', not both".to_string(),
+            ))
+        },
+        (Some(policy), None) => vec![policy],
+        (None, Some(policies)) if !policies.is_empty() => policies,
+        (None, Some(_)) => {
+            return Err(ApiError::BadRequest(
+                "the import document contains no policies".to_string(),
+            ))
+        },
+        (None, None) => {
+            return Err(ApiError::BadRequest(
+                "the import document contains no 'policy' or 'policies' field"
+                    .to_string(),
+            ))
+        },
+    };
+
+    // Validate the whole document before writing anything.
+    for spec in &specs {
+        validate_name(&spec.name)?;
+        for (kind, config) in &spec.layers {
+            validate_layer_payload(kind, config)?;
+        }
+    }
+
+    let mut imported = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let name = unique_policy_name(&state, &spec.name).await?;
+        let layers: BTreeMap<String, Value> = spec.layers.into_iter().collect();
+        let policy = create_policy_with_layers(
+            &state,
+            &current.email,
+            name,
+            spec.description,
+            spec.enabled,
+            &layers,
+        )
+        .await?;
+        imported.push(respond_with_detail(&state, &policy).await?.0);
+    }
+
+    tracing::info!(
+        count = imported.len(),
+        actor = %current.email,
+        "waf policies imported"
+    );
+    Ok(Json(PolicyImportResult { imported }))
 }
 
 /// `POST /api/v1/policies` - creates a policy, optionally with layers.
@@ -1707,4 +1923,51 @@ async fn respond_with_detail(
             .collect(),
         sites,
     }))
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+
+    fn sample_policy() -> ExportedPolicy {
+        ExportedPolicy {
+            name: "baseline".to_string(),
+            description: "shared posture".to_string(),
+            enabled: true,
+            layers: [(
+                "engine".to_string(),
+                serde_json::json!({ "mode": "monitor" }),
+            )]
+            .into_iter()
+            .collect(),
+        }
+    }
+
+    #[test]
+    fn single_policy_export_roundtrips_through_import_shape() {
+        let document = PolicyExportDocument {
+            schema: "varmanwaf.policy/v1".to_string(),
+            exported_at: Utc::now(),
+            policy: sample_policy(),
+        };
+        let value = serde_json::to_value(&document).unwrap();
+        let parsed: PolicyImportRequest =
+            serde_json::from_value(value).unwrap();
+        let policy = parsed.policy.expect("single policy");
+        assert_eq!(policy.name, "baseline");
+        assert_eq!(policy.layers["engine"]["mode"], "monitor");
+    }
+
+    #[test]
+    fn bundle_export_roundtrips_through_import_shape() {
+        let document = PolicyBundleExport {
+            schema: "varmanwaf.policy-bundle/v1".to_string(),
+            exported_at: Utc::now(),
+            policies: vec![sample_policy(), sample_policy()],
+        };
+        let value = serde_json::to_value(&document).unwrap();
+        let parsed: PolicyImportRequest =
+            serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.policies.expect("bundle").len(), 2);
+    }
 }

@@ -1,13 +1,15 @@
-import { useState } from 'react'
+import { useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CaretRight,
+  DownloadSimple,
   Play,
   Plus,
   Stack,
   Trash,
+  UploadSimple,
 } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -27,6 +29,7 @@ import { ErrorState } from '@/components/ErrorState'
 import { PolicyTesterDialog } from '@/components/PolicyTesterDialog'
 import { useCanWrite } from '@/hooks'
 import { cn } from '@/lib/utils'
+import { errorMessage } from '@/api/errors'
 import { crsApi, crsKeys } from '@/api/crs'
 import {
   EXCLUSION_TARGETS,
@@ -44,6 +47,7 @@ import {
   type IpAccessLayerConfig,
   type IpAccessLayerRule,
   type PolicyDetail,
+  type PolicyImportDocument,
   type PolicyLayerKind,
   type PolicyPreview,
   type PolicyRule,
@@ -79,6 +83,27 @@ export const LAYER_TABS: PolicyLayerKind[] = [
   'crs_import',
 ]
 
+function downloadJson(filename: string, data: unknown) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: 'application/json',
+  })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+function policyFilename(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+  return `varman-policy-${slug || 'policy'}.json`
+}
+
 /**
  * Global WAF policies: shared, revisioned configuration documents sites can
  * follow. Unassigned sites keep their own settings, so creating a policy has
@@ -107,6 +132,64 @@ export function PoliciesPage() {
     },
   })
 
+  const fileInput = useRef<HTMLInputElement>(null)
+
+  const exportOne = useMutation({
+    mutationFn: async (policy: PolicySummary) => ({
+      policy,
+      document: await policiesApi.exportPolicy(policy.id),
+    }),
+    onSuccess: ({ policy, document }) => {
+      downloadJson(policyFilename(policy.name), document)
+      toast.success(t('pages.policies.exported'), policy.name)
+    },
+    onError: (error) =>
+      toast.error(t('pages.policies.exportFailed'), errorMessage(error)),
+  })
+
+  const exportAll = useMutation({
+    mutationFn: () => policiesApi.exportAll(),
+    onSuccess: (document) => {
+      const date = new Date().toISOString().slice(0, 10)
+      downloadJson(`varman-policies-${date}.json`, document)
+      toast.success(
+        t('pages.policies.exportedAll', { count: document.policies.length }),
+      )
+    },
+    onError: (error) =>
+      toast.error(t('pages.policies.exportFailed'), errorMessage(error)),
+  })
+
+  const importPolicies = useMutation({
+    mutationFn: (document: PolicyImportDocument) =>
+      policiesApi.importPolicies(document),
+    onSuccess: (result) => {
+      toast.success(
+        t('pages.policies.imported', { count: result.imported.length }),
+        result.imported.map((policy) => policy.name).join(', '),
+      )
+      void queryClient.invalidateQueries({ queryKey: policyKeys.all })
+    },
+    onError: (error) =>
+      toast.error(t('pages.policies.importFailed'), errorMessage(error)),
+  })
+
+  const onImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    // Allow choosing the same file again after a failed import.
+    event.target.value = ''
+    if (!file) return
+    try {
+      const document = JSON.parse(await file.text()) as PolicyImportDocument
+      importPolicies.mutate(document)
+    } catch (error) {
+      toast.error(
+        t('pages.policies.importFailed'),
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+  }
+
   if (list.isError && !list.data) {
     return (
       <div className="animate-slide-up">
@@ -133,13 +216,38 @@ export function PoliciesPage() {
           </p>
         </div>
         {canWrite && (
-          <Button
-            variant="primary"
-            icon={<Plus weight="bold" className="h-4 w-4" />}
-            onClick={() => setCreateOpen(true)}
-          >
-            {t('pages.policies.new')}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={fileInput}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={onImportFile}
+            />
+            <Button
+              variant="secondary"
+              icon={<UploadSimple weight="bold" className="h-4 w-4" />}
+              loading={importPolicies.isPending}
+              onClick={() => fileInput.current?.click()}
+            >
+              {t('pages.policies.import')}
+            </Button>
+            <Button
+              variant="secondary"
+              icon={<DownloadSimple weight="bold" className="h-4 w-4" />}
+              loading={exportAll.isPending}
+              onClick={() => exportAll.mutate()}
+            >
+              {t('pages.policies.exportAll')}
+            </Button>
+            <Button
+              variant="primary"
+              icon={<Plus weight="bold" className="h-4 w-4" />}
+              onClick={() => setCreateOpen(true)}
+            >
+              {t('pages.policies.new')}
+            </Button>
+          </div>
         )}
       </div>
 
@@ -231,16 +339,29 @@ export function PoliciesPage() {
                     <CaretRight weight="bold" className="h-3.5 w-3.5" />
                   </span>
                 </Link>
-                {canWrite && (
+                <div className="flex items-center gap-1">
                   <Button
                     size="sm"
                     variant="ghost"
-                    icon={<Trash className="h-4 w-4" />}
-                    onClick={() => setDeleteTarget(policy)}
+                    icon={<DownloadSimple className="h-4 w-4" />}
+                    loading={
+                      exportOne.isPending && exportOne.variables?.id === policy.id
+                    }
+                    onClick={() => exportOne.mutate(policy)}
                   >
-                    {t('common.delete')}
+                    {t('pages.policies.export')}
                   </Button>
-                )}
+                  {canWrite && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={<Trash className="h-4 w-4" />}
+                      onClick={() => setDeleteTarget(policy)}
+                    >
+                      {t('common.delete')}
+                    </Button>
+                  )}
+                </div>
               </CardFooter>
             </Card>
           ))}

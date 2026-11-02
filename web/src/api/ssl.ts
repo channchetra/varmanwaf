@@ -21,6 +21,36 @@ export interface RenewalAck {
 }
 
 /**
+ * ACME-managed rows have no PEM in the control plane (the key stays on the
+ * edge). A manual upload always has one, even if `auto_renew` was left on.
+ */
+export function isAcmeCertificate(cert: {
+  has_certificate: boolean
+  auto_renew: boolean
+  acme_email: string | null
+}): boolean {
+  return !cert.has_certificate && (cert.auto_renew || Boolean(cert.acme_email))
+}
+
+/** Every SAN on a certificate, including legacy rows with only `domain`. */
+export function certificateDomains(cert: {
+  domain: string
+  domains?: string[]
+}): string[] {
+  return cert.domains?.length ? cert.domains : [cert.domain]
+}
+
+/** Compact multi-domain label: `example.com +2`. */
+export function certificateLabel(cert: {
+  domain: string
+  domains?: string[]
+}): string {
+  const domains = certificateDomains(cert)
+  if (domains.length <= 1) return domains[0] ?? cert.domain
+  return `${domains[0]} +${domains.length - 1}`
+}
+
+/**
  * SSL / TLS — two surfaces over the same certificate rows.
  *
  * - **Per site**: the certificates that site may serve and its TLS posture —

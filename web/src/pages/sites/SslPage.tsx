@@ -31,7 +31,14 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonRows, SkeletonStat } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ErrorState'
-import { sslApi, sslKeys, daysUntilExpiry, expiryTone } from '@/api/ssl'
+import {
+  sslApi,
+  sslKeys,
+  certificateLabel,
+  daysUntilExpiry,
+  isAcmeCertificate,
+  expiryTone,
+} from '@/api/ssl'
 import { MtlsMaterial } from '@/pages/sites/MtlsMaterial'
 import { useCanWrite, useNow } from '@/hooks'
 import { cn } from '@/lib/utils'
@@ -106,7 +113,11 @@ const toDrafts = (s: SslSettings): PostureDrafts => ({
 
 /** A label for the certificate picker: domain plus expiry, when recorded. */
 function certOptionLabel(cert: SslCertificate): string {
-  return cert.expires_at ? `${cert.domain} · ${formatDate(cert.expires_at)}` : cert.domain
+  const label = certificateLabel(cert)
+  const shared = cert.shared ? ` · ${cert.owner_site_domain ?? 'shared'}` : ''
+  return cert.expires_at
+    ? `${label}${shared} · ${formatDate(cert.expires_at)}`
+    : `${label}${shared}`
 }
 
 /**
@@ -223,7 +234,7 @@ export function SslPage() {
   const renew = useMutation({
     mutationFn: (cert: SslCertificate) => sslApi.renew(siteId, cert.id),
     onSuccess: (ack, cert) => {
-      toast.success(t('pages.ssl.renewStarted'), ack.message || cert.domain)
+      toast.success(t('pages.ssl.renewStarted'), ack.message || certificateLabel(cert))
       setLiveCert(cert)
       invalidateCerts()
     },
@@ -232,7 +243,13 @@ export function SslPage() {
   const remove = useMutation({
     mutationFn: (id: string) => sslApi.delete(siteId, id),
     onSuccess: (_data, id) => {
-      toast.success(t('pages.ssl.certDeleted'), certs.find((c) => c.id === id)?.domain)
+      toast.success(
+        t('pages.ssl.certDeleted'),
+        (() => {
+          const cert = certs.find((c) => c.id === id)
+          return cert ? certificateLabel(cert) : undefined
+        })(),
+      )
       // A deleted certificate must not stay selected, or the next save would
       // send an id the server no longer recognises.
       setDrafts((prev) =>
@@ -301,7 +318,8 @@ export function SslPage() {
   const setAsCurrent = (cert: SslCertificate) => {
     saveSettings.mutate(
       { scope: 'https', payload: { self_signed: false, certificate_id: cert.id } },
-      { onSuccess: () => toast.success(t('pages.ssl.currentSet'), cert.domain) },
+      { onSuccess: () =>
+        toast.success(t('pages.ssl.currentSet'), certificateLabel(cert)) },
     )
   }
 
@@ -312,7 +330,7 @@ export function SslPage() {
     {
       key: 'domain',
       header: t('pages.ssl.domain'),
-      accessor: (c) => c.domain,
+      accessor: (c) => certificateLabel(c),
       sortable: true,
       cell: (c) => (
         <div className="flex items-center gap-2">
@@ -327,11 +345,16 @@ export function SslPage() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <p className="pw-mono truncate text-[13px] font-medium text-fg-strong">
-                {c.domain}
+                {certificateLabel(c)}
               </p>
               {isCurrent(c) && (
                 <Badge tone="brand" size="sm">
                   {t('pages.ssl.current')}
+                </Badge>
+              )}
+              {c.shared && (
+                <Badge tone="info" size="sm">
+                  {t('pages.ssl.shared')}
                 </Badge>
               )}
             </div>
@@ -411,23 +434,27 @@ export function SslPage() {
             onClick={() => setLiveCert(c)}
             icon={<Terminal weight="duotone" className="h-4 w-4" />}
           />
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label={t('pages.ssl.renew')}
-            disabled={!canWrite || renew.isPending}
-            onClick={() => renew.mutate(c)}
-            icon={<ArrowsClockwise weight="duotone" className="h-4 w-4" />}
-          />
-          <Button
-            size="icon"
-            variant="ghost"
-            className="hover:text-fg-danger"
-            aria-label={t('common.delete')}
-            disabled={!canWrite}
-            onClick={() => setPendingDelete(c)}
-            icon={<Trash weight="duotone" className="h-4 w-4" />}
-          />
+          {c.site_id === siteId && isAcmeCertificate(c) && (
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={t('pages.ssl.renew')}
+              disabled={!canWrite || renew.isPending}
+              onClick={() => renew.mutate(c)}
+              icon={<ArrowsClockwise weight="duotone" className="h-4 w-4" />}
+            />
+          )}
+          {c.site_id === siteId && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="hover:text-fg-danger"
+              aria-label={t('common.delete')}
+              disabled={!canWrite}
+              onClick={() => setPendingDelete(c)}
+              icon={<Trash weight="duotone" className="h-4 w-4" />}
+            />
+          )}
         </div>
       ),
     },
@@ -527,7 +554,7 @@ export function SslPage() {
                   ) : currentCert ? (
                     <>
                       <span className="pw-mono text-[13px] font-medium text-fg-strong">
-                        {currentCert.domain}
+                        {certificateLabel(currentCert)}
                       </span>
                       <span className="text-xs text-fg-subtle">
                         {currentCert.issuer || t('pages.ssl.unknownIssuer')}
@@ -879,7 +906,11 @@ export function SslPage() {
       >
         {details && (
           <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-            <Detail label={t('pages.ssl.domain')} value={details.domain} mono />
+            <Detail
+              label={t('pages.ssl.domain')}
+              value={details.domains?.join(', ') ?? details.domain}
+              mono
+            />
             <Detail label={t('pages.ssl.issuer')} value={details.issuer || '—'} />
             <Detail label={t('pages.ssl.expires')} value={formatDateTime(details.expires_at)} />
             <Detail
@@ -909,7 +940,7 @@ export function SslPage() {
         {pendingDelete && (
           <div className="rounded-md border border-line bg-recessed px-3 py-2">
             <p className="pw-mono text-[13px] font-medium text-fg-strong">
-              {pendingDelete.domain}
+              {certificateLabel(pendingDelete)}
             </p>
           </div>
         )}
@@ -918,7 +949,7 @@ export function SslPage() {
       <CertificateLiveLog
         open={liveCert !== null}
         certificateId={liveCert?.id ?? null}
-        domain={liveCert?.domain}
+        domain={liveCert ? certificateLabel(liveCert) : undefined}
         onClose={() => setLiveCert(null)}
       />
     </div>

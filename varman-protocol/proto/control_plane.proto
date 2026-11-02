@@ -675,6 +675,10 @@ message SslConfig {
   // Whether a client certificate is required at all; defaults to
   // `mtls_enabled` when unset for backward compatibility.
   bool mtls_require_client_cert = 20;
+  // Hostnames the selected certificate covers (SAN list). Empty keeps the
+  // historical behaviour: derive the ACME order from the site's primary and
+  // alternate domains. A multi-domain certificate row sets this explicitly.
+  repeated string domains = 21;
 }
 
 enum AcmeChallengeType {

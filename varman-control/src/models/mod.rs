@@ -70,7 +70,7 @@ pub use api_protection::{
     api_protection_settings as api_protection_setting,
     control_plane_access_logs as control_plane_access_log,
 };
-pub use certificates::site_certificates;
+pub use certificates::{site_certificate_bindings, site_certificates};
 pub use config_versions as config_version;
 pub use control_plane_tls::{
     control_plane_certificates as control_plane_certificate,

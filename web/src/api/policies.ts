@@ -58,6 +58,42 @@ export interface PolicyDetail extends PolicySummary {
   sites: PolicySiteRef[]
 }
 
+/** One policy as it travels in an export/import JSON document. */
+export interface ExportedPolicy {
+  name: string
+  description: string
+  enabled: boolean
+  layers: Partial<Record<PolicyLayerKind, unknown>>
+}
+
+/** `GET /policies/{id}/export` */
+export interface PolicyExportDocument {
+  schema: string
+  exported_at: string
+  policy: ExportedPolicy
+}
+
+/** `GET /policies/export` */
+export interface PolicyBundleExport {
+  schema: string
+  exported_at: string
+  policies: ExportedPolicy[]
+}
+
+/** `POST /policies/import` accepts either document shape. */
+export type PolicyImportDocument =
+  | PolicyExportDocument
+  | PolicyBundleExport
+  | {
+      schema?: string
+      policy?: ExportedPolicy
+      policies?: ExportedPolicy[]
+    }
+
+export interface PolicyImportResult {
+  imported: PolicyDetail[]
+}
+
 /** One custom rule authored inside a policy's `custom_rules` layer. */
 export interface PolicyRule {
   name: string
@@ -420,6 +456,14 @@ export const policiesApi = {
     apiClient.put<PolicyDetail>(`/policies/${id}`, data),
 
   remove: (id: string) => apiClient.delete<void>(`/policies/${id}`),
+
+  exportPolicy: (id: string) =>
+    apiClient.get<PolicyExportDocument>(`/policies/${id}/export`),
+
+  exportAll: () => apiClient.get<PolicyBundleExport>('/policies/export'),
+
+  importPolicies: (document: PolicyImportDocument) =>
+    apiClient.post<PolicyImportResult>('/policies/import', document),
 
   putLayer: (id: string, kind: PolicyLayerKind, config: unknown) =>
     apiClient.put<PolicyLayer>(`/policies/${id}/layers/${kind}`, { config }),

@@ -29,9 +29,9 @@ use crate::auth::AuthUser;
 use crate::grpc::notify_config_changed;
 use crate::models::{
     acme_challenge, cache_rules, ip_groups, rate_limit_rules, route_match_type,
-    rule, rule_groups, site, site_certificates, site_routes, site_ssl,
-    site_status, site_upstream_pools, site_upstreams, tls_version,
-    trusted_header,
+    rule, rule_groups, site, site_certificate_bindings, site_certificates,
+    site_routes, site_ssl, site_status, site_upstream_pools, site_upstreams,
+    tls_version, trusted_header,
 };
 
 /// Public representation of a site.
@@ -709,6 +709,38 @@ impl TlsPosture {
     }
 }
 
+fn site_domain_set(site: &site::Model) -> Vec<String> {
+    let mut domains = vec![site.domain.to_ascii_lowercase()];
+    domains.extend(
+        site.alternate_domains
+            .iter()
+            .map(|domain| domain.to_ascii_lowercase()),
+    );
+    domains
+}
+
+fn wildcard_covers(pattern: &str, host: &str) -> bool {
+    if pattern == host {
+        return true;
+    }
+    let Some(base) = pattern.strip_prefix("*.") else {
+        return false;
+    };
+    let Some(prefix) = host.strip_suffix(&format!(".{base}")) else {
+        return false;
+    };
+    !prefix.is_empty() && !prefix.contains('.')
+}
+
+fn certificate_domains_cover(
+    cert_domains: &[String],
+    hosts: &[String],
+) -> bool {
+    hosts
+        .iter()
+        .all(|host| cert_domains.iter().any(|cert| wildcard_covers(cert, host)))
+}
+
 /// Applies a TLS posture request to the site's `site_ssl` row, creating the row
 /// when the site has none. Returns the stored posture.
 ///
@@ -718,6 +750,7 @@ pub(crate) async fn save_tls_posture<C: ConnectionTrait>(
     db: &C,
     site: &site::Model,
     req: &TlsPostureRequest,
+    actor: Option<&AuthUser>,
 ) -> Result<TlsPosture, ApiError> {
     let existing = site_ssl::Entity::find()
         .filter(site_ssl::Column::SiteId.eq(site.id))
@@ -725,15 +758,72 @@ pub(crate) async fn save_tls_posture<C: ConnectionTrait>(
         .await?;
 
     if let Some(Some(cert_id)) = req.certificate_id {
-        let owned = site_certificates::Entity::find_by_id(cert_id)
-            .filter(site_certificates::Column::SiteId.eq(site.id))
+        let certificate = site_certificates::Entity::find_by_id(cert_id)
             .one(db)
             .await?
-            .is_some();
-        if !owned {
-            return Err(ApiError::BadRequest(format!(
-                "certificate {cert_id} does not belong to this site"
-            )));
+            .ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "certificate {cert_id} does not exist"
+                ))
+            })?;
+
+        if certificate.site_id != site.id {
+            // Sharing is limited to imported PEM pairs: an ACME-managed
+            // certificate's private key only exists on its owner's edge, so
+            // another site could not renew or serve it independently.
+            let shareable = certificate
+                .cert_pem
+                .as_deref()
+                .is_some_and(|pem| !pem.trim().is_empty());
+            if !shareable {
+                return Err(ApiError::BadRequest(
+                    "only imported certificates can be used by another site; ACME-managed certificates stay with their owner site"
+                        .to_string(),
+                ));
+            }
+
+            let already_bound = site_certificate_bindings::Entity::find()
+                .filter(
+                    site_certificate_bindings::Column::CertificateId
+                        .eq(cert_id),
+                )
+                .filter(site_certificate_bindings::Column::SiteId.eq(site.id))
+                .one(db)
+                .await?
+                .is_some();
+
+            let owner = site::Entity::find_by_id(certificate.site_id)
+                .one(db)
+                .await?;
+            let allowed = already_bound
+                || owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.user_id == site.user_id)
+                || actor.is_some_and(|actor| actor.is_admin());
+            if !allowed {
+                return Err(ApiError::Forbidden(
+                    "this certificate belongs to another account".to_string(),
+                ));
+            }
+
+            let hosts = site_domain_set(site);
+            if !certificate_domains_cover(&certificate.domains(), &hosts) {
+                return Err(ApiError::BadRequest(format!(
+                    "certificate {cert_id} does not cover this site's domains ({})",
+                    hosts.join(", ")
+                )));
+            }
+
+            if !already_bound {
+                site_certificate_bindings::ActiveModel {
+                    id: Set(Uuid::new_v4()),
+                    certificate_id: Set(cert_id),
+                    site_id: Set(site.id),
+                    created_at: Set(Utc::now()),
+                }
+                .insert(db)
+                .await?;
+            }
         }
     }
 
@@ -2094,7 +2184,8 @@ async fn upsert_ssl(
     {
         tls.https_enabled = Some(true);
     }
-    let posture = save_tls_posture(&state.db, &site, &tls).await?;
+    let posture =
+        save_tls_posture(&state.db, &site, &tls, Some(&current)).await?;
 
     let existing = site_ssl::Entity::find()
         .filter(site_ssl::Column::SiteId.eq(id))

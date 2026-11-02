@@ -670,7 +670,11 @@ fn cached_rules_to_pingap_config(
         if let Some(ref ssl) = site.ssl_config
             && ssl.enabled
         {
-            let domains = if site.alternate_domains.is_empty() {
+            // A multi-domain certificate row carries its SAN list explicitly;
+            // otherwise keep the historical site-domain fallback.
+            let domains = if !ssl.domains.is_empty() {
+                ssl.domains.join(",")
+            } else if site.alternate_domains.is_empty() {
                 site.domain.clone()
             } else {
                 let mut d = vec![site.domain.clone()];
@@ -2687,6 +2691,7 @@ mod tests {
             mtls_enabled: false,
             mtls_client_ca: String::new(),
             certificate_id: String::new(),
+            domains: vec![],
             mtls_revoked_fingerprints: vec![],
             mtls_organization: String::new(),
             mtls_require_client_cert: Some(false),
