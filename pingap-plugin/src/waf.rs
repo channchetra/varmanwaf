@@ -68,6 +68,7 @@ use varman_agent::{AccessLogEntry, SecurityEvent, VarmanAgent};
 use varman_challenge::{
     CLEARANCE_COOKIE_NAME, CookieManager, generate_request_id,
 };
+use varman_waf::pipeline::Action;
 use varman_waf::rules::{
     EvalContext, Expression, evaluate as evaluate_expression, parse_expression,
 };
@@ -1777,6 +1778,10 @@ struct StreamState {
     aborted: bool,
     /// Set when the response was a 101 WebSocket upgrade.
     websocket: bool,
+    /// Whether findings on this stream may be enforced. False for a
+    /// monitor/off site and for a legacy/shadow engine; those findings are
+    /// recorded as monitor events instead of closing the connection.
+    enforce: bool,
     /// Frame decoders for an upgraded connection.
     inspector: StreamInspector,
     /// Request identity for abort events, snapshotted at the 101.
@@ -3591,8 +3596,10 @@ impl Plugin for WafPlugin {
                         country_code: entry.country_code.clone(),
                     })
                     .unwrap_or_default();
+                let enforce = self.stream_enforcement(&facts.host);
                 with_stream(&request_id, |state| {
                     state.websocket = true;
+                    state.enforce = enforce;
                     state.facts = facts;
                 });
             }
@@ -3822,28 +3829,74 @@ impl Plugin for WafPlugin {
 }
 
 impl WafPlugin {
+    /// Whether stream findings for `host` may be enforced.
+    ///
+    /// The site's `mode` caps every engine path, and the Varman stream
+    /// inspector is only active for a Varman engine. A monitor/off site or a
+    /// legacy/shadow engine records stream findings as monitor events; it
+    /// never closes the connection.
+    fn stream_enforcement(&self, host: &str) -> bool {
+        let resolved = self.resolve_site(host);
+        let Some(context) = resolved.context else {
+            // Standalone mode: follow the plugin's own mode.
+            return self.mode == WafMode::Block;
+        };
+        if context.mode != Some(WafMode::Block) {
+            return false;
+        }
+        match context.engine_mode.to_ascii_lowercase().as_str() {
+            "legacy" | "shadow" => false,
+            "varman" => true,
+            // `inherit`/empty follows the process-wide engine. The stream
+            // inspector is the Varman pipeline, so only `varman` enforces.
+            "inherit" | "" => std::env::var("VARMAN_WAF_ENGINE")
+                .map(|value| value.eq_ignore_ascii_case("varman"))
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    fn stream_enforcement_for_request(&self, request_id: &str) -> bool {
+        let host = PENDING_ACCESS
+            .get(request_id)
+            .map(|entry| entry.host.clone())
+            .unwrap_or_default();
+        self.stream_enforcement(&host)
+    }
+
     /// Sliding-window scan of a forwarded body chunk. A payload found here
-    /// returns the standard block page: the server writes it to the client
-    /// (nothing has been sent downstream yet) and aborts the upstream
-    /// exchange, so a tail payload surfaces as a clean 403.
+    /// returns the standard block page only when the finding is enforcing;
+    /// a monitor/log finding is recorded and the body continues.
     fn inspect_tail(
         &self,
         request_id: &str,
         ctx: &mut Ctx,
         bytes: &Bytes,
     ) -> Option<HttpResponse> {
+        let enforce = self.stream_enforcement_for_request(request_id);
         let finding = with_stream(request_id, |state| {
             if state.aborted {
                 return None;
             }
             state.tail.push(bytes)
-        });
-        let (rule_id, detail) = finding?;
-        self.record_stream_abort(request_id, ctx, &rule_id, &detail);
-        Some(block_page(
-            request_id,
-            &format!("varman: {rule_id}: {detail}"),
-        ))
+        })?;
+        let (rule_id, detail) = match &finding {
+            StreamFinding::Protocol(reason) => (
+                "ws.protocol_violation".to_string(),
+                format!("malformed WebSocket frame: {reason}"),
+            ),
+            StreamFinding::Payload {
+                rule_id, detail, ..
+            } => (rule_id.clone(), detail.clone()),
+        };
+        if self.record_stream_finding(request_id, ctx, &finding, enforce) {
+            Some(block_page(
+                request_id,
+                &format!("varman: {rule_id}: {detail}"),
+            ))
+        } else {
+            None
+        }
     }
 
     /// Frame inspection of an upgraded connection, one direction per call.
@@ -3857,25 +3910,28 @@ impl WafPlugin {
         bytes: &Bytes,
         end_of_stream: bool,
     ) -> pingora::Result<()> {
-        let finding = with_stream(request_id, |state| {
+        let (finding, enforce) = with_stream(request_id, |state| {
             if !state.websocket || state.aborted {
-                return None;
+                return (None, state.enforce);
             }
-            state.inspector.inspect(from_client, bytes)
+            (state.inspector.inspect(from_client, bytes), state.enforce)
         });
         if let Some(finding) = finding {
-            let (rule_id, detail) = match finding {
-                StreamFinding::Payload { rule_id, detail } => (rule_id, detail),
+            let (rule_id, detail) = match &finding {
                 StreamFinding::Protocol(reason) => (
                     "ws.protocol_violation".to_string(),
                     format!("malformed WebSocket frame: {reason}"),
                 ),
+                StreamFinding::Payload {
+                    rule_id, detail, ..
+                } => (rule_id.clone(), detail.clone()),
             };
-            self.record_stream_abort(request_id, ctx, &rule_id, &detail);
-            return Err(new_internal_error(
-                403,
-                format!("varman: {rule_id}: {detail}"),
-            ));
+            if self.record_stream_finding(request_id, ctx, &finding, enforce) {
+                return Err(new_internal_error(
+                    403,
+                    format!("varman: {rule_id}: {detail}"),
+                ));
+            }
         }
         if end_of_stream {
             STREAMS.remove(request_id);
@@ -3883,27 +3939,54 @@ impl WafPlugin {
         Ok(())
     }
 
-    /// Record a stream finding and mark the stream aborted. The security
-    /// event carries the full reason; the pending access entry is preferred
-    /// while it exists (tail aborts), and for tunnel aborts the snapshot
-    /// taken at the 101 is used. The caller decides the wire outcome: a
-    /// block page for a tail finding, a connection error inside the tunnel.
-    fn record_stream_abort(
+    /// Record a stream finding. Only a `Block`/`Challenge` finding on an
+    /// enforcing site closes the stream; a `Log`/`Monitor` finding (or any
+    /// finding on a monitor/legacy site) is a monitor event and the stream
+    /// continues. Returns whether the caller must abort.
+    fn record_stream_finding(
         &self,
         request_id: &str,
         _ctx: &mut Ctx,
-        rule_id: &str,
-        detail: &str,
-    ) {
+        finding: &StreamFinding,
+        enforce: bool,
+    ) -> bool {
+        let (rule_id, detail, action, score) = match finding {
+            StreamFinding::Protocol(reason) => (
+                "ws.protocol_violation".to_string(),
+                format!("malformed WebSocket frame: {reason}"),
+                Action::Block,
+                0,
+            ),
+            StreamFinding::Payload {
+                rule_id,
+                detail,
+                action,
+                score,
+            } => (rule_id.clone(), detail.clone(), *action, *score),
+        };
+        let blocking =
+            enforce && matches!(action, Action::Block | Action::Challenge);
         let facts = with_stream(request_id, |state| {
-            state.aborted = true;
+            if blocking || matches!(finding, StreamFinding::Protocol(_)) {
+                state.aborted = true;
+            }
             state.facts.clone()
         });
-        tracing::warn!(
-            rule_id,
-            detail,
-            "stream inspection aborted the connection"
-        );
+        if blocking {
+            tracing::warn!(
+                rule_id,
+                detail,
+                score,
+                "stream inspection aborted the connection"
+            );
+        } else {
+            tracing::info!(
+                rule_id,
+                detail,
+                score,
+                "stream inspection recorded a monitor-only finding"
+            );
+        }
         if let Some(agent) = VarmanAgent::instance() {
             let from_pending =
                 PENDING_ACCESS.get(request_id).map(|entry| StreamFacts {
@@ -3919,7 +4002,8 @@ impl WafPlugin {
                     country_code: entry.country_code.clone(),
                 });
             let facts = from_pending.unwrap_or(facts);
-            agent.record_request(true);
+            let tag = rule_id.clone();
+            agent.record_request(blocking);
             agent.log_security_event(SecurityEvent {
                 site_id: facts.site_id,
                 request_id: request_id.to_string(),
@@ -3930,19 +4014,22 @@ impl WafPlugin {
                 host: facts.host,
                 path: facts.path,
                 query_string: facts.query,
-                rule_id: rule_id.to_string(),
+                rule_id,
                 rule_name: "stream-inspection".to_string(),
                 event_type: "waf".to_string(),
-                action: "block".to_string(),
-                score: 40,
-                details: detail.to_string(),
-                response_status: 0,
+                action: if blocking { "block" } else { "monitor" }.to_string(),
+                score,
+                details: detail,
+                response_status: if blocking { 403 } else { 0 },
                 user_agent: facts.user_agent,
                 country_code: facts.country_code,
-                matched_tags: vec![rule_id.to_string()],
+                matched_tags: vec![tag],
             });
         }
-        STREAMS.remove(request_id);
+        if blocking {
+            STREAMS.remove(request_id);
+        }
+        blocking
     }
 }
 
@@ -4787,6 +4874,69 @@ advanced_mode = true
             panic!("expected the mode change to be enforced");
         };
         assert_eq!(http::StatusCode::FORBIDDEN, resp.status);
+    }
+
+    /// Stream inspection is capped by the site mode and the engine: a
+    /// monitor/legacy site must never close a WebSocket tunnel.
+    #[tokio::test]
+    async fn stream_enforcement_follows_mode_and_engine() {
+        fn config(mode: i32, engine_mode: &str) -> proto::SiteConfig {
+            proto::SiteConfig {
+                sites: vec![proto::Site {
+                    id: "site-1".to_string(),
+                    name: "example".to_string(),
+                    domain: "example.com".to_string(),
+                    alternate_domains: Vec::new(),
+                    rules: Some(proto::RuleBundle {
+                        site_id: "site-1".to_string(),
+                        config_hash: format!("hash-{mode}-{engine_mode}"),
+                        waf: Some(proto::WafConfig {
+                            enabled: true,
+                            mode,
+                            engine_mode: engine_mode.to_string(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                config_hash: format!("full-{mode}-{engine_mode}"),
+                updated_at: None,
+            }
+        }
+
+        let (_guard, agent, _dir) = install_test_agent().await;
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+
+        agent
+            .rule_cache
+            .update_from_site_config(&config(1, "varman"))
+            .unwrap();
+        assert!(
+            !plugin.stream_enforcement("example.com"),
+            "monitor mode must not enforce stream findings"
+        );
+
+        agent
+            .rule_cache
+            .update_from_site_config(&config(2, "legacy"))
+            .unwrap();
+        assert!(
+            !plugin.stream_enforcement("example.com"),
+            "legacy engine must not run the Varman stream inspector"
+        );
+
+        agent
+            .rule_cache
+            .update_from_site_config(&config(2, "varman"))
+            .unwrap();
+        assert!(
+            plugin.stream_enforcement("example.com"),
+            "block + varman is the only enforcement combination"
+        );
     }
 
     /// A paused site answers with a 503 maintenance page (and a Retry-After

@@ -21,11 +21,11 @@
 use std::sync::LazyLock;
 
 use varman_waf::canonical::{Canonicalizer, RequestParts};
-use varman_waf::pipeline::SecurityPipeline;
 use varman_waf::pipeline::fast::{RawPathTraversalDetector, SignatureDetector};
 use varman_waf::pipeline::semantic::{
     CommandInjectionDetector, HtmlXssDetector, SqlStructuralDetector,
 };
+use varman_waf::pipeline::{Action, SecurityPipeline};
 
 /// Largest single frame payload accepted. Larger frames fail the stream
 /// rather than being buffered.
@@ -225,8 +225,15 @@ impl FrameDecoder {
 pub enum StreamFinding {
     /// The bytes are not valid RFC 6455 frames.
     Protocol(&'static str),
-    /// A complete message payload matched the injection detectors.
-    Payload { rule_id: String, detail: String },
+    /// A complete message payload matched the injection detectors. `action`
+    /// is the pipeline verdict: `Log`/`Monitor` must be recorded, never
+    /// enforced; only `Block`/`Challenge` can close the stream.
+    Payload {
+        rule_id: String,
+        detail: String,
+        action: Action,
+        score: u32,
+    },
 }
 
 /// Per-connection inspection state: one decoder per direction.
@@ -281,8 +288,8 @@ impl StreamInspector {
 
 /// Scan one content window with the focused detector set. Shared by the frame
 /// inspector (complete messages) and the tail window (forwarded body bytes).
-/// Returns `(rule_id, detail)` on the first finding.
-pub(crate) fn scan_content(payload: &[u8]) -> Option<(String, String)> {
+/// Returns the first finding with its verdict action and score.
+pub(crate) fn scan_content(payload: &[u8]) -> Option<StreamFinding> {
     if payload.is_empty() || payload.len() > MAX_FRAME_BYTES {
         return None;
     }
@@ -292,14 +299,23 @@ pub(crate) fn scan_content(payload: &[u8]) -> Option<(String, String)> {
             .with_body(payload.to_vec()),
     );
     let verdict = WS_PIPELINE.inspect(&canonical);
-    let finding = verdict.findings.first()?;
-    Some((
-        finding.rule_id.to_string(),
-        format!(
+    if verdict.action == Action::Pass {
+        return None;
+    }
+    let finding = verdict
+        .findings
+        .iter()
+        .find(|finding| finding.action_hint == verdict.action)
+        .or_else(|| verdict.findings.first())?;
+    Some(StreamFinding::Payload {
+        rule_id: finding.rule_id.to_string(),
+        detail: format!(
             "payload matched {} ({:?})",
             finding.rule_id, finding.category
         ),
-    ))
+        action: verdict.action,
+        score: verdict.score,
+    })
 }
 
 /// Bytes kept between forwarded chunks when scanning a body tail.
@@ -324,7 +340,7 @@ impl TailWindow {
     }
 
     /// Feed one chunk; returns a finding when the combined window matches.
-    pub fn push(&mut self, bytes: &[u8]) -> Option<(String, String)> {
+    pub fn push(&mut self, bytes: &[u8]) -> Option<StreamFinding> {
         let mut combined = std::mem::take(&mut self.window);
         combined.extend_from_slice(bytes);
         let finding = scan_content(&combined);
@@ -348,16 +364,16 @@ fn scan_payload(opcode: u8, payload: &[u8]) -> Option<StreamFinding> {
     if !matches!(opcode, 1 | 2) {
         return None;
     }
-    let (rule_id, detail) = scan_content(payload)?;
-    Some(StreamFinding::Payload { rule_id, detail })
+    scan_content(payload)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         FrameDecoder, FrameEvent, MAX_FRAME_BYTES, StreamFinding,
-        StreamInspector,
+        StreamInspector, scan_content,
     };
+    use varman_waf::pipeline::Action;
 
     /// Build one frame: `(fin, opcode, masked, payload)`.
     fn frame(
@@ -555,6 +571,27 @@ mod tests {
             inspector.inspect(true, &[0xC1, 0x00]),
             Some(StreamFinding::Protocol("reserved bits set"))
         );
+    }
+
+    #[test]
+    fn weak_command_context_is_log_only() {
+        match scan_content(b"id;").expect("weak finding") {
+            StreamFinding::Payload { action, score, .. } => {
+                assert_eq!(action, Action::Log);
+                assert_eq!(score, 5);
+            },
+            other => panic!("expected payload finding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn high_confidence_command_is_enforced() {
+        match scan_content(b"$(id)").expect("strong finding") {
+            StreamFinding::Payload { action, .. } => {
+                assert!(action > Action::Log, "action was {action:?}");
+            },
+            other => panic!("expected payload finding, got {other:?}"),
+        }
     }
 
     #[test]
