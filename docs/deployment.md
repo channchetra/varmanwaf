@@ -348,18 +348,27 @@ The API for all of this is documented in
 
 | Port | Protocol | Purpose | Required |
 |------|----------|---------|----------|
+| 22 | TCP | SSH administration (or your chosen SSH port) | Keep open before enabling a firewall |
 | 80 | TCP | HTTP traffic / ACME HTTP-01 | Yes (for proxied sites) |
 | 443 | TCP | HTTPS traffic | Yes (for proxied sites) |
 | 9080 | TCP | Admin dashboard + REST API (HTTPS) | Yes |
 | 9090 | TCP | gRPC control plane (agents) | Distributed mode |
 | 5432 | TCP | PostgreSQL | Internal only |
 
+> **Keep SSH open.** If you enable UFW with its default deny policy and
+> allow only the web ports, port 22 is dropped and the next SSH connection
+> times out — including after a reboot. Allow SSH **before** enabling the
+> firewall, and keep the current session open until you have verified a
+> second login works.
+
 ```bash
-# UFW example
+# UFW example — allow SSH first
+sudo ufw allow OpenSSH      # or: sudo ufw allow 22/tcp
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 sudo ufw allow 9080/tcp
-sudo ufw allow 9090/tcp  # Only if agents connect remotely
+sudo ufw allow 9090/tcp     # Only if agents connect remotely
+sudo ufw enable
 ```
 
 ## Backup & Recovery

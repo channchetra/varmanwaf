@@ -136,13 +136,16 @@ Deep reference: [High availability & scaling](../ha.md) and
 | PostgreSQL | 14+ | 16, managed or replicated for HA |
 | RAM | 512 MB | 2 GB+ for the control plane; size edges from measured traffic |
 | Disk | 1 GB | 10 GB+ for logs/cache; separate the database volume |
-| Ports | 80, 443, 9080, 9090 | 5432 internal only |
+| Ports | 80, 443, 9080, 9090 | 5432 internal only; keep SSH (22 or your port) open |
 
 ```bash
+# Allow SSH before enabling UFW; otherwise the next login times out.
+sudo ufw allow OpenSSH    # or: sudo ufw allow 22/tcp
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 sudo ufw allow 9080/tcp
 sudo ufw allow 9090/tcp   # only if agents connect remotely
+sudo ufw enable
 ```
 
 ## Secrets you must set

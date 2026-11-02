@@ -519,12 +519,14 @@ print_firewall_hints() {
     echo ""
     if [[ "$MODE" == "agent" ]]; then
         info "Firewall ports:"
+        echo "    22/tcp   — SSH administration (must stay open; or your SSH port)"
         echo "    80/tcp   — HTTP traffic (proxied sites)"
         echo "    443/tcp  — HTTPS traffic (proxied sites)"
         echo "  Outbound to the control plane (${SERVER_URL}) must be allowed."
         echo ""
         if has ufw; then
-            echo "  With UFW:"
+            echo "  With UFW (allow SSH FIRST — otherwise the next login times out):"
+            echo "    sudo ufw allow OpenSSH"
             echo "    sudo ufw allow 80/tcp"
             echo "    sudo ufw allow 443/tcp"
         fi
@@ -532,13 +534,15 @@ print_firewall_hints() {
     fi
 
     info "Firewall ports to open:"
+    echo "    22/tcp   — SSH administration (must stay open; or your SSH port)"
     echo "    80/tcp   — HTTP traffic (proxied sites)"
     echo "    443/tcp  — HTTPS traffic (proxied sites)"
     echo "    9080/tcp — Admin dashboard & REST API (HTTPS)"
     echo "    9090/tcp — gRPC control plane (agent connections)"
     echo ""
     if has ufw; then
-        echo "  With UFW:"
+        echo "  With UFW (allow SSH FIRST — otherwise the next login times out):"
+        echo "    sudo ufw allow OpenSSH"
         echo "    sudo ufw allow 80/tcp"
         echo "    sudo ufw allow 443/tcp"
         echo "    sudo ufw allow 9080/tcp"
