@@ -329,7 +329,7 @@ impl ErrorPagePlugin {
             && let Some(site) = agent.get_rules_for_domain(host)
             && !site.error_pages.is_empty()
         {
-            let fingerprint = agent.config_hash();
+            let fingerprint = agent.rules_fingerprint(&site);
             if let Some(cached) = self.site_pages.get(host)
                 && cached.fingerprint == fingerprint
             {

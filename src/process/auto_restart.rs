@@ -206,7 +206,13 @@ async fn apply_config(
 
         for category in updated_category_list {
             match category.as_str() {
-                CATEGORY_LOCATION => should_reload_location = true,
+                CATEGORY_LOCATION => {
+                    should_reload_location = true;
+                    // The server→location index owns host/path/weight ordering.
+                    // A location edit must rebuild it even when no server's
+                    // name list changed, or the new routing never applies.
+                    should_reload_server_location = true;
+                },
                 CATEGORY_UPSTREAM => should_reload_upstream = true,
                 CATEGORY_PLUGIN => should_reload_plugin = true,
                 // acme should be reload by let's encrypt service

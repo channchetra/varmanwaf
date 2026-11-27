@@ -1268,7 +1268,7 @@ impl RewritePlugin {
             && let Some(site) = agent.get_rules_for_domain(host)
             && !site.rewrite_rules.is_empty()
         {
-            let fingerprint = agent.config_hash();
+            let fingerprint = agent.rules_fingerprint(&site);
             if let Some(cached) = self.site_rules.get(host)
                 && cached.fingerprint == fingerprint
             {

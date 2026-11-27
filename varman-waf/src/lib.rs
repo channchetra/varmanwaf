@@ -1,14 +1,16 @@
 //! VarmanWAF detection engine.
 //!
-//! Two engine generations live here during the Phase 2 transition:
+//! Two engine generations live here:
 //!
 //! * **Legacy engine** (`engine`, `normalize`, `rules`, `score`) — the
-//!   imported signature-first engine; it still serves every request.
-//! * **Varman pipeline** (`pipeline`, `canonical`) — the new multi-lane
-//!   skeleton: canonical request model, structured findings, monotonic action
-//!   escalation, bounded detection context and shadow comparison. Not wired
-//!   into enforcement yet; see `docs/security-engine.md` and
-//!   `docs/roadmap.md` (Phase 2).
+//!   imported signature-first engine; it serves requests unless the Varman
+//!   engine is selected.
+//! * **Varman pipeline** (`pipeline`, `canonical`) — the multi-lane engine:
+//!   canonical request model, structured findings, monotonic action
+//!   escalation, bounded detection context and shadow comparison. Wired into
+//!   the proxy through `pingap-plugin/src/waf_shadow.rs`: `VARMAN_WAF_ENGINE=
+//!   varman` enforces it, `shadow` compares, and the process default is
+//!   `legacy` (docker-compose sets `shadow`). See `docs/security-engine.md`.
 //!
 //! Legacy engine stages:
 //! 1. Normalize / decode input (URL, HTML entities, path traversal collapsing).

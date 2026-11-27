@@ -205,9 +205,21 @@ mod tests {
             stats.on_response(addr, StatusCode::OK);
         }
         stats.on_transport_failure(addr);
-        std::thread::sleep(Duration::from_millis(1100));
-        let window = stats.get_window_stats(addr);
-        assert_eq!(4, window.total_requests);
+        // The window reports the previous interval once it closes. Poll for
+        // that state instead of sleeping 1.1 s: a descheduled thread can
+        // otherwise land after the *next* rollover and read an empty window.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let window = loop {
+            let window = stats.get_window_stats(addr);
+            if window.total_requests == 4 {
+                break window;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the closed window never reported the recorded requests: {window:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
         assert_eq!(25.0, window.failure_rate_percent);
         assert_eq!(WindowStats::default(), stats.get_window_stats("unknown"));
     }

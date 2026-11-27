@@ -578,7 +578,7 @@ impl Cache {
         if site_rules.cache_rules.is_empty() {
             return None;
         }
-        let fingerprint = agent.config_hash();
+        let fingerprint = agent.rules_fingerprint(&site_rules);
         if let Some(cached) = self.site_cache_rules.get(host)
             && cached.fingerprint == fingerprint
         {

@@ -1,0 +1,4 @@
+#!/bin/sh
+#
+# Every push must pass the full workspace test suite.
+make test

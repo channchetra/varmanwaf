@@ -372,9 +372,21 @@ fn shadow_comparison_report() {
     }
 
     println!("{report}");
-    let path = std::path::Path::new("../docs/shadow-report.md");
-    std::fs::write(path, &report)
-        .unwrap_or_else(|error| panic!("cannot write {path:?}: {error}"));
+    // The report is test output, not a tracked document: write it under the
+    // workspace target directory (or an explicit path) and let the release
+    // step copy it into docs/ if wanted. A missing directory must not fail
+    // the test.
+    let path = std::env::var_os("SHADOW_REPORT_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from("../target/shadow-report.md")
+        });
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(error) = std::fs::write(&path, &report) {
+        eprintln!("shadow report not written to {path:?}: {error}");
+    }
 
     // Ratchets: the pipeline must cover the attack corpus and stay clean on
     // the benign corpus. Update deliberately, with the report as evidence.

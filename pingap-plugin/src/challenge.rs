@@ -624,7 +624,7 @@ impl ChallengePlugin {
             .as_ref()
             .filter(|cfg| cfg.enabled)?;
 
-        let fingerprint = agent.config_hash();
+        let fingerprint = agent.rules_fingerprint(&site_rules);
         if let Some(cached) = self.site_engines.get(host)
             && cached.fingerprint == fingerprint
         {

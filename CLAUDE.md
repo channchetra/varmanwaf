@@ -161,9 +161,11 @@ The pages save an entry by merging the form values over the loaded entry (`{ ...
 
 ## Documentation (English only)
 
-VarmanWAF documentation is **English only** and lives in `docs/` (index:
-`docs/README.md`). The inherited Pingap bilingual docsify site
-(`website/`, `scripts/build-website.sh`, `.github/workflows/pages.yml`) has
-been removed. When a behaviour change touches a config key, a default, a CLI
-flag or a plugin, update the matching file in `docs/`; security-engine changes
-also update `docs/security-engine.md` and the status in `docs/roadmap.md`.
+VarmanWAF documentation is **English only**. The source of truth is `docs/`
+(index: `docs/README.md`); the public site is generated from it by
+`website/build.mjs` (`cd website && npm run build`). The inherited VitePress
+toolchain (`website/.vitepress/`, `scripts/build-website.sh`) and the GitHub
+Pages workflow have been removed. When a behaviour change touches a config
+key, a default, a CLI flag or a plugin, update the matching file in `docs/`;
+security-engine changes also update `docs/security-engine.md` and the status
+in `docs/roadmap.md`.

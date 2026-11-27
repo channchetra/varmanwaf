@@ -353,6 +353,16 @@ impl VarmanAgent {
         self.rule_cache.config_hash()
     }
 
+    /// Fingerprint a per-host plugin cache should key on.
+    ///
+    /// `config_hash()` is the *first* site's bundle hash: a full sync keeps it
+    /// stable when a later site's rules change. Per-host caches must use the
+    /// site's own `config_hash`, falling back to the agent hash only for
+    /// bundles written before the field existed.
+    pub fn rules_fingerprint(&self, site: &cache::SiteRules) -> Arc<str> {
+        fingerprint_for(&site.config_hash, self.config_hash())
+    }
+
     /// Graceful shutdown ΓÇö signals all background tasks to stop.
     pub async fn shutdown(&self) {
         info!("Shutting down VarmanWAF agent...");
@@ -413,11 +423,35 @@ pub async fn start_agent(
     VarmanAgent::start(config).await
 }
 
+/// The per-site fingerprint, or `fallback` for a legacy bundle.
+fn fingerprint_for(site_hash: &str, fallback: Arc<str>) -> Arc<str> {
+    if site_hash.is_empty() {
+        fallback
+    } else {
+        Arc::from(site_hash)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::combine_headers;
     use super::*;
     use varman_protocol::control_plane as proto;
+
+    #[test]
+    fn a_per_host_cache_keys_on_the_site_bundle_hash() {
+        let fallback: Arc<str> = Arc::from("first-site-hash");
+        assert_eq!(
+            &*fingerprint_for("", Arc::clone(&fallback)),
+            "first-site-hash",
+            "a legacy bundle falls back to the agent hash"
+        );
+        assert_eq!(
+            &*fingerprint_for("second-site-hash", fallback),
+            "second-site-hash",
+            "a later site's change must move its own fingerprint"
+        );
+    }
 
     /// Builds an offline agent whose cache carries the given failover
     /// registry and global default.

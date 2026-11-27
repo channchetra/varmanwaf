@@ -9,14 +9,14 @@ Central control plane · Lightweight edge agents · Pingora data plane · Postgr
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
 [![Docker](https://img.shields.io/badge/docker-compose%20ready-2496ED?logo=docker&logoColor=white)](./docker-compose.yml)
-[![Release](https://img.shields.io/badge/release-v1.0.0-brightgreen.svg)](./docs/releases/v1.0.0.md)
+[![Release](https://img.shields.io/badge/release-v1.4.5-brightgreen.svg)](./docs/releases/v1.4.5.md)
 
-**v1.0.0 - the first official release.** The native Varman engine enforces,
-the console carries the full operator surface (policy tuning, access control
-with ipverse data, API assets with learning and per-operation controls,
-exclusion packages with upstream imports, alerts, reports, fleet), and the
-whole program is verified by a 40-script end-to-end sweep. See
-[release notes](./docs/releases/v1.0.0.md).
+**v1.4.5 - the current release.** The native Varman engine, the full operator
+console (policy tuning, access control, API assets, exclusion packages,
+alerts, reports, fleet) and the Pingora data plane are in production use.
+The 1.4.x line adds certificate rotation without restarts, a renewal watchdog,
+NUL-safe telemetry ingest and the stream-inspection fixes. See
+[release notes](./docs/releases/v1.4.5.md).
 
 </div>
 
@@ -60,7 +60,7 @@ Rust.
 
 | Engine | Status |
 | --- | --- |
-| Varman native engine (`engine_mode = varman`) | **Enforces** - the default posture on new sites |
+| Varman native engine (`engine_mode = varman`) | **Enforces** when selected. `inherit` follows `VARMAN_WAF_ENGINE` (legacy unless set); the compose default is `shadow` |
 | Imported signature engine (PingWAF lineage) | Available per site (`engine_mode = legacy`) |
 | Shadow comparison | `engine_mode = shadow` runs both and records how the verdicts compare, never affecting responses |
 
