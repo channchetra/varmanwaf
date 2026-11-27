@@ -570,8 +570,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     // Reject per-server TLS version/cipher settings the active backend cannot
     // apply (rustls fixes 1.2/1.3 + default suites). Must run for `--test` too.
     validate_servers_tls_for_backend(&config.servers)?;
-    // Install aws-lc-rs before ACME / any other rustls user can race to install
-    // a different CryptoProvider. No-op for the OpenSSL backend.
+    // The process provider (ring) is installed in main; this is a no-op
+    // safeguard for library use and for the OpenSSL backend.
     install_default_crypto_provider();
 
     // sync config to other storage
@@ -997,9 +997,10 @@ fn main() {
     // live outside `pingap-plugin` (and for its own `#[ctor]`s).
     plugin::register_builtin_plugins();
 
-    // Same rationale as varman::main: the graph pulls in two rustls crypto
-    // providers (ring + aws-lc-rs), so install ring explicitly before any
-    // TLS listener or client initialises. No-op if already installed.
+    // The graph pulls in two rustls crypto providers (ring + aws-lc-rs). Ring
+    // is the process provider: install it before any TLS listener or client
+    // initialises. `install_default_crypto_provider()` is the idempotent
+    // library-side safeguard and must name the same provider.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Check if VarmanWAF mode is requested (via subcommand or VARMAN_MODE env)

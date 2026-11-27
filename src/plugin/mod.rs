@@ -395,6 +395,7 @@ pub fn try_init_plugins(
     (updated_plugins, error)
 }
 
+#[cfg(test)]
 #[test]
 pub fn initialize_test_plugins() {
     let plugins = HashMap::from([
