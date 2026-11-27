@@ -24,8 +24,8 @@
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock};
-use std::time::Duration;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapOption;
 use chrono::Utc;
@@ -38,6 +38,8 @@ use crate::api::state::AppState;
 use crate::api::system_tls::store_and_activate;
 use crate::models::certificate_events;
 use crate::models::management_certificate::management_certificate as model;
+use crate::models::{event_type, severity};
+use crate::notify::{self, AlertEvent};
 
 /// Name of the certificate entry the data plane adds for the dashboard.
 pub const CERT_NAME: &str = "__management";
@@ -47,6 +49,24 @@ const STALE_AFTER: Duration = Duration::from_secs(30 * 60);
 
 /// How often [`spawn`] looks for a newly issued certificate.
 const TICK: Duration = Duration::from_secs(15);
+
+/// Re-arm the edge when the installed certificate has this much life left.
+/// Short-lived ACME IP certificates last six days, so two days leaves room
+/// for several failed orders before the listener presents an expired one.
+const RENEW_AHEAD: time::Duration = time::Duration::hours(48);
+
+/// Minimum gap between re-arms while a renewal is still in flight.
+const REARM_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// Last watchdog re-arm, so a failing order is retried every six hours
+/// instead of on every 15-second tick.
+static LAST_REARM: LazyLock<Mutex<Option<Instant>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// Fingerprint already announced, so one expiring certificate alerts once
+/// rather than every re-arm.
+static ALERTED: LazyLock<Mutex<Option<String>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 /// The certificate the dashboard should present.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,8 +302,137 @@ pub fn spawn(state: AppState) -> JoinHandle<()> {
             if let Err(err) = tick(&state).await {
                 warn!(error = %err, "management certificate install failed");
             }
+            watchdog(&state).await;
         }
     })
+}
+
+/// Whether the installed certificate is close enough to expiry to act.
+///
+/// Split out so the window is testable without the process-wide state.
+fn needs_rearm(
+    not_after: time::OffsetDateTime,
+    now: time::OffsetDateTime,
+) -> bool {
+    not_after - now <= RENEW_AHEAD
+}
+
+/// Re-arms an ACME request that stopped renewing on its own.
+///
+/// The data plane only learns about `__management` when its configuration is
+/// rebuilt. If that entry is missing — a restart between arming the request
+/// and building the config is enough — no ACME order is attempted, the
+/// certificate expires, and the agents can no longer verify the gRPC
+/// endpoint. Bumping the revision (the same call the manual retry makes)
+/// rebuilds the config and re-enters the ACME task.
+async fn watchdog(state: &AppState) {
+    let Some(request) = desired() else {
+        return;
+    };
+    let Some(issued) = issued() else {
+        return;
+    };
+    let Ok((meta, _)) = crate::pki::tls::describe(&issued.cert_pem) else {
+        return;
+    };
+    let now = time::OffsetDateTime::now_utc();
+
+    if !needs_rearm(meta.not_after, now) {
+        // A fresh certificate clears both gates so the next rotation gets its
+        // own attempt instead of inheriting this one's cooldown.
+        if let Ok(mut last) = LAST_REARM.lock() {
+            *last = None;
+        }
+        if let Ok(mut seen) = ALERTED.lock() {
+            *seen = None;
+        }
+        return;
+    }
+
+    let due = LAST_REARM
+        .lock()
+        .map(|mut last| {
+            let ready = last.is_none_or(|at| at.elapsed() >= REARM_INTERVAL);
+            if ready {
+                *last = Some(Instant::now());
+            }
+            ready
+        })
+        .unwrap_or(false);
+    let remaining = meta.not_after - now;
+
+    if due {
+        warn!(
+            identity = %request.identity,
+            not_after = %meta.not_after,
+            remaining_hours = remaining.whole_hours(),
+            "management certificate is close to expiry; re-arming the ACME request"
+        );
+        set_desired(Some((*request).clone()));
+    }
+
+    let announce = ALERTED
+        .lock()
+        .map(|mut seen| {
+            if seen.as_deref() == Some(meta.fingerprint_sha256.as_str()) {
+                false
+            } else {
+                *seen = Some(meta.fingerprint_sha256.clone());
+                true
+            }
+        })
+        .unwrap_or(false);
+    if !announce {
+        return;
+    }
+
+    let expired = remaining <= time::Duration::ZERO;
+    let message = if expired {
+        format!(
+            "The control-plane certificate for '{}' expired at {}. \
+             Agents cannot verify the gRPC endpoint until it is renewed.",
+            request.identity, meta.not_after
+        )
+    } else {
+        format!(
+            "The control-plane certificate for '{}' expires at {} \
+             ({} hours left) and has not been renewed. The ACME request was \
+             re-armed automatically.",
+            request.identity,
+            meta.not_after,
+            remaining.whole_hours()
+        )
+    };
+    notify::emit(AlertEvent {
+        event_type: if expired {
+            event_type::CERT_EXPIRED.to_string()
+        } else {
+            event_type::CERT_EXPIRING.to_string()
+        },
+        severity: if expired {
+            severity::CRITICAL
+        } else {
+            severity::WARNING
+        },
+        title: format!(
+            "Control-plane certificate {}",
+            if expired {
+                "has expired"
+            } else {
+                "is expiring"
+            }
+        ),
+        message: message.clone(),
+        details: Some(serde_json::json!({
+            "identity": request.identity,
+            "not_after": meta.not_after.to_string(),
+            "fingerprint_sha256": meta.fingerprint_sha256,
+            "expired": expired,
+        })),
+        dedup_key: Some(format!("management_cert:{}", meta.fingerprint_sha256)),
+    })
+    .await;
+    let _ = write_event(&state.db, "management_cert_expiring", message).await;
 }
 
 /// Whether issued material should replace what the listener serves.
@@ -494,6 +643,14 @@ mod tests {
         );
         set_desired(None);
         assert!(desired().is_none());
+    }
+
+    #[test]
+    fn the_renewal_window_is_two_days() {
+        let now = time::OffsetDateTime::now_utc();
+        assert!(!needs_rearm(now + time::Duration::hours(49), now));
+        assert!(needs_rearm(now + time::Duration::hours(47), now));
+        assert!(needs_rearm(now - time::Duration::hours(1), now));
     }
 
     #[test]

@@ -48,7 +48,6 @@ use std::sync::Arc;
 use sea_orm::{ConnectOptions, Database};
 use sea_orm_migration::MigratorTrait;
 use tokio::net::TcpListener;
-use tokio_stream::wrappers::TcpListenerStream;
 use varman_protocol::control_plane::control_plane_server::ControlPlaneServer;
 
 use crate::api::state::AppState;
@@ -298,7 +297,7 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
     })?;
 
     let mut grpc_builder = tonic::transport::Server::builder();
-    if shared_config.grpc_tls_enabled() {
+    let grpc_acceptor = if shared_config.grpc_tls_enabled() {
         match (&shared_config.grpc_tls_cert, &shared_config.grpc_tls_key) {
             (Some(cert_path), Some(key_path)) => {
                 let cert =
@@ -312,17 +311,25 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
                         "failed to read gRPC TLS key {key_path}: {err}"
                     )
                 })?;
-                grpc_builder = configure_grpc_tls(grpc_builder, &cert, &key)?;
+                let tls = tls::ControlPlaneTls::new(true);
+                tls.activate(&cert, &key).map_err(|err| {
+                    anyhow::anyhow!("failed to configure gRPC TLS: {err}")
+                })?;
                 tracing::info!(
                     %grpc_addr,
                     "gRPC control plane listening (TLS, configured certificate)"
                 );
+                Some(tls.grpc_acceptor())
             },
             (None, None) => {
                 // Default TLS mode without explicit certificate files: serve the
                 // certificate the console uses, generating a self-signed pair on
                 // first boot. Agents pin it through `server_ca_cert` (or the CA
                 // the all-in-one mode injects inline).
+                //
+                // The acceptor shares `control_tls`'s reloadable resolver, so
+                // an ACME renewal reaches the gRPC listener on the next
+                // handshake instead of waiting for a process restart.
                 let row = match api::system_tls::load_active_certificate(&state)
                     .await
                 {
@@ -346,17 +353,12 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
                         api::system_tls::bootstrap_self_signed(&state).await?
                     },
                 };
-                let source = row.source.clone();
-                grpc_builder = configure_grpc_tls(
-                    grpc_builder,
-                    &row.cert_pem,
-                    &row.key_pem,
-                )?;
                 tracing::info!(
                     %grpc_addr,
-                    certificate_source = %source,
+                    certificate_source = %row.source,
                     "gRPC control plane listening (TLS)"
                 );
+                Some(control_tls.grpc_acceptor())
             },
             _ => {
                 return Err(anyhow::anyhow!(
@@ -370,7 +372,8 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
             "gRPC control plane is running without TLS (degraded); \
              agent traffic is plaintext — set grpc_tls_mode = \"tls\" to encrypt it"
         );
-    }
+        None
+    };
 
     let control_plane_service = ControlPlaneService::new(
         db.clone(),
@@ -429,7 +432,7 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
         result = grpc_builder
             .add_service(grpc_server)
             .serve_with_incoming_shutdown(
-                TcpListenerStream::new(grpc_listener),
+                tls::grpc_incoming(grpc_listener, grpc_acceptor),
                 shutdown_signal(),
             ) =>
         {
@@ -884,19 +887,6 @@ fn persist_bootstrap_key(plaintext: &str) -> std::io::Result<()> {
         .open(path)?;
     file.write_all(plaintext.as_bytes())?;
     Ok(())
-}
-
-/// Wires a PEM certificate pair into the gRPC server builder.
-fn configure_grpc_tls(
-    builder: tonic::transport::Server,
-    cert_pem: &str,
-    key_pem: &str,
-) -> anyhow::Result<tonic::transport::Server> {
-    let tls = tonic::transport::server::ServerTlsConfig::new()
-        .identity(tonic::transport::Identity::from_pem(cert_pem, key_pem));
-    builder
-        .tls_config(tls)
-        .map_err(|err| anyhow::anyhow!("failed to configure gRPC TLS: {err}"))
 }
 
 /// Returns a future that resolves when the process receives SIGINT or SIGTERM.

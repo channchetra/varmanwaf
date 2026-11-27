@@ -26,6 +26,7 @@ use std::time::Duration;
 
 use axum::extract::connect_info::Connected;
 use axum::serve::{IncomingStream, Listener};
+use futures_util::{Stream, StreamExt};
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -34,6 +35,8 @@ use tokio::sync::{mpsc, Semaphore};
 use tokio::time::timeout;
 use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
+use tokio_stream::wrappers::TcpListenerStream;
+use tonic::transport::server::Connected as TonicConnected;
 
 use crate::pki::mtls::MtlsError;
 use crate::pki::tls::{certified_key, crypto_provider};
@@ -153,6 +156,30 @@ impl ControlPlaneTls {
     /// A handle for the listener to accept connections with.
     pub fn acceptor(&self) -> TlsAcceptor {
         self.acceptor.clone()
+    }
+
+    /// A gRPC acceptor over the same reloadable certificate store.
+    ///
+    /// gRPC needs ALPN `h2`, which the dashboard's HTTP listener must not
+    /// advertise. Building a second `ServerConfig` that shares the resolver
+    /// keeps both properties: the handshake names `h2`, and a certificate
+    /// installed by `activate` is used by the next connection without a
+    /// restart.
+    pub fn grpc_acceptor(&self) -> TlsAcceptor {
+        TlsAcceptor::from(self.grpc_config())
+    }
+
+    /// The rustls configuration behind [`Self::grpc_acceptor`].
+    fn grpc_config(&self) -> Arc<rustls::ServerConfig> {
+        let mut config = rustls::ServerConfig::builder_with_provider(
+            crypto_provider().clone(),
+        )
+        .with_safe_default_protocol_versions()
+        .expect("the ring provider supports the default protocol versions")
+        .with_no_client_auth()
+        .with_cert_resolver(self.resolver.clone());
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        Arc::new(config)
     }
 }
 
@@ -394,6 +421,102 @@ impl Connected<IncomingStream<'_, TcpListener>> for ConnInfo {
     }
 }
 
+/// A gRPC connection after optional TLS termination.
+///
+/// tonic's standard `Connected` impl only covers `TcpStream`, so this wrapper
+/// carries the peer address through the optional TLS layer.
+pub struct GrpcStream {
+    io: Box<dyn GrpcIo>,
+    peer: SocketAddr,
+}
+
+trait GrpcIo: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> GrpcIo for T {}
+
+impl AsyncRead for GrpcStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().io).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for GrpcStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().io).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().io).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().io).poll_shutdown(cx)
+    }
+}
+
+impl TonicConnected for GrpcStream {
+    type ConnectInfo = SocketAddr;
+
+    fn connect_info(&self) -> Self::ConnectInfo {
+        self.peer
+    }
+}
+
+/// Accepts gRPC connections, optionally terminating TLS with `acceptor`.
+///
+/// The acceptor is cloned per connection from its shared resolver, so a
+/// certificate installed while the server runs is used by the next handshake
+/// without a restart. A failed handshake drops that connection only; the
+/// listener keeps running.
+pub fn grpc_incoming(
+    listener: TcpListener,
+    acceptor: Option<TlsAcceptor>,
+) -> impl Stream<Item = io::Result<GrpcStream>> + Send + 'static {
+    TcpListenerStream::new(listener).filter_map(move |accepted| {
+        let acceptor = acceptor.clone();
+        async move {
+            let tcp = match accepted {
+                Ok(tcp) => tcp,
+                Err(err) => {
+                    tracing::warn!(error = %err, "gRPC accept failed");
+                    return None;
+                },
+            };
+            let peer = match tcp.peer_addr() {
+                Ok(peer) => peer,
+                Err(err) => {
+                    tracing::debug!(error = %err, "gRPC peer address unavailable");
+                    return None;
+                },
+            };
+            let io: Box<dyn GrpcIo> = match acceptor {
+                Some(acceptor) => match acceptor.accept(tcp).await {
+                    Ok(stream) => Box::new(stream),
+                    Err(err) => {
+                        tracing::debug!(error = %err, "gRPC TLS handshake failed");
+                        return None;
+                    },
+                },
+                None => Box::new(tcp),
+            };
+            Some(Ok(GrpcStream { io, peer }))
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,6 +627,72 @@ mod tests {
         let mut handshakes: Vec<bool> = server.await.unwrap();
         handshakes.sort_unstable();
         assert_eq!(handshakes, vec![false, true]);
+    }
+
+    /// A certificate installed after the gRPC listener started must be used
+    /// by the next handshake. Before this, tonic snapshotted the pair in a
+    /// static `ServerTlsConfig`, so an ACME renewal only reached 9090 after a
+    /// process restart — and an expired certificate locked every agent out.
+    #[tokio::test]
+    async fn grpc_incoming_uses_a_rotated_certificate_and_advertises_h2() {
+        let (first_pem, first_key) = test_certificate();
+        let (second_pem, second_key) = test_certificate();
+        let tls = Arc::new(ControlPlaneTls::new(true));
+        tls.activate(&first_pem, &first_key).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut incoming =
+            Box::pin(grpc_incoming(listener, Some(tls.grpc_acceptor())));
+
+        let mut roots = RootCertStore::empty();
+        for pem in [&first_pem, &second_pem] {
+            roots.add(parse_chain(pem).unwrap().remove(0)).unwrap();
+        }
+        let mut config = rustls::ClientConfig::builder_with_provider(
+            crypto_provider().clone(),
+        )
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        let connector = TlsConnector::from(Arc::new(config));
+        let name = ServerName::try_from("localhost").unwrap();
+
+        let handshake = |connector: TlsConnector, name: ServerName<'static>| {
+            tokio::spawn(async move {
+                let stream = TcpStream::connect(addr).await.unwrap();
+                let tls = connector.connect(name, stream).await.unwrap();
+                let connection = tls.get_ref().1;
+                let cert = connection.peer_certificates().unwrap()[0]
+                    .as_ref()
+                    .to_vec();
+                let alpn = connection.alpn_protocol().map(<[u8]>::to_vec);
+                (cert, alpn)
+            })
+        };
+
+        let first = handshake(connector.clone(), name.clone());
+        let _server_stream = incoming.next().await.unwrap().unwrap();
+        let (cert, alpn) = first.await.unwrap();
+        assert_eq!(
+            cert,
+            parse_chain(&first_pem).unwrap().remove(0).as_ref(),
+            "the first handshake must present the certificate installed at boot"
+        );
+        assert_eq!(alpn.as_deref(), Some(&b"h2"[..]), "gRPC needs ALPN h2");
+
+        tls.activate(&second_pem, &second_key).unwrap();
+
+        let second = handshake(connector, name);
+        let _server_stream = incoming.next().await.unwrap().unwrap();
+        let (cert, _) = second.await.unwrap();
+        assert_eq!(
+            cert,
+            parse_chain(&second_pem).unwrap().remove(0).as_ref(),
+            "the rotated certificate must be used without a restart"
+        );
     }
 
     /// Regression: a client that connects and sends nothing must not head-of-

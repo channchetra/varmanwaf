@@ -1778,10 +1778,16 @@ struct StreamState {
     aborted: bool,
     /// Set when the response was a 101 WebSocket upgrade.
     websocket: bool,
-    /// Whether findings on this stream may be enforced. False for a
-    /// monitor/off site and for a legacy/shadow engine; those findings are
-    /// recorded as monitor events instead of closing the connection.
-    enforce: bool,
+    /// Whether findings on this stream may be enforced, resolved once per
+    /// connection. False for a monitor/off site, an observation-mode site, a
+    /// disabled WAF and a legacy/shadow engine; those findings are recorded
+    /// as monitor events instead of closing the connection.
+    enforce: Option<bool>,
+    /// Rules already recorded on this stream. A monitor site sees the same
+    /// low-confidence rule on every matching message; one event per rule per
+    /// connection is enough, and the old behaviour (one event per message)
+    /// flooded the event store.
+    reported: HashSet<String>,
     /// Frame decoders for an upgraded connection.
     inspector: StreamInspector,
     /// Request identity for abort events, snapshotted at the 101.
@@ -3599,7 +3605,7 @@ impl Plugin for WafPlugin {
                 let enforce = self.stream_enforcement(&facts.host);
                 with_stream(&request_id, |state| {
                     state.websocket = true;
-                    state.enforce = enforce;
+                    state.enforce = Some(enforce);
                     state.facts = facts;
                 });
             }
@@ -3741,7 +3747,7 @@ impl Plugin for WafPlugin {
                 return Ok(None);
             }
             return self
-                .inspect_tunnel(&request_id, ctx, true, bytes, end_of_stream)
+                .inspect_tunnel(&request_id, true, bytes, end_of_stream)
                 .map(|()| None);
         }
         // Staged remainder: withhold chunks up to the cap, scan them before
@@ -3771,7 +3777,7 @@ impl Plugin for WafPlugin {
                         // still has no body byte; the rest then flows
                         // through untouched.
                         if let Some(response) =
-                            self.inspect_tail(&request_id, ctx, &staged)
+                            self.inspect_tail(&request_id, &staged)
                         {
                             return Ok(Some(response));
                         }
@@ -3787,8 +3793,7 @@ impl Plugin for WafPlugin {
                 // with the end-of-body flag.
                 entry.buffer.extend_from_slice(bytes);
                 let staged = std::mem::take(&mut entry.buffer).freeze();
-                if let Some(response) =
-                    self.inspect_tail(&request_id, ctx, &staged)
+                if let Some(response) = self.inspect_tail(&request_id, &staged)
                 {
                     return Ok(Some(response));
                 }
@@ -3799,7 +3804,7 @@ impl Plugin for WafPlugin {
         if !self.tail_inspection {
             return Ok(None);
         }
-        Ok(self.inspect_tail(&request_id, ctx, bytes))
+        Ok(self.inspect_tail(&request_id, bytes))
     }
 
     /// Read-only inspection of upgraded traffic flowing from the upstream to
@@ -3824,44 +3829,37 @@ impl Plugin for WafPlugin {
             }
             return Ok(());
         };
-        self.inspect_tunnel(&request_id, ctx, false, bytes, end_of_stream)
+        self.inspect_tunnel(&request_id, false, bytes, end_of_stream)
     }
 }
 
 impl WafPlugin {
     /// Whether stream findings for `host` may be enforced.
     ///
-    /// The site's `mode` caps every engine path, and the Varman stream
-    /// inspector is only active for a Varman engine. A monitor/off site or a
-    /// legacy/shadow engine records stream findings as monitor events; it
-    /// never closes the connection.
+    /// This reuses the same decisions as the request path instead of
+    /// re-deriving them from raw fields: a disabled WAF
+    /// ([`EngineChoice::Disabled`]), observation mode, a non-Block site mode
+    /// and a non-Varman engine all keep the stream in monitor-only mode.
+    /// The engine is resolved through [`crate::waf_shadow::resolve_mode`], so
+    /// the aliases (`enforce`, `observe`, `base`) and the invalid-value
+    /// fallback match the request path exactly.
     fn stream_enforcement(&self, host: &str) -> bool {
         let resolved = self.resolve_site(host);
         let Some(context) = resolved.context else {
-            // Standalone mode: follow the plugin's own mode.
-            return self.mode == WafMode::Block;
+            // No site context at all: a standalone plugin follows its own
+            // mode. In an agent deployment this instead means the domain's
+            // bundle has not arrived yet, and enforcing then is how a
+            // monitor site gets blocked after a restart.
+            return VarmanAgent::instance().is_none()
+                && self.mode == WafMode::Block;
         };
-        if context.mode != Some(WafMode::Block) {
+        if matches!(resolved.choice, EngineChoice::Disabled) {
             return false;
         }
-        match context.engine_mode.to_ascii_lowercase().as_str() {
-            "legacy" | "shadow" => false,
-            "varman" => true,
-            // `inherit`/empty follows the process-wide engine. The stream
-            // inspector is the Varman pipeline, so only `varman` enforces.
-            "inherit" | "" => std::env::var("VARMAN_WAF_ENGINE")
-                .map(|value| value.eq_ignore_ascii_case("varman"))
-                .unwrap_or(false),
-            _ => false,
-        }
-    }
-
-    fn stream_enforcement_for_request(&self, request_id: &str) -> bool {
-        let host = PENDING_ACCESS
-            .get(request_id)
-            .map(|entry| entry.host.clone())
-            .unwrap_or_default();
-        self.stream_enforcement(&host)
+        context.mode == Some(WafMode::Block)
+            && !context.observation_mode
+            && crate::waf_shadow::resolve_mode(Some(&context.engine_mode))
+                == crate::waf_shadow::EngineMode::Varman
     }
 
     /// Sliding-window scan of a forwarded body chunk. A payload found here
@@ -3870,26 +3868,28 @@ impl WafPlugin {
     fn inspect_tail(
         &self,
         request_id: &str,
-        ctx: &mut Ctx,
         bytes: &Bytes,
     ) -> Option<HttpResponse> {
-        let enforce = self.stream_enforcement_for_request(request_id);
         let finding = with_stream(request_id, |state| {
             if state.aborted {
                 return None;
             }
             state.tail.push(bytes)
         })?;
-        let (rule_id, detail) = match &finding {
-            StreamFinding::Protocol(reason) => (
-                "ws.protocol_violation".to_string(),
-                format!("malformed WebSocket frame: {reason}"),
-            ),
-            StreamFinding::Payload {
-                rule_id, detail, ..
-            } => (rule_id.clone(), detail.clone()),
-        };
-        if self.record_stream_finding(request_id, ctx, &finding, enforce) {
+        let enforce = with_stream(request_id, |state| match state.enforce {
+            Some(value) => value,
+            None => {
+                let host = PENDING_ACCESS
+                    .get(request_id)
+                    .map(|entry| entry.host.clone())
+                    .unwrap_or_default();
+                let value = self.stream_enforcement(&host);
+                state.enforce = Some(value);
+                value
+            },
+        });
+        let (rule_id, detail, _, _) = finding.parts();
+        if self.record_stream_finding(request_id, &finding, enforce) {
             Some(block_page(
                 request_id,
                 &format!("varman: {rule_id}: {detail}"),
@@ -3905,28 +3905,20 @@ impl WafPlugin {
     fn inspect_tunnel(
         &self,
         request_id: &str,
-        ctx: &mut Ctx,
         from_client: bool,
         bytes: &Bytes,
         end_of_stream: bool,
     ) -> pingora::Result<()> {
         let (finding, enforce) = with_stream(request_id, |state| {
             if !state.websocket || state.aborted {
-                return (None, state.enforce);
+                return (None, state.enforce.unwrap_or(false));
             }
-            (state.inspector.inspect(from_client, bytes), state.enforce)
+            let enforce = state.enforce.unwrap_or(false);
+            (state.inspector.inspect(from_client, bytes), enforce)
         });
         if let Some(finding) = finding {
-            let (rule_id, detail) = match &finding {
-                StreamFinding::Protocol(reason) => (
-                    "ws.protocol_violation".to_string(),
-                    format!("malformed WebSocket frame: {reason}"),
-                ),
-                StreamFinding::Payload {
-                    rule_id, detail, ..
-                } => (rule_id.clone(), detail.clone()),
-            };
-            if self.record_stream_finding(request_id, ctx, &finding, enforce) {
+            let (rule_id, detail, _, _) = finding.parts();
+            if self.record_stream_finding(request_id, &finding, enforce) {
                 return Err(new_internal_error(
                     403,
                     format!("varman: {rule_id}: {detail}"),
@@ -3943,35 +3935,34 @@ impl WafPlugin {
     /// enforcing site closes the stream; a `Log`/`Monitor` finding (or any
     /// finding on a monitor/legacy site) is a monitor event and the stream
     /// continues. Returns whether the caller must abort.
+    ///
+    /// A protocol failure is the exception: after a malformed frame the
+    /// boundaries are unknown, so the stream cannot be inspected any further
+    /// and is closed even in monitor mode. One finding per rule is recorded
+    /// per connection; a monitor site otherwise writes a row for every
+    /// matching message.
     fn record_stream_finding(
         &self,
         request_id: &str,
-        _ctx: &mut Ctx,
         finding: &StreamFinding,
         enforce: bool,
     ) -> bool {
-        let (rule_id, detail, action, score) = match finding {
-            StreamFinding::Protocol(reason) => (
-                "ws.protocol_violation".to_string(),
-                format!("malformed WebSocket frame: {reason}"),
-                Action::Block,
-                0,
-            ),
-            StreamFinding::Payload {
-                rule_id,
-                detail,
-                action,
-                score,
-            } => (rule_id.clone(), detail.clone(), *action, *score),
-        };
-        let blocking =
-            enforce && matches!(action, Action::Block | Action::Challenge);
-        let facts = with_stream(request_id, |state| {
-            if blocking || matches!(finding, StreamFinding::Protocol(_)) {
+        let (rule_id, detail, action, score) = finding.parts();
+        let protocol = matches!(finding, StreamFinding::Protocol(_));
+        let blocking = protocol
+            || (enforce && matches!(action, Action::Block | Action::Challenge));
+        let (facts, first) = with_stream(request_id, |state| {
+            let first = state.reported.insert(rule_id.clone());
+            if blocking {
                 state.aborted = true;
             }
-            state.facts.clone()
+            (state.facts.clone(), first)
         });
+        if !blocking && !first {
+            // This rule is already on the connection's record. Do not write
+            // one event per matching message.
+            return false;
+        }
         if blocking {
             tracing::warn!(
                 rule_id,
@@ -4002,8 +3993,12 @@ impl WafPlugin {
                     country_code: entry.country_code.clone(),
                 });
             let facts = from_pending.unwrap_or(facts);
-            let tag = rule_id.clone();
-            agent.record_request(blocking);
+            // The request itself is already counted by the access-log path.
+            // Only a blocked stream adds to the blocked counter; counting a
+            // monitor finding inflated requests_total once per message.
+            if blocking {
+                agent.record_request(true);
+            }
             agent.log_security_event(SecurityEvent {
                 site_id: facts.site_id,
                 request_id: request_id.to_string(),
@@ -4014,6 +4009,7 @@ impl WafPlugin {
                 host: facts.host,
                 path: facts.path,
                 query_string: facts.query,
+                matched_tags: vec![rule_id.clone()],
                 rule_id,
                 rule_name: "stream-inspection".to_string(),
                 event_type: "waf".to_string(),
@@ -4023,7 +4019,6 @@ impl WafPlugin {
                 response_status: if blocking { 403 } else { 0 },
                 user_agent: facts.user_agent,
                 country_code: facts.country_code,
-                matched_tags: vec![tag],
             });
         }
         if blocking {
@@ -4880,7 +4875,16 @@ advanced_mode = true
     /// monitor/legacy site must never close a WebSocket tunnel.
     #[tokio::test]
     async fn stream_enforcement_follows_mode_and_engine() {
-        fn config(mode: i32, engine_mode: &str) -> proto::SiteConfig {
+        fn config(
+            mode: i32,
+            engine_mode: &str,
+            enabled: bool,
+            observation: bool,
+        ) -> proto::SiteConfig {
+            // The bundle hash must cover every field the test varies:
+            // the cache keys on it, not on the struct contents.
+            let hash =
+                format!("hash-{mode}-{engine_mode}-{enabled}-{observation}");
             proto::SiteConfig {
                 sites: vec![proto::Site {
                     id: "site-1".to_string(),
@@ -4889,9 +4893,10 @@ advanced_mode = true
                     alternate_domains: Vec::new(),
                     rules: Some(proto::RuleBundle {
                         site_id: "site-1".to_string(),
-                        config_hash: format!("hash-{mode}-{engine_mode}"),
+                        config_hash: hash.clone(),
+                        observation_mode: observation,
                         waf: Some(proto::WafConfig {
-                            enabled: true,
+                            enabled,
                             mode,
                             engine_mode: engine_mode.to_string(),
                             ..Default::default()
@@ -4900,7 +4905,7 @@ advanced_mode = true
                     }),
                     ..Default::default()
                 }],
-                config_hash: format!("full-{mode}-{engine_mode}"),
+                config_hash: format!("full-{hash}"),
                 updated_at: None,
             }
         }
@@ -4913,7 +4918,7 @@ advanced_mode = true
 
         agent
             .rule_cache
-            .update_from_site_config(&config(1, "varman"))
+            .update_from_site_config(&config(1, "varman", true, false))
             .unwrap();
         assert!(
             !plugin.stream_enforcement("example.com"),
@@ -4922,7 +4927,7 @@ advanced_mode = true
 
         agent
             .rule_cache
-            .update_from_site_config(&config(2, "legacy"))
+            .update_from_site_config(&config(2, "legacy", true, false))
             .unwrap();
         assert!(
             !plugin.stream_enforcement("example.com"),
@@ -4931,12 +4936,77 @@ advanced_mode = true
 
         agent
             .rule_cache
-            .update_from_site_config(&config(2, "varman"))
+            .update_from_site_config(&config(2, "varman", false, false))
+            .unwrap();
+        assert!(
+            !plugin.stream_enforcement("example.com"),
+            "a disabled WAF must not enforce stream findings"
+        );
+
+        agent
+            .rule_cache
+            .update_from_site_config(&config(2, "varman", true, true))
+            .unwrap();
+        assert!(
+            !plugin.stream_enforcement("example.com"),
+            "observation mode must not enforce stream findings"
+        );
+
+        // `enforce` is a documented alias for `varman`; it must not silently
+        // disable stream protection.
+        agent
+            .rule_cache
+            .update_from_site_config(&config(2, "enforce", true, false))
+            .unwrap();
+        assert!(
+            plugin.stream_enforcement("example.com"),
+            "the enforce alias must match the request path"
+        );
+
+        agent
+            .rule_cache
+            .update_from_site_config(&config(2, "varman", true, false))
             .unwrap();
         assert!(
             plugin.stream_enforcement("example.com"),
             "block + varman is the only enforcement combination"
         );
+        assert!(
+            !plugin.stream_enforcement("missing.example"),
+            "an unsynced domain must not fall back to the plugin's block mode"
+        );
+    }
+
+    /// A monitor site sees the same low-confidence rule on every matching
+    /// WebSocket message. Before deduplication one busy connection produced
+    /// hundreds of rows; now the rule is recorded once per connection.
+    #[tokio::test]
+    async fn a_monitor_stream_records_each_rule_once() {
+        let (_guard, agent, _dir) = install_test_agent().await;
+        while agent.client.pop_log().await.is_some() {}
+        let plugin = WafPlugin::new(
+            &toml::from_str::<PluginConf>(r###"mode = "block""###).unwrap(),
+        )
+        .unwrap();
+
+        let request_id = "stream-dedupe";
+        let finding = StreamFinding::Payload {
+            rule_id: "sem.cmd.command_context".to_string(),
+            detail: "payload matched".to_string(),
+            action: Action::Log,
+            score: 5,
+        };
+        assert!(!plugin.record_stream_finding(request_id, &finding, false));
+        assert!(!plugin.record_stream_finding(request_id, &finding, false));
+
+        let event = agent.client.pop_log().await.expect("one event");
+        assert_eq!("monitor", event.waf_action);
+        assert_eq!(5, event.waf_score);
+        assert!(
+            agent.client.pop_log().await.is_none(),
+            "the second finding must not produce another row"
+        );
+        STREAMS.remove(request_id);
     }
 
     /// A paused site answers with a 503 maintenance page (and a Retry-After

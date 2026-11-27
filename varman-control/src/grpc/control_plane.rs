@@ -1863,29 +1863,41 @@ fn parse_optional_uuid(raw: &str) -> Option<Uuid> {
 }
 
 /// Blank protocol strings become SQL NULLs.
+/// PostgreSQL text columns reject NUL bytes. A single one fails the whole
+/// insert, and the agent retries the same batch forever while its buffer
+/// fills — one scanner path such as `/x%00y` is enough to lose every log
+/// entry behind it. Replace NUL with U+FFFD so the rest of the row survives.
+fn clean(value: &str) -> String {
+    if value.contains('\0') {
+        value.replace('\0', "\u{FFFD}")
+    } else {
+        value.to_string()
+    }
+}
+
 fn optional(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
+    let cleaned = clean(value.trim());
+    if cleaned.is_empty() {
         None
     } else {
-        Some(trimmed.to_string())
+        Some(cleaned)
     }
 }
 
 /// Same as [`optional`] but bounded by a column width.
 fn truncate(value: &str, max: usize) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
+    let cleaned = clean(value.trim());
+    if cleaned.is_empty() {
         return None;
     }
-    if trimmed.len() <= max {
-        return Some(trimmed.to_string());
+    if cleaned.len() <= max {
+        return Some(cleaned);
     }
     let mut end = max;
-    while end > 0 && !trimmed.is_char_boundary(end) {
+    while end > 0 && !cleaned.is_char_boundary(end) {
         end -= 1;
     }
-    Some(trimmed[..end].to_string())
+    Some(cleaned[..end].to_string())
 }
 
 /// Zero and negative protocol integers become SQL NULLs.
@@ -1939,6 +1951,14 @@ mod tests {
         let truncated = truncate(&"é".repeat(10), 5).unwrap();
         assert_eq!(truncated.len(), 4);
         assert_eq!(truncated, "éé");
+    }
+
+    #[test]
+    fn nul_bytes_are_replaced_before_the_database() {
+        // PostgreSQL rejects NUL in text columns, and one bad row would make
+        // the agent retry (and eventually drop) the whole batch.
+        assert_eq!(optional("a\0b").as_deref(), Some("a\u{FFFD}b"));
+        assert_eq!(truncate("/x\0y", 16).as_deref(), Some("/x\u{FFFD}y"));
     }
 
     #[test]

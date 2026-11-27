@@ -236,6 +236,30 @@ pub enum StreamFinding {
     },
 }
 
+impl StreamFinding {
+    /// The rule id, human detail, and the pipeline verdict behind a finding.
+    ///
+    /// A protocol failure carries no rule score: it is enforced regardless of
+    /// the site mode because the frame boundaries are unknown after a decode
+    /// error, so inspection cannot continue safely.
+    pub fn parts(&self) -> (String, String, Action, u32) {
+        match self {
+            Self::Protocol(reason) => (
+                "ws.protocol_violation".to_string(),
+                format!("malformed WebSocket frame: {reason}"),
+                Action::Block,
+                0,
+            ),
+            Self::Payload {
+                rule_id,
+                detail,
+                action,
+                score,
+            } => (rule_id.clone(), detail.clone(), *action, *score),
+        }
+    }
+}
+
 /// Per-connection inspection state: one decoder per direction.
 pub struct StreamInspector {
     client: FrameDecoder,
