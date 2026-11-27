@@ -97,4 +97,8 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+# A queued proxy connection lets the API authorization tests run without
+# PostgreSQL. The `mock` feature cannot be used: it removes `Clone` from
+# `DatabaseConnection`, which the control plane relies on.
+sea-orm = { workspace = true, features = ["proxy"] }
 tempfile = { workspace = true }

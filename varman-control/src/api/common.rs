@@ -193,6 +193,9 @@ pub fn require_write(user: &AuthUser) -> Result<(), ApiError> {
 /// Administrators see every site; other roles only see sites they own. A site
 /// owned by somebody else is reported as `404` rather than `403` so that the API
 /// does not leak which domains exist.
+///
+/// Mutations are additionally gated by [`require_write`] for every role, so an
+/// administrator flagged `must_change_password` cannot write either.
 pub async fn load_site(
     db: &DatabaseConnection,
     site_id: Uuid,
@@ -206,15 +209,13 @@ pub async fn load_site(
             ApiError::NotFound(format!("site {site_id} not found"))
         })?;
 
-    if !user.is_admin() {
-        if model.user_id != user.id {
-            return Err(ApiError::NotFound(format!(
-                "site {site_id} not found"
-            )));
-        }
-        if write {
-            require_write(user)?;
-        }
+    // Ownership is checked first, so a non-owner writing to somebody else's
+    // site still gets the leak-avoiding 404 rather than a 403.
+    if !user.is_admin() && model.user_id != user.id {
+        return Err(ApiError::NotFound(format!("site {site_id} not found")));
+    }
+    if write {
+        require_write(user)?;
     }
     Ok(model)
 }
