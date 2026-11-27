@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::api::common::require_write;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -248,6 +249,7 @@ async fn create_channel(
     Json(payload): Json<ChannelRequest>,
 ) -> Result<Json<ChannelView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let name = payload.name.trim();
     if name.is_empty() || name.len() > 100 {
         return Err(ApiError::BadRequest(
@@ -289,6 +291,7 @@ async fn update_channel(
     Json(payload): Json<ChannelRequest>,
 ) -> Result<Json<ChannelView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let row = notification_channel::Entity::find_by_id(channel_id)
         .one(&state.db)
         .await?
@@ -331,6 +334,7 @@ async fn delete_channel(
     Path(channel_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let result = notification_channel::Entity::delete_by_id(channel_id)
         .exec(&state.db)
         .await?;
@@ -351,6 +355,7 @@ async fn test_channel(
     Path(channel_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let manager = crate::notify::global().ok_or_else(|| {
         ApiError::Internal("notifications are not running".to_string())
     })?;
@@ -398,6 +403,7 @@ async fn update_settings(
     Json(payload): Json<UpdateSettingsRequest>,
 ) -> Result<Json<NotificationSettings>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let mut settings = NotificationSettings::load(&state.db).await;
     if let Some(value) = payload.cpu_percent {
         settings.cpu_percent = clamp_threshold(value);

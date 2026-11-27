@@ -19,7 +19,9 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::common::{load_site_read, load_site_write, parse_uuid};
+use crate::api::common::{
+    load_site_read, load_site_write, parse_uuid, require_write,
+};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -235,6 +237,7 @@ async fn unblock_current(
     ConnectInfo(conn): ConnectInfo<ConnInfo>,
 ) -> Result<Json<UnblockCurrentResponse>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let ip = normalize_ip(&conn.peer_addr.ip()).to_string();
 
     let rows = agent_blocked_ip::Entity::find()

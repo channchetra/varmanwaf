@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::api::auth::{
     create_user, normalise_email, user_write_error, UserResponse,
 };
-use crate::api::common::{parse_uuid, Page, Pagination};
+use crate::api::common::{parse_uuid, require_write, Page, Pagination};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::middleware::AdminUser;
@@ -120,9 +120,10 @@ async fn list(
 /// `POST /api/v1/users`
 async fn create(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    admin: AdminUser,
     Json(payload): Json<CreateUserRequest>,
 ) -> Result<Response, ApiError> {
+    require_write(&admin)?;
     let email = normalise_email(&payload.email)?;
     validate_password(&payload.password)
         .map_err(|err| ApiError::BadRequest(err.to_string()))?;
@@ -174,6 +175,7 @@ async fn update(
     Path(user_id): Path<String>,
     Json(payload): Json<UpdateUserRequest>,
 ) -> Result<Json<UserResponse>, ApiError> {
+    require_write(&admin)?;
     let id = parse_uuid(&user_id, "user id")?;
     let account = user::Entity::find_by_id(id)
         .one(&state.db)
@@ -289,6 +291,7 @@ async fn reset_password(
     Path(user_id): Path<String>,
     Json(payload): Json<ResetPasswordRequest>,
 ) -> Result<Json<UserResponse>, ApiError> {
+    require_write(&admin)?;
     let id = parse_uuid(&user_id, "user id")?;
     if id == admin.id() {
         return Err(ApiError::BadRequest(

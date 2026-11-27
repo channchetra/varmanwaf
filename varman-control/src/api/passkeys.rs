@@ -41,7 +41,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::common::host_without_port;
+use crate::api::common::{host_without_port, require_write};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::middleware::AuthUser;
@@ -161,6 +161,7 @@ async fn update_passkey_settings(
     Json(payload): Json<PasskeySettingsUpdate>,
 ) -> Result<Json<PasskeySettingsView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     set_passkey_enabled(&state.db, payload.enabled).await?;
     tracing::info!(
         actor = %current.id,

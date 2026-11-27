@@ -19,6 +19,7 @@ use sea_orm::QueryFilter;
 use sea_orm::Set;
 use serde::Deserialize;
 
+use crate::api::common::require_write;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -75,6 +76,7 @@ async fn update(
     Json(payload): Json<UpdateCacheSettingsRequest>,
 ) -> Result<Json<cache_settings::Model>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     if payload.max_file_size_mb.is_none()
         && payload.max_space_mb.is_none()

@@ -14,7 +14,9 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::common::{load_site_read, load_site_write, parse_uuid};
+use crate::api::common::{
+    load_site_read, load_site_write, parse_uuid, require_write,
+};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -145,6 +147,7 @@ async fn create(
     Json(payload): Json<CreatePackageRequest>,
 ) -> Result<Json<PackageView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let key = payload.key.trim().to_lowercase();
     if key.is_empty()
         || key.len() > 64
@@ -235,6 +238,7 @@ async fn import_package(
     Json(payload): Json<ImportRequest>,
 ) -> Result<Json<PackageView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     let url = payload.url.trim().to_string();
     crate::subscription::validate_source_url(&url)
@@ -366,6 +370,7 @@ async fn delete_package(
     Path(key): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let package = exclusion_packages::Entity::find()
         .filter(exclusion_packages::Column::Key.eq(key.trim().to_lowercase()))
         .one(&state.db)

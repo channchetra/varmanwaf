@@ -17,7 +17,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::common::non_empty;
+use crate::api::common::{non_empty, require_password_changed};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::middleware::AuthUser;
@@ -367,6 +367,10 @@ async fn update_profile(
     current: AuthUser,
     Json(payload): Json<UpdateProfileRequest>,
 ) -> Result<Json<UserResponse>, ApiError> {
+    // A flagged account must change its password before changing its login
+    // identity; the password change endpoint below is the exempt path.
+    require_password_changed(&current)?;
+
     let account = user::Entity::find_by_id(current.id)
         .one(&state.db)
         .await?
@@ -449,6 +453,9 @@ fn require_current_password(
 }
 
 /// `PUT /api/v1/auth/password`
+/// Deliberately not behind [`require_password_changed`]: this endpoint is the
+/// path that clears `must_change_password`, so gating it would lock the
+/// account out.
 async fn change_password(
     State(state): State<AppState>,
     current: AuthUser,

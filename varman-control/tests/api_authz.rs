@@ -31,9 +31,9 @@ use uuid::Uuid;
 use varman_control::api::common::{
     load_site_read, load_site_write, scope_site,
 };
-use varman_control::api::ip_groups;
+use varman_control::api::{auth, ip_groups, notifications};
 use varman_control::app_state::AppState;
-use varman_control::auth::{create_token, AuthUser};
+use varman_control::auth::{create_token, hash_password, AuthUser};
 use varman_control::config::ServerConfig;
 use varman_control::error::ApiError;
 use varman_control::grpc::registry::AgentRegistry;
@@ -166,6 +166,16 @@ async fn ip_group_app(
     account: &user::Model,
     requests: usize,
 ) -> (Router, String) {
+    app_for(ip_groups::routes(), account, requests).await
+}
+
+/// Builds `routes` over a proxy connection that answers `requests` account
+/// lookups, plus a dashboard token for `account`.
+async fn app_for(
+    routes: Router<AppState>,
+    account: &user::Model,
+    requests: usize,
+) -> (Router, String) {
     let config = ServerConfig::default();
     let token = create_token(
         account.id,
@@ -179,7 +189,7 @@ async fn ip_group_app(
     let db =
         database_with_rows(vec![vec![encode_row(account)]; requests]).await;
     let state = AppState::new(db, config, AgentRegistry::new());
-    (ip_groups::routes().with_state(state), token)
+    (routes.with_state(state), token)
 }
 
 /// A bearer-authenticated request, with an optional JSON body.
@@ -510,4 +520,66 @@ async fn ip_group_delete_requires_admin() {
 
     // Assert
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn must_change_password_blocks_notification_settings() {
+    // Arrange: a flagged administrator through the real notification router.
+    // Only the account lookup is queued; the handler must refuse before any
+    // settings query, so a 403 (not a 500 from an exhausted queue) proves the
+    // write gate runs first.
+    let mut admin = user_row(Uuid::new_v4(), role::ADMIN, 1);
+    admin.must_change_password = true;
+    let (app, token) = app_for(notifications::routes(), &admin, 1).await;
+
+    // Act
+    let response = app
+        .oneshot(bearer_request(
+            Method::PUT,
+            "/notifications/settings",
+            &token,
+            Some(r#"{"enabled":false}"#),
+        ))
+        .await
+        .expect("the router is infallible");
+
+    // Assert: the forced-change message, not a database failure.
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("the body is readable");
+    let body = String::from_utf8(body.to_vec()).expect("the body is UTF-8");
+    assert!(
+        body.contains("change your password before making changes"),
+        "unexpected body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn forced_password_change_does_not_block_the_password_change_itself() {
+    // Arrange: a flagged administrator whose stored hash matches a different
+    // password. The extractor and the handler each load the account, hence
+    // two queued rows.
+    let mut flagged = user_row(Uuid::new_v4(), role::ADMIN, 1);
+    flagged.must_change_password = true;
+    flagged.password_hash = hash_password("the real current password")
+        .expect("hashing a test password cannot fail");
+    let (app, token) = app_for(auth::routes(), &flagged, 2).await;
+
+    // Act
+    let response = app
+        .oneshot(bearer_request(
+            Method::PUT,
+            "/auth/password",
+            &token,
+            Some(
+                r#"{"current_password":"not the real password","new_password":"a much longer new password"}"#,
+            ),
+        ))
+        .await
+        .expect("the router is infallible");
+
+    // Assert: the handler ran and rejected the current password (400), rather
+    // than the forced-change gate answering 403.
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

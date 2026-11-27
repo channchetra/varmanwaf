@@ -14,6 +14,7 @@ use sea_orm::sea_query::OnConflict;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait, Set};
 use serde::Deserialize;
 
+use crate::api::common::require_write;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -53,6 +54,7 @@ async fn update(
     Json(payload): Json<UpdateLogRetentionRequest>,
 ) -> Result<Json<log_retention::Model>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     if payload.access_log_retention_days.is_none()
         && payload.security_event_retention_days.is_none()

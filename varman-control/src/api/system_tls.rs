@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::common::host_without_port;
+use crate::api::common::{host_without_port, require_write};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -174,6 +174,7 @@ async fn upload(
     Json(payload): Json<UploadRequest>,
 ) -> Result<Json<TlsStatusView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     let (meta, sans) = describe(&payload.cert_pem)
         .map_err(|err| ApiError::BadRequest(err.to_string()))?;
@@ -206,6 +207,7 @@ async fn generate(
     Json(payload): Json<SelfSignedRequest>,
 ) -> Result<Json<TlsStatusView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     let common_name = payload
         .common_name

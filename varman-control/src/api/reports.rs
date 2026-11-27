@@ -18,7 +18,7 @@ use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::common::{load_site_read, parse_uuid};
+use crate::api::common::{load_site_read, parse_uuid, require_write};
 use crate::api::display::timezone;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
@@ -305,6 +305,7 @@ async fn save_settings(
     Json(payload): Json<ReportSettings>,
 ) -> Result<Json<ReportSettings>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let mut settings = payload;
     settings.title = settings.title.trim().to_string();
     settings.footer_note = settings
@@ -334,6 +335,7 @@ async fn send_now(
     current: AuthUser,
 ) -> Result<Json<FiredReport>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let settings = load_settings(&state.db).await;
     Ok(Json(fire(&state.db, &settings, Utc::now()).await?))
 }

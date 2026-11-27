@@ -172,6 +172,12 @@ pub fn require_write(user: &AuthUser) -> Result<(), ApiError> {
             "this account cannot modify resources".to_string(),
         ));
     }
+    require_password_changed(user)
+}
+
+/// Refuses a caller whose password is still the administrator-issued
+/// temporary one, without requiring the administrator role.
+pub fn require_password_changed(user: &AuthUser) -> Result<(), ApiError> {
     if user.must_change_password {
         return Err(ApiError::Forbidden(
             "change your password before making changes".to_string(),

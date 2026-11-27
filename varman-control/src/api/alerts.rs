@@ -17,7 +17,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::alerts;
-use crate::api::common::parse_uuid;
+use crate::api::common::{parse_uuid, require_write};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -244,6 +244,7 @@ async fn create_rule(
     Json(payload): Json<RuleRequest>,
 ) -> Result<(StatusCode, Json<alert_rule::Model>), ApiError> {
     require_admin(&current)?;
+    require_write(&current)?;
     let validated = validate_rule(&state, payload).await?;
     let now = Utc::now();
     let row = alert_rule::ActiveModel {
@@ -280,6 +281,7 @@ async fn update_rule(
     Json(payload): Json<RuleRequest>,
 ) -> Result<Json<alert_rule::Model>, ApiError> {
     require_admin(&current)?;
+    require_write(&current)?;
     let id = parse_uuid(&id, "rule id")?;
     let existing = alert_rule::Entity::find_by_id(id)
         .one(&state.db)
@@ -311,6 +313,7 @@ async fn delete_rule(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     require_admin(&current)?;
+    require_write(&current)?;
     let id = parse_uuid(&id, "rule id")?;
     let row = alert_rule::Entity::find_by_id(id)
         .one(&state.db)
@@ -349,6 +352,8 @@ async fn preview_rule(
     _current: AuthUser,
     Path(id): Path<String>,
 ) -> Result<Json<PreviewView>, ApiError> {
+    // Read-only: evaluates the rule and dispatches nothing, so the
+    // password-change gate does not apply.
     let id = parse_uuid(&id, "rule id")?;
     let rule = alert_rule::Entity::find_by_id(id)
         .one(&state.db)
@@ -412,6 +417,7 @@ async fn create_silence(
     Json(payload): Json<SilenceRequest>,
 ) -> Result<(StatusCode, Json<alert_silence::Model>), ApiError> {
     require_admin(&current)?;
+    require_write(&current)?;
     let reason = payload.reason.trim().to_string();
     if reason.chars().count() > 200 {
         return Err(ApiError::bad_request(
@@ -461,6 +467,7 @@ async fn delete_silence(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     require_admin(&current)?;
+    require_write(&current)?;
     let id = parse_uuid(&id, "silence id")?;
     let row = alert_silence::Entity::find_by_id(id)
         .one(&state.db)

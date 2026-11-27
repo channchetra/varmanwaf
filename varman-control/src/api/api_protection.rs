@@ -23,7 +23,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::common::{non_empty, Page, Pagination};
+use crate::api::common::{non_empty, require_write, Page, Pagination};
 use crate::api::error::ApiError;
 use crate::api::logs::{free_text_filter, resolve_window, text_filter};
 use crate::api::state::AppState;
@@ -179,6 +179,7 @@ async fn update(
     Json(payload): Json<UpdateApiProtectionRequest>,
 ) -> Result<Json<ApiProtectionView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     let row = self_protection::load_settings(&state.db).await?;
     let mut prospective = row;

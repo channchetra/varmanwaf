@@ -12,6 +12,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::api::common::require_write;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -60,6 +61,7 @@ async fn update(
     Json(payload): Json<UpdateLoginSecurityRequest>,
 ) -> Result<Json<LoginSecuritySettings>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let mut settings = LoginSecuritySettings::load(&state.db).await;
     if let Some(value) = payload.anomaly_enabled {
         settings.anomaly_enabled = value;
@@ -99,6 +101,7 @@ async fn upload_geoip(
     mut multipart: Multipart,
 ) -> Result<Json<Value>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     let mut bytes: Option<Vec<u8>> = None;
     while let Some(field) = multipart

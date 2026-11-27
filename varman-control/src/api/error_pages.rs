@@ -15,7 +15,9 @@ use sea_orm::{ActiveModelTrait, EntityTrait, PaginatorTrait, QueryOrder, Set};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::api::common::{non_empty, parse_uuid, Page, Pagination};
+use crate::api::common::{
+    non_empty, parse_uuid, require_write, Page, Pagination,
+};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -105,6 +107,7 @@ async fn create(
     Json(payload): Json<CreateRequest>,
 ) -> Result<Response, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     validate_status_code(payload.status_code)?;
     if payload.name.trim().is_empty() || payload.name.len() > 200 {
@@ -146,6 +149,7 @@ async fn update(
     Json(payload): Json<UpdateRequest>,
 ) -> Result<Json<error_pages::Model>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let target = parse_uuid(&page_id, "error page id")?;
 
     let row = find(&state, target).await?;
@@ -193,6 +197,7 @@ async fn remove(
     Path(page_id): Path<String>,
 ) -> Result<Response, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let target = parse_uuid(&page_id, "error page id")?;
     find(&state, target).await?;
 

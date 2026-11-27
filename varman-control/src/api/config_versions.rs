@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::api::common::require_write;
 use crate::api::error::ApiError;
 use crate::api::sites::touch_site;
 use crate::api::state::AppState;
@@ -159,6 +160,7 @@ async fn rollback_version(
     Path(version_id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     let restored = config_history::restore(&state.db, version_id)
         .await

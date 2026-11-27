@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 use serde::{Deserialize, Serialize};
 
+use crate::api::common::require_write;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -74,6 +75,7 @@ async fn update(
     Json(payload): Json<UpdateAcmeRequest>,
 ) -> Result<Json<AcmeView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     if payload.enabled && !management_cert::available() {
         return Err(ApiError::BadRequest(
             "auto-issue needs the edge on the management host (all-in-one \
@@ -131,6 +133,7 @@ async fn retry(
     current: AuthUser,
 ) -> Result<Json<AcmeView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     if !management_cert::available() {
         return Err(ApiError::BadRequest(
             "auto-issue needs the edge on the management host (all-in-one \

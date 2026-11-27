@@ -33,7 +33,9 @@ use uuid::Uuid;
 
 use crate::ai::{self, ChatEvent, Provider, TurnRequest};
 use crate::api::ai_rate_limit;
-use crate::api::common::{parse_uuid, Page, Pagination};
+use crate::api::common::{
+    parse_uuid, require_password_changed, require_write, Page, Pagination,
+};
 use crate::api::error::ApiError;
 use crate::api::site_basic_auth::SECRET_MASK;
 use crate::api::state::AppState;
@@ -255,6 +257,7 @@ async fn update_settings(
     Json(payload): Json<AiSettingsUpdate>,
 ) -> Result<Json<AiSettingsView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     let stored = ai::load_settings(&state.db).await?;
     let mut merged = apply_update(&stored, payload)?;
@@ -294,6 +297,8 @@ async fn test_settings(
     current: AuthUser,
     body: Option<Json<AiSettingsUpdate>>,
 ) -> Result<Json<AiTestResult>, ApiError> {
+    // A read-only probe: nothing is persisted, so the password-change gate
+    // does not apply.
     current.require_admin().map_err(ApiError::from)?;
 
     let stored = ai::load_settings(&state.db).await?;
@@ -422,6 +427,7 @@ async fn create_conversation(
     current: AuthUser,
     body: Option<Json<CreateConversationRequest>>,
 ) -> Result<(StatusCode, Json<ConversationSummary>), ApiError> {
+    require_password_changed(&current)?;
     ai_rate_limit::check_user_limit("ai_create", current.id)?;
 
     let title = body
@@ -484,6 +490,7 @@ async fn delete_conversation(
     current: AuthUser,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    require_password_changed(&current)?;
     let conversation_id = parse_uuid(&id, "conversation id")?;
     let conversation =
         load_conversation(&state, &current, conversation_id).await?;
@@ -543,6 +550,7 @@ async fn send_message(
     headers: HeaderMap,
     Json(payload): Json<SendMessageRequest>,
 ) -> Result<Response, ApiError> {
+    require_password_changed(&current)?;
     ai_rate_limit::check_user_limit("ai_chat", current.id)?;
     let conversation_id = parse_uuid(&id, "conversation id")?;
     load_conversation(&state, &current, conversation_id).await?;

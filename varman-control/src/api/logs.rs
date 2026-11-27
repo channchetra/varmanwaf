@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::api::common::{
-    load_site_read, non_empty, parse_optional_datetime, parse_uuid, Page,
-    Pagination,
+    load_site_read, non_empty, parse_optional_datetime, parse_uuid,
+    require_write, Page, Pagination,
 };
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
@@ -553,6 +553,7 @@ async fn purge(
     Query(query): Query<PurgeQuery>,
 ) -> Result<Json<PurgeResult>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     let days = query.older_than_days;
     if !(1..=3650).contains(&days) {

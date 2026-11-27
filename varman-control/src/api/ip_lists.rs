@@ -13,6 +13,7 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::api::common::require_write;
 use crate::api::error::ApiError;
 use crate::api::ip_groups::{ip_group_action, subscription_kind};
 use crate::api::state::AppState;
@@ -93,6 +94,7 @@ async fn import(
     Json(payload): Json<ImportRequest>,
 ) -> Result<(StatusCode, Json<ImportView>), ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     let catalog_id = payload
         .catalog_id

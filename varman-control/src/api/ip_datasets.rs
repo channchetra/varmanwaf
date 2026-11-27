@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 
+use crate::api::common::require_write;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -121,6 +122,7 @@ async fn sync(
     Json(payload): Json<SyncRequest>,
 ) -> Result<Json<SyncResponse>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     if !matches!(payload.kind.as_str(), KIND_COUNTRY | KIND_ASN) {
         return Err(ApiError::BadRequest(format!(
             "unknown dataset kind '{}' (use 'country' or 'asn')",
@@ -156,6 +158,7 @@ async fn sync_referenced(
     current: AuthUser,
 ) -> Result<Json<SyncResponse>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     let referenced = referenced_keys(&state).await?;
     let countries: Vec<String> = referenced

@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::api::common::{
-    non_empty, parse_datetime, parse_uuid, Page, Pagination,
+    non_empty, parse_datetime, parse_uuid, require_password_changed, Page,
+    Pagination,
 };
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
@@ -168,7 +169,9 @@ async fn create(
     Json(payload): Json<CreateKeyRequest>,
 ) -> Result<Response, ApiError> {
     // Every account may mint its own keys; the permissions granted are
-    // capped at the caller's own power (see below).
+    // capped at the caller's own power (see below). A flagged account must
+    // replace its temporary password first, administrators included.
+    require_password_changed(&current)?;
 
     let name = payload.name.trim().to_string();
     if name.is_empty() || name.len() > 100 {
@@ -186,11 +189,6 @@ async fn create(
     // Self-service keys for read-only roles never exceed read: agents need
     // the `agent` permission, which only admins may delegate.
     if !current.is_admin() {
-        if current.must_change_password {
-            return Err(ApiError::Forbidden(
-                "change your password before creating API keys".to_string(),
-            ));
-        }
         permissions = vec![permission::READ.to_string()];
     }
 
@@ -229,6 +227,7 @@ async fn remove(
 ) -> Result<Response, ApiError> {
     // Any account may revoke its own keys; the filter below already restricts
     // non-admins to their own rows.
+    require_password_changed(&current)?;
     let id = parse_uuid(&key_id, "key id")?;
 
     let mut query = api_key::Entity::delete_by_id(id);

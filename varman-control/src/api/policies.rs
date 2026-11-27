@@ -22,7 +22,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::api::common::{load_site_read, load_site_write, parse_uuid};
+use crate::api::common::{
+    load_site_read, load_site_write, parse_uuid, require_write,
+};
 use crate::api::error::ApiError;
 use crate::api::sites::touch_site;
 use crate::api::state::AppState;
@@ -577,6 +579,7 @@ async fn import_policies(
     Json(payload): Json<PolicyImportRequest>,
 ) -> Result<Json<PolicyImportResult>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     if let Some(schema) = payload.schema.as_deref() {
         if !schema.starts_with("varmanwaf.policy") {
@@ -646,6 +649,7 @@ async fn create_policy(
     Json(payload): Json<CreatePolicyRequest>,
 ) -> Result<Json<PolicyDetail>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let name = validate_name(&payload.name)?;
     for (kind, config) in &payload.layers {
         validate_layer_payload(kind, config)?;
@@ -747,6 +751,7 @@ async fn create_from_template(
     Json(payload): Json<FromTemplateRequest>,
 ) -> Result<Json<PolicyDetail>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let name = validate_name(&payload.name)?;
     let layers = policy_content::template_layers(&payload.template_id)
         .ok_or_else(|| {
@@ -799,6 +804,7 @@ async fn apply_recipe(
     Json(payload): Json<ApplyRecipeRequest>,
 ) -> Result<Json<RecipeApplied>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let id = parse_uuid(&id, "policy id")?;
     let policy = load_policy(&state, id).await?;
     let rule =
@@ -861,6 +867,7 @@ async fn update_policy(
     Json(payload): Json<UpdatePolicyRequest>,
 ) -> Result<Json<PolicyDetail>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let id = parse_uuid(&id, "policy id")?;
     let policy = load_policy(&state, id).await?;
 
@@ -919,6 +926,7 @@ async fn delete_policy(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let id = parse_uuid(&id, "policy id")?;
     let policy = load_policy(&state, id).await?;
 
@@ -951,6 +959,7 @@ async fn put_layer(
     Json(payload): Json<LayerRequest>,
 ) -> Result<Json<LayerView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let id = parse_uuid(&id, "policy id")?;
     let policy = load_policy(&state, id).await?;
     validate_layer_payload(&kind, &payload.config)?;
@@ -989,6 +998,7 @@ async fn delete_layer(
     Path((id, kind)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let id = parse_uuid(&id, "policy id")?;
     let policy = load_policy(&state, id).await?;
     if !policy::is_layer_kind(&kind) {
@@ -1138,6 +1148,7 @@ async fn rollback_policy(
     Json(payload): Json<RollbackRequest>,
 ) -> Result<Json<PolicyDetail>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let id = parse_uuid(&id, "policy id")?;
     let policy = load_policy(&state, id).await?;
     if let Some(expected) = payload.expected_revision {

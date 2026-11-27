@@ -18,7 +18,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::common::{parse_uuid, Page, Pagination};
+use crate::api::common::{parse_uuid, require_write, Page, Pagination};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -178,6 +178,7 @@ async fn import_ruleset(
     Json(payload): Json<ImportRequest>,
 ) -> Result<Json<RulesetView>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let sources = [
         payload.github_tag.as_deref(),
         payload.url.as_deref(),
@@ -353,6 +354,7 @@ async fn delete_ruleset(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let id = parse_uuid(&id, "ruleset id")?;
     let row = crs_ruleset::Entity::find_by_id(id)
         .one(&state.db)

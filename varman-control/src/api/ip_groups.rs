@@ -14,7 +14,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::api::common::{
-    load_site_read, non_empty, parse_uuid, Page, Pagination,
+    load_site_read, non_empty, parse_uuid, require_write, Page, Pagination,
 };
 use crate::api::error::ApiError;
 use crate::api::sites::touch_site;
@@ -319,6 +319,7 @@ async fn create(
     Json(payload): Json<CreateRequest>,
 ) -> Result<Response, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     validate_name(&payload.name)?;
     if !ip_group_action::is_valid(&payload.action) {
         return Err(ApiError::BadRequest(format!(
@@ -394,6 +395,7 @@ async fn update(
     Json(payload): Json<UpdateRequest>,
 ) -> Result<Json<ip_groups::Model>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let target = parse_uuid(&group_id, "IP group id")?;
     let row = find_group(&state, target).await?;
     if row.subscription_kind.as_deref() == Some(subscription_kind::BUILTIN)
@@ -472,6 +474,7 @@ async fn remove(
     Path(group_id): Path<String>,
 ) -> Result<Response, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let target = parse_uuid(&group_id, "IP group id")?;
     find_group(&state, target).await?;
 
@@ -628,6 +631,7 @@ async fn set_sites(
     Json(payload): Json<SetSitesRequest>,
 ) -> Result<Response, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let target = parse_uuid(&group_id, "IP group id")?;
     let group = find_group(&state, target).await?;
 
@@ -700,6 +704,7 @@ async fn sync_now(
     Path(group_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
     let target = parse_uuid(&group_id, "IP group id")?;
     let group = find_group(&state, target).await?;
 

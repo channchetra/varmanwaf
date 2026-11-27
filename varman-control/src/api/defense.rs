@@ -17,6 +17,7 @@ use chrono::Utc;
 use sea_orm::{ActiveModelTrait, Set};
 use serde::Deserialize;
 
+use crate::api::common::require_write;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
@@ -59,6 +60,7 @@ async fn update(
     Json(payload): Json<UpdateDefenseRequest>,
 ) -> Result<Json<defense_settings::Model>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
+    require_write(&current)?;
 
     if payload.observation_mode.is_none() && payload.default_fail_open.is_none()
     {
