@@ -119,7 +119,7 @@ impl MtlsPolicy {
 
     /// The reason this request is refused, `None` when the client
     /// certificate — or its absence — is acceptable.
-    fn denial(&self, ctx: &Ctx) -> Option<&'static str> {
+    fn denial_reason(&self, ctx: &Ctx) -> Option<&'static str> {
         let digest = ctx.conn.tls_peer_cert_digest.as_deref();
         let Some(digest) = digest else {
             return self

@@ -95,9 +95,11 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Start-time sentinel for a request: a non-positive millisecond offset from
+/// `started_at`, negated so it can never be mistaken for a latency. Returns
+/// `-1` while less than a millisecond has elapsed.
 #[inline]
-pub fn get_start_time(started_at: &Instant) -> i32 {
-    // the offset of start time
+pub fn start_time_offset(started_at: &Instant) -> i32 {
     let value = started_at.elapsed().as_millis() as i32;
     if value == 0 {
         return -1;
@@ -1493,7 +1495,7 @@ impl ProxyHttp for Server {
         }
         // start connect to upstream
         ctx.timing.upstream_connect =
-            Some(get_start_time(&ctx.timing.created_at));
+            Some(start_time_offset(&ctx.timing.created_at));
 
         Ok(Box::new(peer))
     }
@@ -1549,7 +1551,7 @@ impl ProxyHttp for Server {
 
         // upstream start processing
         ctx.timing.upstream_processing =
-            Some(get_start_time(&ctx.timing.created_at));
+            Some(start_time_offset(&ctx.timing.created_at));
 
         Ok(())
     }
@@ -1776,7 +1778,7 @@ impl ProxyHttp for Server {
             ctx.state.status = Some(upstream_response.status);
             // start to get upstream response data
             ctx.timing.upstream_response =
-                Some(get_start_time(&ctx.timing.created_at));
+                Some(start_time_offset(&ctx.timing.created_at));
         }
 
         if let Some(id) = &ctx.state.request_id {

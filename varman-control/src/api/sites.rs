@@ -1014,7 +1014,7 @@ async fn create(
 
     let upstream_name = non_empty(&payload.upstream_name)
         .unwrap_or_else(|| "origin".to_string());
-    let upstream_address = normalize_origin_address(&payload.upstream_address)?;
+    let upstream_address = normalise_origin_address(&payload.upstream_address)?;
     validate_upstream(&upstream_name, &upstream_address, default_weight())?;
 
     // New sites are live immediately; the dashboard toggles them between
@@ -1273,12 +1273,12 @@ async fn update(
         active.trust_last_hop = Set(value);
     }
     if let Some(ranges) = &payload.trusted_proxy_ranges {
-        let mut normalized = Vec::with_capacity(ranges.len());
+        let mut normalised = Vec::with_capacity(ranges.len());
         for range in ranges {
             match parse_proxy_range(range) {
                 Some(parsed) => {
-                    if !normalized.contains(&parsed) {
-                        normalized.push(parsed);
+                    if !normalised.contains(&parsed) {
+                        normalised.push(parsed);
                     }
                 },
                 None => {
@@ -1288,10 +1288,10 @@ async fn update(
                 },
             }
         }
-        active.trusted_proxy_ranges = Set(normalized);
+        active.trusted_proxy_ranges = Set(normalised);
     }
     if let Some(group_ids) = &payload.trusted_proxy_group_ids {
-        let mut normalized: Vec<Uuid> = Vec::with_capacity(group_ids.len());
+        let mut normalised: Vec<Uuid> = Vec::with_capacity(group_ids.len());
         for group_id in group_ids {
             let exists = ip_groups::Entity::find_by_id(*group_id)
                 .one(&state.db)
@@ -1302,11 +1302,11 @@ async fn update(
                     "IP group {group_id} does not exist"
                 )));
             }
-            if !normalized.contains(group_id) {
-                normalized.push(*group_id);
+            if !normalised.contains(group_id) {
+                normalised.push(*group_id);
             }
         }
-        active.trusted_proxy_group_ids = Set(normalized);
+        active.trusted_proxy_group_ids = Set(normalised);
     }
     active.updated_at = Set(Utc::now());
 
@@ -1363,7 +1363,7 @@ async fn create_upstream(
     load_site_write(&state.db, id, &current).await?;
 
     let name = payload.name.trim().to_string();
-    let address = normalize_origin_address(&payload.address)?;
+    let address = normalise_origin_address(&payload.address)?;
     validate_upstream(&name, &address, payload.weight)?;
     let pool_id = resolve_pool(&state, id, payload.pool_id.as_ref()).await?;
 
@@ -1412,7 +1412,7 @@ async fn update_upstream(
         active.name = Set(name);
     }
     if let Some(address) = non_empty(&payload.address) {
-        active.address = Set(normalize_origin_address(&address)?);
+        active.address = Set(normalise_origin_address(&address)?);
     }
     if let Some(weight) = payload.weight {
         active.weight = Set(weight);
@@ -2292,7 +2292,7 @@ async fn delete_ssl(
 /// trailing slash is rejected: a path would be silently dropped by the edge
 /// and would also poison the SNI derived from the host, which is worse than a
 /// 400 at save time.
-fn normalize_origin_address(raw: &str) -> Result<String, ApiError> {
+fn normalise_origin_address(raw: &str) -> Result<String, ApiError> {
     let mut address = raw.trim().to_string();
     for scheme in ["http://", "https://"] {
         if let Some(rest) = address.strip_prefix(scheme) {
@@ -2381,7 +2381,7 @@ fn split_origin_host_port(address: &str) -> Option<(&str, Option<&str>)> {
 /// Validates the fields shared by upstream create/update.
 ///
 /// The address is expected to be canonical already — write paths run it
-/// through [`normalize_origin_address`] first.
+/// through [`normalise_origin_address`] first.
 fn validate_upstream(
     name: &str,
     address: &str,
@@ -2703,7 +2703,7 @@ mod tests {
     }
 
     #[test]
-    fn proxy_ranges_normalize_to_canonical_cidr() {
+    fn proxy_ranges_normalise_to_canonical_cidr() {
         assert_eq!(
             parse_proxy_range("10.0.0.1").as_deref(),
             Some("10.0.0.1/32")
@@ -2731,22 +2731,22 @@ mod tests {
     }
 
     #[test]
-    fn origin_addresses_are_normalized_to_host_port() {
+    fn origin_addresses_are_normalised_to_host_port() {
         assert_eq!(
-            normalize_origin_address(" 10.0.0.1:8080 ").unwrap(),
+            normalise_origin_address(" 10.0.0.1:8080 ").unwrap(),
             "10.0.0.1:8080"
         );
         assert_eq!(
-            normalize_origin_address("https://origin.example.com").unwrap(),
+            normalise_origin_address("https://origin.example.com").unwrap(),
             "origin.example.com"
         );
         assert_eq!(
-            normalize_origin_address("http://origin.example.com:8080/")
+            normalise_origin_address("http://origin.example.com:8080/")
                 .unwrap(),
             "origin.example.com:8080"
         );
         assert_eq!(
-            normalize_origin_address("[::1]:8443").unwrap(),
+            normalise_origin_address("[::1]:8443").unwrap(),
             "[::1]:8443"
         );
     }
@@ -2754,14 +2754,14 @@ mod tests {
     #[test]
     fn origin_addresses_reject_paths_and_bad_ports() {
         assert!(
-            normalize_origin_address("https://origin.example.com/api").is_err()
+            normalise_origin_address("https://origin.example.com/api").is_err()
         );
-        assert!(normalize_origin_address("origin.example.com?x=1").is_err());
-        assert!(normalize_origin_address("origin.example.com#frag").is_err());
-        assert!(normalize_origin_address("origin.example.com:0").is_err());
-        assert!(normalize_origin_address("origin.example.com:70000").is_err());
-        assert!(normalize_origin_address("::1").is_err());
-        assert!(normalize_origin_address("").is_err());
+        assert!(normalise_origin_address("origin.example.com?x=1").is_err());
+        assert!(normalise_origin_address("origin.example.com#frag").is_err());
+        assert!(normalise_origin_address("origin.example.com:0").is_err());
+        assert!(normalise_origin_address("origin.example.com:70000").is_err());
+        assert!(normalise_origin_address("::1").is_err());
+        assert!(normalise_origin_address("").is_err());
     }
 
     #[test]
@@ -2773,15 +2773,15 @@ mod tests {
             "0.0.0.0:9090",
         ] {
             assert!(
-                normalize_origin_address(bad).is_err(),
+                normalise_origin_address(bad).is_err(),
                 "{bad} must be rejected as the WAF listener"
             );
         }
         // A local app on a non-listener port and a remote app on port 80 are
         // both legitimate; only loopback listener ports are the WAF itself.
-        assert!(normalize_origin_address("127.0.0.1:3001").is_ok());
-        assert!(normalize_origin_address("10.1.18.5:80").is_ok());
-        assert!(normalize_origin_address("origin.example.com:80").is_ok());
+        assert!(normalise_origin_address("127.0.0.1:3001").is_ok());
+        assert!(normalise_origin_address("10.1.18.5:80").is_ok());
+        assert!(normalise_origin_address("origin.example.com:80").is_ok());
     }
 
     #[test]
@@ -2826,7 +2826,7 @@ mod tests {
         assert_eq!(hc.healthy_threshold, 1);
         hc.validate().expect("the overlaid posture must validate");
 
-        // A path without the leading slash is rejected, not normalized.
+        // A path without the leading slash is rejected, not normalised.
         let mut hc = PoolHealthCheck::default_values();
         hc.apply_update(&UpdatePoolRequest {
             health_check_path: Some("healthz".to_string()),

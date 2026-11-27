@@ -23,6 +23,7 @@ pub mod crs;
 pub mod debug;
 pub mod defense;
 pub mod display;
+pub mod elasticsearch;
 pub mod error;
 pub mod error_pages;
 pub mod exclusions;
@@ -48,7 +49,6 @@ pub mod reports;
 pub mod rewrite;
 pub mod rules;
 pub mod self_protection;
-pub mod settings;
 pub mod site_basic_auth;
 pub mod site_failover;
 pub mod sites;
@@ -100,7 +100,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(analytics::routes())
         .merge(reports::routes())
         .merge(display::routes())
-        .merge(settings::routes())
+        .merge(elasticsearch::routes())
         .merge(log_retention::routes())
         .merge(ssl::routes())
         .merge(mtls::routes())

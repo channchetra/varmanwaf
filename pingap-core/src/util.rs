@@ -15,8 +15,10 @@
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// 2022-05-07: 1651852800
-const SUPER_TIMESTAMP: u64 = 1651852800;
+/// Unix timestamp of 2022-05-07 (UTC). Compact timestamps count from here so
+/// they fit in a `u32`; the encoded value is always an offset, never a Unix
+/// timestamp.
+const UNIX_EPOCH_2022: u64 = 1651852800;
 
 /// Time since the epoch, or zero if the system clock is set before it.
 #[inline]
@@ -32,12 +34,11 @@ pub fn now_sec() -> u64 {
     since_epoch().as_secs()
 }
 
-/// Returns the number of seconds elapsed since SUPER_TIMESTAMP
-/// Returns 0 if the current time is before SUPER_TIMESTAMP
+/// Returns the number of seconds elapsed since [`UNIX_EPOCH_2022`].
+/// Returns 0 if the current time is before that epoch.
 #[inline]
-pub fn get_super_ts() -> u32 {
-    let super_ts_secs = SUPER_TIMESTAMP;
-    now_sec().saturating_sub(super_ts_secs) as u32
+pub fn get_ts() -> u32 {
+    now_sec().saturating_sub(UNIX_EPOCH_2022) as u32
 }
 
 static HOST_NAME: LazyLock<String> = LazyLock::new(|| {
@@ -81,9 +82,7 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        constant_time_eq, get_hostname, get_super_ts, now_ms, now_sec,
-    };
+    use super::{constant_time_eq, get_hostname, get_ts, now_ms, now_sec};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -95,8 +94,8 @@ mod tests {
     }
 
     #[test]
-    fn test_super_ts() {
-        assert_eq!(true, get_super_ts() > 104017048);
+    fn test_get_ts() {
+        assert_eq!(true, get_ts() > 104017048);
     }
 
     #[test]

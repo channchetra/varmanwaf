@@ -3,8 +3,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use http::HeaderValue;
 use pingap_core::{Ctx, format_duration};
 use pingap_core::{
-    convert_header, get_host, get_super_ts, now_ms, now_sec,
-    remove_query_from_header,
+    convert_header, get_host, get_ts, now_ms, now_sec, remove_query_from_header,
 };
 use pingora::http::RequestHeader;
 use std::hint::black_box;
@@ -49,10 +48,10 @@ fn bench_convert_header_value(c: &mut Criterion) {
     });
 }
 
-fn bench_get_super_ts(c: &mut Criterion) {
+fn bench_get_ts(c: &mut Criterion) {
     c.bench_function("get super ts", |b| {
         b.iter(|| {
-            black_box(get_super_ts());
+            black_box(get_ts());
         });
     });
 }
@@ -120,7 +119,7 @@ criterion_group!(
     bench_remove_query_from_header,
     bench_get_host,
     bench_convert_header_value,
-    bench_get_super_ts,
+    bench_get_ts,
     bench_now_ms,
     bench_now_sec,
     bench_format_duration,

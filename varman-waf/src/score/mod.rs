@@ -124,19 +124,19 @@ impl AnomalyScorer {
         breakdown: &mut ScoreBreakdown,
         severity: u8,
     ) {
-        self.add_severity_hit_ex(breakdown, severity, false);
+        self.add_severity_hit_monitored(breakdown, severity, false);
     }
 
     /// [`AnomalyScorer::add_severity_hit`] with an explicit point value -
     /// the per-rule score override. Family sub-scores stay untouched: the
     /// override replaces this rule's own aggregate contribution only.
     pub fn add_points_hit(&self, breakdown: &mut ScoreBreakdown, points: u32) {
-        self.add_points_hit_ex(breakdown, points, false);
+        self.add_points_hit_monitored(breakdown, points, false);
     }
 
     /// [`AnomalyScorer::add_points_hit`] with a monitor-only downgrade flag
-    /// (see [`AnomalyScorer::add_severity_hit_ex`]).
-    pub fn add_points_hit_ex(
+    /// (see [`AnomalyScorer::add_severity_hit_monitored`]).
+    pub fn add_points_hit_monitored(
         &self,
         breakdown: &mut ScoreBreakdown,
         points: u32,
@@ -153,7 +153,7 @@ impl AnomalyScorer {
     /// [`AnomalyScorer::add_severity_hit`] with a monitor-only downgrade
     /// flag: downgraded hits keep the aggregate (visibility) but are
     /// excluded from the blocking subset.
-    pub fn add_severity_hit_ex(
+    pub fn add_severity_hit_monitored(
         &self,
         breakdown: &mut ScoreBreakdown,
         severity: u8,
@@ -176,12 +176,12 @@ impl AnomalyScorer {
         category: LegacyAttackCategory,
         severity: u8,
     ) {
-        self.add_category_hit_ex(breakdown, category, severity, false);
+        self.add_category_hit_monitored(breakdown, category, severity, false);
     }
 
     /// [`AnomalyScorer::add_category_hit`] with a monitor-only downgrade
-    /// flag (see [`AnomalyScorer::add_severity_hit_ex`]).
-    pub fn add_category_hit_ex(
+    /// flag (see [`AnomalyScorer::add_severity_hit_monitored`]).
+    pub fn add_category_hit_monitored(
         &self,
         breakdown: &mut ScoreBreakdown,
         category: LegacyAttackCategory,
@@ -239,11 +239,11 @@ impl AnomalyScorer {
     /// (see `detect_expr_injection`). Confirmed template evaluation is RCE
     /// territory, so this feeds the RCE sub-score directly.
     pub fn add_expr_hit(&self, breakdown: &mut ScoreBreakdown) {
-        self.add_expr_hit_ex(breakdown, false);
+        self.add_expr_hit_monitored(breakdown, false);
     }
 
     /// [`AnomalyScorer::add_expr_hit`] with a monitor-only downgrade flag.
-    pub fn add_expr_hit_ex(
+    pub fn add_expr_hit_monitored(
         &self,
         breakdown: &mut ScoreBreakdown,
         monitored: bool,

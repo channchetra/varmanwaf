@@ -8,7 +8,7 @@ use pingap_config::LocationConf;
 use pingap_core::LocationInstance;
 use pingap_core::{
     CompressionStat, ConnectionInfo, Ctx, Features, HttpResponse, RequestState,
-    Timing, UpstreamInfo, convert_headers, get_super_ts,
+    Timing, UpstreamInfo, convert_headers, get_ts,
 };
 use pingap_location::Location;
 use pingap_logger::Parser;
@@ -209,10 +209,10 @@ fn bench_location_rewrite_path(c: &mut Criterion) {
     });
 }
 
-fn bench_get_super_ts(c: &mut Criterion) {
+fn bench_get_ts(c: &mut Criterion) {
     c.bench_function("get super ts", |b| {
         b.iter(|| {
-            _ = get_super_ts();
+            _ = get_ts();
         })
     });
 }
@@ -377,7 +377,7 @@ criterion_group!(
     bench_new_response_header,
     bench_location_filter,
     bench_location_rewrite_path,
-    bench_get_super_ts,
+    bench_get_ts,
     bench_logger_format,
     bench_map,
     bench_get_location,

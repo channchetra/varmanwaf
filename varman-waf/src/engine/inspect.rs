@@ -251,13 +251,13 @@ impl WafEngine {
                 // The hit keeps its aggregate score but stays out of the RCE
                 // sub-score, or VARMAN-1061 blocks benign storage-style
                 // paths at Strict.
-                self.scorer.add_severity_hit_ex(
+                self.scorer.add_severity_hit_monitored(
                     &mut state.breakdown,
                     severity,
                     monitored,
                 );
             } else {
-                self.scorer.add_category_hit_ex(
+                self.scorer.add_category_hit_monitored(
                     &mut state.breakdown,
                     hit.category,
                     severity,
@@ -357,7 +357,7 @@ impl WafEngine {
         if search_phrase {
             return;
         }
-        self.scorer.add_category_hit_ex(
+        self.scorer.add_category_hit_monitored(
             &mut state.breakdown,
             LegacyAttackCategory::SqlInjection,
             severity,
@@ -405,7 +405,7 @@ impl WafEngine {
         if collected_js_uri {
             return;
         }
-        self.scorer.add_category_hit_ex(
+        self.scorer.add_category_hit_monitored(
             &mut state.breakdown,
             LegacyAttackCategory::Xss,
             severity,
@@ -454,7 +454,7 @@ impl WafEngine {
         if critical && !monitored {
             state.critical_hit = true;
         }
-        self.scorer.add_category_hit_ex(
+        self.scorer.add_category_hit_monitored(
             &mut state.breakdown,
             LegacyAttackCategory::Deserialization,
             severity,
@@ -561,7 +561,7 @@ impl WafEngine {
         if !monitored {
             state.critical_hit = true;
         }
-        self.scorer.add_category_hit_ex(
+        self.scorer.add_category_hit_monitored(
             &mut state.breakdown,
             category,
             5,
@@ -584,7 +584,8 @@ impl WafEngine {
         monitored: bool,
         value: &'n DecodedValue,
     ) {
-        self.scorer.add_expr_hit_ex(&mut state.breakdown, monitored);
+        self.scorer
+            .add_expr_hit_monitored(&mut state.breakdown, monitored);
         if !monitored {
             state.critical_hit = true;
         }
@@ -639,13 +640,13 @@ impl WafEngine {
                 LegacyAttackCategory::CommandInjection
                     | LegacyAttackCategory::Deserialization
             ) {
-                self.scorer.add_severity_hit_ex(
+                self.scorer.add_severity_hit_monitored(
                     &mut state.breakdown,
                     hit.severity,
                     monitored,
                 );
             } else {
-                self.scorer.add_category_hit_ex(
+                self.scorer.add_category_hit_monitored(
                     &mut state.breakdown,
                     hit.category,
                     hit.severity,
@@ -840,7 +841,7 @@ impl WafEngine {
                 // hits stacked on signature hits — can cross the threshold
                 // and block. Operators who want a rule to never contribute to
                 // blocking use the per-rule monitor switch instead, which
-                // routes through `add_severity_hit_ex(monitored=true)`.
+                // routes through `add_severity_hit_monitored(monitored=true)`.
                 match override_points {
                     Some(points) => {
                         self.scorer.add_points_hit(&mut state.breakdown, points)
@@ -885,12 +886,12 @@ impl WafEngine {
         state: &mut InspectionState<'_>,
     ) {
         match override_points {
-            Some(points) => self.scorer.add_points_hit_ex(
+            Some(points) => self.scorer.add_points_hit_monitored(
                 &mut state.breakdown,
                 points,
                 monitored,
             ),
-            None => self.scorer.add_severity_hit_ex(
+            None => self.scorer.add_severity_hit_monitored(
                 &mut state.breakdown,
                 rule.severity,
                 monitored,

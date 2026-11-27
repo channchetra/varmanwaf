@@ -101,7 +101,10 @@ impl PathSelector {
         }
     }
     #[inline]
-    fn is_match(&self, path: &str) -> (bool, Option<AHashMap<String, String>>) {
+    fn match_captures(
+        &self,
+        path: &str,
+    ) -> (bool, Option<AHashMap<String, String>>) {
         match self {
             // For exact path matching, compare path strings directly
             PathSelector::Equal(value) => (value == path, None),
@@ -165,7 +168,10 @@ impl HostSelector {
     /// case) and compares in place: the patterns are stored lowercased, so
     /// no lowercased copy of the request host is made per selector.
     #[inline]
-    fn is_match(&self, host: &str) -> (bool, Option<AHashMap<String, String>>) {
+    fn match_captures(
+        &self,
+        host: &str,
+    ) -> (bool, Option<AHashMap<String, String>>) {
         match self {
             HostSelector::Equal(value) => {
                 (value.eq_ignore_ascii_case(host), None)
@@ -735,7 +741,8 @@ impl Location {
     ) -> (bool, Option<AHashMap<String, String>>) {
         // Path first: it is the cheaper check and the usual reason not to
         // match.
-        let (matched, mut capture_values) = self.path_selector.is_match(path);
+        let (matched, mut capture_values) =
+            self.path_selector.match_captures(path);
         if !matched {
             return (false, None);
         }
@@ -746,7 +753,7 @@ impl Location {
         }
 
         let matched = self.hosts.iter().any(|host_selector| {
-            let (matched, captures) = host_selector.is_match(host);
+            let (matched, captures) = host_selector.match_captures(host);
             if let Some(captures) = captures {
                 if let Some(values) = capture_values.as_mut() {
                     values.extend(captures);

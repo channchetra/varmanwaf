@@ -264,7 +264,7 @@ impl WafPlugin {
     ) -> Option<RequestPluginResult> {
         let mtls =
             state.context.as_ref().and_then(|site| site.mtls.as_ref())?;
-        let reason = mtls.denial(ctx)?;
+        let reason = mtls.denial_reason(ctx)?;
         let response = block_page(&state.request_id, reason);
         emit_generated_access(
             state.agent.as_ref(),
