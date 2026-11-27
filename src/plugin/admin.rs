@@ -513,6 +513,231 @@ impl AdminServe {
 
         Ok(HttpResponse::no_content())
     }
+
+    /// `GET|POST|DELETE /configs[/{category}[/{name}]]` — read the running
+    /// configuration or write a single category entry. Failures are reported
+    /// as a 500 with the error message, matching the old inline dispatcher.
+    async fn handle_configs(
+        &self,
+        session: &mut Session,
+        method: Method,
+        category: &str,
+        params: &[String],
+    ) -> HttpResponse {
+        let result = match method {
+            Method::POST => {
+                if category == "import" {
+                    self.import_config(session).await
+                } else if params.len() < 4 {
+                    Err(pingora::Error::new_str("Url is invalid(no name)"))
+                } else {
+                    self.update_config(session, category, &params[3]).await
+                }
+            },
+            Method::DELETE => {
+                if params.len() < 4 {
+                    Err(pingora::Error::new_str("Url is invalid(no name)"))
+                } else {
+                    self.remove_config(category, &params[3]).await
+                }
+            },
+            _ => self.get_config(category).await,
+        };
+        result.unwrap_or_else(|err| {
+            HttpResponse::try_from_json_status(
+                &ErrorResponse {
+                    message: err.to_string(),
+                },
+                StatusCode::INTERNAL_SERVER_ERROR,
+            )
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
+        })
+    }
+
+    /// `GET /config-history/{category}[/{name}]` — stored revisions of a
+    /// category, or of one entry inside it.
+    async fn handle_config_history(
+        &self,
+        category: &str,
+        params: &[String],
+    ) -> pingora::Result<HttpResponse> {
+        let category = Category::from_str(category).map_err(|e| {
+            error!(target: LOG_TARGET, error = e.to_string(), "get config category fail");
+            pingap_core::new_internal_error(400, e)
+        })?;
+        // The name segment is optional in the url but not in the code below,
+        // so reject a short url instead of indexing past the end of `params`.
+        let Some(name) = params.get(3).cloned() else {
+            return Err(pingap_core::new_internal_error(
+                400,
+                "Url is invalid(no name)",
+            ));
+        };
+        let history = self.config_history_entries(&category, &name).await?;
+        Ok(HttpResponse::try_from_json(&json!({
+            "history": history,
+        }))
+        .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
+    }
+
+    /// Loads the stored revisions of one entry and shapes them for the console,
+    /// skipping revisions that do not contain the category or the entry.
+    async fn config_history_entries(
+        &self,
+        category: &Category,
+        name: &str,
+    ) -> pingora::Result<Vec<serde_json::Value>> {
+        let arr = self
+            .manager
+            .history(category.clone(), name)
+            .await
+            .map_err(|e| {
+                error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
+                pingap_core::new_internal_error(400, e)
+            })?
+            .unwrap_or_default();
+
+        let mut history = vec![];
+        for item in arr {
+            let data: toml::Table = toml::from_str(&item.data).map_err(|e| {
+                error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
+                pingap_core::new_internal_error(400, e)
+            })?;
+            let key = format_category(category);
+            let Some(data) = data.get(key).cloned() else {
+                continue;
+            };
+            let data = if name.is_empty() {
+                data
+            } else {
+                let Some(data) = data.get(name).cloned() else {
+                    continue;
+                };
+                data
+            };
+            history.push(json!({
+                "created_at": item.created_at,
+                "data": data,
+            }));
+        }
+        Ok(history)
+    }
+
+    /// `GET /basic` — process, host and plugin facts for the console.
+    async fn handle_basic(&self) -> pingora::Result<HttpResponse> {
+        let current_config = self.load_config(true).await?;
+        let info = get_process_system_info();
+
+        let (processing, accepted) = get_processing_accepted();
+
+        let basic_info = BasicInfo {
+            start_time: get_start_time(),
+            version: pingap_util::get_pkg_version().to_string(),
+            rustc_version: pingap_util::get_rustc_version().to_string(),
+            config_hash: self
+                .manager
+                .get_current_config()
+                .hash()
+                .unwrap_or_default(),
+            user: current_config.basic.user.clone().unwrap_or_default(),
+            group: current_config.basic.group.clone().unwrap_or_default(),
+            pid: info.pid.to_string(),
+            threads: info.threads,
+            accepted,
+            processing,
+            kernel: info.kernel,
+            memory_mb: info.memory_mb,
+            memory: info.memory,
+            arch: info.arch,
+            cpus: info.cpus,
+            physical_cpus: info.physical_cpus,
+            total_memory: info.total_memory,
+            used_memory: info.used_memory,
+            features: feature_flags(),
+            fd_count: info.fd_count,
+            tcp_count: info.tcp_count,
+            tcp6_count: info.tcp6_count,
+            supported_plugins: get_plugin_factory().supported_plugins(),
+            upstream_healthy_status: new_upstream_provider().healthy_status(),
+            support_history: self.manager.support_history(),
+            git_hash: crate::git_hash().to_string(),
+            now: pingap_core::now_sec(),
+        };
+
+        Ok(HttpResponse::try_from_json(&basic_info)
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
+    }
+
+    /// `POST /restart` — graceful restart of the data-plane process.
+    async fn handle_restart(&self) -> HttpResponse {
+        if let Err(e) = restart_now().await {
+            error!(target: LOG_TARGET, error = e.to_string(), "Restart fail");
+            HttpResponse::bad_request(e.to_string())
+        } else {
+            HttpResponse::no_content()
+        }
+    }
+
+    /// `POST /aes` — encrypt or decrypt a value with the console's AES key.
+    async fn handle_aes(
+        &self,
+        session: &mut Session,
+    ) -> pingora::Result<HttpResponse> {
+        let buf = get_request_body(session).await?;
+        let params: AesParams = serde_json::from_slice(buf.as_ref())
+            .map_err(|e| pingap_core::new_internal_error(400, e))?;
+        let value = if params.category == "encrypt" {
+            pingap_util::aes_encrypt(&params.key, &params.data)
+        } else {
+            pingap_util::aes_decrypt(&params.key, &params.data)
+        }
+        .map_err(|e| pingap_core::new_internal_error(400, e))?;
+        Ok(HttpResponse::try_from_json(&AesResp { value })
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
+    }
+
+    /// `GET /certificates` — certificate metadata known to this process.
+    fn handle_certificates(&self) -> HttpResponse {
+        let mut infos = HashMap::new();
+        for (name, cert) in new_certificate_provider().list().iter() {
+            if let Some(info) = &cert.info {
+                let key = if let Some(value) = &cert.name {
+                    value.clone()
+                } else {
+                    name.clone()
+                };
+                infos.insert(key, info.clone());
+            }
+        }
+        HttpResponse::try_from_json(&infos)
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
+    }
+}
+
+/// Feature flags reported by `/basic`; the control-plane console uses them to
+/// disable settings the running binary cannot honour. The TLS backend is named
+/// (`openssl` or `rustls`) alongside the enabled cargo features.
+fn feature_flags() -> Vec<String> {
+    let mut features = vec![
+        "default".to_string(),
+        pingap_certificate::TLS_BACKEND.to_string(),
+    ];
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "tracing")] {
+            features.push("tracing".to_string());
+        }
+    }
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "full")] {
+            features.push("full".to_string());
+        }
+    }
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "pyro")] {
+            features.push("pyroscope".to_string());
+        }
+    }
+    features
 }
 
 /// Runs the startup validation over an imported configuration, before any of
@@ -723,176 +948,19 @@ async fn handle_request_admin(
         category = &params[2];
     }
     let resp = if path.starts_with("/configs") {
-        match method {
-            Method::POST => {
-                if category == "import" {
-                    plugin.import_config(session).await
-                } else if params.len() < 4 {
-                    Err(pingora::Error::new_str("Url is invalid(no name)"))
-                } else {
-                    plugin.update_config(session, category, &params[3]).await
-                }
-            },
-            Method::DELETE => {
-                if params.len() < 4 {
-                    Err(pingora::Error::new_str("Url is invalid(no name)"))
-                } else {
-                    plugin.remove_config(category, &params[3]).await
-                }
-            },
-            _ => plugin.get_config(category).await,
-        }
-        .unwrap_or_else(|err| {
-            HttpResponse::try_from_json_status(
-                &ErrorResponse {
-                    message: err.to_string(),
-                },
-                StatusCode::INTERNAL_SERVER_ERROR,
-            )
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
-        })
+        plugin
+            .handle_configs(session, method, category, &params)
+            .await
     } else if path.starts_with("/config-history") {
-        let category = Category::from_str(category).map_err(|e| {
-            error!(target: LOG_TARGET, error = e.to_string(), "get config category fail");
-            pingap_core::new_internal_error(400, e)
-        })?;
-        // The name segment is optional in the url but not in the code below,
-        // so reject a short url instead of indexing past the end of `params`.
-        let Some(name) = params.get(3).cloned() else {
-            return Err(pingap_core::new_internal_error(
-                400,
-                "Url is invalid(no name)",
-            ));
-        };
-        let arr = plugin.manager.history(category.clone(), &name).await.map_err(|e| {
-            error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
-            pingap_core::new_internal_error(400, e)
-        })?.unwrap_or_default();
-
-        let mut history = vec![];
-        for item in arr {
-            let data:toml::Table = toml::from_str(&item.data).map_err(|e| {
-                error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
-                pingap_core::new_internal_error(400, e)
-            })?;
-            let key = format_category(&category);
-            let Some(data) = data.get(key).cloned() else {
-                continue;
-            };
-            let data = if name.is_empty() {
-                data
-            } else {
-                let Some(data) = data.get(&name).cloned() else {
-                    continue;
-                };
-                data
-            };
-            history.push(json!({
-                "created_at": item.created_at,
-                "data": data,
-            }));
-        }
-        HttpResponse::try_from_json(&json!({
-            "history": history,
-        }))
-        .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
+        plugin.handle_config_history(category, &params).await?
     } else if path == "/basic" {
-        let current_config = plugin.load_config(true).await?;
-        let info = get_process_system_info();
-
-        let (processing, accepted) = get_processing_accepted();
-
-        let mut basic_info = BasicInfo {
-            start_time: get_start_time(),
-            version: pingap_util::get_pkg_version().to_string(),
-            rustc_version: pingap_util::get_rustc_version().to_string(),
-            config_hash: plugin
-                .manager
-                .get_current_config()
-                .hash()
-                .unwrap_or_default(),
-            user: current_config.basic.user.clone().unwrap_or_default(),
-            group: current_config.basic.group.clone().unwrap_or_default(),
-            pid: info.pid.to_string(),
-            threads: info.threads,
-            accepted,
-            processing,
-            kernel: info.kernel,
-            memory_mb: info.memory_mb,
-            memory: info.memory,
-            arch: info.arch,
-            cpus: info.cpus,
-            physical_cpus: info.physical_cpus,
-            total_memory: info.total_memory,
-            used_memory: info.used_memory,
-            features: vec![],
-            fd_count: info.fd_count,
-            tcp_count: info.tcp_count,
-            tcp6_count: info.tcp6_count,
-            supported_plugins: get_plugin_factory().supported_plugins(),
-            upstream_healthy_status: new_upstream_provider().healthy_status(),
-            support_history: plugin.manager.support_history(),
-            git_hash: crate::git_hash().to_string(),
-            now: pingap_core::now_sec(),
-        };
-        basic_info.features.push("default".to_string());
-        // TLS backend name (`openssl` or `rustls`) so the control-plane
-        // console can disable settings the active binary cannot honour.
-        basic_info
-            .features
-            .push(pingap_certificate::TLS_BACKEND.to_string());
-
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "tracing")] {
-                basic_info.features.push("tracing".to_string());
-            }
-        }
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "full")] {
-                basic_info.features.push("full".to_string());
-            }
-        }
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "pyro")] {
-                basic_info.features.push("pyroscope".to_string());
-            }
-        }
-
-        HttpResponse::try_from_json(&basic_info)
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
+        plugin.handle_basic().await?
     } else if path == "/restart" && method == Method::POST {
-        if let Err(e) = restart_now().await {
-            error!(target: LOG_TARGET, error = e.to_string(), "Restart fail");
-            HttpResponse::bad_request(e.to_string())
-        } else {
-            HttpResponse::no_content()
-        }
+        plugin.handle_restart().await
     } else if path == "/aes" {
-        let buf = get_request_body(session).await?;
-        let params: AesParams = serde_json::from_slice(buf.as_ref())
-            .map_err(|e| pingap_core::new_internal_error(400, e))?;
-        let value = if params.category == "encrypt" {
-            pingap_util::aes_encrypt(&params.key, &params.data)
-        } else {
-            pingap_util::aes_decrypt(&params.key, &params.data)
-        }
-        .map_err(|e| pingap_core::new_internal_error(400, e))?;
-        HttpResponse::try_from_json(&AesResp { value })
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
+        plugin.handle_aes(session).await?
     } else if path == "/certificates" {
-        let mut infos = HashMap::new();
-        for (name, cert) in new_certificate_provider().list().iter() {
-            if let Some(info) = &cert.info {
-                let key = if let Some(value) = &cert.name {
-                    value.clone()
-                } else {
-                    name.clone()
-                };
-                infos.insert(key, info.clone());
-            }
-        }
-        HttpResponse::try_from_json(&infos)
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
+        plugin.handle_certificates()
     } else if path.starts_with("/pprof/") {
         handle_pprof_request(session, &path, &method).await
     } else {

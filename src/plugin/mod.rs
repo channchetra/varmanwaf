@@ -337,35 +337,33 @@ pub fn try_init_plugins(
 
     let mut updated_plugins = vec![];
     let mut plugins = AHashMap::new();
-    let plugin_configs: Vec<(String, PluginConf)> = plugin_configs
-        .into_iter()
-        .filter(|(name, conf)| {
-            let conf_hash_key = get_hash_key(conf);
-            let mut exists = false;
-            if let Some(plugin) = PLUGIN_PROVIDER.get(name) {
-                exists = true;
-                // exists plugin with same config
-                if plugin.config_key() == conf_hash_key {
-                    plugins.insert(name.to_string(), plugin);
-                    return false;
-                }
-            }
-            let step = get_step_conf(conf, PluginStep::Request).to_string();
-            let category = if let Some(value) = conf.get("category") {
-                value.as_str().unwrap_or_default().to_string()
-            } else {
-                "".to_string()
-            };
-            if exists {
-                info!(target: LOG_TARGET, name, step, category, "plugin will be reloaded");
-            } else {
-                info!(target: LOG_TARGET, name, step, category, "plugin will be created");
-            }
-            updated_plugins.push(name.to_string());
-            true
-        })
-        .collect();
-    let (new_plugins, new_errors) = parse_plugins(plugin_configs);
+    let mut pending_configs = Vec::with_capacity(plugin_configs.len());
+    for (name, conf) in plugin_configs {
+        let conf_hash_key = get_hash_key(&conf);
+        let current = PLUGIN_PROVIDER.get(&name);
+        // already current -> reuse the running instance unchanged
+        if let Some(plugin) = current.as_ref()
+            && plugin.config_key() == conf_hash_key
+        {
+            plugins.insert(name, plugin.clone());
+            continue;
+        }
+        // changed (or new) -> rebuild from the configuration
+        let step = get_step_conf(&conf, PluginStep::Request).to_string();
+        let category = conf
+            .get("category")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if current.is_some() {
+            info!(target: LOG_TARGET, name, step, category, "plugin will be reloaded");
+        } else {
+            info!(target: LOG_TARGET, name, step, category, "plugin will be created");
+        }
+        updated_plugins.push(name.clone());
+        pending_configs.push((name, conf));
+    }
+    let (new_plugins, new_errors) = parse_plugins(pending_configs);
     plugins.extend(new_plugins);
     errors.extend(new_errors);
     // Swap the registry only when every plugin built. Storing the partial map
