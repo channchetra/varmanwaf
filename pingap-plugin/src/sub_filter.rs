@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
+use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::{Bytes, BytesMut};
@@ -188,6 +188,15 @@ impl ModifyResponseBody for SubFilterReplacer {
     }
 }
 
+/// Typed view of `[plugins.<name>]` for the sub filter plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct SubFilterPluginParams {
+    path: String,
+    filters: Vec<String>,
+    status_codes: String,
+}
+
 impl TryFrom<&PluginConf> for SubFilter {
     type Error = Error;
 
@@ -199,18 +208,19 @@ impl TryFrom<&PluginConf> for SubFilter {
     /// # Returns
     /// * `Result<Self>` - Configured SubFilter instance or error if configuration is invalid
     fn try_from(value: &PluginConf) -> Result<Self> {
-        let path_value = get_str_conf(value, "path");
-        let path = if path_value.is_empty() {
+        let params: SubFilterPluginParams = parse_params(value, "sub_filter")?;
+        let path = if params.path.is_empty() {
             None
         } else {
-            let regex = Regex::new(get_str_conf(value, "path").as_str())
-                .map_err(|e| Error::Invalid {
+            let regex =
+                Regex::new(&params.path).map_err(|e| Error::Invalid {
                     category: PluginCategory::SubFilter.to_string(),
                     message: e.to_string(),
                 })?;
             Some(regex)
         };
-        let filters = get_str_slice_conf(value, "filters")
+        let filters = params
+            .filters
             .iter()
             .map(|s| {
                 parse_subs_filter(s).ok_or(Error::Invalid {
@@ -219,10 +229,10 @@ impl TryFrom<&PluginConf> for SubFilter {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let status_codes = get_str_conf(value, "status_codes");
-        let status_codes = if !status_codes.is_empty() {
+        let status_codes = if !params.status_codes.is_empty() {
             Some(
-                status_codes
+                params
+                    .status_codes
                     .split(",")
                     .flat_map(|s| s.trim().parse::<u16>().ok())
                     .collect::<Vec<_>>(),

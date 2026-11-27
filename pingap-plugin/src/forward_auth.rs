@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_duration_conf, get_hash_key, get_str_conf, get_str_slice_conf,
-};
+use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, StatusCode};
+use humantime::parse_duration;
 use pingap_config::PluginConf;
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
@@ -57,12 +56,23 @@ pub struct ForwardAuth {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the forward auth plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ForwardAuthParams {
+    auth_url: String,
+    timeout: String,
+    request_headers: Vec<String>,
+    add_headers: Vec<String>,
+}
+
 impl TryFrom<&PluginConf> for ForwardAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
+        let params: ForwardAuthParams = parse_params(value, CATEGORY)?;
 
-        let auth_url = get_str_conf(value, "auth_url");
+        let auth_url = params.auth_url;
         if auth_url.is_empty() {
             return Err(Error::Invalid {
                 category: CATEGORY.to_string(),
@@ -75,8 +85,9 @@ impl TryFrom<&PluginConf> for ForwardAuth {
             message: format!("invalid auth_url: {e}"),
         })?;
 
-        let timeout = get_duration_conf(value, "timeout")
-            .unwrap_or(Duration::from_secs(10));
+        // An absent or unparseable timeout keeps the 10s default, as before.
+        let timeout =
+            parse_duration(&params.timeout).unwrap_or(Duration::from_secs(10));
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
@@ -90,8 +101,8 @@ impl TryFrom<&PluginConf> for ForwardAuth {
             plugin_step: PluginStep::Request,
             client,
             auth_url,
-            request_headers: get_str_slice_conf(value, "request_headers"),
-            add_headers: get_str_slice_conf(value, "add_headers"),
+            request_headers: params.request_headers,
+            add_headers: params.add_headers,
         })
     }
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
+use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -61,14 +61,26 @@ pub struct GeoRestriction {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the geo restriction plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct GeoRestrictionParams {
+    country_codes: Vec<String>,
+    message: String,
+    #[serde(rename = "type")]
+    kind: String,
+}
+
 impl TryFrom<&PluginConf> for GeoRestriction {
     type Error = Error;
 
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
+        let params: GeoRestrictionParams =
+            parse_params(value, "geo_restriction")?;
 
-        let raw_codes = get_str_slice_conf(value, "country_codes");
-        let country_codes: Vec<String> = raw_codes
+        let country_codes: Vec<String> = params
+            .country_codes
             .iter()
             .flat_map(|s| s.split([' ', ',']))
             .filter(|s| !s.is_empty())
@@ -88,14 +100,15 @@ impl TryFrom<&PluginConf> for GeoRestriction {
             }
         }
 
-        let mut message = get_str_conf(value, "message");
+        let mut message = params.message;
         if message.is_empty() {
             message = "Access from your country is not allowed".to_string();
         }
 
-        let category_str = get_str_conf(value, "type");
+        // `RestrictionCategory` here also supports `reporting`, so it keeps
+        // its own parser instead of `restriction_category_from`.
         let restriction_category =
-            category_str.as_str().try_into().map_err(|e: String| {
+            params.kind.as_str().try_into().map_err(|e: String| {
                 Error::Invalid {
                     category: "geo_restriction".to_string(),
                     message: e,

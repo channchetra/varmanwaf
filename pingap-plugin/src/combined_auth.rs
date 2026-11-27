@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf,
-};
+use super::{Error, get_hash_key, parse_params};
 use ahash::AHashMap;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -63,6 +61,27 @@ pub struct CombinedAuth {
     auths: AHashMap<String, AuthParam>,
 }
 
+/// Typed view of `[plugins.<name>]` for the combined auth plugin.
+///
+/// `authorizations` stays a [`toml::Value`] so the two original diagnostics
+/// ("is empty" for a missing key, "is not array" for a wrong type) are kept;
+/// each entry is then deserialized into [`CombinedAuthEntry`].
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct CombinedAuthParams {
+    authorizations: Option<toml::Value>,
+}
+
+/// One `[[authorizations]]` entry.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct CombinedAuthEntry {
+    app_id: String,
+    secret: String,
+    deviation: i64,
+    ip_list: Vec<String>,
+}
+
 /// Converts a plugin configuration into a CombinedAuth instance
 ///
 /// # Arguments
@@ -81,8 +100,9 @@ impl TryFrom<&PluginConf> for CombinedAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
+        let params: CombinedAuthParams = parse_params(value, CATEGORY)?;
 
-        let Some(authorizations) = value.get("authorizations") else {
+        let Some(authorizations) = params.authorizations else {
             return Err(Error::Invalid {
                 category: CATEGORY.to_string(),
                 message: "authorizations is empty".to_string(),
@@ -96,31 +116,36 @@ impl TryFrom<&PluginConf> for CombinedAuth {
         };
         let mut auths = AHashMap::new();
         for item in authorizations.iter() {
-            let Some(value) = item.as_table() else {
+            if !item.is_table() {
                 continue;
-            };
-            let app_id = get_str_conf(value, "app_id");
+            }
+            let auth: CombinedAuthEntry =
+                item.clone().try_into().map_err(|e| Error::Invalid {
+                    category: CATEGORY.to_string(),
+                    message: e.to_string(),
+                })?;
+            let app_id = auth.app_id;
             if app_id.is_empty() {
                 continue;
             }
             let mut ip_rules = None;
-            let ip_list = get_str_slice_conf(value, "ip_list");
-            if !ip_list.is_empty() {
-                ip_rules =
-                    Some(pingap_util::IpRules::try_new(&ip_list).map_err(
+            if !auth.ip_list.is_empty() {
+                ip_rules = Some(
+                    pingap_util::IpRules::try_new(&auth.ip_list).map_err(
                         |e| Error::Invalid {
                             category: PluginCategory::CombinedAuth.to_string(),
                             message: e.to_string(),
                         },
-                    )?);
+                    )?,
+                );
             }
             // `deviation` bounds the replay window, so it has to be a
             // deliberate choice. It used to default to 0, which rejects every
             // request whose timestamp is not exactly the current second — a
             // config that appears to work only when the clocks happen to line
             // up.
-            let deviation = get_int_conf(value, "deviation");
-            let secret = get_str_conf(value, "secret");
+            let deviation = auth.deviation;
+            let secret = auth.secret;
             if deviation <= 0 && secret != SUPER_USER_SECRET {
                 return Err(Error::Invalid {
                     category: CATEGORY.to_string(),

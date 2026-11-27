@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_bool_conf, get_hash_key, get_int_conf, get_str_conf};
+use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use http::StatusCode;
 use pingap_config::PluginConf;
@@ -55,6 +55,15 @@ pub struct Redirect {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the redirect plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct RedirectParams {
+    prefix: String,
+    status: i64,
+    http_to_https: bool,
+}
+
 impl Redirect {
     /// Creates a new Redirect plugin instance from the provided configuration.
     ///
@@ -71,18 +80,19 @@ impl Redirect {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new redirect plugin");
         let hash_value = get_hash_key(params);
+        let params: RedirectParams = parse_params(params, "redirect")?;
 
         // Normalize prefix handling:
         // - Empty or single char prefixes become empty string
         // - Prefixes without leading "/" get one added
         // This ensures consistent path handling
-        let mut prefix = get_str_conf(params, "prefix");
+        let mut prefix = params.prefix;
         if prefix.len() <= 1 {
             prefix = "".to_string();
         } else if !prefix.starts_with("/") {
             prefix = format!("/{prefix}");
         }
-        let status = match get_int_conf(params, "status") as u16 {
+        let status = match params.status as u16 {
             301 => StatusCode::MOVED_PERMANENTLY,
             302 => StatusCode::FOUND,
             308 => StatusCode::PERMANENT_REDIRECT,
@@ -91,7 +101,7 @@ impl Redirect {
         Ok(Self {
             hash_value,
             prefix,
-            http_to_https: get_bool_conf(params, "http_to_https"),
+            http_to_https: params.http_to_https,
             status,
             plugin_step: PluginStep::Request,
         })

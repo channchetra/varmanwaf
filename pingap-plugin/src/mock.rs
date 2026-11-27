@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_hash_key, get_int_conf, get_step_conf_in, get_str_conf,
-    get_str_slice_conf,
-};
+use super::{Error, get_hash_key, get_step_conf_in, parse_params};
 use async_trait::async_trait;
 use http::StatusCode;
 use humantime::parse_duration;
@@ -71,6 +68,17 @@ pub struct MockResponse {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the mock plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct MockParams {
+    path: String,
+    status: i64,
+    headers: Vec<String>,
+    data: String,
+    delay: String,
+}
+
 impl MockResponse {
     /// Creates a new mock response handler from a plugin configuration.
     ///
@@ -89,21 +97,28 @@ impl MockResponse {
 
         // Generate unique hash for this configuration
         let hash_value = get_hash_key(params);
+        let plugin_step = get_step_conf_in(
+            params,
+            &PluginCategory::Mock.to_string(),
+            PluginStep::Request,
+            &[PluginStep::Request, PluginStep::ProxyUpstream],
+        )?;
+        let params: MockParams = parse_params(params, "mock")?;
 
         // Extract all configuration parameters
-        let path = get_str_conf(params, "path"); // Path to match (empty = match all)
-        let status = get_int_conf(params, "status") as u16; // HTTP status code
-        let headers = get_str_slice_conf(params, "headers"); // Response headers
-        let data = get_str_conf(params, "data"); // Response body
+        let path = params.path; // Path to match (empty = match all)
+        let status = params.status as u16; // HTTP status code
+        let headers = params.headers; // Response headers
+        let data = params.data; // Response body
 
         // Parse delay duration if specified
         // Supports human-readable formats like "500ms", "1s", "1m"
-        let delay = get_str_conf(params, "delay");
-        let delay = if !delay.is_empty() {
-            let d = parse_duration(&delay).map_err(|e| Error::Invalid {
-                category: PluginCategory::Mock.to_string(),
-                message: e.to_string(),
-            })?;
+        let delay = if !params.delay.is_empty() {
+            let d =
+                parse_duration(&params.delay).map_err(|e| Error::Invalid {
+                    category: PluginCategory::Mock.to_string(),
+                    message: e.to_string(),
+                })?;
             Some(d)
         } else {
             None
@@ -132,12 +147,7 @@ impl MockResponse {
         Ok(MockResponse {
             hash_value,
             resp,
-            plugin_step: get_step_conf_in(
-                params,
-                &PluginCategory::Mock.to_string(),
-                PluginStep::Request,
-                &[PluginStep::Request, PluginStep::ProxyUpstream],
-            )?,
+            plugin_step,
             path,
             delay,
         })

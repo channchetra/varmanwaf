@@ -31,7 +31,7 @@
 //! * otherwise the locally configured `pages` from the plugin's TOML config,
 //!   optionally merged with the built-in VarmanWAF defaults.
 
-use super::{Error, get_hash_key};
+use super::{Error, get_hash_key, parse_params};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -527,38 +527,52 @@ fn build_site_pages(pages: &[CustomErrorPage]) -> Result<CompiledSitePages> {
     Ok((Arc::new(tera), Arc::new(map)))
 }
 
-/// Parse the `pages` array from a plugin config into [`ErrorPageConfig`]s.
-fn parse_pages(value: &PluginConf) -> Vec<ErrorPageConfig> {
-    let Some(items) = value.get("pages").and_then(|v| v.as_array()) else {
-        return Vec::new();
-    };
-    items
-        .iter()
-        .filter_map(|item| {
-            let status_code =
-                item.get("status_code").and_then(|v| v.as_integer())? as u16;
-            let template = item
-                .get("template")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
+/// One `[[pages]]` entry from the plugin configuration.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ErrorPageConf {
+    /// An entry without a status code cannot be registered and is dropped.
+    status_code: Option<i64>,
+    template: String,
+    #[serde(default = "default_page_content_type")]
+    content_type: String,
+    name: String,
+    #[serde(default = "default_page_enabled")]
+    enabled: bool,
+}
+
+fn default_page_content_type() -> String {
+    "text/html".to_string()
+}
+
+fn default_page_enabled() -> bool {
+    true
+}
+
+fn default_use_defaults() -> bool {
+    true
+}
+
+/// Typed view of `[plugins.<name>]` for the error page plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ErrorPageParams {
+    #[serde(default = "default_use_defaults")]
+    use_defaults: bool,
+    pages: Vec<ErrorPageConf>,
+}
+
+/// Convert the configured `pages` into [`ErrorPageConfig`]s.
+fn parse_pages(pages: Vec<ErrorPageConf>) -> Vec<ErrorPageConfig> {
+    pages
+        .into_iter()
+        .filter_map(|page| {
             Some(ErrorPageConfig {
-                status_code,
-                content_type: item
-                    .get("content_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("text/html")
-                    .to_string(),
-                template,
-                name: item
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                enabled: item
-                    .get("enabled")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true),
+                status_code: page.status_code? as u16,
+                content_type: page.content_type,
+                template: page.template,
+                name: page.name,
+                enabled: page.enabled,
             })
         })
         .collect()
@@ -569,10 +583,8 @@ impl TryFrom<&PluginConf> for ErrorPagePlugin {
 
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let use_defaults = value
-            .get("use_defaults")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+        let params: ErrorPageParams = parse_params(value, CATEGORY)?;
+        let use_defaults = params.use_defaults;
 
         let mut tera = Tera::default();
         tera.add_raw_template(STYLE_PARTIAL, PW_STYLE)
@@ -613,7 +625,7 @@ impl TryFrom<&PluginConf> for ErrorPagePlugin {
         }
 
         // Locally configured custom pages override the defaults.
-        for (i, page) in parse_pages(value).into_iter().enumerate() {
+        for (i, page) in parse_pages(params.pages).into_iter().enumerate() {
             if !page.enabled {
                 continue;
             }

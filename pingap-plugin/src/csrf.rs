@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_str_conf};
+use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cookie::Cookie;
@@ -59,6 +59,16 @@ pub struct Csrf {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the CSRF plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct CsrfParams {
+    name: String,
+    token_path: String,
+    key: String,
+    ttl: String,
+}
+
 /// Attempts to create a new CSRF plugin instance from the provided configuration
 ///
 /// # Errors
@@ -70,13 +80,14 @@ impl TryFrom<&PluginConf> for Csrf {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
+        let params: CsrfParams = parse_params(value, "csrf")?;
 
         let mut csrf = Self {
             hash_value,
             plugin_step: PluginStep::Request,
-            name: get_str_conf(value, "name"),
-            token_path: get_str_conf(value, "token_path"),
-            key: get_str_conf(value, "key"),
+            name: params.name,
+            token_path: params.token_path,
+            key: params.key,
             ttl: 0,
             unauthorized_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
@@ -87,12 +98,12 @@ impl TryFrom<&PluginConf> for Csrf {
         if csrf.name.is_empty() {
             csrf.name = "x-csrf-token".to_string();
         }
-        let ttl = get_str_conf(value, "ttl");
-        if !ttl.is_empty() {
-            let ttl = parse_duration(&ttl).map_err(|e| Error::Invalid {
-                category: PluginCategory::Csrf.to_string(),
-                message: e.to_string(),
-            })?;
+        if !params.ttl.is_empty() {
+            let ttl =
+                parse_duration(&params.ttl).map_err(|e| Error::Invalid {
+                    category: PluginCategory::Csrf.to_string(),
+                    message: e.to_string(),
+                })?;
             csrf.ttl = ttl.as_secs();
         }
 

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_str_conf};
+use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -38,6 +38,13 @@ pub struct Ping {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the ping plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct PingParams {
+    path: String,
+}
+
 /// Response for ping requests containing "pong"
 static PONG_RESPONSE: LazyLock<HttpResponse> = LazyLock::new(|| HttpResponse {
     status: StatusCode::OK,
@@ -56,9 +63,10 @@ impl Ping {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new ping plugin");
         let hash_value = get_hash_key(params);
+        let params: PingParams = parse_params(params, "ping")?;
         Ok(Self {
             hash_value,
-            path: get_str_conf(params, "path"),
+            path: params.path,
             plugin_step: PluginStep::Request,
         })
     }
