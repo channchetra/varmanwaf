@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, parse_params};
+use super::{Error, get_hash_key, parse_params, redacted_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cookie::Cookie;
@@ -136,9 +136,23 @@ impl Csrf {
     /// # Returns
     /// Result containing the configured CSRF plugin or an error
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new csrf plugin");
+        debug!(params = redacted_csrf_params(params), "new csrf plugin");
         Csrf::try_from(params)
     }
+}
+
+/// Renders the configuration for the constructor log with `key` replaced by
+/// the shared placeholder.
+///
+/// `redacted_params` hides the credential names every plugin shares; the CSRF
+/// signing secret is called `key`, which is not one of them (and is a plain
+/// cache prefix in other plugins), so it is redacted here.
+fn redacted_csrf_params(params: &PluginConf) -> String {
+    let mut params = params.clone();
+    if let Some(value) = params.get_mut("key") {
+        *value = toml::Value::String(super::REDACTED.to_string());
+    }
+    redacted_params(&params)
 }
 
 /// Generates a new CSRF token with cryptographic protection
@@ -400,6 +414,26 @@ token_path = "/csrf-token"
             "Plugin csrf invalid, message: Key is not allowed empty",
             result.err().unwrap().to_string()
         );
+    }
+
+    /// Regression: the constructor logged the raw table, which includes the
+    /// token-signing `key`.
+    #[test]
+    fn test_redacted_csrf_params_hides_the_key() {
+        let params = toml::from_str::<PluginConf>(
+            r###"
+token_path = "/csrf-token"
+key = "WjrXUG47wu"
+ttl = "1h"
+"###,
+        )
+        .unwrap();
+        let rendered = redacted_csrf_params(&params);
+        assert!(!rendered.contains("WjrXUG47wu"), "{rendered}");
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+        // Everything else is still rendered: the log stays useful.
+        assert!(rendered.contains("/csrf-token"), "{rendered}");
+        assert!(rendered.contains("1h"), "{rendered}");
     }
 
     #[test]

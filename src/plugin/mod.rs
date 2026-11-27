@@ -83,16 +83,27 @@ pub fn parse_admin_plugin(
 
     let mut authorization = "".to_string();
     if !info.username().is_empty() {
-        authorization = urlencoding::decode(info.username())
-            .map_err(|e| Error::Invalid {
+        let user = urlencoding::decode(info.username()).map_err(|e| {
+            Error::Invalid {
                 category: "admin".to_string(),
                 message: format!(
                     "invalid percent-encoding in admin username: {e}"
                 ),
-            })?
-            .to_string();
+            }
+        })?;
+        authorization = user.to_string();
         // if not base64 string
         if let Some(pass) = info.password() {
+            // `info.password()` is the raw url component: `--admin=u:p%40ss@h`
+            // must store `u:p@ss`, not the escaped form. Decode it like the
+            // username so a colon or space can be written percent-encoded.
+            let pass =
+                urlencoding::decode(pass).map_err(|e| Error::Invalid {
+                    category: "admin".to_string(),
+                    message: format!(
+                        "invalid percent-encoding in admin password: {e}"
+                    ),
+                })?;
             authorization = base64_encode(format!("{authorization}:{pass}"));
         }
     }
@@ -477,6 +488,36 @@ mod tests {
         );
     }
 
+    /// Regression: the password was read from the raw url component, so
+    /// `--admin=u:p%40ss@host` stored `u:p%40ss`. Both halves of the
+    /// credential are percent-decoded before being base64-encoded.
+    #[test]
+    fn a_percent_encoded_admin_credential_is_decoded() {
+        let authorization = |addr: &str| {
+            let (_, _, conf) = parse_admin_plugin(addr)
+                .expect("a percent-encoded credential must parse");
+            conf.get("authorizations")
+                .and_then(|value| value.as_array())
+                .and_then(|items| items.first())
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+
+        assert_eq!(
+            base64_encode("u:p@ss"),
+            authorization("u:p%40ss@127.0.0.1:3018")
+        );
+
+        // A space in the user name and a colon plus a space in the password
+        // stay unambiguous: the plugin splits the decoded value on the first
+        // colon, so the password keeps its own colons.
+        assert_eq!(
+            base64_encode("u ser:pa: ss"),
+            authorization("u%20ser:pa%3A%20ss@127.0.0.1:3018")
+        );
+    }
+
     #[test]
     fn a_malformed_query_is_rejected_instead_of_defaulted() {
         // `max_age` is a string, not a nested map: the parse must fail
@@ -491,6 +532,17 @@ mod tests {
         let message = admin_error("ad%FFmin:secret@127.0.0.1:3018/");
         assert!(
             message.contains("invalid percent-encoding in admin username"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_password_encoding_is_rejected() {
+        // Same failure mode as the user name, named for the password so the
+        // message points at the half that is actually broken.
+        let message = admin_error("admin:sec%FFret@127.0.0.1:3018/");
+        assert!(
+            message.contains("invalid percent-encoding in admin password"),
             "{message}"
         );
     }

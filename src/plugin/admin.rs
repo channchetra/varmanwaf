@@ -1243,6 +1243,65 @@ mod tests {
         }
     }
 
+    /// A configured mount prefix must strip like the default `/` mount:
+    /// `/prefix/configs/full` is the `/configs/full` route, the bare mount
+    /// redirects to the directory form, and the directory form is the API
+    /// root (which has no route, so 404 after authentication).
+    #[tokio::test]
+    async fn test_prefixed_mount_routes() {
+        // spellchecker:off
+        let admin = AdminServe::new(
+            &toml::from_str::<PluginConf>(
+                r#"
+    category = "admin"
+    path = "/prefix"
+    authorizations = ["YWRtaW46MTIzMTIz"]
+    "#,
+            )
+            .unwrap(),
+            new_config_manager(),
+        )
+        .unwrap();
+        // spellchecker:on
+        let token = auth_header("admin", "123123");
+
+        // `/prefix` -> `/prefix/`, keeping the query string.
+        let request = format!(
+            "GET /prefix?x=1 HTTP/1.1\r\nHost: localhost\r\nAuthorization: {token}\r\n\r\n"
+        );
+        let resp = admin_response(&admin, &request).await;
+        assert_eq!(307, resp.status.as_u16());
+        let location = resp
+            .headers
+            .iter()
+            .flatten()
+            .find(|(name, _)| name == http::header::LOCATION)
+            .map(|(_, value)| value.to_str().unwrap_or_default().to_string());
+        assert_eq!(Some("/prefix/?x=1".to_string()), location);
+
+        // `/prefix/` is the API root: authenticated, then 404 like `/`.
+        let request = format!(
+            "GET /prefix/ HTTP/1.1\r\nHost: localhost\r\nAuthorization: {token}\r\n\r\n"
+        );
+        let resp = admin_response(&admin, &request).await;
+        assert_eq!(404, resp.status.as_u16());
+
+        // The prefixed routes match their definitions, with or without the
+        // optional `/api` prefix.
+        for path in ["/prefix/configs/full", "/prefix/api/configs/full"] {
+            let request = format!(
+                "GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: {token}\r\n\r\n"
+            );
+            let resp = admin_response(&admin, &request).await;
+            assert_eq!(200, resp.status.as_u16(), "{path}");
+        }
+        // Authentication still runs on the stripped path.
+        let request =
+            "GET /prefix/basic HTTP/1.1\r\nHost: localhost\r\n\r\n".to_string();
+        let resp = admin_response(&admin, &request).await;
+        assert_eq!(401, resp.status.as_u16());
+    }
+
     #[tokio::test]
     async fn test_unknown_path_returns_not_found() {
         // spellchecker:off

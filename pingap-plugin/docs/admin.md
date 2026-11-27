@@ -37,6 +37,20 @@ pingap -c /opt/pingap/conf --admin=pingap:123123@127.0.0.1:3018
 pingap -c /opt/pingap/conf --admin=pingap:123123@0.0.0.0:80/pingap
 ```
 
+Credentials are mandatory: an address without `user:pass` produces an empty
+`authorizations` entry and fails startup. Percent-encode the characters that
+are special in a URL — `@` as `%40`, `:` as `%3A`, a space as `%20` — and quote
+the value in the shell:
+
+```bash
+# stores the user `u` and the password `p@ss`
+pingap -c /opt/pingap/conf --admin='u:p%40ss@127.0.0.1:3018'
+```
+
+Both halves of the credential are percent-decoded before they are stored. To
+serve the API without authentication on purpose, declare the plugin with
+`allow_unauthenticated = true` (see below) instead of dropping the credentials.
+
 Equivalent environment variables: `PINGAP_ADMIN_ADDR`, `PINGAP_ADMIN_USER`,
 `PINGAP_ADMIN_PASSWORD`.
 

@@ -19,8 +19,15 @@ The key points of configuration are as follows:
 - [locations.grpc-server] should enable grpc_web
 
 ```bash
-cargo run -- -c=~/github/pingap/examples/grpc-web.toml --admin=127.0.0.1:3018
+cargo run -- -c=~/github/pingap/examples/grpc-web.toml --admin=pingap:123123@127.0.0.1:3018
 ```
+
+`--admin` builds a listener that requires credentials. Percent-encode the
+characters that are special in a URL (`@` → `%40`, `:` → `%3A`, space → `%20`),
+e.g. `--admin='user:p%40ss@127.0.0.1:3018'`. To serve the admin API without
+authentication on purpose, declare the plugin with `allow_unauthenticated = true`
+instead of omitting the credentials: an empty `authorizations` list now fails
+startup.
 
 ## Transparent Proxy
 
@@ -29,7 +36,7 @@ cargo run -- -c=~/github/pingap/examples/grpc-web.toml --admin=127.0.0.1:3018
 - Certificate should be set as default for all domains
 
 ```bash
-sudo cargo run -- -c=~/github/pingap/examples/transparent-proxy.toml --admin=127.0.0.1:3018
+sudo cargo run -- -c=~/github/pingap/examples/transparent-proxy.toml --admin=pingap:123123@127.0.0.1:3018
 ```
 
 ```bash
