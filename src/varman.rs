@@ -715,12 +715,20 @@ fn cached_rules_to_pingap_config(
     // proxied site works too. The data plane never serves it; it exists so
     // the ACME task can fill it in, and the material is handed back to the
     // control plane after each reload.
+    //
+    // Seed it with the pair already installed. Without the seed, a rebuilt
+    // config starts with an empty pair, the ACME task reads that as "not
+    // issued yet", and every restart (or reload) orders a duplicate
+    // certificate until the CA's rate limit stops it.
     if let Some(request) = varman_control::management_cert::desired() {
+        let seed = varman_control::management_cert::seed();
         certificates.insert(
             varman_control::management_cert::CERT_NAME.to_string(),
             CertificateConf {
                 domains: Some(request.identity.clone()),
                 acme: Some(format!("http://{}", request.email)),
+                tls_cert: seed.as_ref().map(|seed| seed.cert_pem.clone()),
+                tls_key: seed.as_ref().map(|seed| seed.key_pem.clone()),
                 ..Default::default()
             },
         );

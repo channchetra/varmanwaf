@@ -269,6 +269,9 @@ pub(crate) async fn store_and_activate(
         .control_tls
         .activate(cert_pem, key_pem)
         .map_err(|err| ApiError::BadRequest(err.to_string()))?;
+    if source == tls_source::ACME {
+        crate::management_cert::set_seed(cert_pem, key_pem);
+    }
 
     let row = control_plane_certificate::ActiveModel {
         id: Set(Uuid::new_v4()),
@@ -372,6 +375,9 @@ pub async fn load_active_certificate(
                 "the stored control plane certificate cannot be loaded: {err}"
             ))
         })?;
+    if row.source == tls_source::ACME {
+        crate::management_cert::set_seed(&row.cert_pem, &row.key_pem);
+    }
     Ok(Some(row))
 }
 

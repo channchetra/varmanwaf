@@ -88,6 +88,36 @@ pub struct Issued {
     pub key_pem: String,
 }
 
+/// The certificate pair the listener already holds.
+///
+/// The data plane's config is rebuilt from scratch on every restart and
+/// reload, and `__management` starts without PEM material. The ACME task
+/// reads the certificate from that config: an empty pair looks like "no
+/// certificate yet", so it orders a fresh one. Seeding the entry with the
+/// pair already installed stops a restart (or an unrelated reload) from
+/// consuming a duplicate-certificate issuance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Seed {
+    pub cert_pem: String,
+    pub key_pem: String,
+}
+
+static SEED: LazyLock<ArcSwapOption<Seed>> =
+    LazyLock::new(ArcSwapOption::empty);
+
+/// Records the pair the listener serves, for the next config rebuild.
+pub fn set_seed(cert_pem: &str, key_pem: &str) {
+    SEED.store(Some(Arc::new(Seed {
+        cert_pem: cert_pem.to_string(),
+        key_pem: key_pem.to_string(),
+    })));
+}
+
+/// The pair a rebuilt `__management` entry should start with.
+pub fn seed() -> Option<Arc<Seed>> {
+    SEED.load_full()
+}
+
 static DESIRED: LazyLock<ArcSwapOption<Request>> =
     LazyLock::new(ArcSwapOption::empty);
 static ISSUED: LazyLock<ArcSwapOption<Issued>> =
@@ -643,6 +673,14 @@ mod tests {
         );
         set_desired(None);
         assert!(desired().is_none());
+    }
+
+    #[test]
+    fn the_seed_round_trips() {
+        set_seed("CERT-PEM", "KEY-PEM");
+        let seed = seed().expect("seed");
+        assert_eq!(seed.cert_pem, "CERT-PEM");
+        assert_eq!(seed.key_pem, "KEY-PEM");
     }
 
     #[test]
