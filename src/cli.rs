@@ -17,7 +17,7 @@
 //! These are additive to the existing pingap CLI and are detected before
 //! the normal argument parsing runs.
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 /// VarmanWAF top-level CLI wrapper.
 ///
@@ -64,6 +64,32 @@ pub enum VarmanCommand {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+}
+
+impl VarmanCommand {
+    /// Whether this command starts a long-running process: `server`, `agent`
+    /// or `all-in-one`.
+    ///
+    /// The match is exhaustive on purpose: a new variant must be classified
+    /// here, or the module stops compiling.
+    pub const fn is_run_mode(&self) -> bool {
+        match self {
+            Self::Server(_) | Self::Agent(_) | Self::AllInOne(_) => true,
+            Self::User { .. }
+            | Self::Mode { .. }
+            | Self::Security { .. }
+            | Self::Config { .. } => false,
+        }
+    }
+
+    /// Whether this command runs a maintenance task against PostgreSQL and
+    /// exits: `user`, `mode`, `security` or `config`.
+    ///
+    /// Derived from [`Self::is_run_mode`], so the exhaustive match there is
+    /// the one place a new variant has to be classified.
+    pub const fn is_maintenance(&self) -> bool {
+        !self.is_run_mode()
+    }
 }
 
 /// Options shared by all VarmanWAF modes.
@@ -479,22 +505,39 @@ pub enum OnOff {
     Off,
 }
 
-/// The run modes: the subcommands that start a long-running process.
-pub const RUN_MODES: [&str; 3] = ["server", "agent", "all-in-one"];
-
-/// The maintenance commands: they run against the database and exit.
-const MAINTENANCE_MODES: [&str; 4] = ["user", "mode", "security", "config"];
-
 /// Whether `value` names a VarmanWAF subcommand.
+///
+/// The names come from the clap definition derived from [`VarmanCommand`],
+/// so a new variant is recognised without a second table to keep in sync.
 fn is_mode(value: &str) -> bool {
-    RUN_MODES.contains(&value) || MAINTENANCE_MODES.contains(&value)
+    VarmanCli::command()
+        .get_subcommands()
+        .any(|command| command.get_name() == value)
+}
+
+/// Trims and lower-cases a configured mode, keeping it only when it names a
+/// subcommand.
+fn normalise_mode(raw: &str) -> Option<String> {
+    let mode = raw.trim().to_lowercase();
+    is_mode(&mode).then_some(mode)
 }
 
 /// The mode named by `VARMAN_MODE`, when it names one.
 fn mode_from_env() -> Option<String> {
-    let mode = std::env::var("VARMAN_MODE").ok()?;
-    let mode = mode.trim().to_lowercase();
-    is_mode(&mode).then_some(mode)
+    normalise_mode(&std::env::var("VARMAN_MODE").ok()?)
+}
+
+/// Whether an invocation selects VarmanWAF mode.
+///
+/// The first argument is matched as typed — it is the token clap would parse
+/// — while the environment value is trimmed and lower-cased.
+fn selects_varman_mode(
+    first_arg: Option<&str>,
+    env_mode: Option<&str>,
+) -> bool {
+    let from_argv = first_arg.is_some_and(is_mode);
+    let from_env = env_mode.and_then(normalise_mode).is_some();
+    from_argv || from_env
 }
 
 /// Check whether the command line invokes a VarmanWAF subcommand.
@@ -502,8 +545,10 @@ fn mode_from_env() -> Option<String> {
 /// Returns `true` if the first non-binary argument is one of the VarmanWAF
 /// subcommand names, or if `VARMAN_MODE` environment variable is set.
 pub fn is_varman_mode() -> bool {
-    let from_argv = std::env::args().nth(1).is_some_and(|arg| is_mode(&arg));
-    from_argv || mode_from_env().is_some()
+    selects_varman_mode(
+        std::env::args().nth(1).as_deref(),
+        std::env::var("VARMAN_MODE").ok().as_deref(),
+    )
 }
 
 /// The version banner shared with the pingap-mode `--version`.
@@ -637,17 +682,63 @@ mod tests {
         assert!(opts.serve_frontend);
     }
 
+    /// One minimal command line per [`VarmanCommand`] variant. The names are
+    /// compared with the clap definition in
+    /// `every_subcommand_is_classified_exactly_once`, so a new variant
+    /// without an entry fails the test instead of drifting silently.
+    const SUBCOMMAND_ARGV: [&[&str]; 7] = [
+        &["varman", "server"],
+        &["varman", "agent"],
+        &["varman", "all-in-one"],
+        &["varman", "user", "list"],
+        &["varman", "mode", "status"],
+        &["varman", "security", "status"],
+        &["varman", "config", "history"],
+    ];
+
+    /// The subcommand names clap declares from [`VarmanCommand`].
+    fn declared_subcommands() -> Vec<String> {
+        VarmanCli::command()
+            .get_subcommands()
+            .map(|command| command.get_name().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn every_subcommand_is_classified_exactly_once() {
+        let mut covered = Vec::new();
+        for argv in SUBCOMMAND_ARGV {
+            let command = VarmanCli::try_parse_from(argv.iter().copied())
+                .unwrap()
+                .command;
+            assert!(
+                command.is_maintenance() ^ command.is_run_mode(),
+                "{argv:?} must be exactly one of maintenance or run"
+            );
+            covered.push(argv[1].to_string());
+        }
+        assert_eq!(covered, declared_subcommands());
+    }
+
     #[test]
     fn every_run_mode_accepts_a_config_file() {
-        for mode in RUN_MODES {
+        for argv in SUBCOMMAND_ARGV {
+            let cli = VarmanCli::try_parse_from(argv.iter().copied())
+                .unwrap_or_else(|err| panic!("{argv:?} does not parse: {err}"));
+            if !cli.command.is_run_mode() {
+                continue;
+            }
+            let mode = argv[1];
             let path = format!("--config=/{mode}.toml");
-            let args = ["varman", mode, path.as_str()];
-            let cli = VarmanCli::try_parse_from(args).unwrap();
+            let cli = VarmanCli::try_parse_from(
+                argv.iter().copied().chain(std::iter::once(path.as_str())),
+            )
+            .unwrap();
             let config = match cli.command {
                 VarmanCommand::Server(opts) => opts.config,
                 VarmanCommand::Agent(opts) => opts.config,
                 VarmanCommand::AllInOne(opts) => opts.config,
-                _ => panic!("{mode} is not a run mode"),
+                other => panic!("{mode} is not a run mode: {other:?}"),
             };
             assert_eq!(
                 config.as_deref(),
@@ -736,12 +827,28 @@ mod tests {
     }
 
     #[test]
-    fn maintenance_commands_are_recognised_as_varman_invocations() {
-        for mode in RUN_MODES.into_iter().chain(MAINTENANCE_MODES) {
-            assert!(is_mode(mode), "{mode} must select VarmanWAF mode");
+    fn every_subcommand_name_selects_varman_mode() {
+        for name in declared_subcommands() {
+            assert!(is_mode(&name), "{name} must select VarmanWAF mode");
         }
         assert!(!is_mode("reset-password"));
         assert!(!is_mode(""));
+    }
+
+    #[test]
+    fn the_first_argument_and_env_var_select_the_expected_mode() {
+        // First argument: matched as typed, the same token clap parses.
+        assert!(selects_varman_mode(Some("server"), None));
+        assert!(selects_varman_mode(Some("config"), None));
+        assert!(!selects_varman_mode(Some("--version"), None));
+        assert!(!selects_varman_mode(Some("SERVER"), None));
+
+        // Environment: trimmed and lower-cased.
+        assert!(selects_varman_mode(None, Some("SERVER")));
+        assert!(selects_varman_mode(None, Some(" mode ")));
+        assert!(!selects_varman_mode(None, Some("reset-password")));
+
+        assert!(!selects_varman_mode(None, None));
     }
 
     #[test]

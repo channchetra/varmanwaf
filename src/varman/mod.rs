@@ -207,16 +207,6 @@ fn extract_port(addr: &str) -> &str {
 /// Every variant that is not a run mode must be listed here: `main` routes
 /// these to [`crate::maintenance::run`], and [`build_run_mode`] treats anything
 /// else as unreachable. Omitting one (Config was) panics the CLI.
-fn is_maintenance_command(command: &VarmanCommand) -> bool {
-    matches!(
-        command,
-        VarmanCommand::User { .. }
-            | VarmanCommand::Mode { .. }
-            | VarmanCommand::Security { .. }
-            | VarmanCommand::Config { .. }
-    )
-}
-
 /// Build the `RunMode` from the parsed CLI.
 ///
 /// The maintenance commands never reach this: [`main`] routes them to
@@ -425,7 +415,7 @@ pub fn main() {
         .build()
         .expect("failed to create tokio runtime");
 
-    let result = if is_maintenance_command(&cli.command) {
+    let result = if cli.command.is_maintenance() {
         rt.block_on(crate::maintenance::run(cli))
     } else {
         rt.block_on(run(build_run_mode(cli)))
@@ -544,7 +534,7 @@ mod tests {
         let cli = VarmanCli::try_parse_from(["varman", "config", "history"])
             .expect("config history must parse");
         assert!(
-            is_maintenance_command(&cli.command),
+            cli.command.is_maintenance(),
             "config must be routed to the maintenance runner, not build_run_mode"
         );
     }

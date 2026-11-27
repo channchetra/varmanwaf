@@ -39,6 +39,7 @@ use varman_control::auth::password::{
     MAX_PASSWORD_BYTES, hash_password, validate_password,
 };
 use varman_control::config_history::{self, VersionScope};
+use varman_control::email::normalise_email;
 use varman_control::models::{
     api_protection_setting, config_version, defense_settings, ip_groups, role,
     site, user,
@@ -57,11 +58,16 @@ use crate::cli::{
 /// function is a programming error, reported rather than panicked so the
 /// message names the mistake.
 pub async fn run(cli: VarmanCli) -> anyhow::Result<()> {
+    if !cli.command.is_maintenance() {
+        bail!("this is not a maintenance command");
+    }
     match cli.command {
         VarmanCommand::User { command } => user_command(command).await,
         VarmanCommand::Mode { command } => mode_command(command).await,
         VarmanCommand::Security { command } => security_command(command).await,
         VarmanCommand::Config { command } => config_command(command).await,
+        // `is_maintenance()` rejected the run modes above; these arms remain
+        // so the match stays exhaustive.
         VarmanCommand::Server(_)
         | VarmanCommand::Agent(_)
         | VarmanCommand::AllInOne(_) => {
@@ -85,25 +91,6 @@ async fn connect(db_url: &str) -> anyhow::Result<DatabaseConnection> {
     Database::connect(options).await.context(
         "cannot connect to PostgreSQL (check --db-url or VARMAN_DB_URL)",
     )
-}
-
-/// Lower-cases and structurally validates an e-mail address, the same way
-/// the API layer does, so a CLI-created account logs in under the address
-/// the operator typed.
-fn normalise_email(raw: &str) -> anyhow::Result<String> {
-    let email = raw.trim().to_lowercase();
-    let (local, domain) =
-        email.split_once('@').context("invalid e-mail address")?;
-    if local.is_empty()
-        || domain.is_empty()
-        || domain.len() > 253
-        || !domain.contains('.')
-        || domain.starts_with('.')
-        || domain.ends_with('.')
-    {
-        bail!("invalid e-mail address");
-    }
-    Ok(email)
 }
 
 /// The password to store: the one given, or a generated one. `true` in the
@@ -663,7 +650,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn emails_are_lowercased_and_validated() {
+    fn emails_are_lowercased_and_validated_like_the_api() {
         assert_eq!(
             normalise_email("  Ops@Example.COM ").unwrap(),
             "ops@example.com"
@@ -673,6 +660,12 @@ mod tests {
         assert!(normalise_email("@example.com").is_err());
         assert!(normalise_email("user@.example.com").is_err());
         assert!(normalise_email("user@example.com.").is_err());
+        // The local-part cap the CLI used to omit.
+        assert!(
+            normalise_email(&format!("{}@example.com", "a".repeat(65)))
+                .is_err()
+        );
+        assert!(normalise_email(&format!("user@{}", "a".repeat(255))).is_err());
     }
 
     #[test]

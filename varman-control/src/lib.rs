@@ -22,6 +22,7 @@ pub mod control_tls;
 pub mod crs;
 pub mod defaults;
 pub mod defense_service;
+pub mod email;
 pub mod error;
 pub mod es;
 pub mod exclusions;

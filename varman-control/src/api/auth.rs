@@ -488,23 +488,12 @@ const DUMMY_HASH: &str =
     "$2b$10$Q9V0Z7rQZ3h8YqQZQZQZQeQ9V0Z7rQZ3h8YqQZQZQZQZQZQZQZQZu";
 
 /// Lower-cases and structurally validates an e-mail address.
+///
+/// The rule itself lives in [`crate::email`] so the maintenance CLI accepts
+/// exactly the addresses this API does; here its rejection becomes a 400.
 pub(crate) fn normalise_email(raw: &str) -> Result<String, ApiError> {
-    let email = raw.trim().to_lowercase();
-    let (local, domain) = email.split_once('@').ok_or_else(|| {
-        ApiError::BadRequest("invalid e-mail address".to_string())
-    })?;
-    if local.is_empty() || local.len() > 64 {
-        return Err(ApiError::BadRequest("invalid e-mail address".to_string()));
-    }
-    if domain.is_empty()
-        || domain.len() > 253
-        || !domain.contains('.')
-        || domain.starts_with('.')
-        || domain.ends_with('.')
-    {
-        return Err(ApiError::BadRequest("invalid e-mail address".to_string()));
-    }
-    Ok(email)
+    crate::email::normalise_email(raw)
+        .map_err(|err| ApiError::BadRequest(err.to_string()))
 }
 
 /// Inserts a new user row with a freshly hashed password.
@@ -600,6 +589,12 @@ mod tests {
         assert!(normalise_email("@example.com").is_err());
         assert!(normalise_email("ops@example").is_err());
         assert!(normalise_email("ops@.example.com").is_err());
+
+        // The shared rule's rejection surfaces as a 400, including the
+        // local-part cap the maintenance CLI exercises too.
+        let err = normalise_email(&format!("{}@example.com", "a".repeat(65)))
+            .unwrap_err();
+        assert_eq!(err.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
