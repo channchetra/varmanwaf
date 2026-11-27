@@ -140,6 +140,11 @@ set_seed`, updated by `load_active_certificate` and `store_and_activate`), so
 a rebuild no longer triggers an order. The 1.4.5 deploy itself must not add a
 `control_plane_certificates` row; that is the acceptance check.
 
+Verified on 2026-11-27 at 06:13:04 UTC: after 180 s the row count was still
+19, the newest row remained `05:56:56 | 1db2ddbc`, no install event was
+logged, and `:9090` still presented `1D:B2:DD:BC…`. The fifth slot is intact
+for the 2026-12-01 renewal.
+
 ## Lessons
 
 - A certificate that the process serves but never re-reads is an outage with a
