@@ -91,16 +91,29 @@ Within ten minutes: 350 access rows, 181 security events, no buffer warnings.
   observation mode / unsynced bundles / engine aliases, and close on protocol
   violations.
 
-## Production verification
+## Production verification (2026-11-27)
 
-To be filled in after the 1.4.3 deploy:
+**1.4.3** deployed at `05:37:57 UTC`; the agent connected at `05:37:59`.
 
-- [ ] `:9090` rotates after `POST /system/tls/acme/retry` **without** a restart
-      (same container `StartedAt`).
-- [ ] Agent reconnects after the rotation.
-- [ ] Access logs and security events continue through the rotation.
-- [ ] No `invalid byte sequence` errors.
-- [ ] `sem.cmd.command_context` rows per request drop to 1.
+- [x] `:9090` rotated after `POST /system/tls/acme/retry` **without** a restart:
+      fingerprint `99:56:5E…` → `CC:34:A3…` at `05:39:28` (t+50 s), container
+      `StartedAt` unchanged at `05:37:57.98`.
+- [x] Agent stayed connected through the rotation; no `transport error` after
+      the reconnect.
+- [x] Access logs and security events continued (105 access rows / 67 events
+      in the following three minutes).
+- [x] `sem.cmd.command_context` dropped to **1.00 event per connection**
+      (2 events / 2 connections; previously 2–7).
+- [ ] NUL body — **failed on 1.4.3**: the scalar fields were sanitised but
+      `body_text()` kept the NUL, so the test POST poisoned a batch and
+      ingestion stopped until a restart. Fixed in **1.4.4**.
+
+**1.4.4** deployed at `05:55:25 UTC`.
+
+- [x] POST with a raw NUL body stored `a\uFFFDb` (second character code point
+      `65533`) and produced **0** `invalid byte sequence` errors.
+- [x] Logs kept flowing during and after the test.
+- [x] Image `sha256:817b17fb…`.
 
 ## Lessons
 
