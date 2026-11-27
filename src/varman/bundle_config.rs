@@ -8,7 +8,8 @@ use pingap_config::{
 };
 use tracing::warn;
 use varman_agent::cache::{
-    CachedRules, HealthCheckConfig, RuleCache, SslConfig,
+    CachedRules, GlobalCacheSettings, HealthCheckConfig, RouteConfig,
+    RuleCache, SiteRules, SslConfig, UpstreamConfig, UpstreamPeer,
 };
 
 use super::acme::acme_certificate_conf;
@@ -150,43 +151,73 @@ pub(super) fn health_check_url(
     )
 }
 
-/// Build a `PingapConfig` from the agent's cached site rules.
-///
-/// Each origin pool becomes one upstream keyed by its pool id (or the
-/// legacy per-site name for caches written before pools existed). The
-/// default pool — or the only pool, when no routes exist — receives the
-/// site's `/` fallback location, and every enabled route becomes an
-/// additional location carrying the pingap path marker for its match
-/// type. All sites share a single server listening on ports 80 and 443
-/// with TLS enabled via the global certificate store.
-pub(super) fn cached_rules_to_pingap_config(
-    cached: &CachedRules,
-    cache_dir: &Path,
-) -> Option<PingapConfig> {
-    if cached.sites.is_empty() {
-        return None;
-    }
+// ─── Config assembly ───────────────────────────────────────
 
-    // The cache plugin carries no per-site settings of its own — rules,
-    // namespaces and quotas all flow from the agent's rule cache at request
-    // time. It only earns a slot in the config when some site actually has
-    // cache rules; for the rest it would be dead weight.
-    let has_cache_rules = cached
+/// Whether any site carries an enabled cache rule, i.e. whether the cache
+/// plugin earns a slot in the configuration at all.
+fn has_enabled_cache_rules(cached: &CachedRules) -> bool {
+    cached
         .sites
         .values()
-        .any(|site| site.cache_rules.iter().any(|rule| rule.enabled));
+        .any(|site| site.cache_rules.iter().any(|rule| rule.enabled))
+}
 
-    let mut upstreams: HashMap<String, UpstreamConf> = HashMap::new();
-    let mut locations: HashMap<String, LocationConf> = HashMap::new();
-    let mut certificates: HashMap<String, CertificateConf> = HashMap::new();
-    let mut location_names: Vec<String> = Vec::new();
-    // PEM bundle of the CAs every mTLS-enabled site trusts. The listener
-    // verifies client certificates as a whole, so the anchor is the union
-    // across sites; pinning a certificate to its site is left to the WAF
-    // plugin, which sees the request's SNI.
-    let mut mtls_ca_bundle = String::new();
-    // The WAF plugin is referenced from every location: this is what makes
-    // the data plane enforce rules and emit access/security events.
+/// The process-wide cache plugin instance.
+///
+/// It carries no per-site settings of its own — rules, namespaces and quotas
+/// all flow from the agent's rule cache at request time.
+fn cache_plugin_conf(
+    global_cache: &GlobalCacheSettings,
+    cache_dir: &Path,
+) -> PluginConf {
+    let mut conf = PluginConf::new();
+    conf.insert(
+        "category".to_string(),
+        toml::Value::String("cache".to_string()),
+    );
+    // The disk budget rides on the directory URL (`FileCacheParams` parses
+    // `?max_size=`): pingora's `ensure_disk_space` then evicts by LRU across
+    // every namespace sharing the backend. `0` = unlimited.
+    let directory = match global_cache.max_space_mb() {
+        0 => cache_dir.to_string_lossy().to_string(),
+        space_mb => {
+            format!("{}?max_size={space_mb}mb", cache_dir.to_string_lossy())
+        },
+    };
+    conf.insert("directory".to_string(), toml::Value::String(directory));
+    // pingora's default 1MB ceiling silently refuses to cache anything larger
+    // (the response header stage rejects it before the body ever fills).
+    // Magento-style merged JS/CSS bundles run several MB and are exactly the
+    // assets caching exists for, so the ceiling is raised here. `ByteSize`
+    // parses decimal units — the 16 MiB default is 16_000_000 bytes,
+    // comfortably above a ~10MB bundle. Actual disk usage stays bounded by
+    // each site's `disk_quota_mb` and the LRU eviction manager.
+    conf.insert(
+        "max_file_size".to_string(),
+        toml::Value::String(format!("{}mb", global_cache.max_file_size_mb())),
+    );
+    // A rule without an explicit edge TTL falls back to this floor; `0` (the
+    // default) keeps the old behaviour of no fallback at all.
+    let default_ttl = global_cache.default_edge_ttl_seconds();
+    if default_ttl > 0 {
+        conf.insert(
+            "max_ttl".to_string(),
+            toml::Value::String(format!("{default_ttl}s")),
+        );
+    }
+    conf
+}
+
+/// The config-wide plugin map plus the location wiring derived from it.
+struct PluginWiring {
+    /// Every plugin instance the config registers.
+    plugins: HashMap<String, PluginConf>,
+    /// Full plugin list each site's locations reference, keyed by site id.
+    site_plugins: HashMap<String, Vec<String>>,
+}
+
+/// The process-wide plugin instances every generated config registers.
+fn varman_plugin_confs() -> HashMap<String, PluginConf> {
     let mut plugins: HashMap<String, PluginConf> = HashMap::new();
     plugins.insert(
         WAF_PLUGIN_NAME.to_string(),
@@ -208,353 +239,495 @@ pub(super) fn cached_rules_to_pingap_config(
         toml::from_str::<PluginConf>(r###"category = "error_page""###)
             .unwrap_or_default(),
     );
-    // The cache master switch gates everything: with it off the data plane
-    // never sees a cache plugin, regardless of the rules any site carries.
-    let global_cache = cached.global_cache.clone().unwrap_or_default();
-    let cache_enabled = has_cache_rules && global_cache.master_enabled();
-    if cache_enabled {
-        let mut cache_conf = PluginConf::new();
-        cache_conf.insert(
-            "category".to_string(),
-            toml::Value::String("cache".to_string()),
-        );
-        // The disk budget rides on the directory URL (`FileCacheParams`
-        // parses `?max_size=`): pingora's `ensure_disk_space` then evicts by
-        // LRU across every namespace sharing the backend. `0` = unlimited.
-        let directory = match global_cache.max_space_mb() {
-            0 => cache_dir.to_string_lossy().to_string(),
-            space_mb => {
-                format!("{}?max_size={space_mb}mb", cache_dir.to_string_lossy())
-            },
-        };
-        cache_conf
-            .insert("directory".to_string(), toml::Value::String(directory));
-        // pingora's default 1MB ceiling silently refuses to cache anything
-        // larger (the response header stage rejects it before the body ever
-        // fills). Magento-style merged JS/CSS bundles run several MB and are
-        // exactly the assets caching exists for, so the ceiling is raised
-        // here. `ByteSize` parses decimal units — the 16 MiB default is
-        // 16_000_000 bytes, comfortably above a ~10MB bundle. Actual disk
-        // usage stays bounded by each site's `disk_quota_mb` and the LRU
-        // eviction manager.
-        cache_conf.insert(
-            "max_file_size".to_string(),
-            toml::Value::String(format!(
-                "{}mb",
-                global_cache.max_file_size_mb()
-            )),
-        );
-        // A rule without an explicit edge TTL falls back to this floor;
-        // `0` (the default) keeps the old behaviour of no fallback at all.
-        let default_ttl = global_cache.default_edge_ttl_seconds();
-        if default_ttl > 0 {
-            cache_conf.insert(
-                "max_ttl".to_string(),
-                toml::Value::String(format!("{default_ttl}s")),
-            );
-        }
-        plugins.insert(CACHE_PLUGIN_NAME.to_string(), cache_conf);
-    }
+    plugins
+}
+
+/// Registers the plugin instances and wires the per-site location lists.
+///
+/// The WAF, challenge, rewrite and error-page plugins are process-wide and
+/// referenced from every location; the cache plugin joins them only when the
+/// master switch is on and some site carries an enabled cache rule. The TLS
+/// posture plugins are per-site, so their names are collected per site id.
+fn build_plugins(cached: &CachedRules, cache_dir: &Path) -> PluginWiring {
+    let mut plugins = varman_plugin_confs();
     let mut location_plugins: Vec<String> = vec![
         WAF_PLUGIN_NAME.to_string(),
         CHALLENGE_PLUGIN_NAME.to_string(),
         REWRITE_PLUGIN_NAME.to_string(),
         ERROR_PAGE_PLUGIN_NAME.to_string(),
     ];
-    if cache_enabled {
+    // The cache master switch gates everything: with it off the data plane
+    // never sees a cache plugin, regardless of the rules any site carries.
+    let global_cache = cached.global_cache.clone().unwrap_or_default();
+    if has_enabled_cache_rules(cached) && global_cache.master_enabled() {
+        plugins.insert(
+            CACHE_PLUGIN_NAME.to_string(),
+            cache_plugin_conf(&global_cache, cache_dir),
+        );
         location_plugins.push(CACHE_PLUGIN_NAME.to_string());
     }
 
+    let mut site_plugins = HashMap::new();
     for (site_id, site) in &cached.sites {
         if site.domain.is_empty() {
             continue;
         }
-
-        // One upstream per origin pool. Pools without peers are skipped:
-        // an address-less upstream cannot be constructed.
-        let mut pool_keys: Vec<String> = Vec::new();
-        let mut default_key: Option<String> = None;
-        for (i, up) in site.upstreams.iter().enumerate() {
-            if up.peers.is_empty() {
-                continue;
-            }
-            let name = if up.pool_id.is_empty() {
-                if site.upstreams.len() == 1 {
-                    format!("{site_id}_upstream")
-                } else {
-                    format!("{site_id}_upstream_{i}")
-                }
-            } else {
-                up.pool_id.clone()
-            };
-
-            let addrs: Vec<String> = up
-                .peers
-                .iter()
-                .map(|p| {
-                    let addr = p
-                        .address
-                        .strip_prefix("https://")
-                        .or_else(|| p.address.strip_prefix("http://"))
-                        .unwrap_or(&p.address);
-                    if p.weight > 1 {
-                        format!("{} {}", addr, p.weight)
-                    } else {
-                        addr.to_string()
-                    }
-                })
-                .collect();
-
-            // Multi-node pools get request-level protection by default:
-            // without backend stats the circuit breaker can never observe
-            // failures, and the control plane exposes no knobs for either.
-            // Single-node pools are left untouched — with no alternative
-            // backend an open breaker only short-circuits into 503.
-            let multi_peer = up.peers.len() > 1;
-            let conf = UpstreamConf {
-                addrs,
-                algo: sanitize_algo(&up.algo),
-                sni: if up.sni.is_empty() {
-                    None
-                } else {
-                    Some(up.sni.clone())
-                },
-                // Verification is opt-in. Normalize here as well as in the
-                // agent's gRPC conversion: a rule cache restored from the
-                // persisted snapshot (sites.json) carries `verify_cert: null`
-                // and never passes through that conversion, and a `None` left
-                // intact means pingora's default - strict verification - so
-                // self-signed origins would 502 with InvalidCert.
-                verify_cert: Some(up.verify_cert.unwrap_or(false)),
-                connection_timeout: if up.connection_timeout_ms > 0 {
-                    Some(Duration::from_millis(up.connection_timeout_ms as u64))
-                } else {
-                    None
-                },
-                read_timeout: if up.read_timeout_ms > 0 {
-                    Some(Duration::from_millis(up.read_timeout_ms as u64))
-                } else {
-                    None
-                },
-                write_timeout: if up.write_timeout_ms > 0 {
-                    Some(Duration::from_millis(up.write_timeout_ms as u64))
-                } else {
-                    None
-                },
-                health_check: up
-                    .health_check
-                    .as_ref()
-                    .filter(|h| h.enabled)
-                    .map(|h| health_check_url(&name, h)),
-                enable_backend_stats: multi_peer.then_some(true),
-                circuit_break_max_consecutive_failures: multi_peer.then_some(5),
-                circuit_break_max_failure_percent: multi_peer.then_some(50),
-                circuit_break_min_requests_threshold: multi_peer.then_some(10),
-                circuit_break_open_duration: multi_peer
-                    .then_some(Duration::from_secs(10)),
-                // With several origins, a misjudged health check or an
-                // all-open breaker should degrade to the least-bad backend
-                // instead of failing the site with instant 503s.
-                enable_unhealthy_fallback: multi_peer.then_some(true),
-                ..Default::default()
-            };
-            if up.is_default {
-                default_key = Some(name.clone());
-            }
-            pool_keys.push(name.clone());
-            upstreams.insert(name, conf);
-        }
-
-        // The `/` fallback location points at the default pool. Caches
-        // written before pools existed mark nothing default, so the only
-        // pool serves when no routes exist.
-        let fallback_key = default_key.clone().or_else(|| {
-            if site.routes.is_empty() {
-                pool_keys.first().cloned()
-            } else {
-                None
-            }
-        });
-
-        let host = if site.alternate_domains.is_empty() {
-            site.domain.clone()
-        } else {
-            let mut hosts = vec![site.domain.clone()];
-            hosts.extend(site.alternate_domains.clone());
-            hosts.join(",")
-        };
-
-        let mut site_plugins = location_plugins.clone();
-        site_plugins.extend(site_posture_plugins(
+        let mut names = location_plugins.clone();
+        names.extend(site_posture_plugins(
             site_id,
             site.ssl_config.as_ref(),
             &mut plugins,
         ));
+        site_plugins.insert(site_id.clone(), names);
+    }
 
-        if let Some(key) = fallback_key {
-            let loc_name = format!("{site_id}_loc");
-            locations.insert(
-                loc_name.clone(),
-                LocationConf {
-                    upstream: Some(key),
-                    host: Some(host.clone()),
-                    path: Some("/".to_string()),
-                    plugins: Some(site_plugins.clone()),
-                    // The fallback must sort behind every route: with the
-                    // auto weight (128) any route whose priority was 127 or
-                    // less ranked below this catch-all `/` location and
-                    // never matched. Pin it to the floor instead.
-                    weight: Some(0),
-                    ..Default::default()
-                },
-            );
-            location_names.push(loc_name);
-        }
+    PluginWiring {
+        plugins,
+        site_plugins,
+    }
+}
 
-        for route in &site.routes {
-            if !route.enabled {
-                continue;
-            }
-            // Route only to pools this site actually built — an empty pool
-            // has no upstream to receive traffic. Fall back to the site's
-            // default pool instead of silently dropping the route.
-            let target = if pool_keys.contains(&route.pool_id) {
-                route.pool_id.clone()
-            } else {
-                match default_key.clone().or_else(|| pool_keys.first().cloned())
-                {
-                    Some(fallback) => {
-                        warn!(
-                            site = %site.domain,
-                            route = %route.id,
-                            pool = %route.pool_id,
-                            "route pool has no peers; falling back to the site default pool"
-                        );
-                        fallback
-                    },
-                    None => {
-                        warn!(
-                            site = %site.domain,
-                            route = %route.id,
-                            "route pool has no peers and the site has no usable upstream; route skipped"
-                        );
-                        continue;
-                    },
-                }
-            };
-            let path = match route.match_type.as_str() {
-                "exact" => format!("={}", route.path),
-                "regex" => format!("~{}", route.path),
-                _ => route.path.clone(),
-            };
-            let loc_name = format!("{site_id}_route_{}", route.id);
-            locations.insert(
-                loc_name.clone(),
-                LocationConf {
-                    upstream: Some(target),
-                    host: Some(host.clone()),
-                    path: Some(path),
-                    weight: route
-                        .priority
-                        .map(|p| p.clamp(1, u16::MAX as i32) as u16),
-                    // A route may be gated on an IP group; the location only
-                    // matches clients inside those ranges.
-                    match_ip_ranges: (!route.ip_ranges.is_empty())
-                        .then(|| route.ip_ranges.clone()),
-                    plugins: Some(site_plugins.clone()),
-                    ..Default::default()
-                },
-            );
-            location_names.push(loc_name);
-        }
+/// Optional millisecond timeout; `0` means "keep the proxy default".
+fn optional_timeout(ms: u32) -> Option<Duration> {
+    (ms > 0).then(|| Duration::from_millis(ms as u64))
+}
 
-        // Convert SSL certificate: an uploaded PEM is served as-is, while a
-        // site asking for ACME without one gets a certificate entry the
-        // lets-encrypt task issues against — and later fills in — inside
-        // this config.
-        if let Some(ref ssl) = site.ssl_config
-            && ssl.enabled
-        {
-            // A multi-domain certificate row carries its SAN list explicitly;
-            // otherwise keep the historical site-domain fallback.
-            let domains = if !ssl.domains.is_empty() {
-                ssl.domains.join(",")
-            } else if site.alternate_domains.is_empty() {
-                site.domain.clone()
-            } else {
-                let mut d = vec![site.domain.clone()];
-                d.extend(site.alternate_domains.clone());
-                d.join(",")
-            };
-            let cert = if !ssl.cert_pem.is_empty() {
-                Some(CertificateConf {
-                    domains: Some(domains),
-                    tls_cert: Some(ssl.cert_pem.clone()),
-                    tls_key: Some(ssl.key_pem.clone()),
-                    ..Default::default()
-                })
-            } else if ssl.acme_enabled && !ssl.acme_email.is_empty() {
-                acme_certificate_conf(ssl, domains)
+/// One `addrs` entry: the origin address with its scheme stripped, and the
+/// weight appended only when it differs from the default.
+fn peer_addr(peer: &UpstreamPeer) -> String {
+    let addr = peer
+        .address
+        .strip_prefix("https://")
+        .or_else(|| peer.address.strip_prefix("http://"))
+        .unwrap_or(&peer.address);
+    if peer.weight > 1 {
+        format!("{} {}", addr, peer.weight)
+    } else {
+        addr.to_string()
+    }
+}
+
+/// The pingap upstream for one origin pool.
+fn upstream_conf(name: &str, up: &UpstreamConfig) -> UpstreamConf {
+    // Multi-peer pools get request-level protection by default: without
+    // backend stats the circuit breaker can never observe failures, and the
+    // control plane exposes no knobs for either. Single-peer pools are left
+    // untouched — with no alternative backend an open breaker only
+    // short-circuits into 503.
+    let multi_peer = up.peers.len() > 1;
+    UpstreamConf {
+        addrs: up.peers.iter().map(peer_addr).collect(),
+        algo: sanitize_algo(&up.algo),
+        sni: if up.sni.is_empty() {
+            None
+        } else {
+            Some(up.sni.clone())
+        },
+        // Verification is opt-in. Normalize here as well as in the agent's
+        // gRPC conversion: a rule cache restored from the persisted snapshot
+        // (sites.json) carries `verify_cert: null` and never passes through
+        // that conversion, and a `None` left intact means pingora's default -
+        // strict verification - so self-signed origins would 502 with
+        // InvalidCert.
+        verify_cert: Some(up.verify_cert.unwrap_or(false)),
+        connection_timeout: optional_timeout(up.connection_timeout_ms),
+        read_timeout: optional_timeout(up.read_timeout_ms),
+        write_timeout: optional_timeout(up.write_timeout_ms),
+        health_check: up
+            .health_check
+            .as_ref()
+            .filter(|h| h.enabled)
+            .map(|h| health_check_url(name, h)),
+        enable_backend_stats: multi_peer.then_some(true),
+        circuit_break_max_consecutive_failures: multi_peer.then_some(5),
+        circuit_break_max_failure_percent: multi_peer.then_some(50),
+        circuit_break_min_requests_threshold: multi_peer.then_some(10),
+        circuit_break_open_duration: multi_peer
+            .then_some(Duration::from_secs(10)),
+        // With several origins, a misjudged health check or an all-open
+        // breaker should degrade to the least-bad backend instead of failing
+        // the site with instant 503s.
+        enable_unhealthy_fallback: multi_peer.then_some(true),
+        ..Default::default()
+    }
+}
+
+/// Upstream key for a pool: the pool id, or the legacy per-site name for
+/// caches written before pools existed.
+fn upstream_name(
+    site_id: &str,
+    site: &SiteRules,
+    up: &UpstreamConfig,
+    index: usize,
+) -> String {
+    if !up.pool_id.is_empty() {
+        return up.pool_id.clone();
+    }
+    if site.upstreams.len() == 1 {
+        format!("{site_id}_upstream")
+    } else {
+        format!("{site_id}_upstream_{index}")
+    }
+}
+
+/// The upstreams one site contributed, and which of them unrouted traffic
+/// should use.
+#[derive(Debug, Default)]
+struct SitePools {
+    /// Every upstream name built for the site, in declaration order.
+    pool_keys: Vec<String>,
+    /// Pool the control plane marked as the site default, if any.
+    default_key: Option<String>,
+}
+
+impl SitePools {
+    /// Pool the `/` fallback location points at. Caches written before pools
+    /// existed mark nothing default, so the only pool serves when no routes
+    /// exist.
+    fn fallback_key(&self, routes_empty: bool) -> Option<String> {
+        self.default_key.clone().or_else(|| {
+            if routes_empty {
+                self.pool_keys.first().cloned()
             } else {
                 None
-            };
-            if let Some(cert) = cert {
-                certificates.insert(format!("{site_id}_cert"), cert);
             }
+        })
+    }
+}
+
+/// Builds this site's upstreams and records which pools came out usable.
+fn collect_site_pools(
+    site_id: &str,
+    site: &SiteRules,
+    upstreams: &mut HashMap<String, UpstreamConf>,
+) -> SitePools {
+    let mut pools = SitePools::default();
+    for (i, up) in site.upstreams.iter().enumerate() {
+        // Pools without peers are skipped: an address-less upstream cannot
+        // be constructed.
+        if up.peers.is_empty() {
+            continue;
+        }
+        let name = upstream_name(site_id, site, up, i);
+        let conf = upstream_conf(&name, up);
+        if up.is_default {
+            pools.default_key = Some(name.clone());
+        }
+        pools.pool_keys.push(name.clone());
+        upstreams.insert(name, conf);
+    }
+    pools
+}
+
+/// Every upstream the config declares, plus the per-site pool view the
+/// location builder needs to route traffic.
+struct BuiltUpstreams {
+    upstreams: HashMap<String, UpstreamConf>,
+    pools: HashMap<String, SitePools>,
+}
+
+/// Builds one upstream per origin pool of every usable site.
+fn build_upstreams(cached: &CachedRules) -> BuiltUpstreams {
+    let mut upstreams = HashMap::new();
+    let mut pools = HashMap::new();
+    for (site_id, site) in &cached.sites {
+        if site.domain.is_empty() {
+            continue;
+        }
+        pools.insert(
+            site_id.clone(),
+            collect_site_pools(site_id, site, &mut upstreams),
+        );
+    }
+    BuiltUpstreams { upstreams, pools }
+}
+
+/// `host` pattern for a site: its primary domain plus every alternate
+/// domain, comma-separated. pingap matches any of them.
+fn site_host(site: &SiteRules) -> String {
+    if site.alternate_domains.is_empty() {
+        return site.domain.clone();
+    }
+    let mut hosts = vec![site.domain.clone()];
+    hosts.extend(site.alternate_domains.clone());
+    hosts.join(",")
+}
+
+/// The `/` fallback location. It must sort behind every route: with the auto
+/// weight (128) any route whose priority was 127 or less ranked below this
+/// catch-all and never matched, so it is pinned to the floor.
+fn fallback_location(
+    upstream: String,
+    host: String,
+    plugins: Vec<String>,
+) -> LocationConf {
+    LocationConf {
+        upstream: Some(upstream),
+        host: Some(host),
+        path: Some("/".to_string()),
+        plugins: Some(plugins),
+        weight: Some(0),
+        ..Default::default()
+    }
+}
+
+/// Pool a route should target.
+///
+/// A route only goes to pools this site actually built — an empty pool has no
+/// upstream to receive traffic. Such routes fall back to the site's default
+/// pool instead of being silently dropped.
+fn route_target(
+    site: &SiteRules,
+    route: &RouteConfig,
+    pools: &SitePools,
+) -> Option<String> {
+    if pools.pool_keys.contains(&route.pool_id) {
+        return Some(route.pool_id.clone());
+    }
+    match pools
+        .default_key
+        .clone()
+        .or_else(|| pools.pool_keys.first().cloned())
+    {
+        Some(fallback) => {
+            warn!(
+                site = %site.domain,
+                route = %route.id,
+                pool = %route.pool_id,
+                "route pool has no peers; falling back to the site default pool"
+            );
+            Some(fallback)
+        },
+        None => {
+            warn!(
+                site = %site.domain,
+                route = %route.id,
+                "route pool has no peers and the site has no usable upstream; route skipped"
+            );
+            None
+        },
+    }
+}
+
+/// pingap path pattern for the route's match type.
+fn route_path(route: &RouteConfig) -> String {
+    match route.match_type.as_str() {
+        "exact" => format!("={}", route.path),
+        "regex" => format!("~{}", route.path),
+        _ => route.path.clone(),
+    }
+}
+
+/// Locations generated across every site, plus their names in insertion
+/// order for the server listings.
+struct BuiltLocations {
+    locations: HashMap<String, LocationConf>,
+    /// Location names in the order they were generated; empty means no site
+    /// produced a usable location.
+    names: Vec<String>,
+}
+
+/// Adds one location per enabled route of a site.
+fn add_route_locations(
+    site_id: &str,
+    site: &SiteRules,
+    host: &str,
+    plugins: &[String],
+    pools: &SitePools,
+    built: &mut BuiltLocations,
+) {
+    for route in &site.routes {
+        if !route.enabled {
+            continue;
+        }
+        let Some(target) = route_target(site, route, pools) else {
+            continue;
+        };
+        let loc_name = format!("{site_id}_route_{}", route.id);
+        built.locations.insert(
+            loc_name.clone(),
+            LocationConf {
+                upstream: Some(target),
+                host: Some(host.to_string()),
+                path: Some(route_path(route)),
+                weight: route
+                    .priority
+                    .map(|p| p.clamp(1, u16::MAX as i32) as u16),
+                // A route may be gated on an IP group; the location only
+                // matches clients inside those ranges.
+                match_ip_ranges: (!route.ip_ranges.is_empty())
+                    .then(|| route.ip_ranges.clone()),
+                plugins: Some(plugins.to_vec()),
+                ..Default::default()
+            },
+        );
+        built.names.push(loc_name);
+    }
+}
+
+/// Builds the fallback and route locations for every site.
+fn build_locations(
+    cached: &CachedRules,
+    pools: &HashMap<String, SitePools>,
+    wiring: &PluginWiring,
+) -> BuiltLocations {
+    let mut built = BuiltLocations {
+        locations: HashMap::new(),
+        names: Vec::new(),
+    };
+    for (site_id, site) in &cached.sites {
+        if site.domain.is_empty() {
+            continue;
+        }
+        // Both maps are keyed by site id and built with the same skip rule,
+        // so a miss here cannot happen for a site that has a domain.
+        let (Some(site_pools), Some(site_plugins)) =
+            (pools.get(site_id), wiring.site_plugins.get(site_id))
+        else {
+            continue;
+        };
+        let host = site_host(site);
+
+        if let Some(key) = site_pools.fallback_key(site.routes.is_empty()) {
+            let loc_name = format!("{site_id}_loc");
+            built.locations.insert(
+                loc_name.clone(),
+                fallback_location(key, host.clone(), site_plugins.clone()),
+            );
+            built.names.push(loc_name);
         }
 
-        // A site that turns mTLS on contributes its trust anchor to the
-        // shared listener.
+        add_route_locations(
+            site_id,
+            site,
+            &host,
+            site_plugins,
+            site_pools,
+            &mut built,
+        );
+    }
+    built
+}
+
+/// Hostnames a site certificate covers: the certificate row's explicit SAN
+/// list, else the historical site-domain fallback.
+fn certificate_domains(site: &SiteRules, ssl: &SslConfig) -> String {
+    if ssl.domains.is_empty() {
+        site_host(site)
+    } else {
+        ssl.domains.join(",")
+    }
+}
+
+/// Certificate entry for one site: an uploaded PEM is served as-is, while a
+/// site asking for ACME without one gets a certificate entry the
+/// lets-encrypt task issues against — and later fills in — inside this
+/// config.
+fn site_certificate(site: &SiteRules) -> Option<CertificateConf> {
+    let ssl = site.ssl_config.as_ref().filter(|ssl| ssl.enabled)?;
+    let domains = certificate_domains(site, ssl);
+    if !ssl.cert_pem.is_empty() {
+        Some(CertificateConf {
+            domains: Some(domains),
+            tls_cert: Some(ssl.cert_pem.clone()),
+            tls_key: Some(ssl.key_pem.clone()),
+            ..Default::default()
+        })
+    } else if ssl.acme_enabled && !ssl.acme_email.is_empty() {
+        acme_certificate_conf(ssl, domains)
+    } else {
+        None
+    }
+}
+
+/// Adds the dashboard's own certificate (Settings -> System TLS -> auto-issue).
+///
+/// It is issued by the same ACME task through the same HTTP-01 handler, which
+/// answers for any host - so a dashboard *domain* that is not a proxied site
+/// works too. The data plane never serves it; it exists so the ACME task can
+/// fill it in, and the material is handed back to the control plane after
+/// each reload.
+///
+/// It is seeded with the pair already installed. Without the seed, a rebuilt
+/// config starts with an empty pair, the ACME task reads that as "not issued
+/// yet", and every restart (or reload) orders a duplicate certificate until
+/// the CA's rate limit stops it.
+fn insert_management_certificate(
+    certificates: &mut HashMap<String, CertificateConf>,
+) {
+    let Some(request) = varman_control::management_cert::desired() else {
+        return;
+    };
+    let seed = varman_control::management_cert::seed();
+    certificates.insert(
+        varman_control::management_cert::CERT_NAME.to_string(),
+        CertificateConf {
+            domains: Some(request.identity.clone()),
+            acme: Some(format!("http://{}", request.email)),
+            tls_cert: seed.as_ref().map(|seed| seed.cert_pem.clone()),
+            tls_key: seed.as_ref().map(|seed| seed.key_pem.clone()),
+            ..Default::default()
+        },
+    );
+}
+
+/// Site certificates plus the dashboard's own ACME entry.
+fn build_certificates(
+    cached: &CachedRules,
+) -> HashMap<String, CertificateConf> {
+    let mut certificates = HashMap::new();
+    for (site_id, site) in &cached.sites {
+        if site.domain.is_empty() {
+            continue;
+        }
+        if let Some(cert) = site_certificate(site) {
+            certificates.insert(format!("{site_id}_cert"), cert);
+        }
+    }
+    insert_management_certificate(&mut certificates);
+    certificates
+}
+
+/// PEM bundle of the CAs every mTLS-enabled site trusts. The listener
+/// verifies client certificates as a whole, so the anchor is the union
+/// across sites; pinning a certificate to its site is left to the WAF plugin,
+/// which sees the request's SNI.
+fn build_mtls_ca(cached: &CachedRules) -> String {
+    let mut bundle = String::new();
+    for site in cached.sites.values() {
+        if site.domain.is_empty() {
+            continue;
+        }
         if let Some(ssl) = site.ssl_config.as_ref()
             && ssl.mtls_enabled
             && !ssl.mtls_client_ca.trim().is_empty()
         {
-            mtls_ca_bundle.push_str(ssl.mtls_client_ca.trim());
-            mtls_ca_bundle.push('\n');
+            bundle.push_str(ssl.mtls_client_ca.trim());
+            bundle.push('\n');
         }
     }
+    bundle
+}
 
-    // The dashboard's own certificate (Settings -> System TLS -> auto-issue).
-    // It is issued by the same ACME task through the same HTTP-01 handler,
-    // which answers for any host - so a dashboard *domain* that is not a
-    // proxied site works too. The data plane never serves it; it exists so
-    // the ACME task can fill it in, and the material is handed back to the
-    // control plane after each reload.
-    //
-    // Seed it with the pair already installed. Without the seed, a rebuilt
-    // config starts with an empty pair, the ACME task reads that as "not
-    // issued yet", and every restart (or reload) orders a duplicate
-    // certificate until the CA's rate limit stops it.
-    if let Some(request) = varman_control::management_cert::desired() {
-        let seed = varman_control::management_cert::seed();
-        certificates.insert(
-            varman_control::management_cert::CERT_NAME.to_string(),
-            CertificateConf {
-                domains: Some(request.identity.clone()),
-                acme: Some(format!("http://{}", request.email)),
-                tls_cert: seed.as_ref().map(|seed| seed.cert_pem.clone()),
-                tls_key: seed.as_ref().map(|seed| seed.key_pem.clone()),
-                ..Default::default()
-            },
-        );
-    }
-
-    if location_names.is_empty() {
-        return None;
-    }
-
-    // TLS is a per-server switch in pingap: `global_certificates` turns it
-    // on for every address that server listens on, so 80 and 443 cannot
-    // share one server — a merged listener ran plaintext HTTP through TLS
-    // handshakes, which also broke ACME HTTP-01 validation on port 80.
-    //
-    // 443 is bound even before the first certificate exists: the listener
-    // comes up with an empty provider and handshakes fail until issuance
-    // completes, but the moment a certificate is issued or uploaded the
-    // provider serves it — no restart, no listener rebuild. Binding 443
-    // only once a certificate existed left fresh deployments with the port
-    // closed until the whole process restarted.
-    if certificates.is_empty() {
+/// The 80/443 listener pair.
+///
+/// TLS is a per-server switch in pingap: `global_certificates` turns it on for
+/// every address that server listens on, so 80 and 443 cannot share one
+/// server — a merged listener ran plaintext HTTP through TLS handshakes, which
+/// also broke ACME HTTP-01 validation on port 80.
+///
+/// 443 is bound even before the first certificate exists: the listener comes
+/// up with an empty provider and handshakes fail until issuance completes, but
+/// the moment a certificate is issued or uploaded the provider serves it — no
+/// restart, no listener rebuild. Binding 443 only once a certificate existed
+/// left fresh deployments with the port closed until the whole process
+/// restarted.
+fn build_servers(
+    location_names: Vec<String>,
+    mtls_ca_bundle: String,
+    has_certificates: bool,
+) -> HashMap<String, PingapServerConf> {
+    if !has_certificates {
         warn!(
             "data plane: no certificates yet — TLS handshakes on 443 will \
              fail until one is issued or uploaded"
@@ -581,14 +754,50 @@ pub(super) fn cached_rules_to_pingap_config(
             ..Default::default()
         },
     );
+    servers
+}
+
+/// Build a `PingapConfig` from the agent's cached site rules.
+///
+/// Each origin pool becomes one upstream keyed by its pool id (or the
+/// legacy per-site name for caches written before pools existed). The
+/// default pool — or the only pool, when no routes exist — receives the
+/// site's `/` fallback location, and every enabled route becomes an
+/// additional location carrying the pingap path marker for its match
+/// type. All sites share a single server listening on ports 80 and 443
+/// with TLS enabled via the global certificate store.
+///
+/// The individual steps live in [`build_plugins`], [`build_upstreams`],
+/// [`build_locations`], [`build_certificates`], [`build_mtls_ca`] and
+/// [`build_servers`]; this function only sequences them.
+pub(super) fn cached_rules_to_pingap_config(
+    cached: &CachedRules,
+    cache_dir: &Path,
+) -> Option<PingapConfig> {
+    if cached.sites.is_empty() {
+        return None;
+    }
+
+    let wiring = build_plugins(cached, cache_dir);
+    let upstreams = build_upstreams(cached);
+    let built = build_locations(cached, &upstreams.pools, &wiring);
+    let certificates = build_certificates(cached);
+    let mtls_ca_bundle = build_mtls_ca(cached);
+
+    if built.names.is_empty() {
+        return None;
+    }
+
+    let servers =
+        build_servers(built.names, mtls_ca_bundle, !certificates.is_empty());
 
     Some(PingapConfig {
         basic: BasicConf::default(),
-        upstreams,
-        locations,
+        upstreams: upstreams.upstreams,
+        locations: built.locations,
         servers,
         certificates,
-        plugins,
+        plugins: wiring.plugins,
         ..Default::default()
     })
 }
