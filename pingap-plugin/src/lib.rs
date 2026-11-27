@@ -172,7 +172,16 @@ pub(crate) fn get_restriction_category_conf(
     value: &PluginConf,
     category: &str,
 ) -> Result<RestrictionCategory, Error> {
-    match get_str_conf(value, "type").to_lowercase().as_str() {
+    restriction_category_from(&get_str_conf(value, "type"), category)
+}
+
+/// The string half of [`get_restriction_category_conf`], for typed parameter
+/// structs that have already extracted `type`.
+pub(crate) fn restriction_category_from(
+    value: &str,
+    category: &str,
+) -> Result<RestrictionCategory, Error> {
+    match value.to_lowercase().as_str() {
         "" | "allow" => Ok(RestrictionCategory::Allow),
         "deny" => Ok(RestrictionCategory::Deny),
         other => Err(Error::Invalid {
@@ -180,6 +189,29 @@ pub(crate) fn get_restriction_category_conf(
             message: format!("Invalid type({other}), expect allow or deny"),
         }),
     }
+}
+
+/// Deserializes a plugin's configuration into typed parameters.
+///
+/// `category`, `step` and the descriptive `remark` are not parameters of the
+/// plugin itself, so they are removed first. With
+/// `#[serde(default, deny_unknown_fields)]` on `T`, a misspelled key or a
+/// value of the wrong TOML type becomes a construction error instead of a
+/// silent default, and `pingap -t` reports it through `validate_plugins`.
+pub fn parse_params<T>(conf: &PluginConf, category: &str) -> Result<T, Error>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let mut table = conf.clone();
+    table.remove("category");
+    table.remove("step");
+    table.remove("remark");
+    toml::Value::Table(table)
+        .try_into::<T>()
+        .map_err(|e| Error::Invalid {
+            category: category.to_string(),
+            message: e.to_string(),
+        })
 }
 
 /// Returns true if `accept_encoding` lists `coding` as an acceptable encoding.
@@ -329,8 +361,40 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::accepts_encoding;
+    use super::{accepts_encoding, parse_params};
+    use pingap_config::PluginConf;
     use pretty_assertions::assert_eq;
+
+    #[derive(Debug, Default, serde::Deserialize)]
+    #[serde(default, deny_unknown_fields)]
+    struct TestParams {
+        level: u32,
+        name: String,
+    }
+
+    #[test]
+    fn test_parse_params_ignores_common_keys_and_rejects_typos() {
+        let mut conf = PluginConf::new();
+        conf.insert(
+            "category".into(),
+            toml::Value::String("compression".into()),
+        );
+        conf.insert("step".into(), toml::Value::String("request".into()));
+        conf.insert("level".into(), toml::Value::Integer(3));
+        conf.insert("name".into(), toml::Value::String("x".into()));
+
+        let params: TestParams =
+            parse_params(&conf, "compression").expect("valid params");
+        assert_eq!(3, params.level);
+        assert_eq!("x", params.name);
+
+        conf.insert("levle".into(), toml::Value::Integer(3));
+        assert!(parse_params::<TestParams>(&conf, "compression").is_err());
+
+        conf.remove("levle");
+        conf.insert("level".into(), toml::Value::String("3".into()));
+        assert!(parse_params::<TestParams>(&conf, "compression").is_err());
+    }
 
     #[test]
     fn test_accepts_encoding() {

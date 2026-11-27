@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_hash_key, get_int_conf, get_int_conf_or_default, get_step_conf,
-    get_str_conf,
-};
+use super::{Error, get_hash_key, get_step_conf};
 use async_trait::async_trait;
 use http::StatusCode;
 use humantime::parse_duration;
@@ -88,6 +85,24 @@ pub struct Limiter {
     weight: f64,
 }
 
+/// Typed view of `[plugins.<name>]` for the rate/inflight limiter.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct LimitParams {
+    #[serde(rename = "type")]
+    kind: String,
+    tag: String,
+    key: String,
+    max: i64,
+    interval: String,
+    #[serde(default = "default_weight")]
+    weight: i64,
+}
+
+fn default_weight() -> i64 {
+    50
+}
+
 /// Converts a plugin configuration into a Limiter instance
 ///
 /// # Arguments
@@ -107,9 +122,10 @@ impl TryFrom<&PluginConf> for Limiter {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let step = get_step_conf(value, PluginStep::Request);
+        let params: LimitParams = super::parse_params(value, "limit")?;
 
         // Parse the tag type from config, defaulting to IP-based limiting
-        let tag = match get_str_conf(value, "tag").as_str() {
+        let tag = match params.tag.as_str() {
             "cookie" => LimitTag::Cookie,
             "header" => LimitTag::RequestHeader,
             "query" => LimitTag::Query,
@@ -119,7 +135,7 @@ impl TryFrom<&PluginConf> for Limiter {
         // Parse time interval for rate limiting
         // Format examples: "10s", "1m", "2h"
         // Default: 10 seconds if not specified
-        let interval = get_str_conf(value, "interval");
+        let interval = params.interval;
         let interval = if !interval.is_empty() {
             parse_duration(&interval).map_err(|e| Error::Invalid {
                 category: PluginCategory::Limit.to_string(),
@@ -132,8 +148,8 @@ impl TryFrom<&PluginConf> for Limiter {
         // Create either inflight or rate limiter based on config
         let mut inflight = None;
         let mut rate = None;
-        let mut max = get_int_conf(value, "max") as f64;
-        if get_str_conf(value, "type") == "inflight" {
+        let mut max = params.max as f64;
+        if params.kind == "inflight" {
             // Inflight limiter uses atomic counters to track concurrent requests
             inflight = Some(Inflight::new());
         } else {
@@ -143,14 +159,12 @@ impl TryFrom<&PluginConf> for Limiter {
             rate = Some(Rate::new(interval));
         }
 
-        let weight = get_int_conf_or_default(value, "weight", 50).clamp(0, 100)
-            as f64
-            / 100.0;
+        let weight = params.weight.clamp(0, 100) as f64 / 100.0;
 
         let params = Self {
             hash_value,
             tag,
-            key: get_str_conf(value, "key"),
+            key: params.key,
             max,
             inflight,
             rate,

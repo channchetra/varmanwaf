@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, accepts_encoding, get_bool_conf, get_hash_key, get_int_conf,
-    get_str_conf,
-};
+use super::{Error, accepts_encoding, get_hash_key, parse_params};
 use async_trait::async_trait;
 use http::HeaderValue;
 use http::header::{
@@ -111,6 +108,18 @@ pub struct Compression {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the compression plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct CompressionParams {
+    gzip_level: u32,
+    br_level: u32,
+    zstd_level: u32,
+    decompression: Option<bool>,
+    mode: String,
+    min_length: u64,
+}
+
 // Implementation to create Compression from configuration
 impl TryFrom<&PluginConf> for Compression {
     type Error = Error;
@@ -131,23 +140,20 @@ impl TryFrom<&PluginConf> for Compression {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this configuration
         let hash_value = get_hash_key(value);
+        let params: CompressionParams = parse_params(value, "compression")?;
 
-        // Parse optional decompression setting
-        let mut decompression = None;
-        if value.contains_key("decompression") {
-            decompression = Some(get_bool_conf(value, "decompression"));
-        }
-
-        // Get compression levels from configuration
-        let gzip_level = get_int_conf(value, "gzip_level").min(9) as u32;
-        let br_level = get_int_conf(value, "br_level").min(11) as u32;
-        let zstd_level = get_int_conf(value, "zstd_level").min(22) as u32;
-        let mode = get_str_conf(value, "mode");
+        // A misspelled key or a string level is rejected here instead of
+        // silently disabling compression.
+        let decompression = params.decompression;
+        let gzip_level = params.gzip_level.min(9);
+        let br_level = params.br_level.min(11);
+        let zstd_level = params.zstd_level.min(22);
+        let mode = params.mode;
 
         // Enable compression if any algorithm has a non-zero level
         let support_compression = gzip_level + br_level + zstd_level > 0;
 
-        let min_length = get_int_conf(value, "min_length") as u64;
+        let min_length = params.min_length;
 
         let params = Self {
             hash_value,

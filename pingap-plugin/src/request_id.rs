@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_int_conf, get_step_conf, get_str_conf};
+use super::{Error, get_hash_key, get_step_conf};
 use async_trait::async_trait;
 use http::HeaderName;
 use nanoid::nanoid;
@@ -56,6 +56,15 @@ pub struct RequestId {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the request-id plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct RequestIdParams {
+    header_name: String,
+    algorithm: String,
+    size: usize,
+}
+
 impl TryFrom<&PluginConf> for RequestId {
     type Error = Error;
 
@@ -78,10 +87,11 @@ impl TryFrom<&PluginConf> for RequestId {
         let hash_value = get_hash_key(value);
         // Extract the execution step from configuration
         let step = get_step_conf(value, PluginStep::Request);
+        let params: RequestIdParams = super::parse_params(value, "request_id")?;
 
         // Parse and validate the custom header name if provided
         // An empty string means use the default X-Request-Id header
-        let header_name = get_str_conf(value, "header_name");
+        let header_name = params.header_name;
         let header_name = if header_name.is_empty() {
             None
         } else {
@@ -93,7 +103,7 @@ impl TryFrom<&PluginConf> for RequestId {
                 }
             })?)
         };
-        let mut size = get_int_conf(value, "size") as usize;
+        let mut size = params.size;
         if size == 0 {
             size = 8;
         }
@@ -101,7 +111,7 @@ impl TryFrom<&PluginConf> for RequestId {
         let params = Self {
             hash_value,
             plugin_step: step,
-            algorithm: get_str_conf(value, "algorithm"),
+            algorithm: params.algorithm,
             size,
             header_name,
         };

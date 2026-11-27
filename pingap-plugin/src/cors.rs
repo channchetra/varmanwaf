@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_bool_conf, get_hash_key, get_str_conf};
+use super::{Error, get_hash_key};
 use async_trait::async_trait;
 use http::{HeaderValue, header};
 use humantime::parse_duration;
@@ -46,6 +46,19 @@ pub struct Cors {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the CORS plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct CorsParams {
+    path: String,
+    max_age: String,
+    allow_origin: String,
+    allow_methods: String,
+    allow_headers: String,
+    allow_credentials: bool,
+    expose_headers: String,
+}
+
 impl TryFrom<&PluginConf> for Cors {
     type Error = Error;
     /// Converts a plugin configuration into a CORS plugin instance
@@ -67,10 +80,11 @@ impl TryFrom<&PluginConf> for Cors {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this configuration
         let hash_value = get_hash_key(value);
+        let params: CorsParams = super::parse_params(value, "cors")?;
 
         // Parse max-age duration with human-friendly format (e.g., "60m", "24h")
         // Controls browser caching of preflight results
-        let max_age = get_str_conf(value, "max_age");
+        let max_age = params.max_age;
         let max_age = if !max_age.is_empty() {
             parse_duration(&max_age).map_err(|e| Error::Invalid {
                 category: PluginCategory::Cors.to_string(),
@@ -82,7 +96,7 @@ impl TryFrom<&PluginConf> for Cors {
         };
 
         // Compile path regex if specified, used for selective CORS application
-        let path = get_str_conf(value, "path");
+        let path = params.path;
         let path = if path.is_empty() {
             None
         } else {
@@ -97,14 +111,14 @@ impl TryFrom<&PluginConf> for Cors {
         // "*" - Allow all origins
         // "example.com" - Allow specific domain
         // "$http_origin" - Mirror the requesting origin (dynamic)
-        let mut allow_origin = get_str_conf(value, "allow_origin");
+        let mut allow_origin = params.allow_origin;
         if allow_origin.is_empty() {
             allow_origin = "*".to_string();
         }
 
         // Configure allowed HTTP methods
         // Important for preflight requests to know which methods are supported
-        let mut allow_methods = get_str_conf(value, "allow_methods");
+        let mut allow_methods = params.allow_methods;
         if allow_methods.is_empty() {
             allow_methods =
                 ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].join(", ");
@@ -125,7 +139,7 @@ impl TryFrom<&PluginConf> for Cors {
         )];
 
         // Optional: Allow-Headers for custom headers client may send
-        let allow_headers = get_str_conf(value, "allow_headers");
+        let allow_headers = params.allow_headers;
         if !allow_headers.is_empty() {
             headers.push((
                 header::ACCESS_CONTROL_ALLOW_HEADERS,
@@ -143,7 +157,7 @@ impl TryFrom<&PluginConf> for Cors {
 
         // Optional: Allow credentials (cookies, auth headers)
         // Important: Cannot be used with Allow-Origin: *
-        let allow_credentials = get_bool_conf(value, "allow_credentials");
+        let allow_credentials = params.allow_credentials;
         if allow_credentials {
             headers.push((
                 header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
@@ -152,7 +166,7 @@ impl TryFrom<&PluginConf> for Cors {
         }
 
         // Optional: Expose-Headers lets client access custom response headers
-        let expose_headers = get_str_conf(value, "expose_headers");
+        let expose_headers = params.expose_headers;
         if !expose_headers.is_empty() {
             headers.push((
                 header::ACCESS_CONTROL_EXPOSE_HEADERS,
