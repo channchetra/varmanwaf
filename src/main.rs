@@ -21,30 +21,19 @@ compile_error!(
     "pingap needs a TLS backend: enable `openssl` (default) or build with `--no-default-features --features tls-rustls`"
 );
 
-use crate::certificates::{new_certificate_provider, try_update_certificates};
 use crate::config_manager::{
     get_config_manager, try_init_config_manager, try_init_memory_config_manager,
 };
-use crate::locations::new_location_provider;
-use crate::locations::try_init_locations;
-use crate::plugin::new_plugin_provider;
-use crate::server_locations::new_server_locations_provider;
-use crate::server_locations::try_init_server_locations;
 use crate::upstreams::new_upstream_provider;
-use crate::upstreams::try_init_upstreams;
 use bytes::BytesMut;
 use clap::Parser;
 use crossbeam_channel::Receiver;
 use pingap_acme::new_lets_encrypt_service;
-use pingap_cache::new_storage_clear_service;
 use pingap_certificate::{
-    install_default_crypto_provider, new_certificate_validity_service,
-    new_self_signed_certificate_validity_service,
-    validate_servers_tls_for_backend,
+    install_default_crypto_provider, validate_servers_tls_for_backend,
 };
 use pingap_config::PingapConfig;
 use pingap_config::{ConfigManager, ETCD_PROTOCOL};
-use pingap_core::BackgroundTaskService;
 // Link anchor: `pingap-imageoptim` registers its plugin from a `#[ctor]`, so
 // the crate has to be linked even though nothing here names a symbol from it.
 #[cfg(feature = "imageoptim")]
@@ -57,14 +46,12 @@ use pingap_logger::{
 };
 #[cfg(feature = "full")]
 use pingap_otel::TracerService;
-use pingap_performance::new_performance_metrics_log_service;
 #[cfg(feature = "tracing")]
 use pingap_performance::set_metrics_upstream_provider;
 use pingap_plugin::get_plugin_factory;
-use pingap_proxy::{AppContext, Server, ServerConf, parse_from_conf};
+use pingap_proxy::{Server, ServerConf, parse_from_conf};
 use pingap_upstream::new_upstream_health_check_task;
 use pingora::server;
-use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
 use process::{
     get_admin_addr, get_start_time, new_auto_restart_service,
@@ -85,6 +72,7 @@ mod certificates;
 mod cli;
 mod config_file;
 mod config_manager;
+mod data_plane;
 mod locations;
 mod maintenance;
 mod plugin;
@@ -223,100 +211,6 @@ struct Args {
     threads: Option<usize>,
 }
 
-const DEFAULT_UPGRADE_SOCK: &str = "/tmp/pingap_upgrade.sock";
-
-/// pingora's upgrade socket for this deployment: `basic.upgrade_sock`, or the
-/// path pingap has always defaulted to.
-fn upgrade_sock_path(basic_conf: &pingap_config::BasicConf) -> String {
-    basic_conf
-        .upgrade_sock
-        .clone()
-        .unwrap_or_else(|| DEFAULT_UPGRADE_SOCK.to_string())
-}
-
-fn new_server_config(
-    args: &Args,
-    conf: &PingapConfig,
-) -> server::configuration::ServerConf {
-    new_server_config_from(args.daemon, args.threads, conf)
-}
-
-/// The config-driven half of [`new_server_config`], shared with the
-/// in-process data plane (`src/varman.rs`).
-pub(crate) fn new_server_config_from(
-    daemon: bool,
-    threads: Option<usize>,
-    conf: &PingapConfig,
-) -> server::configuration::ServerConf {
-    let basic_conf = &conf.basic;
-    let mut server_conf = server::configuration::ServerConf {
-        pid_file: basic_conf.get_pid_file(),
-        upgrade_sock: upgrade_sock_path(basic_conf),
-        user: basic_conf.user.clone(),
-        group: basic_conf.group.clone(),
-        daemon,
-        // Pingora only redirects the daemon's stderr when this is set;
-        // otherwise it keeps the inherited one, which is `/dev/null` for a
-        // process started by an auto restart.
-        error_log: basic_conf.error_log.clone(),
-        ..Default::default()
-    };
-    if let Some(value) = basic_conf.grace_period {
-        server_conf.grace_period_seconds = Some(value.as_secs());
-    }
-    if let Some(value) = basic_conf.graceful_shutdown_timeout {
-        server_conf.graceful_shutdown_timeout_seconds = Some(value.as_secs());
-    }
-    if let Some(upstream_keepalive_pool_size) =
-        basic_conf.upstream_keepalive_pool_size
-    {
-        server_conf.upstream_keepalive_pool_size = upstream_keepalive_pool_size;
-    }
-    if let Some(threads) = basic_conf.threads {
-        server_conf.threads = threads.max(1);
-    }
-    if let Some(threads) = threads {
-        server_conf.threads = threads.max(1);
-    }
-    if let Some(max_blocking_threads) = basic_conf.max_blocking_threads {
-        server_conf.max_blocking_threads = Some(max_blocking_threads);
-    }
-    if let Some(work_stealing) = basic_conf.work_stealing {
-        server_conf.work_stealing = work_stealing
-    }
-    if let Some(listener_tasks_per_fd) = basic_conf.listener_tasks_per_fd {
-        server_conf.listener_tasks_per_fd = listener_tasks_per_fd;
-    }
-    // Downstream TLS handshake offload. pingora reads the pair back from this
-    // conf when each TLS listener calls
-    // `TlsSettings::set_offload_threadpool_from_server_conf`, so copying the
-    // values is all that is needed here.
-    server_conf.downstream_tls_offload_threadpools =
-        basic_conf.downstream_tls_offload_threadpools;
-    server_conf.downstream_tls_offload_thread_per_pool =
-        basic_conf.downstream_tls_offload_thread_per_pool;
-    // Upstream connect offload needs nothing on pingap's side beyond this:
-    // pingora-proxy builds its connector with
-    // `ConnectorOptions::from_server_conf`, which reads the pair back.
-    server_conf.upstream_connect_offload_threadpools =
-        basic_conf.upstream_connect_offload_threadpools;
-    server_conf.upstream_connect_offload_thread_per_pool =
-        basic_conf.upstream_connect_offload_thread_per_pool;
-    if let Some(dir) = &basic_conf.working_directory {
-        server_conf.working_directory = Some(std::path::PathBuf::from(dir));
-    }
-    // pingora's own `daemon_wait_for_ready` stays off on purpose. Its parent
-    // side waits on a tokio SIGUSR1 listener, and tokio's signal wake-up pipe
-    // is process-global: pingap has already created it before the fork (the
-    // config is loaded on a tokio runtime), so the daemon inherits the same
-    // pipe, its runtimes drain the wake-up, and the parent never sees the
-    // signal - it waits the full timeout and exits 1 while the daemon runs
-    // fine. The readiness hand-over pingap needs lives in
-    // `process::restart_now` instead, over a unix socket of its own.
-
-    server_conf
-}
-
 async fn migrate_config_layout(config_manager: &ConfigManager) {
     match config_manager.migrate_layout().await {
         Ok(retired) => {
@@ -420,41 +314,40 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     tokio::runtime::Runtime::new()?
         .block_on(migrate_config_layout(&config_manager));
 
-    let (server_conf, name, proxy_plugin_info) =
+    let (admin_server_conf, name, proxy_plugin_info) =
         plugin::parse_admin_plugin(&args.admin.unwrap_or_default())?;
-    let (_, error) =
-        plugin::try_init_plugins(&HashMap::from([(name, proxy_plugin_info)]));
+    // No config is loaded in this mode: the plane is assembled from the
+    // defaults, with the admin plugin as its only extra. `background_tasks`
+    // is `None` because the control-panel node serves no data plane and has
+    // never run the proxy loops.
+    let mut assembled = data_plane::assemble(
+        &PingapConfig::default(),
+        data_plane::DataPlaneOptions {
+            daemon: args.daemon,
+            upgrade: false,
+            threads: None,
+            extra_plugins: HashMap::from([(name, proxy_plugin_info)]),
+            background_tasks: None,
+            admin_only: true,
+        },
+    )?;
+    let error = assembled.plugins.errors.as_str();
     if !error.is_empty() {
         error!(error, "init plugins fail",);
     }
-    let opt = Opt {
-        daemon: args.daemon,
-        ..Default::default()
-    };
-    // config::set_config_path(&args.conf);
-    let mut my_server = server::Server::new(Some(opt))?;
-    let ctx = AppContext {
-        server_locations_provider: new_server_locations_provider(),
-        location_provider: new_location_provider(),
-        upstream_provider: new_upstream_provider(),
-        plugin_provider: new_plugin_provider(),
-        certificate_provider: new_certificate_provider(),
-        config_manager,
-        logger: None,
-    };
-    let ps = Server::new(&server_conf, ctx)?;
-    let services = ps.run(my_server.configuration.clone())?;
+    let ps = Server::new(&admin_server_conf, assembled.app_context(None))?;
+    let services = ps.run(assembled.server.configuration.clone())?;
     // See run(): bootstrap as a service, with the listener depending on it so
     // it waits for the inherited sockets instead of binding fresh ones.
-    let bootstrap_handle = my_server.bootstrap_as_a_service();
-    my_server
+    assembled
+        .server
         .add_service(services.lb)
-        .add_dependency(&bootstrap_handle);
+        .add_dependency(&assembled.bootstrap);
     info!(target: LOG_TARGET, "Admin node server is running");
     let _ = get_start_time();
 
     // TODO not process exit until pingora supports
-    my_server.run_forever();
+    assembled.server.run_forever();
 }
 
 fn parse_arguments() -> Args {
@@ -776,7 +669,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         // daemon dying before it reports is noticed.
         cmd.ready_sock = std::path::PathBuf::from(format!(
             "{}.ready",
-            upgrade_sock_path(&config.basic)
+            data_plane::upgrade_sock_path(&config.basic)
         ));
         cmd.ready_timeout = config
             .basic
@@ -787,59 +680,50 @@ fn run() -> Result<(), Box<dyn Error>> {
         process::set_restart_process_command(cmd);
     }
 
-    try_init_upstreams(&config.upstreams, webhook::get_webhook_sender())?;
-    // Wire upstreams into Prometheus scrapes for per-backend gauges.
+    let mut assembled = data_plane::assemble(
+        &config,
+        data_plane::DataPlaneOptions {
+            daemon: args.daemon,
+            upgrade: args.upgrade,
+            threads: args.threads,
+            extra_plugins: HashMap::new(),
+            background_tasks: Some("simple_background_service"),
+            admin_only: false,
+        },
+    )?;
+    // Wire upstreams into Prometheus scrapes for per-backend gauges. Only this
+    // entry point has ever done it: the setter is a process-wide `OnceLock`,
+    // and the agent-hosted plane leaves the gauges unwired.
     #[cfg(feature = "tracing")]
     set_metrics_upstream_provider(new_upstream_provider());
-    try_init_locations(&config.locations)?;
-    try_init_server_locations(&config.servers, &config.locations)?;
-    let certificates = config.certificates.clone();
 
-    let opt = Opt {
-        upgrade: args.upgrade,
-        daemon: args.daemon,
-        nocapture: false,
-        test: false,
-        conf: None,
-    };
-    let server_conf = new_server_config(&args, &config);
-    // The configuration has to be handed to the constructor, not assigned to
-    // `my_server.configuration` afterwards. `Server::new` snapshots the
-    // configuration it builds into a `Bootstrap`, and `Bootstrap` is what the
-    // *receiving* half of a hot upgrade reads `upgrade_sock` from - a later
-    // assignment never reaches it. The *sending* half reads
-    // `Server::configuration` instead, so the two halves ended up looking for
-    // each other on different sockets: the old process sent to our
-    // `/tmp/pingap_upgrade.sock` while the new one listened on pingora's
-    // default `/tmp/pingora_upgrade.sock`. Both then gave up, and the old
-    // process shut down anyway because it had already signalled itself.
-    let mut my_server =
-        server::Server::new_with_opt_and_conf(Some(opt), server_conf);
-    let server_conf = my_server.configuration.as_ref();
-    info!(
-        target: LOG_TARGET,
-        tls_backend = pingap_certificate::TLS_BACKEND,
-        pid_file = server_conf.pid_file,
-        error_log = server_conf.error_log,
-        upgrade_sock = server_conf.upgrade_sock,
-        user = server_conf.user,
-        group = server_conf.group,
-        threads = server_conf.threads,
-        work_stealing = server_conf.work_stealing,
-        grace_period_seconds = server_conf.grace_period_seconds,
-        graceful_shutdown_timeout_seconds =
-            server_conf.graceful_shutdown_timeout_seconds,
-        upstream_keepalive_pool_size = server_conf.upstream_keepalive_pool_size,
-        listener_tasks_per_fd = server_conf.listener_tasks_per_fd,
-        "server configuration"
-    );
+    {
+        let server_conf = assembled.server.configuration.as_ref();
+        info!(
+            target: LOG_TARGET,
+            tls_backend = pingap_certificate::TLS_BACKEND,
+            pid_file = server_conf.pid_file,
+            error_log = server_conf.error_log,
+            upgrade_sock = server_conf.upgrade_sock,
+            user = server_conf.user,
+            group = server_conf.group,
+            threads = server_conf.threads,
+            work_stealing = server_conf.work_stealing,
+            grace_period_seconds = server_conf.grace_period_seconds,
+            graceful_shutdown_timeout_seconds =
+                server_conf.graceful_shutdown_timeout_seconds,
+            upstream_keepalive_pool_size = server_conf.upstream_keepalive_pool_size,
+            listener_tasks_per_fd = server_conf.listener_tasks_per_fd,
+            "server configuration"
+        );
+    }
     #[cfg(feature = "full")]
     {
         let sentry_dsn = basic_conf.sentry.clone().unwrap_or_default();
         if !sentry_dsn.is_empty() {
             match pingap_sentry::new_sentry_options(&sentry_dsn) {
                 Ok(opts) => {
-                    my_server.set_sentry_config(opts);
+                    assembled.server.set_sentry_config(opts);
                 },
                 Err(e) => {
                     error!(error = e.to_string(), "sentry init fail");
@@ -850,23 +734,23 @@ fn run() -> Result<(), Box<dyn Error>> {
     // Bootstrap runs as a service rather than up front so that a restart's
     // readiness report (next) can be ordered *before* it: bootstrap is where
     // the new process asks the old one for the listening sockets, and the
-    // old one only hands them over after that report. Every listener below
-    // declares a dependency on this handle: a listening service builds its
-    // sockets from the inherited fds when it starts, and would bind fresh
-    // ones if it ran first.
-    let bootstrap_handle = my_server.bootstrap_as_a_service();
+    // old one only hands them over after that report. `assemble` already
+    // added it; every listener below declares a dependency on this handle: a
+    // listening service builds its sockets from the inherited fds when it
+    // starts, and would bind fresh ones if it ran first.
     // Started by `--autorestart`? Report readiness to the process that
     // spawned us right before bootstrap asks it for the listening sockets;
     // that report is what lets it send itself SIGQUIT.
     if let Some(service) = process::new_ready_notify_service() {
-        let notify_handle =
-            my_server.add_service(background_service("ready_notify", service));
-        bootstrap_handle.add_dependency(&notify_handle);
+        let notify_handle = assembled
+            .server
+            .add_service(background_service("ready_notify", service));
+        assembled.bootstrap.add_dependency(&notify_handle);
     }
 
     #[cfg(feature = "pyro")]
     if let Some(url) = &config.basic.pyroscope {
-        my_server.add_service(background_service(
+        assembled.server.add_service(background_service(
             "pyro_agent",
             pingap_pyroscope::new_agent_service(url),
         ));
@@ -877,9 +761,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         plugins = get_plugin_factory().supported_plugins().join(","),
         "plugins are registered"
     );
-    let (_, error) = plugin::try_init_plugins(&config.plugins);
-    if !error.is_empty() {
-        error!(target: LOG_TARGET, error, "init plugins fail",);
+    let plugin_errors = assembled.plugins.errors.as_str();
+    if !plugin_errors.is_empty() {
+        error!(target: LOG_TARGET, error = plugin_errors, "init plugins fail",);
     }
 
     let mut server_conf_list: Vec<ServerConf> = parse_from_conf(config.clone());
@@ -914,51 +798,25 @@ fn run() -> Result<(), Box<dyn Error>> {
         #[cfg(feature = "full")]
         // add otlp service
         if let Some(otlp_exporter) = &serve_conf.otlp_exporter {
-            my_server.add_service(background_service(
+            assembled.server.add_service(background_service(
                 &format!("otlp:{}", serve_conf.name),
                 TracerService::new(&serve_conf.name, otlp_exporter),
             ));
         }
     }
-    let certificate_provider = new_certificate_provider();
+    let certificate_provider = assembled.certificate_provider.clone();
+    let mut simple_background_service = assembled
+        .background_tasks
+        .take()
+        .expect("assemble builds the background tasks for a data plane");
 
-    let mut simple_background_service = BackgroundTaskService::new(
-        "simple_background_service",
-        Duration::from_secs(60),
-        vec![
-            (
-                "validity_checker".to_string(),
-                new_certificate_validity_service(
-                    certificate_provider.clone(),
-                    webhook::get_webhook_sender(),
-                ),
-            ),
-            (
-                "self_signed_certificate_stale".to_string(),
-                new_self_signed_certificate_validity_service(),
-            ),
-            (
-                "performance_metrics".to_string(),
-                new_performance_metrics_log_service(
-                    new_location_provider(),
-                    new_upstream_provider(),
-                ),
-            ),
-        ],
-    );
-    simple_background_service.set_immediately(true);
-    simple_background_service.set_initial_delay(Some(Duration::from_secs(3)));
-
-    if let Some(task) = new_storage_clear_service() {
-        simple_background_service.add_task("storage_clear", task);
-    }
-
-    let enabled_http_challenge = certificates.iter().any(|(_, certificate)| {
-        let acme = certificate.acme.clone().unwrap_or_default();
-        let domains = certificate.domains.clone().unwrap_or_default();
-        let dns_challenge = certificate.dns_challenge.unwrap_or_default();
-        !acme.is_empty() && !domains.is_empty() && !dns_challenge
-    });
+    let enabled_http_challenge =
+        config.certificates.iter().any(|(_, certificate)| {
+            let acme = certificate.acme.clone().unwrap_or_default();
+            let domains = certificate.domains.clone().unwrap_or_default();
+            let dns_challenge = certificate.dns_challenge.unwrap_or_default();
+            !acme.is_empty() && !domains.is_empty() && !dns_challenge
+        });
 
     if std::env::var("PINGAP_DISABLE_ACME")
         .unwrap_or_default()
@@ -974,16 +832,20 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
     }
 
-    let (updated_certificates, errors) = try_update_certificates(&certificates);
-    if !updated_certificates.is_empty() {
+    let certificate_update = &assembled.certificates;
+    if !certificate_update.updated.is_empty() {
         info!(
             target: LOG_TARGET,
-            updated_certificates = updated_certificates.join(","),
+            updated_certificates = certificate_update.updated.join(","),
             "init certificates success"
         );
     }
-    if !errors.is_empty() {
-        error!(target: LOG_TARGET, error = errors, "parse certificate fail");
+    if !certificate_update.errors.is_empty() {
+        error!(
+            target: LOG_TARGET,
+            error = certificate_update.errors.as_str(),
+            "parse certificate fail"
+        );
     }
 
     // no server listen 80 and lets encrypt domains is not empty
@@ -1004,31 +866,26 @@ fn run() -> Result<(), Box<dyn Error>> {
             let r = new_access_logger(&log_path);
             let (tx, task) = r.recv()??;
             application_log_paths.push(task.get_dir());
-            my_server.add_service(background_service("access_logger", task));
+            assembled
+                .server
+                .add_service(background_service("access_logger", task));
             Some(tx)
         } else {
             None
         };
-        let ctx = AppContext {
-            server_locations_provider: new_server_locations_provider(),
-            location_provider: new_location_provider(),
-            upstream_provider: new_upstream_provider(),
-            plugin_provider: new_plugin_provider(),
-            certificate_provider: certificate_provider.clone(),
-            config_manager: config_manager.clone(),
-            logger: access_logger,
-        };
-        let mut ps = Server::new(&server_conf, ctx)?;
+        let mut ps =
+            Server::new(&server_conf, assembled.app_context(access_logger))?;
         if enabled_http_challenge && listen_80_port {
             ps.enable_lets_encrypt();
         }
         if let Some(service) = ps.get_prometheus_push_service() {
             simple_background_service.add_task("prometheus_push", service);
         }
-        let services = ps.run(my_server.configuration.clone())?;
-        my_server
+        let services = ps.run(assembled.server.configuration.clone())?;
+        assembled
+            .server
             .add_service(services.lb)
-            .add_dependency(&bootstrap_handle);
+            .add_dependency(&assembled.bootstrap);
     }
 
     let basic_config = &config.basic;
@@ -1064,7 +921,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     if args.autorestart || args.autoreload {
         let only_hot_reload = !args.autorestart;
         if config_manager.support_observer() {
-            my_server.add_service(background_service(
+            assembled.server.add_service(background_service(
                 "observer",
                 new_observer_service(
                     config_manager.clone(),
@@ -1081,13 +938,17 @@ fn run() -> Result<(), Box<dyn Error>> {
                 only_hot_reload,
             );
             let name = auto_restart_task.name().to_string();
-            my_server.add_service(background_service(&name, auto_restart_task));
+            assembled
+                .server
+                .add_service(background_service(&name, auto_restart_task));
         }
     }
 
     let name = simple_background_service.name().to_string();
 
-    my_server.add_service(background_service(&name, simple_background_service));
+    assembled
+        .server
+        .add_service(background_service(&name, simple_background_service));
 
     let upstream_health_check_task = new_upstream_health_check_task(
         new_upstream_provider(),
@@ -1095,10 +956,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         webhook::get_webhook_sender(),
     );
     let name = upstream_health_check_task.name().to_string();
-    my_server
+    assembled
+        .server
         .add_service(background_service(&name, upstream_health_check_task));
 
-    my_server.add_service(background_service(
+    assembled.server.add_service(background_service(
         "webhook_flush",
         webhook::WebhookFlushService,
     ));
@@ -1118,7 +980,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     // a fast shutdown (SIGINT) takes them down without running the flush
     // service, so the webhook gets one more chance to post its last batch
     // before the process goes.
-    my_server.run(server::RunArgs::default());
+    assembled.server.run(server::RunArgs::default());
     webhook::flush_pending_before_exit();
     // `exit` runs no destructors, so a buffered application log would keep
     // its last lines.

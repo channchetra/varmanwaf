@@ -4,24 +4,18 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pingap_acme::new_lets_encrypt_service;
 use pingap_config::PingapTomlConfig;
-use pingap_core::BackgroundTaskService;
-use pingap_proxy::{
-    AppContext, Server as ProxyServer, ServerConf, parse_from_conf,
-};
+use pingap_proxy::{Server as ProxyServer, parse_from_conf};
 use pingap_upstream::new_upstream_health_check_task;
-use pingora::server;
-use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
 use tracing::{error, info, warn};
 use varman_agent::cache::RuleCache;
 
-use crate::certificates::{new_certificate_provider, try_update_certificates};
+use crate::certificates::try_update_certificates;
 use crate::config_manager::try_init_memory_config_manager;
-use crate::locations::{new_location_provider, try_init_locations};
-use crate::plugin::{new_plugin_provider, try_init_plugins};
-use crate::server_locations::{
-    new_server_locations_provider, try_init_server_locations,
-};
+use crate::data_plane::{DataPlaneOptions, assemble};
+use crate::locations::try_init_locations;
+use crate::plugin::try_init_plugins;
+use crate::server_locations::try_init_server_locations;
 use crate::upstreams::{new_upstream_provider, try_init_upstreams};
 
 use super::acme::{
@@ -111,37 +105,50 @@ pub(super) async fn start_data_plane(
     config_manager.set_current_config(config.clone());
     publish_management_certificate(&config);
 
-    // Initialize providers from the (merged) config
-    try_init_upstreams(&config.upstreams, crate::webhook::get_webhook_sender())
-        .map_err(|e| anyhow::anyhow!("failed to init upstreams: {}", e))?;
-    try_init_locations(&config.locations)
-        .map_err(|e| anyhow::anyhow!("failed to init locations: {}", e))?;
-    try_init_server_locations(&config.servers, &config.locations).map_err(
-        |e| anyhow::anyhow!("failed to init server locations: {}", e),
+    // Assemble the shared data plane: providers, pingora server, the four
+    // common background loops. `background_tasks` stays here because this root
+    // adds ACME to it and registers it before its listeners.
+    let mut assembled = assemble(
+        &config,
+        DataPlaneOptions {
+            daemon: false,
+            upgrade: false,
+            threads: None,
+            extra_plugins: HashMap::new(),
+            background_tasks: Some("data_plane_background_tasks"),
+            admin_only: false,
+        },
     )?;
 
     // Activate the WAF plugin: without it the data plane forwards traffic
     // uninspected and no access/security events are ever emitted.
-    let (updated_plugins, plugin_errors) = try_init_plugins(&config.plugins);
-    if !updated_plugins.is_empty() {
+    if !assembled.plugins.updated.is_empty() {
         info!(
-            plugins = updated_plugins.join(","),
+            plugins = assembled.plugins.updated.join(","),
             "data plane: plugins initialized"
         );
     }
-    if !plugin_errors.is_empty() {
-        error!(error = plugin_errors, "data plane: plugin init errors");
+    if !assembled.plugins.errors.is_empty() {
+        error!(
+            error = assembled.plugins.errors.as_str(),
+            "data plane: plugin init errors"
+        );
     }
 
     // Initialize certificates
-    let cert_provider = new_certificate_provider();
+    let cert_provider = assembled.certificate_provider.clone();
     if !config.certificates.is_empty() {
-        let (updated, errors) = try_update_certificates(&config.certificates);
-        if !updated.is_empty() {
-            info!(certs = updated.join(","), "data plane: certificates loaded");
+        if !assembled.certificates.updated.is_empty() {
+            info!(
+                certs = assembled.certificates.updated.join(","),
+                "data plane: certificates loaded"
+            );
         }
-        if !errors.is_empty() {
-            error!(error = errors, "data plane: certificate parse errors");
+        if !assembled.certificates.errors.is_empty() {
+            error!(
+                error = assembled.certificates.errors.as_str(),
+                "data plane: certificate parse errors"
+            );
         }
     }
 
@@ -193,13 +200,6 @@ pub(super) async fn start_data_plane(
         })));
     }
 
-    // Create the Pingora server
-    let opt = Opt::default();
-    let server_conf = crate::new_server_config_from(false, None, &config);
-    let mut my_server =
-        server::Server::new_with_opt_and_conf(Some(opt), server_conf);
-    let bootstrap_handle = my_server.bootstrap_as_a_service();
-
     // ACME (Let's Encrypt): issue and renew certificates for sites whose
     // The ACME task must exist even when no certificate is configured at
     // start-up: certificates are created at runtime (the console, the API)
@@ -211,13 +211,10 @@ pub(super) async fn start_data_plane(
     let acme_enabled = std::env::var("PINGAP_DISABLE_ACME")
         .unwrap_or_default()
         .is_empty();
-    let mut background_tasks = BackgroundTaskService::new(
-        "data_plane_background_tasks",
-        Duration::from_secs(60),
-        vec![],
-    );
-    background_tasks.set_immediately(true);
-    background_tasks.set_initial_delay(Some(Duration::from_secs(3)));
+    let mut background_tasks = assembled
+        .background_tasks
+        .take()
+        .expect("assemble builds the background tasks for a data plane");
     // A stalled ACME cycle is mirrored onto the `pingap::acme` target, which
     // the agent's certificate-event capture ships to the control plane — so
     // an issuance that hangs shows up in the panel's certificate log instead
@@ -231,30 +228,6 @@ pub(super) async fn start_data_plane(
             "background tasks still running past the interval"
         );
     })));
-    // The same loops the file-configured data plane registers. Without them
-    // an agent-hosted plane never notices an expiring certificate, never
-    // rotates a stale self-signed pair and never clears old storage.
-    background_tasks.add_task(
-        "validity_checker",
-        pingap_certificate::new_certificate_validity_service(
-            cert_provider.clone(),
-            crate::webhook::get_webhook_sender(),
-        ),
-    );
-    background_tasks.add_task(
-        "self_signed_certificate_stale",
-        pingap_certificate::new_self_signed_certificate_validity_service(),
-    );
-    background_tasks.add_task(
-        "performance_metrics",
-        pingap_performance::new_performance_metrics_log_service(
-            new_location_provider(),
-            new_upstream_provider(),
-        ),
-    );
-    if let Some(task) = pingap_cache::new_storage_clear_service() {
-        background_tasks.add_task("storage_clear", task);
-    }
     if acme_enabled {
         background_tasks.add_task(
             "lets_encrypt",
@@ -267,25 +240,17 @@ pub(super) async fn start_data_plane(
         info!("data plane: ACME certificate management enabled");
     }
     let background_tasks_name = background_tasks.name().to_string();
-    my_server.add_service(background_service(
+    assembled.server.add_service(background_service(
         &background_tasks_name,
         background_tasks,
     ));
 
     // Parse server configs and start proxy servers
-    let server_conf_list: Vec<ServerConf> = parse_from_conf(config.clone());
+    let server_conf_list = parse_from_conf(config.clone());
 
     for server_conf in server_conf_list {
-        let ctx = AppContext {
-            server_locations_provider: new_server_locations_provider(),
-            location_provider: new_location_provider(),
-            upstream_provider: new_upstream_provider(),
-            plugin_provider: new_plugin_provider(),
-            certificate_provider: cert_provider.clone(),
-            config_manager: config_manager.clone(),
-            logger: None,
-        };
-        let mut ps = ProxyServer::new(&server_conf, ctx)?;
+        let mut ps =
+            ProxyServer::new(&server_conf, assembled.app_context(None))?;
         // The HTTP-01 challenge must be reachable on port 80, so every
         // data-plane server whose address list includes :80 intercepts
         // /.well-known/acme-challenge before proxying.
@@ -297,10 +262,11 @@ pub(super) async fn start_data_plane(
         {
             ps.enable_lets_encrypt();
         }
-        let services = ps.run(my_server.configuration.clone())?;
-        my_server
+        let services = ps.run(assembled.server.configuration.clone())?;
+        assembled
+            .server
             .add_service(services.lb)
-            .add_dependency(&bootstrap_handle);
+            .add_dependency(&assembled.bootstrap);
     }
 
     info!(
@@ -326,9 +292,11 @@ pub(super) async fn start_data_plane(
         service_name = %hc_name,
         "data plane: registering upstream health check background service"
     );
-    my_server
+    assembled
+        .server
         .add_service(background_service(&hc_name, upstream_health_check_task));
 
+    let my_server = assembled.server;
     // Run Pingora in a dedicated OS thread. Do NOT join it here —
     // joining would block the tokio worker thread permanently and starve
     // the control-plane REST/gRPC servers (especially on small machines).
