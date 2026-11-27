@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, RestrictionCategory, get_hash_key, get_restriction_category_conf,
-    get_str_conf, get_str_slice_conf,
-};
+use super::{Error, RestrictionCategory, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -64,6 +61,16 @@ pub struct RefererRestriction {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the referer restriction plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct RefererRestrictionParams {
+    #[serde(rename = "type")]
+    kind: String,
+    referer_list: Vec<String>,
+    message: String,
+}
+
 impl TryFrom<&PluginConf> for RefererRestriction {
     type Error = Error;
     /// Attempts to create a RefererRestriction instance from plugin configuration
@@ -80,9 +87,11 @@ impl TryFrom<&PluginConf> for RefererRestriction {
     /// - Required configuration fields are missing
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
+        let params: RefererRestrictionParams =
+            parse_params(value, "referer_restriction")?;
         let mut referer_list = vec![];
         let mut prefix_referer_list = vec![];
-        for item in get_str_slice_conf(value, "referer_list").iter() {
+        for item in params.referer_list.iter() {
             if item.starts_with('*') {
                 prefix_referer_list
                     .push(item.substring(1, item.len()).to_string());
@@ -91,7 +100,7 @@ impl TryFrom<&PluginConf> for RefererRestriction {
             }
         }
 
-        let mut message = get_str_conf(value, "message");
+        let mut message = params.message;
         if message.is_empty() {
             message = "Request is forbidden".to_string();
         }
@@ -100,8 +109,8 @@ impl TryFrom<&PluginConf> for RefererRestriction {
             plugin_step: PluginStep::Request,
             prefix_referer_list,
             referer_list,
-            restriction_category: get_restriction_category_conf(
-                value,
+            restriction_category: super::restriction_category_from(
+                &params.kind,
                 "referer_restriction",
             )?,
             forbidden_resp: HttpResponse {

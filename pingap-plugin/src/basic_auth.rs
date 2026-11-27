@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
-};
+use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::HeaderValue;
@@ -84,17 +82,27 @@ pub struct BasicAuth {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the basic auth plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct BasicAuthParams {
+    delay: String,
+    authorizations: Vec<String>,
+    hide_credentials: bool,
+}
+
 impl TryFrom<&PluginConf> for BasicAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate a unique hash for this plugin instance based on configuration
         // This ensures consistent plugin behavior across restarts
         let hash_value = get_hash_key(value);
+        let params: BasicAuthParams = parse_params(value, "basic_auth")?;
 
         // Parse optional delay duration for rate limiting
         // Supports human-readable duration strings like "10s", "1m", etc.
         // Returns None if delay is not specified
-        let delay = get_str_conf(value, "delay");
+        let delay = params.delay;
         let delay = if !delay.is_empty() {
             let d = parse_duration(&delay).map_err(|e| Error::Invalid {
                 category: PluginCategory::BasicAuth.to_string(),
@@ -109,7 +117,7 @@ impl TryFrom<&PluginConf> for BasicAuth {
         // Each credential must be a valid base64 string
         // Invalid base64 strings will cause initialization to fail
         let mut authorizations = vec![];
-        for item in get_str_slice_conf(value, "authorizations").iter() {
+        for item in params.authorizations.iter() {
             // Validate base64 format - this ensures we don't store invalid credentials
             let _ = base64_decode(item).map_err(|e| Error::Base64Decode {
                 category: PluginCategory::BasicAuth.to_string(),
@@ -146,7 +154,7 @@ impl TryFrom<&PluginConf> for BasicAuth {
             hash_value,
             plugin_step: PluginStep::Request,
             delay,
-            hide_credentials: get_bool_conf(value, "hide_credentials"),
+            hide_credentials: params.hide_credentials,
             authorizations,
             miss_authorization_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,

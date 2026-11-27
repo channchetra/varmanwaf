@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, RestrictionCategory, get_hash_key, get_restriction_category_conf,
-    get_str_conf, get_str_slice_conf,
-};
+use super::{Error, RestrictionCategory, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -70,6 +67,16 @@ pub struct UaRestriction {
     hash_value: String, // Unique identifier for plugin instance, used for caching/tracking
 }
 
+/// Typed view of `[plugins.<name>]` for the user agent restriction plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct UaRestrictionParams {
+    #[serde(rename = "type")]
+    kind: String,
+    ua_list: Vec<String>,
+    message: String,
+}
+
 impl TryFrom<&PluginConf> for UaRestriction {
     type Error = Error;
     /// Attempts to create a new UaRestriction instance from plugin configuration.
@@ -86,6 +93,8 @@ impl TryFrom<&PluginConf> for UaRestriction {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this plugin configuration
         let hash_value = get_hash_key(value);
+        let params: UaRestrictionParams =
+            parse_params(value, "ua_restriction")?;
         let mut ua_list = vec![];
 
         // Parse and compile each regex pattern from the ua_list config
@@ -94,7 +103,7 @@ impl TryFrom<&PluginConf> for UaRestriction {
         //   "go-http-client/1.1",
         //   "(Twitterspider)/(\d+)\.(\d+)"
         // ]
-        for item in get_str_slice_conf(value, "ua_list").iter() {
+        for item in params.ua_list.iter() {
             let reg = Regex::new(item).map_err(|e| Error::Invalid {
                 category: "regex".to_string(),
                 message: e.to_string(),
@@ -103,7 +112,7 @@ impl TryFrom<&PluginConf> for UaRestriction {
         }
 
         // Configure custom error message or use default
-        let mut message = get_str_conf(value, "message");
+        let mut message = params.message;
         if message.is_empty() {
             message = "Request is forbidden".to_string();
         }
@@ -112,8 +121,8 @@ impl TryFrom<&PluginConf> for UaRestriction {
             hash_value,
             plugin_step: PluginStep::Request,
             ua_list,
-            restriction_category: get_restriction_category_conf(
-                value,
+            restriction_category: super::restriction_category_from(
+                &params.kind,
                 "ua_restriction",
             )?,
             forbidden_resp: HttpResponse {

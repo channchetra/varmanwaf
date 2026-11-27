@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, RestrictionCategory, get_hash_key, get_restriction_category_conf,
-    get_str_conf, get_str_slice_conf,
-};
+use super::{Error, RestrictionCategory, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -41,6 +38,16 @@ pub struct IpRestriction {
     hash_value: String, // Unique identifier used for plugin caching/tracking
 }
 
+/// Typed view of `[plugins.<name>]` for the IP restriction plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct IpRestrictionParams {
+    #[serde(rename = "type")]
+    kind: String,
+    ip_list: Vec<String>,
+    message: String,
+}
+
 impl TryFrom<&PluginConf> for IpRestriction {
     type Error = Error;
     /// Attempts to create a new IpRestriction instance from a plugin configuration.
@@ -61,17 +68,19 @@ impl TryFrom<&PluginConf> for IpRestriction {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this plugin instance
         let hash_value = get_hash_key(value);
+        let params: IpRestrictionParams =
+            parse_params(value, "ip_restriction")?;
 
         // Parse IP rules from configuration
         // Supports both individual IPs ("192.168.1.1") and CIDR ranges ("10.0.0.0/24")
-        let ip_rules = IpRules::try_new(&get_str_slice_conf(value, "ip_list"))
-            .map_err(|e| Error::Invalid {
+        let ip_rules =
+            IpRules::try_new(&params.ip_list).map_err(|e| Error::Invalid {
                 category: PluginCategory::IpRestriction.to_string(),
                 message: e.to_string(),
             })?;
 
         // Get custom error message or use default
-        let mut message = get_str_conf(value, "message");
+        let mut message = params.message;
         if message.is_empty() {
             message = "Request is forbidden".to_string();
         }
@@ -80,8 +89,8 @@ impl TryFrom<&PluginConf> for IpRestriction {
             hash_value,
             plugin_step: PluginStep::Request,
             ip_rules,
-            restriction_category: get_restriction_category_conf(
-                value,
+            restriction_category: super::restriction_category_from(
+                &params.kind,
                 "ip_restriction",
             )?,
             forbidden_resp: HttpResponse {

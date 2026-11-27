@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, accepts_encoding, get_bool_conf, get_hash_key, get_str_conf,
-};
+use super::{Error, accepts_encoding, get_hash_key, parse_params};
 use async_trait::async_trait;
 use pingap_config::PluginConf;
 use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
@@ -46,13 +44,23 @@ pub struct AcceptEncoding {
     plugin_step: PluginStep,
 }
 
+/// Typed view of `[plugins.<name>]` for the accept-encoding plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct AcceptEncodingParams {
+    only_one_encoding: bool,
+    encodings: String,
+}
+
 impl TryFrom<&PluginConf> for AcceptEncoding {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let only_one_encoding = get_bool_conf(value, "only_one_encoding");
+        let params: AcceptEncodingParams =
+            parse_params(value, "accept_encoding")?;
+        let only_one_encoding = params.only_one_encoding;
         let mut encodings = vec![];
-        for encoding in get_str_conf(value, "encodings").split(",") {
+        for encoding in params.encodings.split(",") {
             let v = encoding.trim();
             if !v.is_empty() {
                 encodings.push(v.to_string());

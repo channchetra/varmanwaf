@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_bool_conf, get_hash_key, get_step_conf_in, get_str_conf,
-    get_str_slice_conf,
-};
+use super::{Error, get_hash_key, get_step_conf_in, parse_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderName, StatusCode};
@@ -90,6 +87,17 @@ pub struct KeyAuth {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the key auth plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct KeyAuthParams {
+    delay: String,
+    query: String,
+    header: String,
+    keys: Vec<String>,
+    hide_credentials: bool,
+}
+
 impl TryFrom<&PluginConf> for KeyAuth {
     type Error = Error;
     /// Attempts to create a KeyAuth instance from a plugin configuration.
@@ -107,8 +115,9 @@ impl TryFrom<&PluginConf> for KeyAuth {
     /// * When plugin step is not request
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
+        let params: KeyAuthParams = parse_params(value, "key_auth")?;
 
-        let delay = get_str_conf(value, "delay");
+        let delay = params.delay;
         let delay = if !delay.is_empty() {
             let d = parse_duration(&delay).map_err(|e| Error::Invalid {
                 category: PluginCategory::KeyAuth.to_string(),
@@ -119,8 +128,8 @@ impl TryFrom<&PluginConf> for KeyAuth {
             None
         };
 
-        let query_name = get_str_conf(value, "query");
-        let header_name = get_str_conf(value, "header");
+        let query_name = params.query;
+        let header_name = params.header;
         if query_name.is_empty() && header_name.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::KeyAuth.to_string(),
@@ -139,7 +148,8 @@ impl TryFrom<&PluginConf> for KeyAuth {
                 }
             })?);
         }
-        let keys: Vec<Vec<u8>> = get_str_slice_conf(value, "keys")
+        let keys: Vec<Vec<u8>> = params
+            .keys
             .iter()
             .map(|item| item.as_bytes().to_vec())
             .collect();
@@ -152,7 +162,7 @@ impl TryFrom<&PluginConf> for KeyAuth {
         let params = Self {
             hash_value,
             keys,
-            hide_credentials: get_bool_conf(value, "hide_credentials"),
+            hide_credentials: params.hide_credentials,
             plugin_step: get_step_conf_in(
                 value,
                 &PluginCategory::KeyAuth.to_string(),

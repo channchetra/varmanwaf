@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_bool_conf, get_hash_key, get_int_conf, get_str_conf};
+use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
@@ -42,32 +42,46 @@ pub struct TrafficSplitting {
     matcher: Option<Regex>,
 }
 
+/// Typed view of `[plugins.<name>]` for the traffic splitting plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct TrafficSplittingParams {
+    upstream: String,
+    weight: i64,
+    stickiness: bool,
+    sticky_cookie: String,
+    sticky_header: String,
+    matcher: String,
+}
+
 impl TryFrom<&PluginConf> for TrafficSplitting {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
-        let upstream = get_str_conf(value, "upstream");
+        let params: TrafficSplittingParams =
+            parse_params(value, "traffic_splitting")?;
+        let upstream = params.upstream;
         if upstream.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::TrafficSplitting.to_string(),
                 message: "upstream is not allowed empty".to_string(),
             });
         }
-        let weight = (get_int_conf(value, "weight").clamp(0, 100)) as u8;
-        let stickiness = get_bool_conf(value, "stickiness");
+        let weight = (params.weight.clamp(0, 100)) as u8;
+        let stickiness = params.stickiness;
 
-        let sticky_cookie = get_str_conf(value, "sticky_cookie");
+        let sticky_cookie = params.sticky_cookie;
         let sticky_cookie = if sticky_cookie.is_empty() {
             None
         } else {
             Some(sticky_cookie)
         };
-        let sticky_header = get_str_conf(value, "sticky_header");
+        let sticky_header = params.sticky_header;
         let sticky_header = if sticky_header.is_empty() {
             None
         } else {
             Some(sticky_header)
         };
-        let matcher = get_str_conf(value, "matcher");
+        let matcher = params.matcher;
         let matcher = if matcher.is_empty() {
             None
         } else {

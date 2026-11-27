@@ -166,17 +166,9 @@ impl RestrictionCategory {
     }
 }
 
-/// Parses the `type` of a restriction plugin. Absent means `allow`, which is
-/// the documented default; anything that is not `allow` or `deny` is rejected.
-pub(crate) fn get_restriction_category_conf(
-    value: &PluginConf,
-    category: &str,
-) -> Result<RestrictionCategory, Error> {
-    restriction_category_from(&get_str_conf(value, "type"), category)
-}
-
-/// The string half of [`get_restriction_category_conf`], for typed parameter
-/// structs that have already extracted `type`.
+/// Parses the `type` of a restriction plugin from the already-extracted string.
+/// Absent means `allow`, which is the documented default; anything that is not
+/// `allow` or `deny` is rejected.
 pub(crate) fn restriction_category_from(
     value: &str,
     category: &str,

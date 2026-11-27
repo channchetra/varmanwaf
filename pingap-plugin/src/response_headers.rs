@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
+use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf};
@@ -74,6 +74,18 @@ pub struct ResponseHeaders {
     hash_value: String,
 }
 
+/// Typed view of `[plugins.<name>]` for the response headers plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ResponseHeadersParams {
+    add_headers: Vec<String>,
+    set_headers: Vec<String>,
+    remove_headers: Vec<String>,
+    rename_headers: Vec<String>,
+    set_headers_not_exists: Vec<String>,
+    mode: String,
+}
+
 impl TryFrom<&PluginConf> for ResponseHeaders {
     type Error = Error;
 
@@ -97,11 +109,13 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this plugin configuration
         let hash_value = get_hash_key(value);
+        let params: ResponseHeadersParams =
+            parse_params(value, "response_headers")?;
 
         // Parse add_headers from config
         // Format: "Header-Name:header value"
         let mut add_headers = vec![];
-        for item in get_str_slice_conf(value, "add_headers").iter() {
+        for item in params.add_headers.iter() {
             let header = convert_header(item).map_err(|e| Error::Invalid {
                 category: PluginCategory::ResponseHeaders.to_string(),
                 message: e.to_string(),
@@ -112,7 +126,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
         }
 
         let mut set_headers = vec![];
-        for item in get_str_slice_conf(value, "set_headers").iter() {
+        for item in params.set_headers.iter() {
             let header = convert_header(item).map_err(|e| Error::Invalid {
                 category: PluginCategory::ResponseHeaders.to_string(),
                 message: e.to_string(),
@@ -122,7 +136,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             }
         }
         let mut remove_headers = vec![];
-        for item in get_str_slice_conf(value, "remove_headers").iter() {
+        for item in params.remove_headers.iter() {
             let item =
                 HeaderName::from_str(item).map_err(|e| Error::Invalid {
                     category: PluginCategory::ResponseHeaders.to_string(),
@@ -131,7 +145,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             remove_headers.push(item);
         }
         let mut rename_headers = vec![];
-        for item in get_str_slice_conf(value, "rename_headers").iter() {
+        for item in params.rename_headers.iter() {
             if let Some((k, v)) =
                 item.split_once(':').map(|(k, v)| (k.trim(), v.trim()))
             {
@@ -149,7 +163,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             }
         }
         let mut set_headers_not_exists = vec![];
-        for item in get_str_slice_conf(value, "set_headers_not_exists").iter() {
+        for item in params.set_headers_not_exists.iter() {
             let header = convert_header(item).map_err(|e| Error::Invalid {
                 category: PluginCategory::ResponseHeaders.to_string(),
                 message: e.to_string(),
@@ -160,7 +174,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             }
         }
 
-        let mode = get_str_conf(value, "mode");
+        let mode = params.mode;
 
         let params = Self {
             hash_value,
