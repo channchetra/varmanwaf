@@ -22,6 +22,7 @@ describes it, in the same commit**.
 | You are adding… | Where it goes |
 | --- | --- |
 | A REST endpoint | `varman-control/src/api/<area>.rs` + route registration in that module; a migration if it stores state |
+| Shared non-HTTP logic | `varman-control/src/<area>.rs` at the crate root when `api/`, `grpc/`, background tasks or the binary also use it; `api/<area>.rs` keeps extractors, handlers and routes only |
 | A database table/column | `varman-control/src/migration/` (SeaORM migration + `mod.rs` entry) |
 | An engine detector or rule family | `varman-waf/src/` (pipeline stage), with corpora in `varman-waf/tests/corpus` |
 | A SecLang feature | `varman-waf/src/seclang/` (+ compatibility notes in `docs/compatibility.md`) |
