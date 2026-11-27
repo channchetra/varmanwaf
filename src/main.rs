@@ -238,13 +238,23 @@ fn new_server_config(
     args: &Args,
     conf: &PingapConfig,
 ) -> server::configuration::ServerConf {
+    new_server_config_from(args.daemon, args.threads, conf)
+}
+
+/// The config-driven half of [`new_server_config`], shared with the
+/// in-process data plane (`src/varman.rs`).
+pub(crate) fn new_server_config_from(
+    daemon: bool,
+    threads: Option<usize>,
+    conf: &PingapConfig,
+) -> server::configuration::ServerConf {
     let basic_conf = &conf.basic;
     let mut server_conf = server::configuration::ServerConf {
         pid_file: basic_conf.get_pid_file(),
         upgrade_sock: upgrade_sock_path(basic_conf),
         user: basic_conf.user.clone(),
         group: basic_conf.group.clone(),
-        daemon: args.daemon,
+        daemon,
         // Pingora only redirects the daemon's stderr when this is set;
         // otherwise it keeps the inherited one, which is `/dev/null` for a
         // process started by an auto restart.
@@ -265,7 +275,7 @@ fn new_server_config(
     if let Some(threads) = basic_conf.threads {
         server_conf.threads = threads.max(1);
     }
-    if let Some(threads) = args.threads {
+    if let Some(threads) = threads {
         server_conf.threads = threads.max(1);
     }
     if let Some(max_blocking_threads) = basic_conf.max_blocking_threads {
@@ -402,18 +412,21 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     pingap_logger::logger_try_init(pingap_logger::LoggerParams {
         ..Default::default()
     })?;
+    // The admin plugin's constructor calls `get_config_manager()`, so the
+    // manager must exist before any plugin is built; otherwise the plugin is
+    // missing and the listener answers every request with 404.
+    let config_manager =
+        try_init_config_manager(&args.conf.clone().unwrap_or_default())?;
+    tokio::runtime::Runtime::new()?
+        .block_on(migrate_config_layout(&config_manager));
+
     let (server_conf, name, proxy_plugin_info) =
         plugin::parse_admin_plugin(&args.admin.unwrap_or_default())?;
-
     let (_, error) =
         plugin::try_init_plugins(&HashMap::from([(name, proxy_plugin_info)]));
     if !error.is_empty() {
         error!(error, "init plugins fail",);
     }
-    let config_manager =
-        try_init_config_manager(&args.conf.clone().unwrap_or_default())?;
-    tokio::runtime::Runtime::new()?
-        .block_on(migrate_config_layout(&config_manager));
     let opt = Opt {
         daemon: args.daemon,
         ..Default::default()

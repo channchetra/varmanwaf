@@ -1133,7 +1133,7 @@ pub async fn start_data_plane(
     publish_management_certificate(&config);
 
     // Initialize providers from the (merged) config
-    try_init_upstreams(&config.upstreams, None)
+    try_init_upstreams(&config.upstreams, crate::webhook::get_webhook_sender())
         .map_err(|e| anyhow::anyhow!("failed to init upstreams: {}", e))?;
     try_init_locations(&config.locations)
         .map_err(|e| anyhow::anyhow!("failed to init locations: {}", e))?;
@@ -1216,7 +1216,9 @@ pub async fn start_data_plane(
 
     // Create the Pingora server
     let opt = Opt::default();
-    let mut my_server = server::Server::new(Some(opt))?;
+    let server_conf = crate::new_server_config_from(false, None, &config);
+    let mut my_server =
+        server::Server::new_with_opt_and_conf(Some(opt), server_conf);
     let bootstrap_handle = my_server.bootstrap_as_a_service();
 
     // ACME (Let's Encrypt): issue and renew certificates for sites whose
@@ -1250,13 +1252,37 @@ pub async fn start_data_plane(
             "background tasks still running past the interval"
         );
     })));
+    // The same loops the file-configured data plane registers. Without them
+    // an agent-hosted plane never notices an expiring certificate, never
+    // rotates a stale self-signed pair and never clears old storage.
+    background_tasks.add_task(
+        "validity_checker",
+        pingap_certificate::new_certificate_validity_service(
+            cert_provider.clone(),
+            crate::webhook::get_webhook_sender(),
+        ),
+    );
+    background_tasks.add_task(
+        "self_signed_certificate_stale",
+        pingap_certificate::new_self_signed_certificate_validity_service(),
+    );
+    background_tasks.add_task(
+        "performance_metrics",
+        pingap_performance::new_performance_metrics_log_service(
+            new_location_provider(),
+            new_upstream_provider(),
+        ),
+    );
+    if let Some(task) = pingap_cache::new_storage_clear_service() {
+        background_tasks.add_task("storage_clear", task);
+    }
     if acme_enabled {
         background_tasks.add_task(
             "lets_encrypt",
             new_lets_encrypt_service(
                 config_manager.clone(),
                 cert_provider.clone(),
-                None,
+                crate::webhook::get_webhook_sender(),
             ),
         );
         info!("data plane: ACME certificate management enabled");
