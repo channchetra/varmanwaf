@@ -396,6 +396,7 @@ pub(super) async fn start_data_plane(
                 &config,
                 &ApplyOptions::agent_data_plane(),
                 None,
+                &watcher_config_manager,
             )
             .await;
             if let ApplyOutcome::Failed(message) = &outcome {

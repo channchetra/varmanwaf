@@ -268,8 +268,11 @@ pub fn assemble(
     try_init_server_locations(&config.servers, &config.locations)
         .map_err(|e| anyhow::anyhow!("failed to init server locations: {e}"))?;
 
-    let (updated, errors) =
-        try_init_plugins(&config.plugins, options.admin_plugin);
+    let (updated, errors) = try_init_plugins(
+        &config.plugins,
+        options.admin_plugin,
+        config_manager.clone(),
+    );
 
     let certificate_provider = new_certificate_provider();
     // Nothing configured (the `--cp` node) leaves the provider untouched

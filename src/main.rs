@@ -297,9 +297,9 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     pingap_logger::logger_try_init(pingap_logger::LoggerParams {
         ..Default::default()
     })?;
-    // The admin plugin's constructor calls `get_config_manager()`, so the
-    // manager must exist before any plugin is built; otherwise the plugin is
-    // missing and the listener answers every request with 404.
+    // The manager is created before assembly and handed to the admin plugin
+    // through `assemble`. The plugin no longer reads the process-global slot,
+    // so its existence depends only on that hand-over, not on start-up order.
     let config_manager =
         try_init_config_manager(&args.conf.clone().unwrap_or_default())?;
     tokio::runtime::Runtime::new()?
@@ -427,9 +427,25 @@ fn parse_arguments() -> Args {
 /// lives in a higher layer). A category this build does not know — e.g. a
 /// feature-gated plugin that was compiled out — is only warned about, matching
 /// runtime behaviour; any other construction error is treated as fatal.
-fn validate_plugins(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
+///
+/// An admin plugin is not registered in the factory (it needs a
+/// `ConfigManager`), so it is dry-run the same way `try_init_plugins` builds
+/// it, with `config_manager`.
+fn validate_plugins(
+    config: &PingapConfig,
+    config_manager: &Arc<ConfigManager>,
+) -> Result<(), Box<dyn Error>> {
     let factory = pingap_plugin::get_plugin_factory();
     for (name, conf) in config.plugins.iter() {
+        let category = conf
+            .get("category")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if category == "admin" {
+            plugin::AdminServe::new(conf, config_manager.clone())
+                .map_err(|e| format!("plugin \"{name}\" is invalid: {e}"))?;
+            continue;
+        }
         match factory.create(conf) {
             Ok(_) => {},
             Err(pingap_plugin::Error::NotFound { category }) => {
@@ -589,7 +605,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // return if test mode
     if args.test {
-        validate_plugins(&config)?;
+        validate_plugins(&config, &config_manager)?;
         info!(target: LOG_TARGET, "Validate config success");
         return Ok(());
     }

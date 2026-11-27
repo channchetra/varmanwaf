@@ -14,7 +14,7 @@
 
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use pingap_config::PluginConf;
+use pingap_config::{ConfigManager, PluginConf};
 use pingap_core::{Plugin, PluginProvider, Plugins};
 use pingap_plugin::get_plugin_factory;
 // Reuse the canonical plugin-config helpers instead of keeping a second copy.
@@ -37,6 +37,8 @@ use tracing::{error, info};
 
 mod admin;
 mod stats;
+
+pub(crate) use self::admin::AdminServe;
 
 /// UUID for the admin server plugin, generated at runtime
 pub static ADMIN_SERVER_PLUGIN: &str = "pingap:admin";
@@ -337,6 +339,10 @@ pub fn register_builtin_plugins() {
 /// * `admin` - The admin listener plugin parsed by the root, if it serves one.
 ///   It is passed explicitly because it is not part of the loaded document and
 ///   must not depend on start-up order.
+/// * `config_manager` - The manager every admin plugin (the injected listener
+///   and any `category = "admin"` entry in the document) reads and writes the
+///   configuration through. The generic factory has none to give it, so those
+///   plugins are constructed here instead.
 ///
 /// # Returns
 /// Vector of plugin names that were created or updated
@@ -346,6 +352,7 @@ pub fn register_builtin_plugins() {
 pub fn try_init_plugins(
     plugins: &HashMap<String, PluginConf>,
     admin: Option<AdminPlugin>,
+    config_manager: Arc<ConfigManager>,
 ) -> (Vec<String>, String) {
     let mut plugin_configs: Vec<(String, PluginConf)> = plugins
         .iter()
@@ -366,6 +373,7 @@ pub fn try_init_plugins(
     let mut updated_plugins = vec![];
     let mut plugins = AHashMap::new();
     let mut pending_configs = Vec::with_capacity(plugin_configs.len());
+    let mut pending_admins: Vec<(String, PluginConf)> = vec![];
     for (name, conf) in plugin_configs {
         let conf_hash_key = get_hash_key(&conf);
         let current = PLUGIN_PROVIDER.get(&name);
@@ -394,11 +402,29 @@ pub fn try_init_plugins(
             info!(target: LOG_TARGET, name, step, category, "plugin will be created");
         }
         updated_plugins.push(name.clone());
+        // Built below with the manager this call was handed: the factory has
+        // none to give it. Covers the `--admin` listener and any
+        // `category = "admin"` entry in the document alike.
+        if category == "admin" {
+            pending_admins.push((name, conf));
+            continue;
+        }
         pending_configs.push((name, conf));
     }
-    let (new_plugins, new_errors) = parse_plugins(pending_configs);
-    plugins.extend(new_plugins);
+    let (mut new_plugins, new_errors) = parse_plugins(pending_configs);
     errors.extend(new_errors);
+    for (name, conf) in pending_admins {
+        match AdminServe::new(&conf, config_manager.clone()) {
+            Ok(plugin) => {
+                new_plugins.insert(name, Arc::new(plugin));
+            },
+            Err(e) => errors.push(Error::Invalid {
+                category: "admin".to_string(),
+                message: format!("create plugin {name} failed, {e}"),
+            }),
+        }
+    }
+    plugins.extend(new_plugins);
     // Swap the registry only when every plugin built. Storing the partial map
     // would drop the plugins that failed to rebuild, so the running config
     // would reference plugins that no longer exist.
@@ -476,6 +502,48 @@ mod tests {
         let Error::Invalid { category, .. } = error;
         assert_eq!("url", category);
     }
+
+    /// A `category = "admin"` entry in the document (the shape `conf/plugins.toml`
+    /// documents) is not in the factory any more: it is built with the manager
+    /// the caller passed, exactly like the `--admin` listener.
+    #[test]
+    fn a_document_admin_plugin_is_built_with_the_given_manager() {
+        let manager = Arc::new(pingap_config::new_memory_config_manager(
+            "[basic]\n",
+            None,
+        ));
+        let plugins = HashMap::from([(
+            "test:documentAdmin".to_string(),
+            toml::from_str::<PluginConf>(
+                r#"
+category = "admin"
+path = "/test-admin"
+allow_unauthenticated = true
+"#,
+            )
+            .unwrap(),
+        )]);
+
+        let (updated, error) =
+            try_init_plugins(&plugins, None, manager.clone());
+
+        assert!(error.is_empty(), "{error}");
+        assert!(
+            updated.iter().any(|name| name == "test:documentAdmin"),
+            "the document admin plugin must be created: {updated:?}"
+        );
+
+        // A bad admin config is reported against its name instead of being
+        // skipped, and keeps the previous plugin map.
+        let plugins = HashMap::from([(
+            "test:badAdmin".to_string(),
+            toml::from_str::<PluginConf>(r#"category = "admin""#).unwrap(),
+        )]);
+        let (_, error) = try_init_plugins(&plugins, None, manager);
+
+        assert!(error.contains("test:badAdmin"), "{error}");
+        assert!(error.contains("authorizations is empty"), "{error}");
+    }
 }
 
 #[cfg(test)]
@@ -515,6 +583,10 @@ remove_headers = [
             .unwrap(),
         ),
     ]);
-    let (_, error) = try_init_plugins(&plugins, None);
+    let (_, error) = try_init_plugins(
+        &plugins,
+        None,
+        Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None)),
+    );
     assert!(error.is_empty());
 }

@@ -154,6 +154,7 @@ async fn apply_config(
         new_config,
         &ApplyOptions::daemon(hot_reload_only),
         admin_plugin.as_ref(),
+        &config_manager,
     )
     .await;
 
@@ -248,7 +249,8 @@ struct AutoRestart {
     log_reload_handle: LoggerReloadHandle,
     current_log_level: ArcSwap<String>,
     /// Re-registered with every plugin rebuild, or the admin listener would
-    /// lose its plugin after the first reload.
+    /// lose its plugin after the first reload. The rebuild gets this
+    /// watcher's `config_manager` for it.
     admin_plugin: Option<AdminPlugin>,
     /// The document this watcher last handled. Per instance, never shared.
     last_seen: LastSeenCell,

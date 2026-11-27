@@ -14,13 +14,11 @@
 
 use super::{get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf};
 use crate::certificates::new_certificate_provider;
-use crate::config_manager::get_config_manager;
 use crate::process::{get_start_time, restart_now};
 use crate::upstreams::new_upstream_provider;
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
-use ctor::ctor;
 use hex::ToHex;
 use http::Method;
 use http::{HeaderValue, StatusCode, header};
@@ -68,7 +66,7 @@ pub struct AdminServe {
     pub path: String,
     pub authorizations: Vec<(String, String)>,
     pub plugin_step: PluginStep,
-    manager: Arc<ConfigManager>,
+    config_manager: Arc<ConfigManager>,
     max_age: Duration,
     hash_value: String,
     ip_fail_limit: TtlLruLimit,
@@ -119,9 +117,18 @@ struct FullConfigJson {
     pub original: String,
 }
 
-impl TryFrom<&PluginConf> for AdminServe {
-    type Error = Error;
-    fn try_from(value: &PluginConf) -> Result<Self> {
+impl AdminServe {
+    /// Creates the admin API plugin, reading and writing the configuration
+    /// through `config_manager`.
+    ///
+    /// The manager is a parameter rather than a process-global lookup: the
+    /// assembly and reload paths already own one, so construction carries no
+    /// start-up ordering requirement and a test can inject a local instance.
+    pub fn new(
+        value: &PluginConf,
+        config_manager: Arc<ConfigManager>,
+    ) -> Result<Self> {
+        debug!(target: LOG_TARGET, params = redacted_params(value), "new admin server plugin");
         let hash_value = get_hash_key(value);
         let allow_unauthenticated = value
             .get("allow_unauthenticated")
@@ -208,10 +215,7 @@ impl TryFrom<&PluginConf> for AdminServe {
                 Duration::from_secs(5 * 60),
                 ip_fail_limit as usize,
             ),
-            manager: get_config_manager().map_err(|e| Error::Invalid {
-                category: "config_manager".to_string(),
-                message: e.to_string(),
-            })?,
+            config_manager,
             authorizations,
             allow_unauthenticated,
         };
@@ -241,12 +245,6 @@ async fn get_request_body(session: &mut Session) -> pingora::Result<BytesMut> {
 }
 
 impl AdminServe {
-    pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(target: LOG_TARGET, params = redacted_params(params), "new admin server plugin");
-        let serve = AdminServe::try_from(params)?;
-
-        Ok(serve)
-    }
     fn auth_validate(&self, req_header: &RequestHeader) -> bool {
         if self.allow_unauthenticated {
             return true;
@@ -315,7 +313,7 @@ impl AdminServe {
         &self,
         replace_include: bool,
     ) -> pingora::Result<PingapConfig> {
-        let config = self.manager.load_all().await.map_err(|e| {
+        let config = self.config_manager.load_all().await.map_err(|e| {
             error!(target: LOG_TARGET, "failed to load config: {e}");
             pingap_core::new_internal_error(500, e)
         })?;
@@ -375,7 +373,7 @@ impl AdminServe {
     ) -> pingora::Result<HttpResponse> {
         let category = Category::from_str(category)
             .map_err(|e| pingap_core::new_internal_error(500, e))?;
-        self.manager.delete(category, name).await.map_err(|e| {
+        self.config_manager.delete(category, name).await.map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "delete config fail");
             pingap_core::new_internal_error(500, e)
         })?;
@@ -404,7 +402,7 @@ impl AdminServe {
             pingap_core::new_internal_error(500, e)
         })?;
 
-        self.manager
+        self.config_manager
             .update(category, name, &conf)
             .await
             .map_err(|e| {
@@ -506,7 +504,7 @@ impl AdminServe {
             error!(target: LOG_TARGET, error = e, "import config fail");
             pingap_core::new_internal_error(500, e)
         })?;
-        self.manager.save_all(&config).await.map_err(|e| {
+        self.config_manager.save_all(&config).await.map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
             pingap_core::new_internal_error(500, e)
         })?;
@@ -588,7 +586,7 @@ impl AdminServe {
         name: &str,
     ) -> pingora::Result<Vec<serde_json::Value>> {
         let arr = self
-            .manager
+            .config_manager
             .history(category.clone(), name)
             .await
             .map_err(|e| {
@@ -635,7 +633,7 @@ impl AdminServe {
             version: pingap_util::get_pkg_version().to_string(),
             rustc_version: pingap_util::get_rustc_version().to_string(),
             config_hash: self
-                .manager
+                .config_manager
                 .get_current_config()
                 .hash()
                 .unwrap_or_default(),
@@ -659,7 +657,7 @@ impl AdminServe {
             tcp6_count: info.tcp6_count,
             supported_plugins: get_plugin_factory().supported_plugins(),
             upstream_healthy_status: new_upstream_provider().healthy_status(),
-            support_history: self.manager.support_history(),
+            support_history: self.config_manager.support_history(),
             git_hash: crate::git_hash().to_string(),
             now: pingap_core::now_sec(),
         };
@@ -997,38 +995,24 @@ impl Plugin for AdminServe {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("admin", |params| Ok(Arc::new(AdminServe::new(params)?)));
-}
-
 #[cfg(test)]
 mod tests {
     use super::{AdminServe, handle_request_admin, validate_import};
-    use crate::config_manager::try_init_config_manager;
     use hex::ToHex;
     use http::Method;
-    use pingap_config::{PingapTomlConfig, PluginConf};
+    use pingap_config::{ConfigManager, PingapTomlConfig, PluginConf};
     use pingap_core::{Ctx, HttpResponse};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use sha2::{Digest, Sha256};
+    use std::sync::Arc;
     use tokio_test::io::Builder;
 
-    /// `ConfigManager` is a process-wide `OnceLock`, so every test in this
-    /// module shares the first backing file. Keep it in the temp directory for
-    /// the whole test binary instead of letting a per-test `NamedTempFile`
-    /// delete it (and the `/configs` reads with it) when that test ends.
-    fn init_config_manager() {
-        static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        let path = PATH.get_or_init(|| {
-            let path = std::env::temp_dir()
-                .join(format!("pingap-admin-test-{}.toml", std::process::id()));
-            std::fs::write(&path, "").expect("write test config");
-            path.to_string_lossy().to_string()
-        });
-        try_init_config_manager(path).unwrap();
+    /// A local manager per test. Injection is the point of the constructor:
+    /// the plugin no longer reads the process-global slot, so a test can hand
+    /// it its own instance instead of installing one process-wide first.
+    fn new_config_manager() -> Arc<ConfigManager> {
+        Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None))
     }
 
     /// Builds the `token:ts` header the admin API expects.
@@ -1051,9 +1035,8 @@ mod tests {
 
     #[test]
     fn test_admin_params() {
-        init_config_manager();
         // spellchecker:off
-        let params = AdminServe::try_from(
+        let params = AdminServe::new(
             &toml::from_str::<PluginConf>(
                 r#"
     category = "admin"
@@ -1065,6 +1048,7 @@ mod tests {
     "#,
             )
             .unwrap(),
+            new_config_manager(),
         )
         .unwrap();
         // spellchecker:on
@@ -1080,7 +1064,7 @@ mod tests {
         assert_eq!("request", params.plugin_step.to_string());
         assert_eq!("/", params.path);
 
-        let result = AdminServe::try_from(
+        let result = AdminServe::new(
             &toml::from_str::<PluginConf>(
                 r#"
     category = "admin"
@@ -1091,6 +1075,7 @@ mod tests {
     "#,
             )
             .unwrap(),
+            new_config_manager(),
         );
 
         assert_eq!(
@@ -1101,9 +1086,8 @@ mod tests {
 
     #[test]
     fn test_auth_validate_requires_auth_for_every_path() {
-        init_config_manager();
         // spellchecker:off
-        let admin = AdminServe::try_from(
+        let admin = AdminServe::new(
             &toml::from_str::<PluginConf>(
                 r#"
     category = "admin"
@@ -1112,6 +1096,7 @@ mod tests {
     "#,
             )
             .unwrap(),
+            new_config_manager(),
         )
         .unwrap();
         // spellchecker:on
@@ -1194,9 +1179,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_configs_full_requires_auth() {
-        init_config_manager();
         // spellchecker:off
-        let admin = AdminServe::try_from(
+        let admin = AdminServe::new(
             &toml::from_str::<PluginConf>(
                 r#"
     category = "admin"
@@ -1205,6 +1189,7 @@ mod tests {
     "#,
             )
             .unwrap(),
+            new_config_manager(),
         )
         .unwrap();
         // spellchecker:on
@@ -1233,9 +1218,8 @@ mod tests {
     /// empty path, so `/basic` and `/configs` fell through to 404.
     #[tokio::test]
     async fn test_bare_single_segment_routes() {
-        init_config_manager();
         // spellchecker:off
-        let admin = AdminServe::try_from(
+        let admin = AdminServe::new(
             &toml::from_str::<PluginConf>(
                 r#"
     category = "admin"
@@ -1244,6 +1228,7 @@ mod tests {
     "#,
             )
             .unwrap(),
+            new_config_manager(),
         )
         .unwrap();
         // spellchecker:on
@@ -1260,9 +1245,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_unknown_path_returns_not_found() {
-        init_config_manager();
         // spellchecker:off
-        let admin = AdminServe::try_from(
+        let admin = AdminServe::new(
             &toml::from_str::<PluginConf>(
                 r#"
     category = "admin"
@@ -1271,6 +1255,7 @@ mod tests {
     "#,
             )
             .unwrap(),
+            new_config_manager(),
         )
         .unwrap();
         // spellchecker:on
@@ -1289,9 +1274,11 @@ mod tests {
 
     #[test]
     fn test_admin_auth_construction_fails_closed() {
-        init_config_manager();
         let build = |conf: &str| {
-            AdminServe::try_from(&toml::from_str::<PluginConf>(conf).unwrap())
+            AdminServe::new(
+                &toml::from_str::<PluginConf>(conf).unwrap(),
+                new_config_manager(),
+            )
         };
 
         // An empty list used to mean "no authentication"; it is now an error.
@@ -1398,8 +1385,7 @@ addrs = []
     /// to index past the end of the split url and panic the request task.
     #[tokio::test]
     async fn test_config_history_without_name() {
-        init_config_manager();
-        let admin = AdminServe::try_from(
+        let admin = AdminServe::new(
             &toml::from_str::<PluginConf>(
                 r#"
 category = "admin"
@@ -1407,6 +1393,7 @@ allow_unauthenticated = true
 "#,
             )
             .unwrap(),
+            new_config_manager(),
         )
         .unwrap();
 
@@ -1426,5 +1413,38 @@ allow_unauthenticated = true
             err.to_string().contains("Url is invalid(no name)"),
             "unexpected error: {err}"
         );
+    }
+
+    /// The constructor takes its manager instead of reading the process-global
+    /// slot, so each plugin serves the document of the instance it was given.
+    #[tokio::test]
+    async fn test_config_reads_use_the_injected_manager() {
+        let admin = |log_level: &str| {
+            AdminServe::new(
+                &toml::from_str::<PluginConf>(
+                    r#"
+category = "admin"
+allow_unauthenticated = true
+"#,
+                )
+                .unwrap(),
+                Arc::new(pingap_config::new_memory_config_manager(
+                    &format!("[basic]\nlog_level = \"{log_level}\"\n"),
+                    None,
+                )),
+            )
+            .unwrap()
+        };
+        let request = "GET /configs/full HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+        for log_level in ["warn", "error"] {
+            let resp = admin_response(&admin(log_level), request).await;
+            assert_eq!(200, resp.status.as_u16(), "{log_level}");
+            let body = String::from_utf8_lossy(&resp.body);
+            assert!(
+                body.contains(&format!("log_level = \\\"{log_level}\\\"")),
+                "the injected manager's document must be served: {body}"
+            );
+        }
     }
 }

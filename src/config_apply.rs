@@ -45,6 +45,7 @@ use pingap_config::{
     CATEGORY_UPSTREAM, ConfigManager, PingapConfig,
 };
 use pingap_core::{NotificationData, NotificationLevel};
+use std::sync::Arc;
 use tracing::{debug, error, info};
 
 static LOG_TARGET: &str = "main::config_apply";
@@ -203,11 +204,15 @@ impl Categories {
 /// `admin_plugin` is the root's admin listener plugin, if it serves one. It is
 /// not part of the document and has to be re-registered on every plugin
 /// rebuild, or the admin listener would lose its plugin after a reload.
+/// `config_manager` is the manager every admin plugin reads and writes the
+/// configuration through; it is forwarded to the plugin rebuild instead of
+/// being looked up from a process global.
 pub async fn apply_config(
     previous: &PingapConfig,
     next: &PingapConfig,
     options: &ApplyOptions,
     admin_plugin: Option<&AdminPlugin>,
+    config_manager: &Arc<ConfigManager>,
 ) -> ApplyOutcome {
     let (changed, diff) = previous.diff(next);
     debug!(
@@ -224,8 +229,14 @@ pub async fn apply_config(
 
     let projection = hot_projection(previous, next, options).await;
     let categories = dispatch(previous, next, &changed, options);
-    let failures =
-        apply_categories(next, categories, options, admin_plugin).await;
+    let failures = apply_categories(
+        next,
+        categories,
+        options,
+        admin_plugin,
+        config_manager,
+    )
+    .await;
     if !failures.is_empty() {
         return ApplyOutcome::Failed(failures.join(";"));
     }
@@ -283,6 +294,7 @@ async fn apply_categories(
     categories: Categories,
     options: &ApplyOptions,
     admin_plugin: Option<&AdminPlugin>,
+    config_manager: &Arc<ConfigManager>,
 ) -> Vec<String> {
     let mut failures = vec![];
 
@@ -312,8 +324,11 @@ async fn apply_categories(
         }
     }
     if categories.plugins {
-        let (updated, error) =
-            try_init_plugins(&next.plugins, admin_plugin.cloned());
+        let (updated, error) = try_init_plugins(
+            &next.plugins,
+            admin_plugin.cloned(),
+            config_manager.clone(),
+        );
         // A non-empty error means the provider kept the previous map; the
         // partial list it returns must not be reported as applied.
         let result = if error.is_empty() {
@@ -557,6 +572,12 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
 
+    /// A local manager for the plugin rebuild. The admin plugin reads and
+    /// writes through it, so `apply_config` takes it instead of a global.
+    fn new_config_manager() -> Arc<ConfigManager> {
+        Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None))
+    }
+
     fn config_with_upstream(name: &str) -> PingapConfig {
         let mut config = PingapConfig::default();
         config.upstreams.insert(
@@ -756,9 +777,14 @@ mod tests {
         let config = config_with_upstream("apply-engine-equal");
 
         // Act
-        let outcome =
-            apply_config(&config, &config, &ApplyOptions::daemon(false), None)
-                .await;
+        let outcome = apply_config(
+            &config,
+            &config,
+            &ApplyOptions::daemon(false),
+            None,
+            &new_config_manager(),
+        )
+        .await;
 
         // Assert
         assert!(matches!(outcome, ApplyOutcome::Unchanged));
@@ -772,12 +798,22 @@ mod tests {
         next.basic.log_level = Some("debug".to_string());
 
         // Act
-        let restarting =
-            apply_config(&previous, &next, &ApplyOptions::daemon(false), None)
-                .await;
-        let hot_only =
-            apply_config(&previous, &next, &ApplyOptions::daemon(true), None)
-                .await;
+        let restarting = apply_config(
+            &previous,
+            &next,
+            &ApplyOptions::daemon(false),
+            None,
+            &new_config_manager(),
+        )
+        .await;
+        let hot_only = apply_config(
+            &previous,
+            &next,
+            &ApplyOptions::daemon(true),
+            None,
+            &new_config_manager(),
+        )
+        .await;
 
         // Assert: the log level is not a hot-reloadable component.
         match restarting {
@@ -809,9 +845,14 @@ mod tests {
         config_manager.set_current_config(previous.clone());
 
         // Act
-        let outcome =
-            apply_config(&previous, &next, &ApplyOptions::daemon(false), None)
-                .await;
+        let outcome = apply_config(
+            &previous,
+            &next,
+            &ApplyOptions::daemon(false),
+            None,
+            &new_config_manager(),
+        )
+        .await;
         let committed =
             commit_if_applied(&config_manager, next.clone(), &outcome);
 

@@ -107,16 +107,6 @@ pub fn try_init_memory_config_manager(
     try_init("memory", move || Ok(new_memory_config_manager(data, path)))
 }
 
-/// The process-wide config manager, when one has been initialized.
-pub fn get_config_manager() -> Result<Arc<ConfigManager>> {
-    CONFIG_MANAGER
-        .get()
-        .map(|installed| installed.manager.clone())
-        .ok_or_else(|| Error::Invalid {
-            message: "config manager not initialized".to_string(),
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
