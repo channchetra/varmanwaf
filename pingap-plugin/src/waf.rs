@@ -56,6 +56,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tor_geoip::GeoipDb;
 use tracing::{debug, warn};
+use varman_agent::cache::PathTargetExclusion as CachePathTargetExclusion;
 use varman_agent::cache::{
     BasicAuthConfig as CacheBasicAuthConfig,
     BotProtectionConfig as CacheBotProtection, GeoConfig as CacheGeoConfig,
@@ -296,6 +297,9 @@ struct SiteContext {
     /// applied to the Varman pipeline so both engines agree on the site's
     /// policy.
     monitor_categories: Vec<String>,
+    /// Path-scoped target exclusions from exclusion packages. Streams are
+    /// body content, so only entries that name the body target apply.
+    path_target_exclusions: Vec<CachePathTargetExclusion>,
     /// Compiled per-site custom layers (SecLang virtual patches + OpenAPI
     /// validation); `None` when neither is configured.
     custom: Option<Arc<crate::waf_custom::CustomLayers>>,
@@ -362,6 +366,9 @@ impl SiteContext {
             mode: waf_cfg.map(site_mode),
             monitor_categories: waf_cfg
                 .map(|cfg| cfg.monitor_categories.clone())
+                .unwrap_or_default(),
+            path_target_exclusions: waf_cfg
+                .map(|cfg| cfg.path_target_exclusions.clone())
                 .unwrap_or_default(),
             custom,
         }
@@ -1778,11 +1785,9 @@ struct StreamState {
     aborted: bool,
     /// Set when the response was a 101 WebSocket upgrade.
     websocket: bool,
-    /// Whether findings on this stream may be enforced, resolved once per
-    /// connection. False for a monitor/off site, an observation-mode site, a
-    /// disabled WAF and a legacy/shadow engine; those findings are recorded
-    /// as monitor events instead of closing the connection.
-    enforce: Option<bool>,
+    /// Enforcement policy, resolved once per connection from the site
+    /// context (at the 101, or on the first tail scan).
+    policy: Option<Arc<StreamPolicy>>,
     /// Rules already recorded on this stream. A monitor site sees the same
     /// low-confidence rule on every matching message; one event per rule per
     /// connection is enough, and the old behaviour (one event per message)
@@ -1824,6 +1829,47 @@ fn with_stream<R>(
         state.created = Some(Instant::now());
     }
     f(&mut state)
+}
+
+/// Everything the stream inspector needs from the site configuration,
+/// resolved once per connection.
+#[derive(Debug, Clone, Default)]
+struct StreamPolicy {
+    /// Findings may close the stream.
+    enforce: bool,
+    /// Monitor-only categories, applied to every scanned message with the
+    /// same helper the request path uses.
+    monitored: Vec<String>,
+    /// Rule ids excluded for the request path whose exclusion names the
+    /// body target.
+    excluded_rules: HashSet<String>,
+    /// Request path the policy was resolved for (exclusion matching and
+    /// debug logging).
+    path: String,
+}
+
+/// Rules excluded for `path` whose exclusion names the body target.
+///
+/// A stream payload is body content; an exclusion that only names the path
+/// or the query arguments says nothing about what flows through the tunnel.
+fn stream_excluded_rules(
+    path: &str,
+    exclusions: &[CachePathTargetExclusion],
+) -> HashSet<String> {
+    exclusions
+        .iter()
+        .filter(|exclusion| {
+            exclusion
+                .targets
+                .iter()
+                .any(|target| target.eq_ignore_ascii_case("body"))
+        })
+        .filter(|exclusion| {
+            exclusion.path_prefix.is_empty()
+                || path.starts_with(&exclusion.path_prefix)
+        })
+        .map(|exclusion| exclusion.rule_id.clone())
+        .collect()
 }
 
 fn register_pending_access(request_id: &str, pending: PendingAccess) {
@@ -3602,10 +3648,11 @@ impl Plugin for WafPlugin {
                         country_code: entry.country_code.clone(),
                     })
                     .unwrap_or_default();
-                let enforce = self.stream_enforcement(&facts.host);
+                let policy =
+                    Arc::new(self.stream_policy(&facts.host, &facts.path));
                 with_stream(&request_id, |state| {
                     state.websocket = true;
-                    state.enforce = Some(enforce);
+                    state.policy = Some(policy);
                     state.facts = facts;
                 });
             }
@@ -3834,32 +3881,43 @@ impl Plugin for WafPlugin {
 }
 
 impl WafPlugin {
-    /// Whether stream findings for `host` may be enforced.
+    /// Enforcement policy for one stream.
     ///
-    /// This reuses the same decisions as the request path instead of
-    /// re-deriving them from raw fields: a disabled WAF
-    /// ([`EngineChoice::Disabled`]), observation mode, a non-Block site mode
-    /// and a non-Varman engine all keep the stream in monitor-only mode.
-    /// The engine is resolved through [`crate::waf_shadow::resolve_mode`], so
-    /// the aliases (`enforce`, `observe`, `base`) and the invalid-value
-    /// fallback match the request path exactly.
-    fn stream_enforcement(&self, host: &str) -> bool {
+    /// Resolved from the same [`ResolvedSite`] the request path uses, so a
+    /// disabled WAF ([`EngineChoice::Disabled`]), observation mode, a
+    /// non-Block site mode and a non-Varman engine all keep the stream in
+    /// monitor-only mode. The engine goes through
+    /// [`crate::waf_shadow::resolve_mode`], so the aliases (`enforce`,
+    /// `observe`, `base`) and the invalid-value fallback match the request
+    /// path exactly.
+    fn stream_policy(&self, host: &str, path: &str) -> StreamPolicy {
         let resolved = self.resolve_site(host);
         let Some(context) = resolved.context else {
             // No site context at all: a standalone plugin follows its own
             // mode. In an agent deployment this instead means the domain's
             // bundle has not arrived yet, and enforcing then is how a
             // monitor site gets blocked after a restart.
-            return VarmanAgent::instance().is_none()
-                && self.mode == WafMode::Block;
+            return StreamPolicy {
+                enforce: VarmanAgent::instance().is_none()
+                    && self.mode == WafMode::Block,
+                path: path.to_string(),
+                ..Default::default()
+            };
         };
-        if matches!(resolved.choice, EngineChoice::Disabled) {
-            return false;
-        }
-        context.mode == Some(WafMode::Block)
+        let enforce = !matches!(resolved.choice, EngineChoice::Disabled)
+            && context.mode == Some(WafMode::Block)
             && !context.observation_mode
             && crate::waf_shadow::resolve_mode(Some(&context.engine_mode))
-                == crate::waf_shadow::EngineMode::Varman
+                == crate::waf_shadow::EngineMode::Varman;
+        StreamPolicy {
+            enforce,
+            monitored: context.monitor_categories.clone(),
+            excluded_rules: stream_excluded_rules(
+                path,
+                &context.path_target_exclusions,
+            ),
+            path: path.to_string(),
+        }
     }
 
     /// Sliding-window scan of a forwarded body chunk. A payload found here
@@ -3870,26 +3928,30 @@ impl WafPlugin {
         request_id: &str,
         bytes: &Bytes,
     ) -> Option<HttpResponse> {
-        let finding = with_stream(request_id, |state| {
+        let (finding, policy) = with_stream(request_id, |state| {
             if state.aborted {
-                return None;
+                return (None, state.policy.clone());
             }
-            state.tail.push(bytes)
-        })?;
-        let enforce = with_stream(request_id, |state| match state.enforce {
-            Some(value) => value,
-            None => {
-                let host = PENDING_ACCESS
-                    .get(request_id)
-                    .map(|entry| entry.host.clone())
-                    .unwrap_or_default();
-                let value = self.stream_enforcement(&host);
-                state.enforce = Some(value);
-                value
-            },
+            let policy = match state.policy.clone() {
+                Some(policy) => policy,
+                None => {
+                    // Only the first chunk pays for the site lookup; the
+                    // resolved policy serves every later chunk.
+                    let (host, path) = PENDING_ACCESS
+                        .get(request_id)
+                        .map(|entry| (entry.host.clone(), entry.path.clone()))
+                        .unwrap_or_default();
+                    let policy = Arc::new(self.stream_policy(&host, &path));
+                    state.policy = Some(Arc::clone(&policy));
+                    policy
+                },
+            };
+            (state.tail.push(bytes, &policy.monitored), Some(policy))
         });
+        let finding = finding?;
+        let policy = policy?;
         let (rule_id, detail, _, _) = finding.parts();
-        if self.record_stream_finding(request_id, &finding, enforce) {
+        if self.record_stream_finding(request_id, &finding, &policy) {
             Some(block_page(
                 request_id,
                 &format!("varman: {rule_id}: {detail}"),
@@ -3909,16 +3971,24 @@ impl WafPlugin {
         bytes: &Bytes,
         end_of_stream: bool,
     ) -> pingora::Result<()> {
-        let (finding, enforce) = with_stream(request_id, |state| {
+        let (finding, policy) = with_stream(request_id, |state| {
             if !state.websocket || state.aborted {
-                return (None, state.enforce.unwrap_or(false));
+                return (None, state.policy.clone());
             }
-            let enforce = state.enforce.unwrap_or(false);
-            (state.inspector.inspect(from_client, bytes), enforce)
+            let policy = match state.policy.clone() {
+                Some(policy) => policy,
+                None => return (None, None),
+            };
+            (
+                state
+                    .inspector
+                    .inspect(from_client, bytes, &policy.monitored),
+                Some(policy),
+            )
         });
-        if let Some(finding) = finding {
+        if let (Some(finding), Some(policy)) = (finding, policy) {
             let (rule_id, detail, _, _) = finding.parts();
-            if self.record_stream_finding(request_id, &finding, enforce) {
+            if self.record_stream_finding(request_id, &finding, &policy) {
                 return Err(new_internal_error(
                     403,
                     format!("varman: {rule_id}: {detail}"),
@@ -3936,21 +4006,31 @@ impl WafPlugin {
     /// finding on a monitor/legacy site) is a monitor event and the stream
     /// continues. Returns whether the caller must abort.
     ///
-    /// A protocol failure is the exception: after a malformed frame the
-    /// boundaries are unknown, so the stream cannot be inspected any further
-    /// and is closed even in monitor mode. One finding per rule is recorded
-    /// per connection; a monitor site otherwise writes a row for every
-    /// matching message.
+    /// A path-scoped body exclusion drops the rule before it is recorded or
+    /// enforced. A protocol failure is the exception to the mode cap: after
+    /// a malformed frame the boundaries are unknown, so the stream cannot be
+    /// inspected any further and is closed even in monitor mode. One finding
+    /// per rule is recorded per connection; a monitor site otherwise writes
+    /// a row for every matching message.
     fn record_stream_finding(
         &self,
         request_id: &str,
         finding: &StreamFinding,
-        enforce: bool,
+        policy: &StreamPolicy,
     ) -> bool {
         let (rule_id, detail, action, score) = finding.parts();
         let protocol = matches!(finding, StreamFinding::Protocol(_));
+        if !protocol && policy.excluded_rules.contains(rule_id.as_str()) {
+            tracing::debug!(
+                rule_id,
+                path = %policy.path,
+                "stream finding dropped by a path-scoped body exclusion"
+            );
+            return false;
+        }
         let blocking = protocol
-            || (enforce && matches!(action, Action::Block | Action::Challenge));
+            || (policy.enforce
+                && matches!(action, Action::Block | Action::Challenge));
         let (facts, first) = with_stream(request_id, |state| {
             let first = state.reported.insert(rule_id.clone());
             if blocking {
@@ -4874,7 +4954,7 @@ advanced_mode = true
     /// Stream inspection is capped by the site mode and the engine: a
     /// monitor/legacy site must never close a WebSocket tunnel.
     #[tokio::test]
-    async fn stream_enforcement_follows_mode_and_engine() {
+    async fn stream_policy_follows_mode_engine_and_site_settings() {
         fn config(
             mode: i32,
             engine_mode: &str,
@@ -4899,6 +4979,14 @@ advanced_mode = true
                             enabled,
                             mode,
                             engine_mode: engine_mode.to_string(),
+                            monitor_categories: vec!["rce".to_string()],
+                            rule_target_exclusions: vec![
+                                proto::RuleTargetExclusions {
+                                    rule_id: "VARMAN-1001".to_string(),
+                                    targets: vec!["body".to_string()],
+                                    path_prefix: "/ws".to_string(),
+                                },
+                            ],
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -4921,7 +5009,7 @@ advanced_mode = true
             .update_from_site_config(&config(1, "varman", true, false))
             .unwrap();
         assert!(
-            !plugin.stream_enforcement("example.com"),
+            !plugin.stream_policy("example.com", "").enforce,
             "monitor mode must not enforce stream findings"
         );
 
@@ -4930,7 +5018,7 @@ advanced_mode = true
             .update_from_site_config(&config(2, "legacy", true, false))
             .unwrap();
         assert!(
-            !plugin.stream_enforcement("example.com"),
+            !plugin.stream_policy("example.com", "").enforce,
             "legacy engine must not run the Varman stream inspector"
         );
 
@@ -4939,7 +5027,7 @@ advanced_mode = true
             .update_from_site_config(&config(2, "varman", false, false))
             .unwrap();
         assert!(
-            !plugin.stream_enforcement("example.com"),
+            !plugin.stream_policy("example.com", "").enforce,
             "a disabled WAF must not enforce stream findings"
         );
 
@@ -4948,7 +5036,7 @@ advanced_mode = true
             .update_from_site_config(&config(2, "varman", true, true))
             .unwrap();
         assert!(
-            !plugin.stream_enforcement("example.com"),
+            !plugin.stream_policy("example.com", "").enforce,
             "observation mode must not enforce stream findings"
         );
 
@@ -4959,7 +5047,7 @@ advanced_mode = true
             .update_from_site_config(&config(2, "enforce", true, false))
             .unwrap();
         assert!(
-            plugin.stream_enforcement("example.com"),
+            plugin.stream_policy("example.com", "").enforce,
             "the enforce alias must match the request path"
         );
 
@@ -4968,12 +5056,63 @@ advanced_mode = true
             .update_from_site_config(&config(2, "varman", true, false))
             .unwrap();
         assert!(
-            plugin.stream_enforcement("example.com"),
+            plugin.stream_policy("example.com", "").enforce,
             "block + varman is the only enforcement combination"
         );
         assert!(
-            !plugin.stream_enforcement("missing.example"),
+            !plugin.stream_policy("missing.example", "").enforce,
             "an unsynced domain must not fall back to the plugin's block mode"
+        );
+
+        // The same resolution carries the site's monitor categories and the
+        // body-scoped exclusions for the WebSocket request path.
+        let policy = plugin.stream_policy("example.com", "/ws");
+        assert!(policy.enforce);
+        assert_eq!(vec!["rce".to_string()], policy.monitored);
+        assert!(policy.excluded_rules.contains("VARMAN-1001"));
+        assert!(
+            !plugin
+                .stream_policy("example.com", "/api")
+                .excluded_rules
+                .contains("VARMAN-1001"),
+            "an exclusion must not leak outside its path prefix"
+        );
+    }
+
+    #[test]
+    fn stream_exclusions_only_apply_to_the_body_target() {
+        let exclusions = vec![
+            CachePathTargetExclusion {
+                rule_id: "VARMAN-1001".to_string(),
+                targets: vec!["body".to_string()],
+                path_prefix: "/ws".to_string(),
+            },
+            CachePathTargetExclusion {
+                rule_id: "VARMAN-1002".to_string(),
+                targets: vec!["path".to_string()],
+                path_prefix: "/ws".to_string(),
+            },
+            CachePathTargetExclusion {
+                rule_id: "VARMAN-1003".to_string(),
+                targets: vec!["body".to_string()],
+                path_prefix: "/api".to_string(),
+            },
+            CachePathTargetExclusion {
+                rule_id: "VARMAN-1004".to_string(),
+                targets: vec!["BODY".to_string()],
+                path_prefix: String::new(),
+            },
+        ];
+        let excluded = stream_excluded_rules("/ws/socket", &exclusions);
+        assert!(excluded.contains("VARMAN-1001"));
+        assert!(
+            !excluded.contains("VARMAN-1002"),
+            "a path-only exclusion says nothing about the tunnel"
+        );
+        assert!(!excluded.contains("VARMAN-1003"));
+        assert!(
+            excluded.contains("VARMAN-1004"),
+            "an empty prefix is site-wide and targets are case-insensitive"
         );
     }
 
@@ -4996,8 +5135,9 @@ advanced_mode = true
             action: Action::Log,
             score: 5,
         };
-        assert!(!plugin.record_stream_finding(request_id, &finding, false));
-        assert!(!plugin.record_stream_finding(request_id, &finding, false));
+        let policy = StreamPolicy::default();
+        assert!(!plugin.record_stream_finding(request_id, &finding, &policy));
+        assert!(!plugin.record_stream_finding(request_id, &finding, &policy));
 
         let event = agent.client.pop_log().await.expect("one event");
         assert_eq!("monitor", event.waf_action);

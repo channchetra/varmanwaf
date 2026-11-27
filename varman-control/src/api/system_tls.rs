@@ -269,9 +269,6 @@ pub(crate) async fn store_and_activate(
         .control_tls
         .activate(cert_pem, key_pem)
         .map_err(|err| ApiError::BadRequest(err.to_string()))?;
-    if source == tls_source::ACME {
-        crate::management_cert::set_seed(cert_pem, key_pem);
-    }
 
     let row = control_plane_certificate::ActiveModel {
         id: Set(Uuid::new_v4()),
@@ -305,6 +302,11 @@ pub(crate) async fn store_and_activate(
         .exec(&state.db)
         .await?;
 
+    // Only after the row is durable: a failed insert must not make the next
+    // config rebuild advertise a pair the database does not know about.
+    if source == tls_source::ACME {
+        crate::management_cert::set_seed(cert_pem, key_pem);
+    }
     Ok(())
 }
 

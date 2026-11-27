@@ -85,3 +85,7 @@ review-*
 
 # Kept E2E evidence (reports, screenshots, DB dump, harness)
 /e2e-artifacts/
+
+# desloppify local state
+.desloppify/
+scorecard.png

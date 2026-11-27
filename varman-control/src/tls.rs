@@ -117,13 +117,7 @@ impl ControlPlaneTls {
     /// that terminates TLS elsewhere never installs one.
     pub fn new(enabled: bool) -> Self {
         let resolver = Arc::new(ReloadableResolver::default());
-        let config = rustls::ServerConfig::builder_with_provider(
-            crypto_provider().clone(),
-        )
-        .with_safe_default_protocol_versions()
-        .expect("the ring provider supports the default protocol versions")
-        .with_no_client_auth()
-        .with_cert_resolver(resolver.clone());
+        let config = server_config(Arc::clone(&resolver));
 
         Self {
             enabled,
@@ -171,16 +165,20 @@ impl ControlPlaneTls {
 
     /// The rustls configuration behind [`Self::grpc_acceptor`].
     fn grpc_config(&self) -> Arc<rustls::ServerConfig> {
-        let mut config = rustls::ServerConfig::builder_with_provider(
-            crypto_provider().clone(),
-        )
-        .with_safe_default_protocol_versions()
-        .expect("the ring provider supports the default protocol versions")
-        .with_no_client_auth()
-        .with_cert_resolver(self.resolver.clone());
+        let mut config = server_config(Arc::clone(&self.resolver));
         config.alpn_protocols = vec![b"h2".to_vec()];
         Arc::new(config)
     }
+}
+
+/// The TLS listener configuration both acceptors share: no client auth, and
+/// a certificate resolved from `resolver` on every handshake.
+fn server_config(resolver: Arc<ReloadableResolver>) -> rustls::ServerConfig {
+    rustls::ServerConfig::builder_with_provider(crypto_provider().clone())
+        .with_safe_default_protocol_versions()
+        .expect("the ring provider supports the default protocol versions")
+        .with_no_client_auth()
+        .with_cert_resolver(resolver)
 }
 
 /// A connection accepted by [`MixedListener`], TLS or cleartext.

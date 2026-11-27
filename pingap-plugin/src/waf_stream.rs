@@ -22,10 +22,15 @@ use std::sync::LazyLock;
 
 use varman_waf::canonical::{Canonicalizer, RequestParts};
 use varman_waf::pipeline::fast::{RawPathTraversalDetector, SignatureDetector};
+use varman_waf::pipeline::policy::downgrade_monitored;
 use varman_waf::pipeline::semantic::{
     CommandInjectionDetector, HtmlXssDetector, SqlStructuralDetector,
 };
 use varman_waf::pipeline::{Action, SecurityPipeline};
+
+/// Score recorded for a framing failure. It carries no anomaly contribution:
+/// the finding is enforced regardless of the site mode.
+const PROTOCOL_VIOLATION_SCORE: u32 = 0;
 
 /// Largest single frame payload accepted. Larger frames fail the stream
 /// rather than being buffered.
@@ -248,7 +253,7 @@ impl StreamFinding {
                 "ws.protocol_violation".to_string(),
                 format!("malformed WebSocket frame: {reason}"),
                 Action::Block,
-                0,
+                PROTOCOL_VIOLATION_SCORE,
             ),
             Self::Payload {
                 rule_id,
@@ -282,10 +287,13 @@ impl StreamInspector {
 
     /// Inspect one chunk of tunnel bytes. `from_client` selects the decoder;
     /// both masked (client) and unmasked (server) frames are handled.
+    /// `monitored` is the site's monitor-only category list, applied to every
+    /// complete message exactly as the request path applies it.
     pub fn inspect(
         &mut self,
         from_client: bool,
         bytes: &[u8],
+        monitored: &[String],
     ) -> Option<StreamFinding> {
         let decoder = if from_client {
             &mut self.client
@@ -301,7 +309,9 @@ impl StreamInspector {
                     return Some(StreamFinding::Protocol(reason));
                 },
                 FrameEvent::Message(opcode, payload) => {
-                    if let Some(finding) = scan_payload(opcode, &payload) {
+                    if let Some(finding) =
+                        scan_payload(opcode, &payload, monitored)
+                    {
                         return Some(finding);
                     }
                 },
@@ -312,8 +322,15 @@ impl StreamInspector {
 
 /// Scan one content window with the focused detector set. Shared by the frame
 /// inspector (complete messages) and the tail window (forwarded body bytes).
-/// Returns the first finding with its verdict action and score.
-pub(crate) fn scan_content(payload: &[u8]) -> Option<StreamFinding> {
+/// Returns the finding that decided the verdict, with its action and score.
+///
+/// `monitored` applies the site's monitor-only categories with the same
+/// helper the request path uses, so a category the operator set to monitor
+/// cannot be blocked by the stream scanner.
+pub(crate) fn scan_content(
+    payload: &[u8],
+    monitored: &[String],
+) -> Option<StreamFinding> {
     if payload.is_empty() || payload.len() > MAX_FRAME_BYTES {
         return None;
     }
@@ -322,20 +339,23 @@ pub(crate) fn scan_content(payload: &[u8]) -> Option<StreamFinding> {
             .with_header("Content-Type", "application/octet-stream")
             .with_body(payload.to_vec()),
     );
-    let verdict = WS_PIPELINE.inspect(&canonical);
+    let mut verdict = WS_PIPELINE.inspect(&canonical);
+    downgrade_monitored(&mut verdict, monitored);
     if verdict.action == Action::Pass {
         return None;
     }
-    let finding = verdict
-        .findings
-        .iter()
-        .find(|finding| finding.action_hint == verdict.action)
-        .or_else(|| verdict.findings.first())?;
+    // The verdict action is the maximum of the finding hints. Picking the
+    // maximum (rather than the first match) keeps the reported rule and score
+    // aligned with the finding that actually decided the verdict.
+    let finding = verdict.findings.iter().max_by_key(|finding| {
+        (finding.action_hint, finding.severity, finding.score)
+    })?;
     Some(StreamFinding::Payload {
         rule_id: finding.rule_id.to_string(),
         detail: format!(
-            "payload matched {} ({:?})",
-            finding.rule_id, finding.category
+            "payload matched {} ({})",
+            finding.rule_id,
+            finding.category.as_str()
         ),
         action: verdict.action,
         score: verdict.score,
@@ -364,10 +384,14 @@ impl TailWindow {
     }
 
     /// Feed one chunk; returns a finding when the combined window matches.
-    pub fn push(&mut self, bytes: &[u8]) -> Option<StreamFinding> {
+    pub fn push(
+        &mut self,
+        bytes: &[u8],
+        monitored: &[String],
+    ) -> Option<StreamFinding> {
         let mut combined = std::mem::take(&mut self.window);
         combined.extend_from_slice(bytes);
-        let finding = scan_content(&combined);
+        let finding = scan_content(&combined, monitored);
         if combined.len() > TAIL_WINDOW_BYTES {
             let keep = combined.len() - TAIL_WINDOW_BYTES;
             combined.drain(..keep);
@@ -384,11 +408,15 @@ impl TailWindow {
 }
 
 /// Scan one complete message payload with the focused detector set.
-fn scan_payload(opcode: u8, payload: &[u8]) -> Option<StreamFinding> {
+fn scan_payload(
+    opcode: u8,
+    payload: &[u8],
+    monitored: &[String],
+) -> Option<StreamFinding> {
     if !matches!(opcode, 1 | 2) {
         return None;
     }
-    scan_content(payload)
+    scan_content(payload, monitored)
 }
 
 #[cfg(test)]
@@ -553,7 +581,8 @@ mod tests {
             inspector
                 .inspect(
                     true,
-                    &frame(true, 1, Some([9, 9, 9, 9]), b"hello world")
+                    &frame(true, 1, Some([9, 9, 9, 9]), b"hello world"),
+                    &[],
                 )
                 .is_none()
         );
@@ -565,6 +594,7 @@ mod tests {
                 Some([1, 2, 3, 4]),
                 b"1' OR '1'='1 UNION SELECT password FROM users",
             ),
+            &[],
         );
         match finding {
             Some(StreamFinding::Payload { rule_id, .. }) => {
@@ -587,19 +617,20 @@ mod tests {
                     None,
                     b"<script>alert(document.cookie)</script>"
                 ),
+                &[],
             ),
             Some(StreamFinding::Payload { .. })
         ));
         // A malformed frame fails the stream.
         assert_eq!(
-            inspector.inspect(true, &[0xC1, 0x00]),
+            inspector.inspect(true, &[0xC1, 0x00], &[]),
             Some(StreamFinding::Protocol("reserved bits set"))
         );
     }
 
     #[test]
     fn weak_command_context_is_log_only() {
-        match scan_content(b"id;").expect("weak finding") {
+        match scan_content(b"id;", &[]).expect("weak finding") {
             StreamFinding::Payload { action, score, .. } => {
                 assert_eq!(action, Action::Log);
                 assert_eq!(score, 5);
@@ -610,9 +641,36 @@ mod tests {
 
     #[test]
     fn high_confidence_command_is_enforced() {
-        match scan_content(b"$(id)").expect("strong finding") {
+        match scan_content(b"$(id)", &[]).expect("strong finding") {
             StreamFinding::Payload { action, .. } => {
                 assert!(action > Action::Log, "action was {action:?}");
+            },
+            other => panic!("expected payload finding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn monitored_categories_downgrade_the_stream_verdict() {
+        // `rce` is the dashboard name for the command-injection family.
+        match scan_content(b"$(id)", &["rce".to_string()]).expect("finding") {
+            StreamFinding::Payload { action, score, .. } => {
+                assert_eq!(action, Action::Monitor);
+                assert!(score > 0, "the anomaly score is still recorded");
+            },
+            other => panic!("expected payload finding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_monitored_stream_still_reports_the_deciding_rule() {
+        // The verdict carries the strongest finding, not whichever came
+        // first in detector order.
+        match scan_content(b"$(id)", &[]).expect("finding") {
+            StreamFinding::Payload {
+                rule_id, action, ..
+            } => {
+                assert!(!rule_id.is_empty());
+                assert!(action > Action::Log);
             },
             other => panic!("expected payload finding, got {other:?}"),
         }
@@ -624,8 +682,8 @@ mod tests {
 
         let mut window = TailWindow::new();
         // The classic payload split mid-signature across two chunks.
-        assert!(window.push(b"prefix text 1' OR '1'=").is_none());
-        let finding = window.push(b"'1 suffix");
+        assert!(window.push(b"prefix text 1' OR '1'=", &[]).is_none());
+        let finding = window.push(b"'1 suffix", &[]);
         assert!(finding.is_some(), "split payload must be caught");
         assert!(window.len() <= super::TAIL_WINDOW_BYTES);
     }
@@ -636,7 +694,7 @@ mod tests {
 
         let mut window = TailWindow::new();
         for _ in 0..64 {
-            assert!(window.push(&vec![b'a'; 4096]).is_none());
+            assert!(window.push(&vec![b'a'; 4096], &[]).is_none());
         }
         assert!(
             window.len() <= super::TAIL_WINDOW_BYTES,

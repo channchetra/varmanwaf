@@ -431,9 +431,27 @@ async fn create_certificate(
 ) -> Result<Response, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     let site = load_site_write(&state.db, id, &current).await?;
+    let activate = payload.activate;
 
-    let model = insert_certificate(&state.db, &site, payload).await?;
+    // Same contract as `POST /certificates`: `activate` attaches the new
+    // certificate and turns HTTPS on in one call, and a posture failure must
+    // not leave the certificate behind.
+    let txn = state.db.begin().await?;
+    let model = insert_certificate(&txn, &site, payload).await?;
+    if activate {
+        let posture = TlsPostureRequest {
+            https_enabled: Some(true),
+            certificate_id: Some(Some(model.id)),
+            ..Default::default()
+        };
+        save_tls_posture(&txn, &site, &posture, Some(&current)).await?;
+    }
+    txn.commit().await?;
+
     announce_certificate_created(&state, &model, Some(&current.email)).await;
+    if activate {
+        tracing::info!(site_id = %site.id, cert_id = %model.id, "certificate activated");
+    }
     Ok(
         (StatusCode::CREATED, Json(CertificateResponse::from(model)))
             .into_response(),
