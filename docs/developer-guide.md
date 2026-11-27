@@ -12,6 +12,10 @@ describes it, in the same commit**.
 - Rust 1.96+ (workspace pinned in `rust-toolchain` if present), Node 20+ for
   the console.
 - PostgreSQL for local runs (`docker compose up -d varman-postgres`).
+  Any Docker-compatible runtime works: every command here is plain `docker`
+  or `docker compose`. Kiri is the default on the maintainer's Linux and
+  macOS machines (`docker context use kiri`); CI and production still run
+  Docker Engine, so never point a production host at a desktop runtime.
 
 ## 2. Repository map (where to put things)
 
