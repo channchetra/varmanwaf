@@ -1629,7 +1629,10 @@ fn body_text(body: &[u8]) -> Option<String> {
         return None;
     }
     let capped = &body[..body.len().min(MAX_STORED_BODY)];
-    Some(String::from_utf8_lossy(capped).into_owned())
+    // NUL is valid UTF-8 but not valid in a PostgreSQL text column; the same
+    // reason the scalar fields go through `clean`. The bodies are the one
+    // text path that carries attacker bytes verbatim.
+    Some(String::from_utf8_lossy(capped).replace('\0', "\u{FFFD}"))
 }
 
 /// True when the entry carries a WAF decision and belongs in
@@ -1959,6 +1962,13 @@ mod tests {
         // the agent retry (and eventually drop) the whole batch.
         assert_eq!(optional("a\0b").as_deref(), Some("a\u{FFFD}b"));
         assert_eq!(truncate("/x\0y", 16).as_deref(), Some("/x\u{FFFD}y"));
+        // The captured bodies are the other path for raw request bytes.
+        assert_eq!(body_text(b"a\0b").as_deref(), Some("a\u{FFFD}b"));
+        assert_eq!(body_text(b""), None);
+        assert_eq!(
+            body_text(&[0xff, 0x00]).as_deref(),
+            Some("\u{FFFD}\u{FFFD}")
+        );
     }
 
     #[test]
