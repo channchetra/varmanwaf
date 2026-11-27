@@ -1,93 +1,91 @@
-# Desloppify continuation state (2026-11-27)
+# Desloppify continuation state (2026-11-28)
 
 > Internal. Read this before continuing the code-health work.
 
-## Goal
+## Current score
 
-Maximise the **strict score** honestly with the desloppify harness.
-Target: **85.0**. Current: **81.1** (queue 121).
+Strict **84.9 / 85.0** (plan start 22.1, +62.8). Queue **112**.
+Branch `desloppify/code-health`. **Nothing pushed or deployed.** Production **1.4.5**.
+
+The remaining gap is concentrated in three dimensions:
+
+| Dimension | Score | Anchor findings |
+|---|---|---|
+| Cross-module architecture | 78 | `foundation_plugin_depends_on_platform` (pingap-plugin → varman-waf/-agent/-challenge), `rule_vocabulary_duplicated_across_crates`, `plugin_reads_agent_process_global` (16 sites), `shared_types_create_module_cycles` |
+| Initialization coupling | 80 | `provider_registries_are_process_globals` (five `LazyLock` registries) |
+| Test strategy | 80 | `maintenance_writes_untested` (needs a disposable PostgreSQL), remaining handler-module coverage |
+
+Everything else is at or above 85 (elegance, design, API, naming, authorization, error consistency, contracts, AI debt).
+
+## Gates (green at this commit)
 
 ```bash
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-desloppify status
-desloppify next
+cargo fmt --all -- --check
+cargo test --workspace --features=full      # 64 suites, 0 failed
+cargo clippy --workspace --all-targets --features=full -- -D warnings
+cargo machete
 ```
 
-The harness lives in `.desloppify/` (gitignored). Skill: `desloppify` (v7),
-installed project-locally under `.claude/skills/desloppify`.
+Feature checks used: `--cp --admin` (401 unauth, 200 auth), file-config proxy on
+a loopback port, all-in-one boot against a temporary PostgreSQL, `make build-web`,
+and admin `/configs` auth/prefix tests.
 
-## Ground rules
+## What this pass changed (highlights)
 
-- Branch: `desloppify/code-health`. **Nothing has been pushed or deployed.**
-- Production runs **1.4.5**; the edge uses the real 1.4.5 image.
-- Every step ends with:
-  `cargo test --workspace --features=full`,
-  `cargo clippy --workspace --all-targets --features=full -- -D warnings`,
-  `cargo fmt --all -- --check`, `cargo machete`.
-- Console/feature changes also get a visual smoke (local Postgres + all-in-one
-  on Kiri, browser login/dashboard).
-- ACME: do not trigger orders before **2026-12-04 03:53 UTC** (rate-limit
-  window; see `docs/private/incident-2026-11-20-telemetry-outage.md`).
+- **Security**: the `--admin` `/configs/*.js` auth bypass is closed; empty/malformed
+  admin credentials fail closed; the CSRF key and admin credentials are redacted
+  from logs; `--admin` decodes both credential halves; **every mutating control-plane
+  handler now enforces the forced-password-change flag** (57 handlers, with
+  self-service flag-only paths and the password-change exemption); IP-group
+  mutations are admin-only; `key_allows_agent` fails closed; MCP tools are
+  tenant-scoped (17 tests); auditors get documented read-all.
+- **Structure**: typed plugin params everywhere (unknown keys/wrong types fail
+  `pingap -t`); one `src/data_plane.rs::assemble` for all three roots; one
+  `src/config_apply.rs` apply engine; `varman/data_plane.rs` split into
+  bundle/acme/assembly; `WafEngine::inspect` 862→52 lines and
+  `WafPlugin::handle_request` 900→45; one `ProviderUpdate` shape; root
+  `app_state`/`error`/`bundle`/`key_auth`/`certificate_status`/`api_util`/`time_util`.
+- **Tests**: boot smoke, server-location ordering, a real-origin proxy lifecycle
+  (including `$variable` upstream), 16 authz tests, 17 MCP-scope tests, admin
+  mutation/auth/import tests, secret redaction, last-admin guard, env fallbacks.
+- **Operations**: `varman` help/template identity, Debian varman unit, ring as the
+  documented rustls provider, strict readiness pid, `--cp` requires `--admin`,
+  replaceable restart command, memory budget set once in `main`, pprof flake
+  retried.
 
-## Committed on this branch
+## Recommended next step
 
-| Commit | Change |
-|---|---|
-| `91e5031`..`4aa6289` | 1.4.3–1.4.5: gRPC TLS rotation, renewal watchdog, NUL ingest, stream policy |
-| `2fe547b`, `9f30198` | stream policy + failed-reload guard/atomic registries |
-| `5dd99f8` | one category taxonomy; dead processor trait removed |
-| `58fe5c6`, `f972bad` | docs regenerated from the tree; placement rule |
-| `daa1c8e` | single console embed; startup/admin dedupe |
-| `3a40e4e` | `waf.rs` 7,525 → `waf/` modules |
-| `8d80277` | data-plane drifts + `--cp` init order (200 verified) |
-| `8200531` | `varman.rs` 2,885 → `varman/mod.rs` + `data_plane.rs` |
-| `032f75e` | rule tester reports skipped exclusions/threshold truthfully |
-| `8769a8a` | `admin.rs` → `maintenance.rs`; root map + flag distinction |
+The only way past 84.9 is the foundation inversion. Do it as a new crate
+(`varman-plugin`/`varman-edge`) in two stages:
 
-## Current high-elegance findings (all open unless noted)
+1. Move the WAF modules (`waf/`, `waf_custom`, `waf_processor`, `waf_shadow`,
+   `waf_stream`) into the new crate; keep `pingap-plugin` for generic plugins.
+2. Move `challenge`, `cache`, `rewrite`, `error_page`; drop the `varman-*`
+   dependencies from `pingap-plugin`.
 
-1. `console_contract_mismatch` — `--admin` embeds the console but implements
-   `/configs`, `/pprof`, `/basic`, not `/api/v1`. **Decision needed:** either
-   stop embedding the console in `src/plugin/admin.rs` (breaks `make dev`'s
-   :3018 UI) or implement a matching contract. Not changed deliberately.
-2. `data_plane_assembled_three_ways` — `run()`, `run_admin_node()` and
-   `start_data_plane()` still have three assembly paths (behaviour aligned in
-   `8d80277`). Suggested: one `src/data_plane.rs::assemble(config, extras)`.
-3. `engine_config_mapping_ownerless` — `WafEngineConfig` mapping is mirrored in
-   `pingap-plugin/src/waf/mod.rs` (`build_site_engine`), the rule tester
-   (`varman-control/src/policy_test.rs`) and `api/self_protection.rs`.
-   Suggested: a shared constructor in `varman-waf`; the tester must keep
-   listing what it cannot resolve (done in `032f75e`).
-4. `control_plane_transport_modules_own_services` — move `defense::load`,
-   `self_protection::load_settings/effective_allowlist` and the four `start_*`
-   schedulers out of `api/`, re-exporting for routes.
-5. `varman_mode_god_module` — `varman/mod.rs` is 1,651 lines after the data
-   plane split; `run`/CLI/bootstrap remain.
-6. `waf_policy_split_across_foundation_and_agent` — the rule model still lives
-   in `varman-agent::cache` while enforcement lives in `pingap-plugin`.
+Then inject the five provider registries (init 80) instead of `LazyLock`
+singletons, and add a disposable-PostgreSQL maintenance test harness
+(`tests/` with a container or a CI service) for test strategy.
 
-## Test strategy (67)
+Each stage ends with the four gates above; re-review only the dimension changed
+and import with `--allow-partial`. The blind reviewers are anti-gaming: resolve
+findings only after the code change.
 
-- `control_plane_handler_coverage_gap` — 23 handler modules untested. Options:
-  a disposable Postgres harness (real handlers) or a focused MockDatabase for
-  the authz guard.
-- `proxy_data_plane_integration_gap` — no `pingap-proxy/tests/` lifecycle test.
-- The pre-push gate, shadow-report output and flaky window test are fixed.
+## ACME / production safety
 
-## Recommended next steps
+- Do **not** order or renew certificates before **2026-12-04 03:53 UTC** (rate-limit
+  window). The current certificate expires **2026-12-03 20:58 UTC**; the 12-01
+  renewal is the fifth and must succeed.
+- No restart or deploy of production from this branch; it is local-only.
 
-1. Decide the console contract (item 1) — it is the only workflow-breaking
-   choice; everything else is a refactor.
-2. `src/data_plane.rs::assemble` extraction (item 2), then re-review high/mid.
-3. Move the control-plane services (item 4); then the engine mapping owner.
-4. Add the API authz + proxy lifecycle suites; re-review test strategy.
-5. When the queue is clear: `desloppify scan --path .` and check strict.
+## Useful commands
 
-## Notes
+```bash
+desloppify status
+desloppify next
+desloppify review --run-batches --dry-run --dimensions <dim>
+desloppify review --import-run <run-dir> --scan-after-import --manual-override --allow-partial --attest "..."
+```
 
-- The first blind review was lenient (83.2); later re-reviews were stricter and
-  the score settled at 81.1. Small fixes do not move it; the structural items
-  above are what the reviewers weigh.
-- `--cp` now returns 200 for the console shell, but its API calls still hit
-  missing `/api/v1` routes (see item 1).
-- Local stacks used for visual tests were torn down; no containers remain.
+Recent re-review runs and the current issue IDs live in `.desloppify/`.
