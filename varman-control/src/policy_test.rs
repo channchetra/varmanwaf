@@ -363,7 +363,7 @@ pub fn evaluate(
         matched_rules: matched,
         notes,
         simulated: vec![
-            "managed rules (with monitor/disable/score overrides and target exclusions)".to_string(),
+            "managed rules (with monitor/disable/score overrides and rule target exclusions)".to_string(),
             "policy and site custom rules".to_string(),
             "SecLang virtual patches".to_string(),
         ],
@@ -371,6 +371,8 @@ pub fn evaluate(
             "rate limits (need request history)".to_string(),
             "IP/geo access rules (need the real client address)".to_string(),
             "bot checks (need UA/TLS/behaviour data)".to_string(),
+            "path-scoped exclusion packages (not resolved into the candidate engine config)".to_string(),
+            "site anomaly threshold (the candidate view does not carry it; the tester uses the 40 default)".to_string(),
         ],
     }
 }
