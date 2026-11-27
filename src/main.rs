@@ -464,6 +464,19 @@ fn validate_plugins(
     Ok(())
 }
 
+/// Reads the machine's available memory and hands it to the cache, which
+/// derives percentage-based memory limits from it.
+///
+/// Called from `main` before dispatch, so every root - the file-configured
+/// daemon, the `--cp` admin node and VarmanWAF mode - starts from the same
+/// budget. `sysinfo` keeps the value in sync with the kernel's view rather
+/// than the process's own usage.
+fn init_available_memory() {
+    let mut sys = System::new();
+    sys.refresh_memory();
+    pingap_cache::update_available_memory(sys.available_memory());
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
     let args = parse_arguments();
 
@@ -483,10 +496,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     if args.cp {
         return run_admin_node(args);
     }
-
-    let mut sys = System::new();
-    sys.refresh_memory();
-    pingap_cache::update_available_memory(sys.available_memory());
 
     // Initialize configuration. With `--upstream` the whole config is built
     // from the command line and kept in memory, so no config file is needed.
@@ -1011,6 +1020,11 @@ fn main() {
     // `get_start_time` would report its first caller instead. Covers both the
     // platform mode and the plain proxy started below.
     init_start_time();
+    // The cache derives its percentage-based limits from the machine's
+    // available memory, so read it once here, before dispatch: the
+    // file-configured daemon, the `--cp` admin node and VarmanWAF mode
+    // otherwise each depended on whether their own root happened to do it.
+    init_available_memory();
     // Explicit registration is the link edge for feature-gated plugins that
     // live outside `pingap-plugin` (and for its own `#[ctor]`s).
     plugin::register_builtin_plugins();

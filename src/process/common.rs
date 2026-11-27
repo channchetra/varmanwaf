@@ -20,6 +20,7 @@ use std::process;
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 use std::sync::OnceLock;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -52,7 +53,7 @@ pub fn get_start_time() -> u64 {
     *START_TIME.get_or_init(pingap_core::now_sec)
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct RestartProcessCommand {
     pub exec_path: PathBuf,
     pub log_level: String,
@@ -96,15 +97,37 @@ impl RestartProcessCommand {
     }
 }
 
-static CMD: OnceLock<RestartProcessCommand> = OnceLock::new();
+/// The command `/restart` spawns. The last root to install one owns it; see
+/// [`set_restart_process_command`].
+static CMD: RwLock<Option<RestartProcessCommand>> = RwLock::new(None);
 
 /// Sets the command configuration used for process restarts.
-/// This configuration is stored statically and can only be set once.
+///
+/// A later, different command replaces the stored one instead of being
+/// silently discarded: the last caller owns the restart path, and the
+/// replacement is logged because it changes what `/restart` spawns.
 ///
 /// # Arguments
 /// * `data` - The restart command configuration to store
 pub fn set_restart_process_command(data: RestartProcessCommand) {
-    CMD.get_or_init(|| data);
+    let mut slot = CMD.write().unwrap_or_else(|e| e.into_inner());
+    if let Some(previous) = slot.as_ref()
+        && previous != &data
+    {
+        warn!(
+            target: LOG_TARGET,
+            previous_exec_path = %previous.exec_path.display(),
+            exec_path = %data.exec_path.display(),
+            "restart command replaced by a later one"
+        );
+    }
+    *slot = Some(data);
+}
+
+/// The installed restart command, cloned so the lock is never held across the
+/// asynchronous restart.
+fn restart_command() -> Option<RestartProcessCommand> {
+    CMD.read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 static PROCESS_RESTAR_COUNT: LazyLock<AtomicU8> =
@@ -167,7 +190,7 @@ pub async fn restart_now() -> io::Result<()> {
             "Pingap is restarting",
         ));
     }
-    let Some(cmd) = CMD.get() else {
+    let Some(cmd) = restart_command() else {
         PROCESS_RESTARTING.store(false, Ordering::Relaxed);
         return Err(std::io::Error::new(
             io::ErrorKind::NotFound,
@@ -520,6 +543,31 @@ mod start_time_tests {
         // than the current clock.
         assert_eq!(first, second);
         assert!(first <= pingap_core::now_sec(), "{first}");
+    }
+}
+
+#[cfg(test)]
+mod restart_command_tests {
+    use super::*;
+
+    #[test]
+    fn a_second_restart_command_replaces_the_stale_one() {
+        // Arrange: one root installed its command.
+        set_restart_process_command(RestartProcessCommand {
+            exec_path: PathBuf::from("/first/pingap"),
+            ..Default::default()
+        });
+
+        // Act: a second root installs a different one.
+        set_restart_process_command(RestartProcessCommand {
+            exec_path: PathBuf::from("/second/pingap"),
+            ..Default::default()
+        });
+
+        // Assert: the newest command owns the restart path; the old one is
+        // not silently kept.
+        let stored = restart_command().expect("a command must be stored");
+        assert_eq!(PathBuf::from("/second/pingap"), stored.exec_path);
     }
 }
 
