@@ -39,34 +39,76 @@ pub enum RunMode {
 /// Convert CLI server options into a `ServerConfig`.
 fn server_config_from_opts(opts: &ServerOpts) -> ServerConfig {
     let mut config = ServerConfig::from_env();
-    // CLI flags override environment
-    config.db_url = opts.common.db_url.clone();
-    config.http_addr = opts.common.admin_addr.clone();
-    config.grpc_addr = opts.common.grpc_addr.clone();
-    config.grpc_tls_cert = opts.common.grpc_tls_cert.clone();
-    config.grpc_tls_key = opts.common.grpc_tls_key.clone();
-    config.grpc_tls_mode = opts.common.grpc_tls_mode;
-    config.jwt_secret = opts.jwt_secret.clone();
-    config.default_admin_email = opts.admin_email.clone();
-    config.default_admin_password = opts.admin_password.clone();
-    config.serve_frontend = opts.serve_frontend;
+    apply_cli_server_overrides(
+        &mut config,
+        &opts.common,
+        opts.jwt_secret.as_str(),
+        &opts.admin_email,
+        &opts.admin_password,
+        opts.serve_frontend,
+    );
     apply_tls_opts(&mut config, &opts.common);
     config
+}
+
+/// Applies only the values the operator actually spelled out.
+///
+/// `ServerConfig::from_env` also honours conventional aliases (`DATABASE_URL`,
+/// `VARMAN_HTTP_ADDR`); assigning every clap field unconditionally would
+/// replace those with the clap defaults whenever the matching `VARMAN_*`
+/// variable was absent.
+fn apply_cli_server_overrides(
+    config: &mut ServerConfig,
+    common: &CommonOpts,
+    jwt_secret: &str,
+    admin_email: &str,
+    admin_password: &str,
+    serve_frontend: bool,
+) {
+    let defaults = ServerConfig::default();
+    if common.db_url != defaults.db_url {
+        config.db_url = common.db_url.clone();
+    }
+    if common.admin_addr != defaults.http_addr {
+        config.http_addr = common.admin_addr.clone();
+    }
+    if common.grpc_addr != defaults.grpc_addr {
+        config.grpc_addr = common.grpc_addr.clone();
+    }
+    if let Some(value) = &common.grpc_tls_cert {
+        config.grpc_tls_cert = Some(value.clone());
+    }
+    if let Some(value) = &common.grpc_tls_key {
+        config.grpc_tls_key = Some(value.clone());
+    }
+    if common.grpc_tls_mode != defaults.grpc_tls_mode {
+        config.grpc_tls_mode = common.grpc_tls_mode;
+    }
+    if jwt_secret != defaults.jwt_secret {
+        config.jwt_secret = jwt_secret.to_string();
+    }
+    if admin_email != defaults.default_admin_email {
+        config.default_admin_email = admin_email.to_string();
+    }
+    if admin_password != defaults.default_admin_password {
+        config.default_admin_password = admin_password.to_string();
+    }
+    if !serve_frontend {
+        config.serve_frontend = false;
+    }
 }
 
 /// Convert CLI all-in-one options into a `ServerConfig`.
 fn server_config_from_all_in_one(opts: &AllInOneOpts) -> ServerConfig {
     let mut config = ServerConfig::from_env();
-    config.db_url = opts.common.db_url.clone();
-    config.http_addr = opts.common.admin_addr.clone();
-    config.grpc_addr = opts.common.grpc_addr.clone();
-    config.grpc_tls_cert = opts.common.grpc_tls_cert.clone();
-    config.grpc_tls_key = opts.common.grpc_tls_key.clone();
-    config.grpc_tls_mode = opts.common.grpc_tls_mode;
-    config.jwt_secret = opts.jwt_secret.clone();
-    config.default_admin_email = opts.admin_email.clone();
-    config.default_admin_password = opts.admin_password.clone();
-    config.serve_frontend = opts.serve_frontend;
+    apply_cli_server_overrides(
+        &mut config,
+        &opts.common,
+        opts.jwt_secret.as_str(),
+        &opts.admin_email,
+        &opts.admin_password,
+        opts.serve_frontend,
+    );
     apply_tls_opts(&mut config, &opts.common);
     config
 }
@@ -76,11 +118,15 @@ fn server_config_from_all_in_one(opts: &AllInOneOpts) -> ServerConfig {
 /// The SAN list is only replaced when the operator actually spelled one out,
 /// so the built-in defaults survive an invocation without `--tls-sans`.
 fn apply_tls_opts(config: &mut ServerConfig, opts: &CommonOpts) {
-    config.tls_enabled = opts.tls_enabled;
+    if !opts.tls_enabled {
+        config.tls_enabled = false;
+    }
     if !opts.tls_sans.is_empty() {
         config.tls_sans = opts.tls_sans.clone();
     }
-    config.public_host = opts.public_host.clone();
+    if let Some(host) = &opts.public_host {
+        config.public_host = Some(host.clone());
+    }
 }
 
 /// Convert CLI agent options into an `AgentConfig`.
@@ -443,6 +489,55 @@ mod tests {
     use std::path::Path;
     use std::time::Duration;
     use varman_agent::cache::{HealthCheckConfig, SslConfig};
+
+    #[test]
+    fn cli_defaults_do_not_clobber_environment_values() {
+        let opts = ServerOpts::try_parse_from(["varman"])
+            .expect("default server options parse");
+        let defaults = ServerConfig::default();
+        // An alias-derived value that `ServerConfig::from_env` may have set.
+        let mut config = ServerConfig {
+            db_url: "postgres://alias/db".to_string(),
+            ..Default::default()
+        };
+
+        apply_cli_server_overrides(
+            &mut config,
+            &opts.common,
+            &opts.jwt_secret,
+            &opts.admin_email,
+            &opts.admin_password,
+            opts.serve_frontend,
+        );
+
+        assert_eq!("postgres://alias/db", config.db_url);
+        assert_eq!(defaults.http_addr, config.http_addr);
+    }
+
+    #[test]
+    fn explicit_cli_database_url_overrides_the_environment() {
+        let opts = ServerOpts::try_parse_from([
+            "varman",
+            "--db-url",
+            "postgres://cli/db",
+        ])
+        .expect("server options parse");
+        let mut config = ServerConfig {
+            db_url: "postgres://alias/db".to_string(),
+            ..Default::default()
+        };
+
+        apply_cli_server_overrides(
+            &mut config,
+            &opts.common,
+            &opts.jwt_secret,
+            &opts.admin_email,
+            &opts.admin_password,
+            opts.serve_frontend,
+        );
+
+        assert_eq!("postgres://cli/db", config.db_url);
+    }
 
     #[test]
     fn config_is_a_maintenance_command() {
