@@ -69,7 +69,7 @@ type Result<T> = std::result::Result<T, Error>;
 static LOG_TARGET: &str = "main::admin";
 
 #[derive(RustEmbed)]
-#[folder = "dist/"]
+#[folder = "web/dist/"]
 struct AdminAsset;
 
 pub struct EmbeddedStaticFile(pub Option<EmbeddedFile>, pub Duration);
@@ -1006,12 +1006,12 @@ mod tests {
 
     #[test]
     fn test_embedded_static_file() {
-        // `dist/` is a build artifact populated by `make build-web`; a clean
-        // checkout (e.g. CI) only contains the tracked `dist/README.md`, so skip
-        // gracefully instead of panicking when the bundle isn't present.
+        // `web/dist/` is the same bundle the control plane embeds. A clean
+        // checkout has no bundle until `make build-web`; skip gracefully
+        // instead of panicking when it isn't present.
         let Some(file) = AdminAsset::get("index.html") else {
             eprintln!(
-                "skipping test_embedded_static_file: dist/index.html not built (run `make build-web`)"
+                "skipping test_embedded_static_file: web/dist/index.html not built (run `make build-web`)"
             );
             return;
         };

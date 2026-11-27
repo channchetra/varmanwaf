@@ -52,17 +52,14 @@ check-target:
 		fi; \
 	fi
 
-# Removes the build cache and the copied root `dist/`; `web/dist` is kept
-# because varman-control embeds it at compile time.
+# Removes the build cache; `web/dist` is kept because both the control plane
+# and the pingap admin plugin embed it at compile time.
 clean:
 	cargo clean
-	rm -rf dist
 
 build-web:
-	rm -rf dist \
-	&& cd web \
-	&& npm install && npm run  build \
-	&& cp -rf dist ../
+	cd web \
+	&& npm install && npm run build
 
 
 bench-all:

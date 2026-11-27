@@ -103,9 +103,6 @@ RUN cargo build --release --features full || true; \
 # 2e. 拷真实源码（任何源码变化让此层及以下失效，但 2d 的缓存层仍命中）
 COPY src/ src/
 COPY benches/ benches/
-# src/plugin/admin.rs embeds dist/ via rust-embed (resolved against the root
-# crate's manifest dir /app), so the folder must exist at compile time.
-COPY dist/ dist/
 COPY pingap-core/ pingap-core/
 COPY pingap-util/ pingap-util/
 COPY pingap-config/ pingap-config/
@@ -132,7 +129,7 @@ COPY varman-agent/ varman-agent/
 COPY varman-waf/ varman-waf/
 COPY varman-challenge/ varman-challenge/
 
-# 2f. 前端产物（供 varman-control/src/frontend.rs 的 rust-embed #[folder = "../web/dist/"]）
+# 2f. 前端产物（varman-control 与 pingap admin 两个 rust-embed 都指向 web/dist/）
 COPY --from=frontend-builder /app/web/dist/ web/dist/
 
 # 2g. 最终构建：touch 使 workspace crate 的 mtime 指纹失效（排除 target/ 避免污染生成代码），

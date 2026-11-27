@@ -73,6 +73,7 @@ use process::{
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
+use std::future::Future;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -320,80 +321,66 @@ async fn migrate_config_layout(config_manager: &ConfigManager) {
     }
 }
 
+/// Run one startup task on its own thread and runtime, handing the result
+/// back synchronously.
+///
+/// Startup runs before the logger exists, so failures are printed. The
+/// runtime is created inside the child thread, which keeps the bridge safe
+/// across the daemon fork.
+fn run_startup<T, F, Fut, E>(task: F, runtime_error: E) -> Receiver<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = T> + Send + 'static,
+    E: FnOnce(String) -> T + Send + 'static,
+{
+    let (s, r) = crossbeam_channel::bounded(0);
+    std::thread::spawn(move || {
+        let result = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt.block_on(task()),
+            Err(e) => runtime_error(e.to_string()),
+        };
+        if let Err(e) = s.send(result) {
+            // use println because log is not init
+            println!("sender fail, {e}");
+        }
+    });
+    r
+}
+
 fn get_config(
     config_manager: Arc<ConfigManager>,
 ) -> Receiver<Result<PingapConfig, pingap_config::Error>> {
-    let (s, r) = crossbeam_channel::bounded(0);
-    std::thread::spawn(move || {
-        match tokio::runtime::Runtime::new() {
-            Ok(rt) => {
-                let send = async move {
-                    // Before the first read, and before anything can write:
-                    // fold any layout left over from a previous `ConfigMode`
-                    // into the current one. Failing here must not be fatal - a
-                    // read only config directory holding a single old layout
-                    // loads perfectly well, and used to.
-                    migrate_config_layout(&config_manager).await;
-                    match config_manager.load_all().await {
-                        Ok(config) => {
-                            // TODO 原有的load config有admin模式
-                            let result = config.to_pingap_config(true);
-                            if let Err(e) = s.send(result) {
-                                println!("sender fail, {e}");
-                            }
-                        },
-                        Err(e) => {
-                            if let Err(e) = s.send(Err(e)) {
-                                println!("sender fail, {e}");
-                            }
-                        },
-                    }
-                };
-                rt.block_on(send);
-            },
-            Err(e) => {
-                if let Err(e) = s.send(Err(pingap_config::Error::Invalid {
-                    message: e.to_string(),
-                })) {
-                    // use println because log is not init
-                    println!("sender fail, {e}");
-                }
-            },
-        };
-    });
-    r
+    run_startup(
+        move || async move {
+            // Before the first read, and before anything can write: fold any
+            // layout left over from a previous `ConfigMode` into the current
+            // one. Failing here must not be fatal - a read-only config
+            // directory holding a single old layout loads perfectly well, and
+            // used to.
+            migrate_config_layout(&config_manager).await;
+            match config_manager.load_all().await {
+                Ok(config) => {
+                    // TODO 原有的load config有admin模式
+                    config.to_pingap_config(true)
+                },
+                Err(e) => Err(e),
+            }
+        },
+        |message| Err(pingap_config::Error::Invalid { message }),
+    )
 }
 
 fn sync_config(
     config_manager: Arc<ConfigManager>,
     path: String,
 ) -> Receiver<Result<(), pingap_config::Error>> {
-    let (s, r) = crossbeam_channel::bounded(0);
-    std::thread::spawn(move || {
-        match tokio::runtime::Runtime::new() {
-            Ok(rt) => {
-                let send = async move {
-                    let result =
-                        pingap_config::sync_to_path(config_manager, &path)
-                            .await;
-                    if let Err(e) = s.send(result) {
-                        // use println because log is not init
-                        println!("sender fail, {e}");
-                    }
-                };
-                rt.block_on(send);
-            },
-            Err(e) => {
-                if let Err(e) = s.send(Err(pingap_config::Error::Invalid {
-                    message: e.to_string(),
-                })) {
-                    // use println because log is not init
-                    println!("sender fail, {e}");
-                }
-            },
-        };
-    });
-    r
+    run_startup(
+        move || async move {
+            pingap_config::sync_to_path(config_manager, &path).await
+        },
+        |message| Err(pingap_config::Error::Invalid { message }),
+    )
 }
 
 fn new_access_logger(
@@ -405,30 +392,10 @@ fn new_access_logger(
     >,
 > {
     let file = path.to_string();
-    let (s, r) = crossbeam_channel::bounded(0);
-    std::thread::spawn(move || {
-        match tokio::runtime::Runtime::new() {
-            Ok(rt) => {
-                let send = async move {
-                    let result = new_async_logger(&file).await;
-                    if let Err(e) = s.send(result) {
-                        // use println because log is not init
-                        println!("sender fail, {e}");
-                    }
-                };
-                rt.block_on(send);
-            },
-            Err(e) => {
-                if let Err(e) = s.send(Err(pingap_core::Error::Invalid {
-                    message: e.to_string(),
-                })) {
-                    // use println because log is not init
-                    println!("sender fail, {e}");
-                }
-            },
-        };
-    });
-    r
+    run_startup(
+        move || async move { new_async_logger(&file).await },
+        |message| Err(pingap_core::Error::Invalid { message }),
+    )
 }
 
 fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
@@ -1162,5 +1129,16 @@ fn main() {
         // reloaded anyway, and a supervisor could not tell a failed start from
         // a clean shutdown.
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_startup_bridge_returns_the_task_result() {
+        let result = run_startup(|| async { 42 }, |_| 0);
+        assert_eq!(42, result.recv().expect("bridge result"));
     }
 }

@@ -322,7 +322,11 @@ pub fn try_init_plugins(
     if let Some(addr) = &get_admin_addr() {
         match parse_admin_plugin(addr) {
             Ok((_, name, proxy_plugin_info)) => {
-                plugin_configs.push((name, proxy_plugin_info));
+                // The control-panel path passes the same plugin explicitly.
+                // Injecting it from the global as well constructs it twice.
+                if !plugins.contains_key(&name) {
+                    plugin_configs.push((name, proxy_plugin_info));
+                }
             },
             Err(e) => {
                 errors.push(e);
