@@ -476,7 +476,12 @@ pub async fn restart_now() -> io::Result<()> {
 /// 4. Execute the restart if this is still the most recent restart request
 ///
 /// If the restart fails, an error notification will be sent.
-pub async fn restart() {
+/// Restarts after a 60-second debounce window.
+///
+/// Only the last request in the window restarts, so a burst of configuration
+/// changes produces one hand-over. A failed restart is logged, notified and
+/// returned so the caller can record it; it is never silently discarded.
+pub async fn restart() -> io::Result<()> {
     let count = PROCESS_RESTAR_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     tokio::time::sleep(Duration::from_secs(60)).await;
     if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed)
@@ -494,7 +499,9 @@ pub async fn restart() {
             ..Default::default()
         })
         .await;
+        return Err(e);
     }
+    Ok(())
 }
 
 #[cfg(test)]

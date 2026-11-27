@@ -34,6 +34,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::warn;
 
 use bytes::BytesMut;
 use pingap_cache::new_storage_clear_service;
@@ -335,6 +336,14 @@ pub fn assemble(
         }
         tasks
     });
+
+    if !errors.is_empty() || !certificates.errors.is_empty() {
+        warn!(
+            plugin_errors = %errors,
+            certificate_errors = %certificates.errors,
+            "data plane assembled with deferred provider errors"
+        );
+    }
 
     Ok(AssembledPlane {
         server,

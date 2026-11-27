@@ -107,16 +107,23 @@ pub fn parse_admin_plugin(
         })?;
     let max_age = params.max_age.unwrap_or("2d".to_string());
 
-    let data = format!(
-        r#"
-    category = "admin"
-    path = "{path}"
-    authorizations = [
-        "{authorization}"
-    ]
-    max_age = "{max_age}"
-    remark = "Admin serve"
-    "#,
+    // Build the map directly: a path or credential containing a quote must
+    // not be able to break (or inject into) a TOML document, and a parse
+    // failure must not quietly become an empty plugin config.
+    let mut plugin_conf = PluginConf::new();
+    plugin_conf.insert(
+        "category".to_string(),
+        toml::Value::String("admin".to_string()),
+    );
+    plugin_conf.insert("path".to_string(), toml::Value::String(path));
+    plugin_conf.insert(
+        "authorizations".to_string(),
+        toml::Value::Array(vec![toml::Value::String(authorization)]),
+    );
+    plugin_conf.insert("max_age".to_string(), toml::Value::String(max_age));
+    plugin_conf.insert(
+        "remark".to_string(),
+        toml::Value::String("Admin serve".to_string()),
     );
     Ok((
         ServerConf {
@@ -126,7 +133,7 @@ pub fn parse_admin_plugin(
             ..Default::default()
         },
         ADMIN_SERVER_PLUGIN.to_string(),
-        toml::from_str::<PluginConf>(&data).unwrap_or_default(),
+        plugin_conf,
     ))
 }
 

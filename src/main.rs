@@ -22,7 +22,7 @@ compile_error!(
 );
 
 use crate::config_manager::{
-    get_config_manager, try_init_config_manager, try_init_memory_config_manager,
+    try_init_config_manager, try_init_memory_config_manager,
 };
 use crate::upstreams::new_upstream_provider;
 use bytes::BytesMut;
@@ -509,7 +509,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         try_init_config_manager(&args.conf.clone().unwrap_or_default())?
     };
 
-    let r = get_config(get_config_manager()?);
+    let r = get_config(config_manager.clone());
     // A broken config is fatal on its own, but not with `--admin`: the admin
     // server has to come up so the configuration can be repaired through it.
     // Starting on an empty config is indistinguishable from a healthy server

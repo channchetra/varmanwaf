@@ -226,7 +226,7 @@ async fn apply_config(
     })
     .await;
     if should_restart {
-        restart().await;
+        let _ = restart().await;
     }
     Ok(should_restart)
 }
