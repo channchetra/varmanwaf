@@ -1,24 +1,30 @@
 # admin
 
-Serves the embedded web admin UI and the configuration REST API. Lives in the
-`pingap` binary (`src/plugin/admin.rs`) because it needs the configuration
-manager, the certificate/upstream providers and the restart machinery.
+Serves the data-plane configuration REST API and the process profiling
+endpoints. It is **API only**: the web console is not embedded here. The
+console (`web/`) is served by the control plane — `varman server` at
+`--admin-addr` / `VARMAN_ADMIN_ADDR`, default `0.0.0.0:9080` — next to its
+`/api/v1` REST API.
+
+Lives in the `pingap` binary (`src/plugin/admin.rs`) because it needs the
+configuration manager, the certificate/upstream providers and the restart
+machinery.
 
 - **Step:** `request` (fixed)
 - **Registered as:** `admin`
 
 Most people never declare this plugin by hand — the `--admin` command line flag
 builds an equivalent configuration. Declaring it explicitly is what you do when
-the admin UI should live on an existing server behind a path prefix.
+the admin API should live on an existing server behind a path prefix.
 
 ## Configuration
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `admin`. |
-| `path` | string | `""` | URL prefix the admin UI is mounted at. A trailing `/` is stripped. |
+| `path` | string | `""` | URL prefix the API is mounted at. A trailing `/` is stripped. |
 | `authorizations` | string[] | `[]` | Base64 of `user:password`, one entry per account. **Required and non-empty** unless `allow_unauthenticated` is set. An entry that does not decode to `user:password` fails construction, naming its index. |
-| `allow_unauthenticated` | bool | `false` | Explicitly serves the admin API and UI without authentication. Logs a warning at startup. Never expose such an instance beyond localhost. |
+| `allow_unauthenticated` | bool | `false` | Explicitly serves the admin API without authentication. Logs a warning at startup. Never expose such an instance beyond localhost. |
 | `max_age` | duration | `2d` | Allowed clock skew for the signed token. |
 | `ip_fail_limit` | int | `10` | Failed attempts per IP before that IP is blocked for 5 minutes. |
 
@@ -64,25 +70,22 @@ token = hex(sha256("<user>:<password>:<unix-seconds>"))
 ```
 
 `<unix-seconds>` must be within `max_age` of the proxy's clock, and the token is
-compared in constant time. The web UI computes this for you after login.
+compared in constant time. The API has no login flow; the client computes the
+token itself.
 
-Static assets of the login page are served without authentication so the login
-screen can load, but only these exact paths and only for `GET`/`HEAD`:
-
-- `/`, `/index.html`, `/favicon.ico`, `/vite.svg`
-- anything under `/assets/` (the Vite bundle)
-
-Every other path requires authentication, including `/configs`,
-`/config-history`, `/basic`, `/pprof` — both through the bare path and the
-`/api` prefix. A static-looking suffix such as `.js`, `.css` or `.png` grants
-nothing.
+**Every path requires authentication.** There is no public route: neither `/`,
+the old login-page asset names (`/index.html`, `/favicon.ico`, `/vite.svg`,
+`/assets/*`), nor a static-looking suffix such as `.js`, `.css` or `.png` is
+exempt — through the bare path or the `/api` prefix. Unknown paths are
+authenticated first and then return `404 Not Found`.
 
 After `ip_fail_limit` failures an IP is refused with `403 Forbidden, too many
 failures` for 5 minutes.
 
 ## API
 
-All routes are relative to `<path>/api`.
+All routes are relative to `<path>`; the `/api` prefix is optional
+(`<path>/api/configs` and `<path>/configs` are equivalent).
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -93,11 +96,15 @@ All routes are relative to `<path>/api`.
 | `GET` | `/config-history/{category}/{name}` | Previous versions, when the storage backend supports history |
 | `GET` | `/basic` | Process info, enabled features (includes the TLS backend name `openssl` / `rustls`), supported plugins, upstream health |
 | `GET` | `/certificates` | Parsed information about the loaded certificates |
-| `POST` | `/aes` | AES encrypt/decrypt helper used by the UI for secrets |
+| `POST` | `/aes` | AES encrypt/decrypt helper for secrets |
 | `POST` | `/restart` | Trigger a graceful restart |
+| `GET` | `/pprof/profile` | CPU profile (protobuf, gzip); `?seconds=` defaults to 30, max 120 |
+| `GET` | `/pprof/flamegraph` | CPU flame graph (SVG); same query parameters |
+| `GET` | `/pprof/memory` | Memory snapshot (JSON) |
 
 `{category}` is one of `basic`, `server`, `location`, `upstream`, `plugin`,
-`certificate`, `storage`.
+`certificate`, `storage`. Any other path — including `/` — returns
+`404 Not Found` after authentication.
 
 ```bash
 TS=$(date +%s)
@@ -109,7 +116,8 @@ curl -H "Authorization: $TOKEN:$TS" http://127.0.0.1:3018/api/basic
 
 `pingap --cp --admin=user:pass@127.0.0.1:3018` runs only the admin node: it
 manages configuration in the shared backend (typically etcd) without proxying
-traffic itself. Data-plane instances watch the same backend and hot reload.
+traffic itself. Its listener is also API only — the console is not part of this
+mode. Data-plane instances watch the same backend and hot reload.
 
 ## Usage notes
 
@@ -122,9 +130,9 @@ traffic itself. Data-plane instances watch the same backend and hot reload.
   [`ip_restriction`](ip_restriction.md) in front of the admin location.
 - Configuration written through the API goes to whatever backend `-c` points at.
   With `file://` storage, a proxy started with `--upstream` (the config-file-less
-  quick start) has no editable backing store and the UI cannot be used to change
-  it.
+  quick start) has no editable backing store and the API cannot be used to
+  change it.
 - The token embeds a timestamp but not the request; it is a bearer credential.
-  Serve the admin UI over TLS.
+  Serve the admin API over TLS.
 - `/configs/{category}/{name}` and `/config-history/{category}/{name}` both
   require the name segment; omitting it returns an error rather than a result.

@@ -53,7 +53,7 @@ check-target:
 	fi
 
 # Removes the build cache; `web/dist` is kept because both the control plane
-# and the pingap admin plugin embed it at compile time.
+# and only varman-control embeds it at compile time.
 clean:
 	cargo clean
 
@@ -70,6 +70,8 @@ bench-all:
 bench:
 	cargo bench
 
+# Bacon dev loop; the data-plane admin API on :3018 is JSON/profiling only
+# (no console — that is served by `varman server --admin-addr`).
 dev:
 	bacon run --  --features=full -- -c="~/tmp/pingap?separation=true&enable_history=true" --admin=pingap:123123@127.0.0.1:3018 --autoreload
 

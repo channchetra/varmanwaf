@@ -25,7 +25,7 @@ Editions are mixed by design: the workspace default is 2024, but `varman-agent`,
 ## Common commands
 
 ```bash
-# Bacon-driven dev loop (uses --autoreload + admin UI on :3018)
+# Bacon-driven dev loop (uses --autoreload + data-plane admin API on :3018)
 make dev                 # bacon run -- --features=full -- -c=... --admin=...
 
 # Lint (CI gate — runs typos + clippy --features=full --all-targets -- -D warnings)
@@ -51,7 +51,7 @@ make release             # default features
 make release-full        # tracing + imageoptim
 make release-perf        # release-perf profile, includes pyroscope agent
 
-# Web admin assets (rust-embed'd from web/dist into both binaries)
+# Web console assets (rust-embed'd from web/dist into varman-control)
 make build-web           # cd web && npm install && npm run build
 
 # Pre-commit hook (runs `make lint`)
@@ -80,7 +80,7 @@ from every member's `Cargo.toml` by `src/bin/generate-mermaid.rs`):
 - `pingap-plugin` — built-in plugins. Add new ones by implementing the `Plugin` trait from `pingap-core` and registering them via the plugin factory.
 - `pingap-upstream` — pingora `Backends` + load-balancing wiring; gets its backend set from `pingap-discovery` (static / DNS / Docker labels / transparent) and `pingap-health` for active checks.
 - `src/main.rs` — argument parsing, config bootstrap, daemonization, server assembly. `src/varman/` is the all-in-one platform mode, `src/cli.rs` the Varman CLI, `src/maintenance.rs` the PostgreSQL maintenance commands (`varman user|mode|security|config`), and `src/quick_start.rs` the starter config. `src/process/` and `src/plugin/` handle hot reload and the data-plane admin plugin.
-- `--admin` is the **data-plane admin plugin** (`PINGAP_ADMIN_*`); `--admin-addr` / `VARMAN_ADMIN_ADDR` is the **control-plane REST/dashboard listener**. They are different features.
+- `--admin` is the **data-plane admin JSON/profiling API** (`PINGAP_ADMIN_*`) and serves no console; `--admin-addr` / `VARMAN_ADMIN_ADDR` is the **control-plane console + REST listener** (`varman server`, default `0.0.0.0:9080`). They are different features.
 - `build.rs` — uses `vergen = "10.0.3"` + `vergen-git2 = "10.0.3"` to embed `VERGEN_GIT_SHA` into the binary's `--version`. **Both crates must stay on matching majors**; if you see `Add` trait-bound errors from `vergen_lib`, the lockfile has pulled mismatched versions — refresh it. The emitter runs with `default_on_error()`: vergen 10 otherwise leaves `VERGEN_GIT_SHA` unset when there is no `.git` (source export, crates.io tarball) and `env!()` stops compiling; with it the value is `VERGEN_IDEMPOTENT_OUTPUT`, which `git_hash()` in `src/main.rs` reports as `unknown`.
 - `examples/` — working configs to copy from: `api-gateway`, `grpc-web`, `static-serve`, `transparent-proxy`, `web-socket`.
 
@@ -166,11 +166,11 @@ these targets and the `Dockerfile`; the former workflow steps now run locally.
 
 ## Web admin
 
-`web/` is a Vite/React app. After editing it, run `make build-web` so the compiled assets in `web/dist/` get embedded into both binaries via `rust-embed` at compile time. `--admin user:pass@host:port[/prefix]` exposes the admin UI; in `make dev` it's on `127.0.0.1:3018`.
+`web/` is the Vite/React console. After editing it, run `make build-web` so the compiled assets in `web/dist/` get embedded into `varman-control` via `rust-embed` at compile time. The console is served by the control plane (`varman server --admin-addr <addr>`, or `VARMAN_ADMIN_ADDR`; default `0.0.0.0:9080`) next to its `/api/v1` REST API. The data-plane admin plugin behind `--admin user:pass@host:port[/prefix]` is API only — `/configs`, `/config-history`, `/basic`, `/restart`, `/aes`, `/certificates`, `/pprof/*` — and serves no UI; `make dev` exposes that API on `127.0.0.1:3018`.
 
-**Every config field must have a form item in `web/`.** A field added to a `pingap-config` struct (`BasicConf`, `ServerConf`, `LocationConf`, `UpstreamConf`, `CertificateConf`, `StorageConf`) or to a plugin's config is not done until the admin can show and edit it. For a config struct, add the field to the matching interface in `web/src/states/config.ts` and an item to the page in `web/src/pages/` (`Basic.tsx`, `Servers.tsx`, `Locations.tsx`, `Upstreams.tsx`, `Certificates.tsx`, `Storages.tsx`); for a plugin field, add it to that plugin's builder in `web/src/plugin-fields.ts`. Each item needs its label/placeholder (and a `tips` line when the semantics are not obvious) in **both** `web/src/i18n/en.ts` and `web/src/i18n/zh.ts`, under the page's section. Pick the control by the Rust type: `Option<bool>` -> `RADIOS` + `newBooleanOptions()` with `defaultValue: conf.field` (never `|| null`, that turns an explicit `false` into Unset); enum-like `Option<String>` -> `RADIOS`/`SELECT` + `newStringOptions(..., withNone = true)` with `defaultValue: conf.field || ""` so an unset field stays unset instead of being saved as the first option; `Option<Vec<String>>` of free-form entries (`name` or `name:value`) -> `TEXTS`, and only use `KV_LIST` when every entry really is `key<sep>value` (its placeholder is `"key hint : value hint"`, split on `" : "`); numbers -> `NUMBER`; durations/sizes -> `TEXT` with the `newZodDuration()`/`newZodBytes()` schema entry.
+**Every config field must have a form item in `web/`.** A field added to a `pingap-config` struct (`BasicConf`, `ServerConf`, `LocationConf`, `UpstreamConf`, `CertificateConf`, `StorageConf`) or to a plugin's config is not done until the console can show and edit it. For a config struct, add the field to the matching interface in `web/src/states/config.ts` and an item to the page in `web/src/pages/` (`Basic.tsx`, `Servers.tsx`, `Locations.tsx`, `Upstreams.tsx`, `Certificates.tsx`, `Storages.tsx`); for a plugin field, add it to that plugin's builder in `web/src/plugin-fields.ts`. Each item needs its label/placeholder (and a `tips` line when the semantics are not obvious) in **both** `web/src/i18n/en.ts` and `web/src/i18n/zh.ts`, under the page's section. Pick the control by the Rust type: `Option<bool>` -> `RADIOS` + `newBooleanOptions()` with `defaultValue: conf.field` (never `|| null`, that turns an explicit `false` into Unset); enum-like `Option<String>` -> `RADIOS`/`SELECT` + `newStringOptions(..., withNone = true)` with `defaultValue: conf.field || ""` so an unset field stays unset instead of being saved as the first option; `Option<Vec<String>>` of free-form entries (`name` or `name:value`) -> `TEXTS`, and only use `KV_LIST` when every entry really is `key<sep>value` (its placeholder is `"key hint : value hint"`, split on `" : "`); numbers -> `NUMBER`; durations/sizes -> `TEXT` with the `newZodDuration()`/`newZodBytes()` schema entry.
 
-The pages save an entry by merging the form values over the loaded entry (`{ ...loaded, ...value }`) because the server replaces the whole entry with what it receives; keep that merge when touching `onSave`, and keep it before `omitEmptyArrayString` so a field cleared in the form is still removed. Verify a new item end to end in the admin (`make dev`, or `make build-web` then run the binary with `--admin`): the value renders, an edit is saved, and clearing it removes the key from the config file.
+The pages save an entry by merging the form values over the loaded entry (`{ ...loaded, ...value }`) because the server replaces the whole entry with what it receives; keep that merge when touching `onSave`, and keep it before `omitEmptyArrayString` so a field cleared in the form is still removed. Verify a new item end to end in the console (run `varman server` with `--admin-addr` after `make build-web`): the value renders, an edit is saved, and clearing it removes the key from the config file.
 
 ## Documentation (English only)
 

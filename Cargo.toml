@@ -47,7 +47,6 @@ clap = { version = "4.6.6", features = [
 ], default-features = false }
 ctor = { workspace = true }
 crossbeam-channel = "0.5.17"
-flate2 = { workspace = true }
 glob = { workspace = true }
 hex = { workspace = true }
 http = { workspace = true }
@@ -80,10 +79,6 @@ pingora = { workspace = true }
 regex = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
 rcgen = { workspace = true }
-rust-embed = { version = "8.12.0", features = [
-    "mime-guess",
-    "compression",
-], default-features = false }
 sea-orm = { workspace = true }
 serde_qs = { workspace = true }
 sysinfo = { workspace = true }

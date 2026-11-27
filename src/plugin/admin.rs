@@ -21,10 +21,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
 use ctor::ctor;
-use flate2::Compression;
-use flate2::write::GzEncoder;
 use hex::ToHex;
-use hex::encode;
 use http::Method;
 use http::{HeaderValue, StatusCode, header};
 use humantime::parse_duration;
@@ -51,14 +48,11 @@ use pingap_upstream::UpstreamHealthyStatus;
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
-use rust_embed::EmbeddedFile;
-use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::Write;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -69,64 +63,6 @@ use urlencoding::decode;
 type Result<T> = std::result::Result<T, Error>;
 
 static LOG_TARGET: &str = "main::admin";
-
-#[derive(RustEmbed)]
-#[folder = "web/dist/"]
-struct AdminAsset;
-
-pub struct EmbeddedStaticFile(pub Option<EmbeddedFile>, pub Duration);
-
-impl From<EmbeddedStaticFile> for HttpResponse {
-    fn from(value: EmbeddedStaticFile) -> Self {
-        let Some(file) = value.0 else {
-            return HttpResponse::not_found("Not Found");
-        };
-        // generate content hash
-        let str = &encode(file.metadata.sha256_hash())[0..8];
-        let mime_type = file.metadata.mimetype();
-        // cut hash and file length as etag
-        let entity_tag = format!(r#""{:x}-{str}""#, file.data.len());
-        // html set no-cache
-        let max_age = if mime_type.contains("text/html") {
-            0
-        } else {
-            value.1.as_secs()
-        };
-
-        let mut headers = vec![];
-        if let Ok(value) = HeaderValue::from_str(mime_type) {
-            headers.push((header::CONTENT_TYPE, value));
-        }
-        if let Ok(value) = HeaderValue::from_str(&entity_tag) {
-            headers.push((header::ETAG, value));
-        }
-
-        let mut gzip_body = None;
-        if file.data.len() > 1024 {
-            let mut d = GzEncoder::new(vec![], Compression::best());
-            let _ = d.write_all(&file.data);
-            if let Ok(w) = d.finish() {
-                gzip_body = Some(Bytes::copy_from_slice(w.as_ref()));
-                if let Ok(value) = HeaderValue::from_str("gzip") {
-                    headers.push((header::CONTENT_ENCODING, value));
-                }
-            }
-        }
-        let body = if let Some(data) = gzip_body {
-            data
-        } else {
-            Bytes::copy_from_slice(&file.data)
-        };
-
-        HttpResponse {
-            status: StatusCode::OK,
-            body,
-            max_age: Some(max_age as u32),
-            headers: Some(headers),
-            ..Default::default()
-        }
-    }
-}
 
 pub struct AdminServe {
     pub path: String,
@@ -304,23 +240,6 @@ async fn get_request_body(session: &mut Session) -> pingora::Result<BytesMut> {
     Ok(buf)
 }
 
-/// The login UI's own files, which may be served before the visitor has
-/// authenticated.
-///
-/// Only exact paths qualify (plus the Vite bundle under `/assets/`), and only
-/// for a read: a suffix such as `.js`, `.css` or `.png` proves nothing, because
-/// the route table also accepts bare paths (`/configs/...` as well as
-/// `/api/configs/...`). Anything else — every API route, config history,
-/// `/basic`, `/pprof`, and any path that merely *looks* static — must
-/// authenticate.
-fn is_public_asset(method: &Method, path: &str) -> bool {
-    if method != Method::GET && method != Method::HEAD {
-        return false;
-    }
-    path.starts_with("/assets/")
-        || matches!(path, "/" | "/index.html" | "/favicon.ico" | "/vite.svg")
-}
-
 impl AdminServe {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(target: LOG_TARGET, params = redacted_params(params), "new admin server plugin");
@@ -343,9 +262,6 @@ impl AdminServe {
             return false;
         }
         let path = req_header.uri.path();
-        if is_public_asset(&req_header.method, path) {
-            return true;
-        }
         let value =
             pingap_core::get_req_header_value(req_header, "Authorization")
                 .unwrap_or_default();
@@ -772,6 +688,13 @@ async fn handle_request_admin(
         let resp = HttpResponse::redirect(&new_path)?;
         return Ok(Some(resp));
     }
+    // A `/` mount strips the only slash, leaving a relative `basic`. `http::Uri`
+    // parses that as an authority with an empty path, so the bare single-segment
+    // routes (`/basic`, `/configs`, ...) would fall through to 404. Restore the
+    // leading slash before rewriting the request URI.
+    if !new_path.is_empty() && !new_path.starts_with('/') {
+        new_path = format!("/{new_path}");
+    }
     if let Some(query) = header.uri.query() {
         new_path = format!("{new_path}?{query}");
     }
@@ -913,8 +836,8 @@ async fn handle_request_admin(
             now: pingap_core::now_sec(),
         };
         basic_info.features.push("default".to_string());
-        // TLS backend name (`openssl` or `rustls`) so the admin UI can disable
-        // settings the active binary cannot honour and show it on the home page.
+        // TLS backend name (`openssl` or `rustls`) so the control-plane
+        // console can disable settings the active binary cannot honour.
         basic_info
             .features
             .push(pingap_certificate::TLS_BACKEND.to_string());
@@ -973,15 +896,9 @@ async fn handle_request_admin(
     } else if path.starts_with("/pprof/") {
         handle_pprof_request(session, &path, &method).await
     } else {
-        let mut file = path.substring(1, path.len());
-        if file.is_empty() {
-            file = "index.html";
-        }
-        EmbeddedStaticFile(
-            AdminAsset::get(file),
-            Duration::from_secs(365 * 24 * 3600),
-        )
-        .into()
+        // The data-plane plugin is an API only; the console bundle belongs to
+        // `varman-control`, so any path outside the route table is a 404.
+        HttpResponse::not_found("Not Found")
     };
     Ok(Some(resp))
 }
@@ -1020,23 +937,53 @@ fn init() {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AdminAsset, AdminServe, EmbeddedStaticFile, handle_request_admin,
-        is_public_asset, validate_import,
-    };
+    use super::{AdminServe, handle_request_admin, validate_import};
     use crate::config_manager::try_init_config_manager;
+    use hex::ToHex;
     use http::Method;
     use pingap_config::{PingapTomlConfig, PluginConf};
     use pingap_core::{Ctx, HttpResponse};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
-    use std::time::Duration;
+    use sha2::{Digest, Sha256};
     use tokio_test::io::Builder;
+
+    /// `ConfigManager` is a process-wide `OnceLock`, so every test in this
+    /// module shares the first backing file. Keep it in the temp directory for
+    /// the whole test binary instead of letting a per-test `NamedTempFile`
+    /// delete it (and the `/configs` reads with it) when that test ends.
+    fn init_config_manager() {
+        static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let path = PATH.get_or_init(|| {
+            let path = std::env::temp_dir()
+                .join(format!("pingap-admin-test-{}.toml", std::process::id()));
+            std::fs::write(&path, "").expect("write test config");
+            path.to_string_lossy().to_string()
+        });
+        try_init_config_manager(path).unwrap();
+    }
+
+    /// Builds the `token:ts` header the admin API expects.
+    fn auth_header(user: &str, pass: &str) -> String {
+        let ts = pingap_core::now_sec();
+        let mut hasher = Sha256::new();
+        hasher.update(format!("{user}:{pass}:{ts}").as_bytes());
+        format!("{}:{ts}", hasher.finalize().encode_hex::<String>())
+    }
+
+    async fn admin_response(admin: &AdminServe, request: &str) -> HttpResponse {
+        let mock_io = Builder::new().read(request.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        handle_request_admin(admin, &mut session, &mut Ctx::default())
+            .await
+            .unwrap()
+            .unwrap()
+    }
 
     #[test]
     fn test_admin_params() {
-        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
-        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
+        init_config_manager();
         // spellchecker:off
         let params = AdminServe::try_from(
             &toml::from_str::<PluginConf>(
@@ -1085,35 +1032,8 @@ mod tests {
     }
 
     #[test]
-    fn test_embedded_static_file() {
-        // `web/dist/` is the same bundle the control plane embeds. A clean
-        // checkout has no bundle until `make build-web`; skip gracefully
-        // instead of panicking when it isn't present.
-        let Some(file) = AdminAsset::get("index.html") else {
-            eprintln!(
-                "skipping test_embedded_static_file: web/dist/index.html not built (run `make build-web`)"
-            );
-            return;
-        };
-        let resp: HttpResponse =
-            EmbeddedStaticFile(Some(file), Duration::from_secs(60)).into();
-        assert_eq!(true, !resp.body.is_empty());
-        assert_eq!(200, resp.status.as_u16());
-        assert_eq!(0, resp.max_age.unwrap_or_default());
-        assert_eq!(
-            r#"("content-type", "text/html")"#,
-            format!("{:?}", resp.headers.unwrap_or_default()[0])
-        );
-
-        let resp: HttpResponse =
-            EmbeddedStaticFile(None, Duration::from_secs(60)).into();
-        assert_eq!(404, resp.status.as_u16())
-    }
-
-    #[test]
-    fn test_auth_validate_skips_only_public_assets() {
-        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
-        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
+    fn test_auth_validate_requires_auth_for_every_path() {
+        init_config_manager();
         // spellchecker:off
         let admin = AdminServe::try_from(
             &toml::from_str::<PluginConf>(
@@ -1129,67 +1049,179 @@ mod tests {
         // spellchecker:on
 
         // `auth_validate` runs on the path AFTER the admin prefix is stripped.
-        let auth_skipped = |method: Method, path: &str| {
-            let req = pingora::http::RequestHeader::build(
-                method,
-                path.as_bytes(),
-                None,
-            )
-            .unwrap();
-            admin.auth_validate(&req)
-        };
+        let request =
+            |method: Method, path: &str, authorization: Option<&str>| {
+                let mut req = pingora::http::RequestHeader::build(
+                    method,
+                    path.as_bytes(),
+                    None,
+                )
+                .unwrap();
+                if let Some(value) = authorization {
+                    req.insert_header("authorization", value).unwrap();
+                }
+                req
+            };
 
-        // Genuine static assets of the login UI load without auth.
-        assert_eq!(true, auth_skipped(Method::GET, "/"));
-        assert_eq!(true, auth_skipped(Method::GET, "/index.html"));
-        assert_eq!(true, auth_skipped(Method::GET, "/favicon.ico"));
-        assert_eq!(true, auth_skipped(Method::GET, "/vite.svg"));
-        assert_eq!(true, auth_skipped(Method::GET, "/assets/index-abc.js"));
-
-        // Regression: the bare-path router accepts `/configs` too, so a
-        // static-looking suffix must never skip auth.
-        assert_eq!(false, auth_skipped(Method::GET, "/configs/full.js"));
-        assert_eq!(false, auth_skipped(Method::GET, "/api/configs/full.js"));
-        assert_eq!(false, auth_skipped(Method::GET, "/config-history/x.css"));
+        // Nothing is public any more: the console moved to the control plane,
+        // so every path — including the old login-page assets and paths that
+        // merely look static — must authenticate.
+        for path in [
+            "/",
+            "/index.html",
+            "/favicon.ico",
+            "/vite.svg",
+            "/assets/index-abc.js",
+            "/configs/full.js",
+            "/api/configs/full.js",
+            "/config-history/x.css",
+            "/api/basic",
+            "/pingap.png",
+        ] {
+            assert_eq!(
+                false,
+                admin.auth_validate(&request(Method::GET, path, None)),
+                "{path} must require authentication"
+            );
+        }
         assert_eq!(
             false,
-            auth_skipped(Method::POST, "/configs/upstream/evil.js")
+            admin.auth_validate(&request(
+                Method::POST,
+                "/configs/upstream/evil.js",
+                None
+            ))
         );
-        assert_eq!(false, auth_skipped(Method::GET, "/api/basic"));
-        assert_eq!(false, auth_skipped(Method::GET, "/pingap.png"));
-        assert_eq!(false, auth_skipped(Method::POST, "/assets/index.js"));
+
+        // A valid signed token still authenticates any of them.
+        let token = auth_header("admin", "123123");
+        assert_eq!(
+            true,
+            admin.auth_validate(&request(
+                Method::GET,
+                "/configs/full",
+                Some(&token)
+            ))
+        );
+        assert_eq!(
+            true,
+            admin.auth_validate(&request(
+                Method::GET,
+                "/assets/index-abc.js",
+                Some(&token)
+            ))
+        );
+
+        // A token signed for a different password does not.
+        let token = auth_header("admin", "wrong");
+        assert_eq!(
+            false,
+            admin.auth_validate(&request(
+                Method::GET,
+                "/configs/full",
+                Some(&token)
+            ))
+        );
     }
 
-    #[test]
-    fn test_public_asset_requires_exact_path_and_read_method() {
-        assert_eq!(true, is_public_asset(&Method::GET, "/"));
-        assert_eq!(true, is_public_asset(&Method::HEAD, "/"));
-        assert_eq!(true, is_public_asset(&Method::GET, "/assets/index-abc.js"));
-        assert_eq!(true, is_public_asset(&Method::HEAD, "/assets/index.css"));
+    #[tokio::test]
+    async fn test_configs_full_requires_auth() {
+        init_config_manager();
+        // spellchecker:off
+        let admin = AdminServe::try_from(
+            &toml::from_str::<PluginConf>(
+                r#"
+    category = "admin"
+    path = "/"
+    authorizations = ["YWRtaW46MTIzMTIz"]
+    "#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // spellchecker:on
 
-        assert_eq!(false, is_public_asset(&Method::GET, "/configs/full.js"));
-        assert_eq!(
-            false,
-            is_public_asset(&Method::GET, "/api/configs/full.js")
-        );
-        assert_eq!(
-            false,
-            is_public_asset(&Method::GET, "/config-history/x.css")
-        );
-        assert_eq!(false, is_public_asset(&Method::GET, "/basic"));
-        assert_eq!(false, is_public_asset(&Method::GET, "/pprof/memory.js"));
-        assert_eq!(
-            false,
-            is_public_asset(&Method::POST, "/configs/upstream/evil.js")
-        );
-        assert_eq!(false, is_public_asset(&Method::POST, "/assets/index.js"));
-        assert_eq!(false, is_public_asset(&Method::POST, "/"));
+        let request = |authorization: Option<&str>| {
+            let mut value = String::from(
+                "GET /configs/full HTTP/1.1\r\nHost: localhost\r\n",
+            );
+            if let Some(token) = authorization {
+                value.push_str(&format!("Authorization: {token}\r\n"));
+            }
+            value.push_str("\r\n");
+            value
+        };
+
+        let resp = admin_response(&admin, &request(None)).await;
+        assert_eq!(401, resp.status.as_u16());
+
+        let token = auth_header("admin", "123123");
+        let resp = admin_response(&admin, &request(Some(&token))).await;
+        assert_eq!(200, resp.status.as_u16());
+    }
+
+    /// Regression: a `/` mount strips the only slash from a single-segment
+    /// route. `http::Uri` parsed the relative `basic` as an authority with an
+    /// empty path, so `/basic` and `/configs` fell through to 404.
+    #[tokio::test]
+    async fn test_bare_single_segment_routes() {
+        init_config_manager();
+        // spellchecker:off
+        let admin = AdminServe::try_from(
+            &toml::from_str::<PluginConf>(
+                r#"
+    category = "admin"
+    path = "/"
+    authorizations = ["YWRtaW46MTIzMTIz"]
+    "#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // spellchecker:on
+        let token = auth_header("admin", "123123");
+
+        for path in ["/basic", "/configs"] {
+            let request = format!(
+                "GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: {token}\r\n\r\n"
+            );
+            let resp = admin_response(&admin, &request).await;
+            assert_eq!(200, resp.status.as_u16(), "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unknown_path_returns_not_found() {
+        init_config_manager();
+        // spellchecker:off
+        let admin = AdminServe::try_from(
+            &toml::from_str::<PluginConf>(
+                r#"
+    category = "admin"
+    path = "/"
+    authorizations = ["YWRtaW46MTIzMTIz"]
+    "#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // spellchecker:on
+        let token = auth_header("admin", "123123");
+
+        // `/` used to serve the embedded `index.html`; it is now just another
+        // unknown path for this API-only plugin.
+        for path in ["/", "/does-not-exist.js"] {
+            let request = format!(
+                "GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: {token}\r\n\r\n"
+            );
+            let resp = admin_response(&admin, &request).await;
+            assert_eq!(404, resp.status.as_u16(), "{path}");
+        }
     }
 
     #[test]
     fn test_admin_auth_construction_fails_closed() {
-        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
-        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
+        init_config_manager();
         let build = |conf: &str| {
             AdminServe::try_from(&toml::from_str::<PluginConf>(conf).unwrap())
         };
@@ -1298,8 +1330,7 @@ addrs = []
     /// to index past the end of the split url and panic the request task.
     #[tokio::test]
     async fn test_config_history_without_name() {
-        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
-        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
+        init_config_manager();
         let admin = AdminServe::try_from(
             &toml::from_str::<PluginConf>(
                 r#"
