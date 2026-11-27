@@ -493,17 +493,24 @@ impl AdminServe {
         session: &mut Session,
     ) -> pingora::Result<HttpResponse> {
         let buf = get_request_body(session).await?;
-        let config: PingapTomlConfig = toml::from_slice(&buf).map_err(|e| {
-            error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
-            pingap_core::new_internal_error(500, e)
-        })?;
+        let config: PingapTomlConfig = match toml::from_slice(&buf) {
+            Ok(config) => config,
+            Err(e) => {
+                error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
+                // The caller sent a malformed document: 400, not a server
+                // fault. The stored document is untouched.
+                return Ok(HttpResponse::bad_request(format!(
+                    "invalid config: {e}"
+                )));
+            },
+        };
         // A per-category write validates before it is stored; a wholesale
         // import replaces every category at once, so it must pass the same
         // gate or it can install a config the process would refuse to boot.
-        validate_import(&config).map_err(|e| {
+        if let Err(e) = validate_import(&config) {
             error!(target: LOG_TARGET, error = e, "import config fail");
-            pingap_core::new_internal_error(500, e)
-        })?;
+            return Ok(HttpResponse::bad_request(e));
+        }
         self.config_manager.save_all(&config).await.map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
             pingap_core::new_internal_error(500, e)
@@ -1758,7 +1765,7 @@ allow_unauthenticated = true
             let resp =
                 admin_json_response(&admin, "POST", "/configs/import", body)
                     .await;
-            assert_eq!(500, resp.status.as_u16(), "body: {body}");
+            assert_eq!(400, resp.status.as_u16(), "body: {body}");
             assert_eq!(
                 before,
                 manager.load_all_raw().await.unwrap(),
