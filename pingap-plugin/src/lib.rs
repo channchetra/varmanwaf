@@ -79,6 +79,50 @@ pub fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Configuration keys whose values are credentials and must not reach a log.
+const SECRET_CONFIG_KEYS: [&str; 8] = [
+    "api_key",
+    "authorizations",
+    "client_secret",
+    "cookie_secret",
+    "keys",
+    "password",
+    "secret",
+    "token",
+];
+
+/// Placeholder printed instead of a credential value.
+const REDACTED: &str = "<redacted>";
+
+/// Renders a plugin configuration for a debug log with every credential value
+/// replaced by [`REDACTED`].
+///
+/// Auth plugins log their configuration at construction. Printing the raw
+/// table wrote base64 credentials, API keys, JWT and challenge secrets into
+/// the log. The shape of a list is preserved so the log still shows how many
+/// credentials are configured, and every other key is rendered unchanged.
+pub fn redacted_params(conf: &PluginConf) -> String {
+    let mut table = conf.clone();
+    for key in SECRET_CONFIG_KEYS {
+        if let Some(value) = table.get_mut(key) {
+            *value = redacted_value(value);
+        }
+    }
+    table.to_string()
+}
+
+fn redacted_value(value: &toml::Value) -> toml::Value {
+    match value {
+        toml::Value::Array(items) => toml::Value::Array(
+            items
+                .iter()
+                .map(|_| toml::Value::String(REDACTED.to_string()))
+                .collect(),
+        ),
+        _ => toml::Value::String(REDACTED.to_string()),
+    }
+}
+
 pub fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
     get_int_conf_or_default(value, key, 0)
 }
@@ -356,7 +400,7 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::{accepts_encoding, parse_params};
+    use super::{accepts_encoding, parse_params, redacted_params};
     use pingap_config::PluginConf;
     use pretty_assertions::assert_eq;
 
@@ -401,5 +445,32 @@ mod tests {
         assert_eq!(false, accepts_encoding("gzipx", "gzip"));
         // Explicit q=0 means "not acceptable".
         assert_eq!(false, accepts_encoding("br;q=0", "br"));
+    }
+
+    #[test]
+    fn test_redacted_params_hides_credentials() {
+        // spellchecker:off
+        let conf: PluginConf = toml::from_str(
+            r#"
+category = "basic_auth"
+authorizations = ["YWRtaW46MTIzMTIz"]
+secret = "super-secret"
+keys = ["key-one", "key-two"]
+delay = "10ms"
+"#,
+        )
+        .unwrap();
+        // spellchecker:on
+
+        let rendered = redacted_params(&conf);
+        assert!(!rendered.contains("YWRtaW46MTIzMTIz"));
+        assert!(!rendered.contains("super-secret"));
+        assert!(!rendered.contains("key-one"));
+        // Two list entries remain visible as two placeholders.
+        assert!(rendered.contains("<redacted>"));
+        assert!(rendered.contains(r#"["<redacted>", "<redacted>"]"#));
+        // Non-secret keys are untouched.
+        assert!(rendered.contains("basic_auth"));
+        assert!(rendered.contains("10ms"));
     }
 }

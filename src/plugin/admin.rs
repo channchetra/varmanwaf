@@ -28,12 +28,14 @@ use hex::encode;
 use http::Method;
 use http::{HeaderValue, StatusCode, header};
 use humantime::parse_duration;
+use pingap_certificate::validate_servers_tls_for_backend;
 use pingap_config::hcl::convert_toml_to_hcl;
 use pingap_config::kdl::convert_toml_to_kdl;
 use pingap_config::{
     BasicConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE, Category,
-    CertificateConf, ConfigManager, LocationConf, PluginCategory, PluginConf,
-    ServerConf, StorageConf, UpstreamConf, Validate, format_category,
+    CertificateConf, ConfigManager, LocationConf, PingapTomlConfig,
+    PluginCategory, PluginConf, ServerConf, StorageConf, UpstreamConf,
+    Validate, format_category,
 };
 use pingap_config::{
     CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
@@ -44,7 +46,7 @@ use pingap_core::{
 };
 use pingap_performance::get_process_system_info;
 use pingap_performance::get_processing_accepted;
-use pingap_plugin::{Error, get_plugin_factory};
+use pingap_plugin::{Error, get_plugin_factory, redacted_params};
 use pingap_upstream::UpstreamHealthyStatus;
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
@@ -61,7 +63,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use substring::Substring;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 use urlencoding::decode;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -134,6 +136,7 @@ pub struct AdminServe {
     max_age: Duration,
     hash_value: String,
     ip_fail_limit: TtlLruLimit,
+    allow_unauthenticated: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -184,21 +187,61 @@ impl TryFrom<&PluginConf> for AdminServe {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
+        let allow_unauthenticated = value
+            .get("allow_unauthenticated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let mut authorizations = vec![];
-        for item in get_str_slice_conf(value, "authorizations").iter() {
+        for (index, item) in get_str_slice_conf(value, "authorizations")
+            .iter()
+            .enumerate()
+        {
             if item.is_empty() {
-                continue;
+                // The `--admin host:port` form emits one empty entry when no
+                // credentials are given. It used to disable authentication
+                // silently; only `allow_unauthenticated` may do that now.
+                if allow_unauthenticated {
+                    continue;
+                }
+                return Err(Error::Invalid {
+                    category: "admin".to_string(),
+                    message: format!(
+                        "authorizations[{index}] is empty, expect base64 of user:password"
+                    ),
+                });
             }
             let data =
                 base64_decode(item).map_err(|e| Error::Base64Decode {
                     category: PluginCategory::BasicAuth.to_string(),
                     source: e,
                 })?;
-            if let Some((user, pass)) =
-                std::string::String::from_utf8_lossy(&data).split_once(':')
-            {
-                authorizations.push((user.to_string(), pass.to_string()));
-            }
+            let decoded = std::string::String::from_utf8_lossy(&data);
+            let Some((user, pass)) = decoded.split_once(':') else {
+                return Err(Error::Invalid {
+                    category: "admin".to_string(),
+                    message: format!(
+                        "authorizations[{index}] must be base64 of user:password"
+                    ),
+                });
+            };
+            authorizations.push((user.to_string(), pass.to_string()));
+        }
+        if authorizations.is_empty() && !allow_unauthenticated {
+            return Err(Error::Invalid {
+                category: "admin".to_string(),
+                message:
+                    "authorizations is empty; set allow_unauthenticated = \
+                          true to disable authentication"
+                        .to_string(),
+            });
+        }
+        if allow_unauthenticated {
+            warn!(
+                target: LOG_TARGET,
+                "admin: authentication is DISABLED (allow_unauthenticated = true); \
+                 anyone who can reach this listener can read and change the \
+                 configuration"
+            );
         }
         let mut ip_fail_limit = get_int_conf(value, "ip_fail_limit");
         if ip_fail_limit <= 0 {
@@ -234,6 +277,7 @@ impl TryFrom<&PluginConf> for AdminServe {
                 message: e.to_string(),
             })?,
             authorizations,
+            allow_unauthenticated,
         };
 
         Ok(params)
@@ -260,31 +304,46 @@ async fn get_request_body(session: &mut Session) -> pingora::Result<BytesMut> {
     Ok(buf)
 }
 
+/// The login UI's own files, which may be served before the visitor has
+/// authenticated.
+///
+/// Only exact paths qualify (plus the Vite bundle under `/assets/`), and only
+/// for a read: a suffix such as `.js`, `.css` or `.png` proves nothing, because
+/// the route table also accepts bare paths (`/configs/...` as well as
+/// `/api/configs/...`). Anything else — every API route, config history,
+/// `/basic`, `/pprof`, and any path that merely *looks* static — must
+/// authenticate.
+fn is_public_asset(method: &Method, path: &str) -> bool {
+    if method != Method::GET && method != Method::HEAD {
+        return false;
+    }
+    path.starts_with("/assets/")
+        || matches!(path, "/" | "/index.html" | "/favicon.ico" | "/vite.svg")
+}
+
 impl AdminServe {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(target: LOG_TARGET, params = params.to_string(), "new admin server plugin");
+        debug!(target: LOG_TARGET, params = redacted_params(params), "new admin server plugin");
         let serve = AdminServe::try_from(params)?;
 
         Ok(serve)
     }
     fn auth_validate(&self, req_header: &RequestHeader) -> bool {
-        if self.authorizations.is_empty() {
+        if self.allow_unauthenticated {
             return true;
         }
+        // Construction rejects an empty list unless `allow_unauthenticated` is
+        // set, so this is a belt-and-braces fail-closed default: a malformed
+        // config must never turn into an open admin API.
+        if self.authorizations.is_empty() {
+            error!(
+                target: LOG_TARGET,
+                "auth validate fail: no authorizations configured"
+            );
+            return false;
+        }
         let path = req_header.uri.path();
-        // The login UI's own static assets (js/css/png) and the index page must
-        // load before the user authenticates. But API routes must ALWAYS require
-        // auth: otherwise auth is bypassed by suffixing an API URL with a
-        // static-looking extension, e.g. `GET /api/configs/x.js`. The auth skip
-        // and the `/api` router use different criteria, so they must be kept
-        // mutually exclusive here.
-        let is_api = path.starts_with("/api") || path.starts_with("api/");
-        if !is_api
-            && (path.len() <= 1
-                || path.ends_with(".js")
-                || path.ends_with(".css")
-                || path.ends_with(".png"))
-        {
+        if is_public_asset(&req_header.method, path) {
             return true;
         }
         let value =
@@ -520,8 +579,15 @@ impl AdminServe {
         session: &mut Session,
     ) -> pingora::Result<HttpResponse> {
         let buf = get_request_body(session).await?;
-        let config = toml::from_slice(&buf).map_err(|e| {
+        let config: PingapTomlConfig = toml::from_slice(&buf).map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
+            pingap_core::new_internal_error(400, e)
+        })?;
+        // A per-category write validates before it is stored; a wholesale
+        // import replaces every category at once, so it must pass the same
+        // gate or it can install a config the process would refuse to boot.
+        validate_import(&config).map_err(|e| {
+            error!(target: LOG_TARGET, error = e, "import config fail");
             pingap_core::new_internal_error(400, e)
         })?;
         self.manager.save_all(&config).await.map_err(|e| {
@@ -531,6 +597,18 @@ impl AdminServe {
 
         Ok(HttpResponse::no_content())
     }
+}
+
+/// Runs the startup validation over an imported configuration, before any of
+/// it is written to the backing store.
+fn validate_import(
+    config: &PingapTomlConfig,
+) -> std::result::Result<(), String> {
+    let parsed = config.to_pingap_config(true).map_err(|e| e.to_string())?;
+    parsed.validate().map_err(|e| e.to_string())?;
+    validate_servers_tls_for_backend(&parsed.servers)
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn get_method_path(session: &Session) -> (Method, String) {
@@ -944,9 +1022,11 @@ fn init() {
 mod tests {
     use super::{
         AdminAsset, AdminServe, EmbeddedStaticFile, handle_request_admin,
+        is_public_asset, validate_import,
     };
     use crate::config_manager::try_init_config_manager;
-    use pingap_config::PluginConf;
+    use http::Method;
+    use pingap_config::{PingapTomlConfig, PluginConf};
     use pingap_core::{Ctx, HttpResponse};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -1031,7 +1111,7 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_validate_skips_only_static_assets() {
+    fn test_auth_validate_skips_only_public_assets() {
         let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
         try_init_config_manager(&file.path().to_string_lossy()).unwrap();
         // spellchecker:off
@@ -1049,9 +1129,9 @@ mod tests {
         // spellchecker:on
 
         // `auth_validate` runs on the path AFTER the admin prefix is stripped.
-        let auth_skipped = |path: &str| {
+        let auth_skipped = |method: Method, path: &str| {
             let req = pingora::http::RequestHeader::build(
-                http::Method::GET,
+                method,
                 path.as_bytes(),
                 None,
             )
@@ -1060,17 +1140,158 @@ mod tests {
         };
 
         // Genuine static assets of the login UI load without auth.
-        assert_eq!(true, auth_skipped("/"));
-        assert_eq!(true, auth_skipped("/assets/index.js"));
-        assert_eq!(true, auth_skipped("/assets/index.css"));
-        assert_eq!(true, auth_skipped("/pingap.png"));
+        assert_eq!(true, auth_skipped(Method::GET, "/"));
+        assert_eq!(true, auth_skipped(Method::GET, "/index.html"));
+        assert_eq!(true, auth_skipped(Method::GET, "/favicon.ico"));
+        assert_eq!(true, auth_skipped(Method::GET, "/vite.svg"));
+        assert_eq!(true, auth_skipped(Method::GET, "/assets/index-abc.js"));
 
-        // Regression: API routes must never be auth-skipped, even when suffixed
-        // with a static-looking extension.
-        assert_eq!(false, auth_skipped("/api/configs/anything.js"));
-        assert_eq!(false, auth_skipped("/api/configs/upstream/evil.css"));
-        assert_eq!(false, auth_skipped("/api/certificates.png"));
-        assert_eq!(false, auth_skipped("/api/basic"));
+        // Regression: the bare-path router accepts `/configs` too, so a
+        // static-looking suffix must never skip auth.
+        assert_eq!(false, auth_skipped(Method::GET, "/configs/full.js"));
+        assert_eq!(false, auth_skipped(Method::GET, "/api/configs/full.js"));
+        assert_eq!(false, auth_skipped(Method::GET, "/config-history/x.css"));
+        assert_eq!(
+            false,
+            auth_skipped(Method::POST, "/configs/upstream/evil.js")
+        );
+        assert_eq!(false, auth_skipped(Method::GET, "/api/basic"));
+        assert_eq!(false, auth_skipped(Method::GET, "/pingap.png"));
+        assert_eq!(false, auth_skipped(Method::POST, "/assets/index.js"));
+    }
+
+    #[test]
+    fn test_public_asset_requires_exact_path_and_read_method() {
+        assert_eq!(true, is_public_asset(&Method::GET, "/"));
+        assert_eq!(true, is_public_asset(&Method::HEAD, "/"));
+        assert_eq!(true, is_public_asset(&Method::GET, "/assets/index-abc.js"));
+        assert_eq!(true, is_public_asset(&Method::HEAD, "/assets/index.css"));
+
+        assert_eq!(false, is_public_asset(&Method::GET, "/configs/full.js"));
+        assert_eq!(
+            false,
+            is_public_asset(&Method::GET, "/api/configs/full.js")
+        );
+        assert_eq!(
+            false,
+            is_public_asset(&Method::GET, "/config-history/x.css")
+        );
+        assert_eq!(false, is_public_asset(&Method::GET, "/basic"));
+        assert_eq!(false, is_public_asset(&Method::GET, "/pprof/memory.js"));
+        assert_eq!(
+            false,
+            is_public_asset(&Method::POST, "/configs/upstream/evil.js")
+        );
+        assert_eq!(false, is_public_asset(&Method::POST, "/assets/index.js"));
+        assert_eq!(false, is_public_asset(&Method::POST, "/"));
+    }
+
+    #[test]
+    fn test_admin_auth_construction_fails_closed() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
+        let build = |conf: &str| {
+            AdminServe::try_from(&toml::from_str::<PluginConf>(conf).unwrap())
+        };
+
+        // An empty list used to mean "no authentication"; it is now an error.
+        let err = build(r#"category = "admin""#).err().unwrap();
+        assert!(
+            err.to_string().contains("authorizations is empty"),
+            "unexpected error: {err}"
+        );
+        let err = build(
+            r#"
+category = "admin"
+authorizations = []
+"#,
+        )
+        .err()
+        .unwrap();
+        assert!(
+            err.to_string().contains("authorizations is empty"),
+            "unexpected error: {err}"
+        );
+
+        // A decoded entry without `user:pass` is rejected, naming the index.
+        // spellchecker:off
+        let err = build(
+            r#"
+category = "admin"
+authorizations = ["YWRtaW46MTIzMTIz", "bm9jb2xvbg=="]
+"#,
+        )
+        .err()
+        .unwrap();
+        // spellchecker:on
+        assert!(
+            err.to_string().contains("authorizations[1]"),
+            "unexpected error: {err}"
+        );
+
+        // An explicitly empty entry (what `--admin host:port` emits) is
+        // rejected too: authentication can only be turned off on purpose.
+        let err = build(
+            r#"
+category = "admin"
+authorizations = [""]
+"#,
+        )
+        .err()
+        .unwrap();
+        assert!(
+            err.to_string().contains("authorizations[0]"),
+            "unexpected error: {err}"
+        );
+
+        // One valid entry is enough.
+        assert!(
+            build(
+                r#"
+category = "admin"
+authorizations = ["YWRtaW46MTIzMTIz"]
+"#
+            )
+            .is_ok()
+        );
+
+        // The explicit opt-out still allows an empty list.
+        assert!(
+            build(
+                r#"
+category = "admin"
+allow_unauthenticated = true
+"#
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_validate_import_rejects_invalid_config() {
+        let valid: PingapTomlConfig = toml::from_str(
+            r#"
+[basic]
+log_level = "info"
+"#,
+        )
+        .unwrap();
+        assert_eq!(Ok(()), validate_import(&valid));
+
+        // An upstream without addresses would be stored by `save_all` today
+        // and only fail at the next restart.
+        let invalid: PingapTomlConfig = toml::from_str(
+            r#"
+[upstreams.bad]
+addrs = []
+"#,
+        )
+        .unwrap();
+        let err = validate_import(&invalid).err().unwrap();
+        assert!(
+            err.contains("upstream addrs is empty"),
+            "unexpected error: {err}"
+        );
     }
 
     /// Regression: `/config-history/{category}` without the trailing name used
@@ -1080,7 +1301,13 @@ mod tests {
         let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
         try_init_config_manager(&file.path().to_string_lossy()).unwrap();
         let admin = AdminServe::try_from(
-            &toml::from_str::<PluginConf>(r#"category = "admin""#).unwrap(),
+            &toml::from_str::<PluginConf>(
+                r#"
+category = "admin"
+allow_unauthenticated = true
+"#,
+            )
+            .unwrap(),
         )
         .unwrap();
 

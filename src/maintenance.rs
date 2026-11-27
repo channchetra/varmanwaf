@@ -243,10 +243,7 @@ async fn reset_password(opts: ResetPasswordOpts) -> anyhow::Result<()> {
 
     let password_hash = hash_password(&password)
         .map_err(|err| anyhow::anyhow!("cannot hash the password: {err}"))?;
-    let mut active: user::ActiveModel = row.into();
-    active.password_hash = Set(password_hash);
-    active.updated_at = Set(Utc::now());
-    let row = active
+    let row = password_reset_change(row, password_hash)
         .update(&db)
         .await
         .context("cannot update the password")?;
@@ -256,6 +253,21 @@ async fn reset_password(opts: ResetPasswordOpts) -> anyhow::Result<()> {
         print_generated(&password);
     }
     Ok(())
+}
+
+/// Applies the credential invalidation of a password reset, matching the API:
+/// the new hash, a forced change at the next login, and a token-version bump
+/// that revokes every token minted before it.
+fn password_reset_change(
+    row: user::Model,
+    password_hash: String,
+) -> user::ActiveModel {
+    let mut active: user::ActiveModel = row.into();
+    active.password_hash = Set(password_hash);
+    active.must_change_password = Set(true);
+    active.token_version = Set(active.token_version.unwrap() + 1);
+    active.updated_at = Set(Utc::now());
+    active
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -689,5 +701,27 @@ mod tests {
         // 128 bits of hex from two UUIDv4 payloads.
         assert_eq!(password.len(), 64);
         assert!(password.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn password_reset_forces_change_and_revokes_tokens() {
+        let now = Utc::now();
+        let row = user::Model {
+            id: Uuid::new_v4(),
+            email: "ops@example.com".to_string(),
+            password_hash: "old-hash".to_string(),
+            name: None,
+            role: role::ADMIN.to_string(),
+            disabled: false,
+            must_change_password: false,
+            token_version: 7,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let active = password_reset_change(row, "new-hash".to_string());
+        assert_eq!(Set("new-hash".to_string()), active.password_hash);
+        assert_eq!(Set(true), active.must_change_password);
+        assert_eq!(Set(8), active.token_version);
     }
 }

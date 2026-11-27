@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, parse_params};
+use super::{Error, get_hash_key, parse_params, redacted_params};
 use ahash::AHashMap;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -181,7 +181,7 @@ impl CombinedAuth {
     /// # Returns
     /// * `Result<Self>` - A new plugin instance or an error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new combined auth plugin");
+        debug!(params = redacted_params(params), "new combined auth plugin");
         Self::try_from(params)
     }
 

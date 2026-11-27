@@ -17,7 +17,8 @@ the admin UI should live on an existing server behind a path prefix.
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `admin`. |
 | `path` | string | `""` | URL prefix the admin UI is mounted at. A trailing `/` is stripped. |
-| `authorizations` | string[] | `[]` | Base64 of `user:password`. **Empty disables authentication entirely.** |
+| `authorizations` | string[] | `[]` | Base64 of `user:password`, one entry per account. **Required and non-empty** unless `allow_unauthenticated` is set. An entry that does not decode to `user:password` fails construction, naming its index. |
+| `allow_unauthenticated` | bool | `false` | Explicitly serves the admin API and UI without authentication. Logs a warning at startup. Never expose such an instance beyond localhost. |
 | `max_age` | duration | `2d` | Allowed clock skew for the signed token. |
 | `ip_fail_limit` | int | `10` | Failed attempts per IP before that IP is blocked for 5 minutes. |
 
@@ -65,10 +66,16 @@ token = hex(sha256("<user>:<password>:<unix-seconds>"))
 `<unix-seconds>` must be within `max_age` of the proxy's clock, and the token is
 compared in constant time. The web UI computes this for you after login.
 
-Static assets of the login page (`/`, `*.js`, `*.css`, `*.png`) are served
-without authentication so the login screen can load. Anything under `/api` always
-requires it, so an API route cannot be reached by dressing it up with a
-static-looking suffix.
+Static assets of the login page are served without authentication so the login
+screen can load, but only these exact paths and only for `GET`/`HEAD`:
+
+- `/`, `/index.html`, `/favicon.ico`, `/vite.svg`
+- anything under `/assets/` (the Vite bundle)
+
+Every other path requires authentication, including `/configs`,
+`/config-history`, `/basic`, `/pprof` — both through the bare path and the
+`/api` prefix. A static-looking suffix such as `.js`, `.css` or `.png` grants
+nothing.
 
 After `ip_fail_limit` failures an IP is refused with `403 Forbidden, too many
 failures` for 5 minutes.
@@ -106,8 +113,10 @@ traffic itself. Data-plane instances watch the same backend and hot reload.
 
 ## Usage notes
 
-- **An empty `authorizations` disables authentication.** Never expose such an
-  instance beyond localhost.
+- **Authentication is required.** An empty or malformed `authorizations` list
+  fails startup; it no longer disables authentication. To run without
+  authentication on purpose, set `allow_unauthenticated = true` — never expose
+  such an instance beyond localhost.
 - The API can change certificates, upstreams and servers and can restart the
   process. Bind it to a private interface, or put
   [`ip_restriction`](ip_restriction.md) in front of the admin location.

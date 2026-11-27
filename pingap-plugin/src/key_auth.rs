@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_step_conf_in, parse_params};
+use super::{
+    Error, get_hash_key, get_step_conf_in, parse_params, redacted_params,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderName, StatusCode};
@@ -197,7 +199,7 @@ impl KeyAuth {
     /// # Returns
     /// * `Result<Self>` - A new KeyAuth instance or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new key auth plugin");
+        debug!(params = redacted_params(params), "new key auth plugin");
         Self::try_from(params)
     }
 }

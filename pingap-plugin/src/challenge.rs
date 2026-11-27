@@ -23,7 +23,7 @@
 //! the [`PENDING_CHALLENGES`] store so a challenge issued by one can be
 //! verified by the other's verify endpoint.
 
-use super::{Error, get_hash_key, parse_params};
+use super::{Error, get_hash_key, parse_params, redacted_params};
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
@@ -575,7 +575,7 @@ pub struct ChallengePlugin {
 impl ChallengePlugin {
     /// Create a new plugin from configuration.
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new challenge plugin");
+        debug!(params = redacted_params(params), "new challenge plugin");
         Self::try_from(params)
     }
 

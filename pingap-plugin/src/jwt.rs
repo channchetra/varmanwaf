@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, parse_params};
+use super::{Error, get_hash_key, parse_params, redacted_params};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -459,7 +459,7 @@ impl JwtAuth {
     /// # Returns
     /// * `Result<Self>` - New JwtAuth instance or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new jwt auth plugin");
+        debug!(params = redacted_params(params), "new jwt auth plugin");
         Self::try_from(params)
     }
 }
