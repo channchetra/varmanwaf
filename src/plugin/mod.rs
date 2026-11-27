@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::process::get_admin_addr;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_config::PluginConf;
@@ -40,6 +39,11 @@ mod stats;
 
 /// UUID for the admin server plugin, generated at runtime
 pub static ADMIN_SERVER_PLUGIN: &str = "pingap:admin";
+
+/// Name and configuration of a plugin the root constructs itself and hands to
+/// [`try_init_plugins`], instead of the registry deriving it from a
+/// process-global set during boot.
+pub type AdminPlugin = (String, PluginConf);
 
 static LOG_TARGET: &str = "main::plugin";
 
@@ -298,10 +302,23 @@ pub fn parse_plugins(
     (plugins, errors)
 }
 
+/// Registers the plugins that live outside `pingap-plugin`'s own link set.
+///
+/// `pingap-imageoptim` registers through a `#[ctor]`, which only runs when the
+/// crate is linked. Naming it here is that link edge, and the call makes the
+/// registration explicit instead of relying on an unused import in `main`.
+pub fn register_builtin_plugins() {
+    #[cfg(feature = "imageoptim")]
+    pingap_imageoptim::register();
+}
+
 /// Initializes or updates plugins based on configuration.
 ///
 /// # Arguments
 /// * `plugins` - HashMap of plugin names to configurations
+/// * `admin` - The admin listener plugin parsed by the root, if it serves one.
+///   It is passed explicitly because it is not part of the loaded document and
+///   must not depend on start-up order.
 ///
 /// # Returns
 /// Vector of plugin names that were created or updated
@@ -310,27 +327,20 @@ pub fn parse_plugins(
 /// Returns Error if plugin initialization fails
 pub fn try_init_plugins(
     plugins: &HashMap<String, PluginConf>,
+    admin: Option<AdminPlugin>,
 ) -> (Vec<String>, String) {
     let mut plugin_configs: Vec<(String, PluginConf)> = plugins
         .iter()
         .map(|(name, value)| (name.to_string(), value.clone()))
         .collect();
 
-    // add admin plugin
     let mut errors = vec![];
-    if let Some(addr) = &get_admin_addr() {
-        match parse_admin_plugin(addr) {
-            Ok((_, name, proxy_plugin_info)) => {
-                // The control-panel path passes the same plugin explicitly.
-                // Injecting it from the global as well constructs it twice.
-                if !plugins.contains_key(&name) {
-                    plugin_configs.push((name, proxy_plugin_info));
-                }
-            },
-            Err(e) => {
-                errors.push(e);
-            },
-        }
+    // A configuration entry named like the admin plugin wins, exactly as it
+    // did when the plugin was injected from the process-global address.
+    if let Some((name, conf)) = admin
+        && !plugins.contains_key(&name)
+    {
+        plugin_configs.push((name, conf));
     }
 
     plugin_configs.extend(get_builtin_proxy_plugins());
@@ -421,6 +431,6 @@ remove_headers = [
             .unwrap(),
         ),
     ]);
-    let (_, error) = try_init_plugins(&plugins);
+    let (_, error) = try_init_plugins(&plugins, None);
     assert!(error.is_empty());
 }

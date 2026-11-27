@@ -34,7 +34,7 @@
 
 use crate::certificates::try_update_certificates;
 use crate::locations::try_init_locations;
-use crate::plugin::try_init_plugins;
+use crate::plugin::{AdminPlugin, try_init_plugins};
 use crate::server_locations::try_init_server_locations;
 use crate::upstreams::{try_init_upstreams, try_update_upstreams};
 use crate::webhook::{
@@ -197,10 +197,15 @@ impl Categories {
 }
 
 /// Applies `next` over `previous`.
+///
+/// `admin_plugin` is the root's admin listener plugin, if it serves one. It is
+/// not part of the document and has to be re-registered on every plugin
+/// rebuild, or the admin listener would lose its plugin after a reload.
 pub async fn apply_config(
     previous: &PingapConfig,
     next: &PingapConfig,
     options: &ApplyOptions,
+    admin_plugin: Option<&AdminPlugin>,
 ) -> ApplyOutcome {
     let (changed, diff) = previous.diff(next);
     debug!(
@@ -217,7 +222,8 @@ pub async fn apply_config(
 
     let projection = hot_projection(previous, next, options).await;
     let categories = dispatch(previous, next, &changed, options);
-    let failures = apply_categories(next, categories, options).await;
+    let failures =
+        apply_categories(next, categories, options, admin_plugin).await;
     if !failures.is_empty() {
         return ApplyOutcome::Failed(failures.join(";"));
     }
@@ -274,6 +280,7 @@ async fn apply_categories(
     next: &PingapConfig,
     categories: Categories,
     options: &ApplyOptions,
+    admin_plugin: Option<&AdminPlugin>,
 ) -> Vec<String> {
     let mut failures = vec![];
 
@@ -303,7 +310,8 @@ async fn apply_categories(
         }
     }
     if categories.plugins {
-        let (updated, error) = try_init_plugins(&next.plugins);
+        let (updated, error) =
+            try_init_plugins(&next.plugins, admin_plugin.cloned());
         // A non-empty error means the provider kept the previous map; the
         // partial list it returns must not be reported as applied.
         let result = if error.is_empty() {
@@ -747,7 +755,8 @@ mod tests {
 
         // Act
         let outcome =
-            apply_config(&config, &config, &ApplyOptions::daemon(false)).await;
+            apply_config(&config, &config, &ApplyOptions::daemon(false), None)
+                .await;
 
         // Assert
         assert!(matches!(outcome, ApplyOutcome::Unchanged));
@@ -762,9 +771,11 @@ mod tests {
 
         // Act
         let restarting =
-            apply_config(&previous, &next, &ApplyOptions::daemon(true)).await;
+            apply_config(&previous, &next, &ApplyOptions::daemon(true), None)
+                .await;
         let hot_only =
-            apply_config(&previous, &next, &ApplyOptions::daemon(false)).await;
+            apply_config(&previous, &next, &ApplyOptions::daemon(false), None)
+                .await;
 
         // Assert: the log level is not a hot-reloadable component.
         match restarting {
@@ -797,7 +808,8 @@ mod tests {
 
         // Act
         let outcome =
-            apply_config(&previous, &next, &ApplyOptions::daemon(false)).await;
+            apply_config(&previous, &next, &ApplyOptions::daemon(false), None)
+                .await;
         let committed =
             commit_if_applied(&config_manager, next.clone(), &outcome);
 

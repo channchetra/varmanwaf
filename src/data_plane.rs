@@ -32,7 +32,6 @@
 //! * the Prometheus upstream-provider hook - only `run` has ever set it, and
 //!   the setter is a process-wide `OnceLock`.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -167,9 +166,10 @@ pub struct DataPlaneOptions {
     pub upgrade: bool,
     /// `--threads`, overriding `basic.threads` for every runtime.
     pub threads: Option<usize>,
-    /// Plugins built in addition to `config.plugins`. The `--cp` node passes
-    /// its admin plugin here because it never loads a configuration.
-    pub extra_plugins: HashMap<String, PluginConf>,
+    /// Plugins built in addition to `config.plugins`. The `--cp` node and
+    /// the file-configured daemon pass the admin listener parsed from
+    /// `--admin` here; the agent-hosted plane has none.
+    pub admin_plugin: Option<(String, PluginConf)>,
     /// Name of the shared background-task service. The file-configured daemon
     /// and the agent-hosted plane have always reported different names and
     /// both are kept. `None` for the `--cp` admin node, which runs no
@@ -267,9 +267,8 @@ pub fn assemble(
     try_init_server_locations(&config.servers, &config.locations)
         .map_err(|e| anyhow::anyhow!("failed to init server locations: {e}"))?;
 
-    let mut plugin_configs = config.plugins.clone();
-    plugin_configs.extend(options.extra_plugins);
-    let (updated, errors) = try_init_plugins(&plugin_configs);
+    let (updated, errors) =
+        try_init_plugins(&config.plugins, options.admin_plugin);
 
     let certificate_provider = new_certificate_provider();
     // Nothing configured (the `--cp` node) leaves the provider untouched
@@ -384,7 +383,7 @@ mod tests {
                 daemon: true,
                 upgrade: false,
                 threads: Some(3),
-                extra_plugins: HashMap::new(),
+                admin_plugin: None,
                 background_tasks: Some("test_background_service"),
                 admin_only: false,
             },
@@ -410,7 +409,7 @@ mod tests {
                 daemon: false,
                 upgrade: false,
                 threads: None,
-                extra_plugins: HashMap::new(),
+                admin_plugin: None,
                 background_tasks: None,
                 admin_only: true,
             },

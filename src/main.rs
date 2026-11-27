@@ -34,11 +34,6 @@ use pingap_certificate::{
 };
 use pingap_config::PingapConfig;
 use pingap_config::{ConfigManager, ETCD_PROTOCOL};
-// Link anchor: `pingap-imageoptim` registers its plugin from a `#[ctor]`, so
-// the crate has to be linked even though nothing here names a symbol from it.
-#[cfg(feature = "imageoptim")]
-#[allow(unused_imports)]
-use pingap_imageoptim::ImageOptim;
 use pingap_logger::parse_access_log_directive;
 use pingap_logger::{
     AsyncLoggerTask, LogCompressParams, new_async_logger,
@@ -54,10 +49,8 @@ use pingap_upstream::new_upstream_health_check_task;
 use pingora::server;
 use pingora::services::background::background_service;
 use process::{
-    get_admin_addr, init_start_time, new_auto_restart_service,
-    new_observer_service, set_admin_addr,
+    init_start_time, new_auto_restart_service, new_observer_service,
 };
-use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
 use std::future::Future;
@@ -265,10 +258,7 @@ fn get_config(
             // used to.
             migrate_config_layout(&config_manager).await;
             match config_manager.load_all().await {
-                Ok(config) => {
-                    // TODO 原有的load config有admin模式
-                    config.to_pingap_config(true)
-                },
+                Ok(config) => config.to_pingap_config(true),
                 Err(e) => Err(e),
             }
         },
@@ -315,7 +305,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     tokio::runtime::Runtime::new()?
         .block_on(migrate_config_layout(&config_manager));
 
-    let (admin_server_conf, name, proxy_plugin_info) =
+    let (admin_server_conf, admin_name, admin_plugin_conf) =
         plugin::parse_admin_plugin(&args.admin.unwrap_or_default())?;
     // No config is loaded in this mode: the plane is assembled from the
     // defaults, with the admin plugin as its only extra. `background_tasks`
@@ -327,7 +317,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
             daemon: args.daemon,
             upgrade: false,
             threads: None,
-            extra_plugins: HashMap::from([(name, proxy_plugin_info)]),
+            admin_plugin: Some((admin_name, admin_plugin_conf)),
             background_tasks: None,
             admin_only: true,
         },
@@ -473,9 +463,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     // Set up admin node if specified
-    if let Some(admin) = &args.admin {
-        set_admin_addr(admin);
-    }
     if args.cp {
         return run_admin_node(args);
     }
@@ -579,10 +566,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         application_log_paths.push(log_path);
     }
 
-    // TODO a better way
-    // since the cache will be initialized in validate function
-    // so set the current conf first
-    // pingap_config::set_current_config(&conf);
     config.validate()?;
     // Reject per-server TLS version/cipher settings the active backend cannot
     // apply (rustls fixes 1.2/1.3 + default suites). Must run for `--test` too.
@@ -680,13 +663,28 @@ fn run() -> Result<(), Box<dyn Error>> {
         process::set_restart_process_command(cmd);
     }
 
+    // Parse the admin listener once. The same plugin is registered in the
+    // provider (through `assemble`) and describes the listener added below, so
+    // `--admin` is not parsed twice and nothing depends on start-up order.
+    let (admin_server_conf, admin_plugin) = match args
+        .admin
+        .as_deref()
+        .map(plugin::parse_admin_plugin)
+        .transpose()?
+    {
+        Some((server_conf, name, conf)) => {
+            (Some(server_conf), Some((name, conf)))
+        },
+        None => (None, None),
+    };
+
     let mut assembled = data_plane::assemble(
         &config,
         data_plane::DataPlaneOptions {
             daemon: args.daemon,
             upgrade: args.upgrade,
             threads: args.threads,
-            extra_plugins: HashMap::new(),
+            admin_plugin: admin_plugin.clone(),
             background_tasks: Some("simple_background_service"),
             admin_only: false,
         },
@@ -768,13 +766,12 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let mut server_conf_list: Vec<ServerConf> = parse_from_conf(config.clone());
 
-    if let Some(addr) = &get_admin_addr() {
-        let (server_conf, _, plugin_conf) = plugin::parse_admin_plugin(addr)?;
-        let path = if let Some(path) = plugin_conf.get("path") {
-            path.to_string()
-        } else {
-            "".to_string()
-        };
+    if let Some(server_conf) = admin_server_conf {
+        let path = admin_plugin
+            .as_ref()
+            .and_then(|(_, plugin_conf)| plugin_conf.get("path"))
+            .map(|path| path.to_string())
+            .unwrap_or_default();
         info!(
             target: LOG_TARGET,
             admin_addr = server_conf.addr,
@@ -920,6 +917,8 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     if args.autorestart || args.autoreload {
         let only_hot_reload = !args.autorestart;
+        // The admin listener outlives every reload, so its plugin is passed to
+        // each rebuild instead of being re-derived from a process-global.
         if config_manager.support_observer() {
             assembled.server.add_service(background_service(
                 "observer",
@@ -928,6 +927,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     reload_handle,
                     auto_restart_check_interval,
                     only_hot_reload,
+                    admin_plugin,
                 ),
             ));
         } else {
@@ -936,6 +936,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 reload_handle,
                 auto_restart_check_interval,
                 only_hot_reload,
+                admin_plugin,
             );
             let name = auto_restart_task.name().to_string();
             assembled
@@ -992,6 +993,9 @@ fn main() {
     // `get_start_time` would report its first caller instead. Covers both the
     // platform mode and the plain proxy started below.
     init_start_time();
+    // Explicit registration is the link edge for feature-gated plugins that
+    // live outside `pingap-plugin` (and for its own `#[ctor]`s).
+    plugin::register_builtin_plugins();
 
     // Same rationale as varman::main: the graph pulls in two rustls crypto
     // providers (ring + aws-lc-rs), so install ring explicitly before any

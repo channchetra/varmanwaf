@@ -113,7 +113,7 @@ pub(super) async fn start_data_plane(
             daemon: false,
             upgrade: false,
             threads: None,
-            extra_plugins: HashMap::new(),
+            admin_plugin: None,
             background_tasks: Some("data_plane_background_tasks"),
             admin_only: false,
         },
@@ -394,6 +394,7 @@ pub(super) async fn start_data_plane(
                 &previous,
                 &config,
                 &ApplyOptions::agent_data_plane(),
+                None,
             )
             .await;
             if let ApplyOutcome::Failed(message) = &outcome {

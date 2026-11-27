@@ -278,11 +278,20 @@ impl Plugin for ImageOptim {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
+/// Registers the `image_optim` plugin with the global plugin factory.
+///
+/// The `#[ctor]` below calls this so the plugin is available whenever the
+/// crate is linked; the binary calls it explicitly as well, which is the link
+/// edge that keeps this crate in the build.
+pub fn register() {
     get_plugin_factory().register("image_optim", |params| {
         Ok(Arc::new(ImageOptim::new(params)?))
     });
+}
+
+#[ctor(unsafe)]
+fn init() {
+    register();
 }
 
 #[cfg(test)]

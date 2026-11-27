@@ -14,6 +14,7 @@
 
 use super::restart;
 use crate::config_apply::{self, ApplyOptions, ApplyOutcome};
+use crate::plugin::AdminPlugin;
 use crate::webhook::send_notification;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_trait::async_trait;
@@ -74,6 +75,7 @@ fn should_skip(
 async fn diff_and_update_config(
     config_manager: Arc<ConfigManager>,
     hot_reload_only: bool,
+    admin_plugin: Option<AdminPlugin>,
 ) -> Result<Option<PingapConfig>, Box<dyn std::error::Error>> {
     let raw = config_manager.load_all_raw().await?;
     let hash = raw_hash(&raw);
@@ -83,8 +85,13 @@ async fn diff_and_update_config(
     }
     let new_config =
         PingapTomlConfig::from_toml(&raw)?.to_pingap_config(true)?;
-    let restart_requested =
-        apply_config(config_manager, &new_config, hot_reload_only).await?;
+    let restart_requested = apply_config(
+        config_manager,
+        &new_config,
+        hot_reload_only,
+        admin_plugin,
+    )
+    .await?;
     // Recorded only after a pass that finished. An error - the document
     // does not parse, an address does not resolve - is retried on the next
     // tick, and a pass that asked for a restart is repeated by the next
@@ -118,6 +125,7 @@ async fn apply_config(
     config_manager: Arc<ConfigManager>,
     new_config: &PingapConfig,
     hot_reload_only: bool,
+    admin_plugin: Option<AdminPlugin>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     new_config.validate()?;
     validate_servers_tls_for_backend(&new_config.servers)?;
@@ -127,6 +135,7 @@ async fn apply_config(
         &current_config,
         new_config,
         &ApplyOptions::daemon(!hot_reload_only),
+        admin_plugin.as_ref(),
     )
     .await;
 
@@ -220,6 +229,9 @@ struct AutoRestart {
     config_manager: Arc<ConfigManager>,
     log_reload_handle: LoggerReloadHandle,
     current_log_level: ArcSwap<String>,
+    /// Re-registered with every plugin rebuild, or the admin listener would
+    /// lose its plugin after the first reload.
+    admin_plugin: Option<AdminPlugin>,
 }
 
 /// Creates a new auto-restart service that checks for config changes periodically
@@ -228,6 +240,7 @@ pub fn new_auto_restart_service(
     log_reload_handle: LoggerReloadHandle,
     interval: Duration,
     only_hot_reload: bool,
+    admin_plugin: Option<AdminPlugin>,
 ) -> BackgroundTaskService {
     let mut restart_unit = 1_u32;
     let unit = Duration::from_secs(10);
@@ -249,6 +262,7 @@ pub fn new_auto_restart_service(
         only_hot_reload,
         restart_unit,
         current_log_level: ArcSwap::from_pointee(current_log_level),
+        admin_plugin,
     });
     let name = "auto_restart";
     BackgroundTaskService::new_single(name, interval.min(unit), name, task)
@@ -274,6 +288,8 @@ pub struct ConfigObserverService {
     interval: Duration,
     /// If true, only perform hot reloads when changes detected
     only_hot_reload: bool,
+    /// Re-registered with every plugin rebuild, like the polling service.
+    admin_plugin: Option<AdminPlugin>,
     delay: AtomicU32,
 }
 
@@ -285,6 +301,7 @@ pub fn new_observer_service(
     log_reload_handle: LoggerReloadHandle,
     interval: Duration,
     only_hot_reload: bool,
+    admin_plugin: Option<AdminPlugin>,
 ) -> ConfigObserverService {
     let current_log_level = config_manager
         .get_current_config()
@@ -299,6 +316,7 @@ pub fn new_observer_service(
         interval,
         only_hot_reload,
         current_log_level: ArcSwap::from_pointee(current_log_level),
+        admin_plugin,
         delay: AtomicU32::new(MIN_DELAY),
     }
 }
@@ -341,7 +359,11 @@ impl BackgroundService for ConfigObserverService {
                 _ = period.tick() => {
                     // fetch and diff update
                     // some change may be restart
-                    if let Some(new_config) = run_diff_and_update_config(self.config_manager.clone(), self.only_hot_reload).await {
+                    if let Some(new_config) = run_diff_and_update_config(
+                        self.config_manager.clone(),
+                        self.only_hot_reload,
+                        self.admin_plugin.clone(),
+                    ).await {
                         reload_log_level(
                             &self.log_reload_handle,
                             &self.current_log_level,
@@ -360,7 +382,11 @@ impl BackgroundService for ConfigObserverService {
                                 continue;
                             }
                             // only hot reload for observe updated
-                            run_diff_and_update_config(self.config_manager.clone(), true).await;
+                            run_diff_and_update_config(
+                                self.config_manager.clone(),
+                                true,
+                                self.admin_plugin.clone(),
+                            ).await;
                         },
                         Err(e) => {
                             error!(
@@ -385,8 +411,11 @@ impl BackgroundService for ConfigObserverService {
 async fn run_diff_and_update_config(
     config_manager: Arc<ConfigManager>,
     hot_reload_only: bool,
+    admin_plugin: Option<AdminPlugin>,
 ) -> Option<PingapConfig> {
-    match diff_and_update_config(config_manager, hot_reload_only).await {
+    match diff_and_update_config(config_manager, hot_reload_only, admin_plugin)
+        .await
+    {
         Ok(new_config) => new_config,
         Err(e) => {
             error!(
@@ -421,6 +450,7 @@ impl BackgroundTask for AutoRestart {
         if let Some(new_config) = run_diff_and_update_config(
             self.config_manager.clone(),
             hot_reload_only,
+            self.admin_plugin.clone(),
         )
         .await
         {

@@ -35,25 +35,6 @@ static LOG_TARGET: &str = "main::process";
 /// the lazy fallback keeps tests and library users working without it.
 static START_TIME: OnceLock<u64> = OnceLock::new();
 
-static ADMIN_ADDR: OnceLock<String> = OnceLock::new();
-
-/// Sets the admin address for the application.
-/// This address is used for administrative access and can only be set once.
-///
-/// # Arguments
-/// * `addr` - The address string to use for admin access
-pub fn set_admin_addr(addr: &str) {
-    ADMIN_ADDR.get_or_init(|| addr.to_string());
-}
-
-/// Returns the currently configured admin address, if one is set.
-///
-/// Returns:
-/// * `Option<String>` - The admin address if configured, None otherwise
-pub fn get_admin_addr() -> Option<String> {
-    ADMIN_ADDR.get().cloned()
-}
-
 /// Records the process start time as epoch seconds.
 ///
 /// Call this once at startup, as early as possible: without it
