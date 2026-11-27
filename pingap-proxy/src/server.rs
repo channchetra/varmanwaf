@@ -478,7 +478,8 @@ impl Server {
         self.lets_encrypt_enabled = true;
     }
     /// Get the prometheus push service configuration if enabled.
-    /// Returns a tuple of (metrics endpoint, service future) if push mode is configured.
+    /// Returns the background task that pushes metrics when push mode is
+    /// configured, or `None` when it is disabled or cannot be built.
     pub fn get_prometheus_push_service(
         &self,
     ) -> Option<Box<dyn BackgroundTask>> {

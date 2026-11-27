@@ -53,10 +53,9 @@ pub fn get_admin_addr() -> Option<String> {
     ADMIN_ADDR.get().cloned()
 }
 
-/// Returns the process start time in seconds since startup.
+/// Returns the process start time as epoch seconds (not an uptime).
 ///
-/// Returns:
-/// * `u64` - Number of seconds since the process started
+/// Callers that need uptime subtract this from `pingap_core::now_sec()`.
 pub fn get_start_time() -> u64 {
     START_TIME.as_secs()
 }

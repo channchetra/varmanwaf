@@ -249,10 +249,9 @@ pub fn new_plugin_provider() -> Arc<dyn PluginProvider> {
 /// * `configs` - Vector of (name, config) tuples for plugins to initialize
 ///
 /// # Returns
-/// HashMap mapping plugin names to initialized plugin instances
-///
-/// # Errors
-/// Returns Error if plugin initialization fails
+/// A tuple of the plugins that were created, keyed by name, and the errors for
+/// the configurations that failed. One failure does not stop the remaining
+/// plugins from being created; the caller decides what to do with the errors.
 pub fn parse_plugins(
     configs: Vec<(String, PluginConf)>,
 ) -> (Plugins, Vec<Error>) {

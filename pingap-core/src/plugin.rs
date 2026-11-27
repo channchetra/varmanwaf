@@ -40,7 +40,7 @@ pub enum PluginStep {
 pub enum RequestPluginResult {
     /// The plugin did not run or took no action.
     Skipped,
-    /// The plugin ran and modified the request; processing should continue.
+    /// The plugin found nothing to stop; processing continues.
     Continue,
     /// The plugin has decided to terminate the request and send an immediate response.
     Respond(HttpResponse),
@@ -115,14 +115,12 @@ pub trait Plugin: Sync + Send {
     /// * `_ctx` - Mutable reference to the request context for storing state
     ///
     /// # Returns
-    /// * `Ok(result)` where:
-    ///   * `result` - The result of the plugin's action on the request
-    ///     - `Skipped`: Plugin did not run or took no action
-    ///     - `Continue`: Plugin ran and modified the request; processing should continue
-    ///     - `Respond(response)`: Plugin has decided to terminate the request and send an immediate response
-    ///   * `response` - Optional HTTP response:
-    ///     - `Some(response)`: Terminates request processing and returns this response to client
-    ///     - `None`: Allows request to continue to next plugin or upstream
+    /// * `Ok(RequestPluginResult::Skipped)` - The plugin did not run at this
+    ///   step or took no action
+    /// * `Ok(RequestPluginResult::Continue)` - Nothing to stop; processing
+    ///   continues to the next plugin or upstream
+    /// * `Ok(RequestPluginResult::Respond(response))` - Terminates request
+    ///   processing and returns this response to the client
     /// * `Err` - Returns error if plugin processing failed
     #[inline]
     async fn handle_request(

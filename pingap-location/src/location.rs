@@ -634,7 +634,6 @@ impl Location {
         Ok(location)
     }
 
-    /// Returns whether gRPC-Web protocol support is enabled for this location
     /// The location's plugins, resolved through `provider`. The list is
     /// built on the first request after the location or the plugins were
     /// loaded and shared by every request after that, so the per-request

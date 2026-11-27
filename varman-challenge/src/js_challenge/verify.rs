@@ -84,14 +84,12 @@ fn has_leading_zero_bits(hash: &[u8], bits: u32) -> bool {
     let full_bytes = (bits / 8) as usize;
     let remaining_bits = bits % 8;
 
-    // Check full zero bytes
     for byte in hash.iter().take(full_bytes) {
         if *byte != 0 {
             return false;
         }
     }
 
-    // Check remaining bits in the next byte
     if remaining_bits > 0 {
         if full_bytes >= hash.len() {
             return false;
@@ -201,7 +199,6 @@ pub fn check_browser_integrity(
         }
     }
 
-    // All checks passed
     IntegrityResult::Passed
 }
 

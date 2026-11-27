@@ -1,12 +1,18 @@
-//! The Varman detection pipeline (Phase 2 skeleton).
+//! The Varman detection pipeline.
 //!
 //! # Scope of this module
 //!
-//! This is the *shape* of the new engine, landed while the legacy engine
-//! (`crate::engine`, `crate::rules`, `crate::score`) keeps serving every
-//! request. Nothing here is wired into the proxy yet: the pipeline exists to
-//! host detectors, enforce the action and budget invariants, and support
-//! shadow comparison (`shadow::compare`) before any enforcement switch.
+//! The pipeline runs inside the WAF plugin through `pingap-plugin`'s
+//! `waf_shadow` module, selected per site by `waf_settings.engine_mode` and
+//! falling back to `VARMAN_WAF_ENGINE`: `legacy` (the default) does not run
+//! it, `shadow` runs it next to the legacy engine and records the comparison
+//! without changing enforcement, and `varman` enforces the stronger of the
+//! pipeline and legacy verdicts. The legacy engine (`crate::engine`,
+//! `crate::rules`, `crate::score`) remains authoritative whenever its verdict
+//! is at least as strong.
+//!
+//! This module hosts the detectors, the action and budget invariants, and
+//! shadow comparison (`shadow::compare`).
 //!
 //! # Architecture (target)
 //!
@@ -122,10 +128,14 @@ impl PipelineVerdict {
     /// enforcing caller can apply the pipeline's verdict with the same
     /// response mapping the legacy engine uses.
     ///
-    /// `Log` and `Monitor` both map to [`crate::WafAction::Monitor`]: the
-    /// event is recorded and the request proceeds. The score breakdown is
-    /// rebuilt from the findings' categories so event/dashboard consumers see
-    /// the same shape they see from the legacy engine.
+    /// `Log` maps to [`crate::WafAction::Pass`]: its findings still inflate
+    /// the score breakdown, but the caller sees no action. `Monitor` maps to
+    /// [`crate::WafAction::Monitor`]. This is a pure conversion — nothing is
+    /// recorded here; the caller decides whether to emit an event.
+    ///
+    /// The score breakdown is rebuilt from the findings' categories so
+    /// event/dashboard consumers see the same shape they see from the legacy
+    /// engine.
     pub fn to_waf_verdict(&self) -> crate::WafVerdict {
         use crate::{ScoreBreakdown, ScoreClass, WafAction, WafVerdict};
 
@@ -542,7 +552,7 @@ mod tests {
         assert_eq!(mapped.breakdown.overall_class, ScoreClass::Attack);
         assert!(mapped.details.contains("varman-pipeline"));
 
-        // Log/Monitor hints map to Monitor; the score saturates at u8::MAX.
+        // Monitor maps to Monitor; the mapped score saturates at u8::MAX.
         verdict.action = Action::Monitor;
         verdict.score = 1000;
         let mapped = verdict.to_waf_verdict();

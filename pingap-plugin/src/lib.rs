@@ -94,6 +94,13 @@ pub fn get_int_conf_or_default(
         .unwrap_or(default_value)
 }
 
+/// Resolves `step`, falling back to `default_value` when the key is missing or
+/// holds an unrecognised value.
+///
+/// Prefer [`get_step_conf_in`] for a plugin that implements only some steps:
+/// this function silently accepts an unsupported step, and the plugin then
+/// never runs. The fallback is only appropriate for plugins that handle every
+/// step.
 pub fn get_step_conf(
     value: &PluginConf,
     default_value: PluginStep,

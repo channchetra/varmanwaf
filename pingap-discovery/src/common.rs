@@ -23,15 +23,9 @@ use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Instant;
 use tracing::{info, warn};
 
-/// Checks if the discovery type is static
-///
-/// # Arguments
-/// * `value` - The discovery type string to check
-///
-/// # Returns
-/// * `bool` - True if the discovery type is static (empty or matches STATIC_DISCOVERY)
+/// Returns `true` when discovery is static: the empty string or
+/// [`STATIC_DISCOVERY`].
 pub fn is_static_discovery(value: &str) -> bool {
-    // Using a match statement is slightly more idiomatic and extensible.
     matches!(value, "" | STATIC_DISCOVERY)
 }
 

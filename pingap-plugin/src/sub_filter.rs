@@ -157,25 +157,19 @@ impl ModifyResponseBody for SubFilterReplacer {
         let mut data = self.buffer.to_vec();
         for item in self.filters.iter() {
             if let Some(regex_pattern) = &item.regex_pattern {
-                // Handle regex-based replacement (subs_filter)
                 if item.flags.contains(&'g') {
-                    // Global replacement - replace all occurrences
                     data = regex_pattern
                         .replace_all(&data, &item.replacement)
                         .to_vec();
                 } else {
-                    // Replace first occurrence only
                     data = regex_pattern
                         .replace(&data, &item.replacement)
                         .to_vec();
                 }
             } else {
-                // Handle literal string replacement (sub_filter)
                 if item.flags.contains(&'g') {
-                    // Global replacement
                     data = data.replace(&item.pattern, &item.replacement);
                 } else {
-                    // Replace first occurrence only
                     data = data.replacen(&item.pattern, &item.replacement, 1);
                 }
             }
