@@ -19,12 +19,12 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::api::mtls::to_utc;
 use crate::app_state::AppState;
 use crate::config::DEFAULT_TLS_COMMON_NAME;
 use crate::error::ApiError;
 use crate::models::{control_plane_certificate, tls_source};
 use crate::pki::tls::generate_self_signed;
+use crate::time_util::to_utc;
 
 /// Validity of a generated self-signed certificate, in days. Long enough that
 /// an operator does not have to regenerate it, short enough that it is not

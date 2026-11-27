@@ -2,16 +2,15 @@
 //! the multi-tenancy checks that every handler performs before touching data.
 
 use chrono::{DateTime, Utc};
-use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    Statement,
-};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::api::error::ApiError;
 use crate::auth::AuthUser;
 use crate::models::{acme_challenge, site};
+
+pub use crate::api_util::{parse_uuid, query_all};
 
 /// Default number of rows returned by a list endpoint.
 pub const DEFAULT_PAGE_SIZE: u64 = 50;
@@ -136,13 +135,6 @@ impl<T> Page<T> {
     pub fn empty(pagination: Pagination) -> Self {
         Self::new(Vec::new(), 0, pagination)
     }
-}
-
-/// Parses a path/query UUID with a 400 instead of a 500.
-pub fn parse_uuid(value: &str, what: &str) -> Result<Uuid, ApiError> {
-    Uuid::parse_str(value.trim()).map_err(|err| {
-        ApiError::BadRequest(format!("invalid {what} '{value}': {err}"))
-    })
 }
 
 /// Parses an RFC 3339 timestamp filter.
@@ -285,21 +277,6 @@ pub fn non_empty(value: &Option<String>) -> Option<String> {
         .as_ref()
         .map(|raw| raw.trim().to_string())
         .filter(|raw| !raw.is_empty())
-}
-
-/// Runs a parameterised read-only statement.
-pub async fn query_all(
-    db: &DatabaseConnection,
-    sql: &str,
-    values: Vec<sea_orm::Value>,
-) -> Result<Vec<sea_orm::QueryResult>, ApiError> {
-    db.query_all(Statement::from_sql_and_values(
-        sea_orm::DatabaseBackend::Postgres,
-        sql,
-        values,
-    ))
-    .await
-    .map_err(ApiError::from)
 }
 
 /// Strips a trailing slash so that both `/api/v1/sites` and `/api/v1/sites/`

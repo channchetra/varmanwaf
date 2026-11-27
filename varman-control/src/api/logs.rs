@@ -22,6 +22,8 @@ use crate::auth::AuthUser;
 use crate::models::{access_log, security_event, site};
 use crate::provenance;
 
+pub(crate) use crate::api_util::escape_like;
+
 /// How far back a query may reach when the client does not say.
 const DEFAULT_WINDOW_HOURS: i64 = 24;
 /// Hard ceiling on the requested window, so a stray `from=1970` cannot scan the
@@ -233,18 +235,6 @@ fn split_multi(value: &str) -> Vec<String> {
         .filter(|part| !part.is_empty())
         .map(str::to_string)
         .collect()
-}
-
-/// Escapes LIKE metacharacters so a user-supplied value matches literally.
-pub(crate) fn escape_like(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if matches!(ch, '\\' | '%' | '_') {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    escaped
 }
 
 /// Renders a value that may carry `*` wildcards as a LIKE pattern; `None` when

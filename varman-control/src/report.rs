@@ -24,7 +24,7 @@ use sea_orm::{DatabaseConnection, Value};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::api::common::query_all;
+use crate::api_util::query_all;
 use crate::error::ApiError;
 
 /// Longest range a report may cover.

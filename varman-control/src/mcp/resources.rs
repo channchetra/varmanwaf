@@ -9,7 +9,7 @@
 use chrono::Utc;
 use serde_json::{json, Value};
 
-use crate::api::state::AppState;
+use crate::app_state::AppState;
 use crate::mcp::auth::McpPrincipal;
 use crate::mcp::tools::{self, ToolContext};
 

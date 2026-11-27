@@ -27,6 +27,8 @@ use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::grpc::notify_config_changed;
+
+pub use crate::api_util::touch_site;
 use crate::models::{
     acme_challenge, cache_rules, ip_groups, rate_limit_rules, route_match_type,
     rule, rule_groups, site, site_certificate_bindings, site_certificates,
@@ -2645,22 +2647,6 @@ pub fn parse_proxy_range(raw: &str) -> Option<String> {
             .ok()
             .map(|ip| ipnet::IpNet::from(ip).to_string())
     }
-}
-
-/// Updates `sites.updated_at` so agents see a fresh configuration fingerprint.
-pub async fn touch_site(
-    state: &AppState,
-    site_id: Uuid,
-) -> Result<(), ApiError> {
-    site::Entity::update_many()
-        .col_expr(
-            site::Column::UpdatedAt,
-            sea_orm::sea_query::Expr::value(Utc::now()),
-        )
-        .filter(site::Column::Id.eq(site_id))
-        .exec(&state.db)
-        .await?;
-    Ok(())
 }
 
 #[cfg(test)]

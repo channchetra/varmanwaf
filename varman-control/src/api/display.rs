@@ -10,63 +10,17 @@ use axum::routing::get;
 use axum::{Json, Router};
 use chrono_tz::Tz;
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
-use serde::{Deserialize, Serialize};
 
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
+use crate::time_util::SETTINGS_KEY;
 
-/// Key of the display settings row in `instance_settings`.
-const SETTINGS_KEY: &str = "display_settings";
+pub use crate::time_util::{load, resolve, timezone, DisplaySettings};
 
 /// Routes contributed to `/api/v1`.
 pub fn routes() -> Router<AppState> {
     Router::new().route("/settings/display", get(show).put(save))
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DisplaySettings {
-    /// IANA timezone name; `UTC` by default.
-    #[serde(default = "default_timezone")]
-    pub timezone: String,
-}
-
-fn default_timezone() -> String {
-    "UTC".to_string()
-}
-
-impl Default for DisplaySettings {
-    fn default() -> Self {
-        Self {
-            timezone: default_timezone(),
-        }
-    }
-}
-
-/// Loads the display settings; defaults when absent or unparsable.
-pub async fn load(db: &sea_orm::DatabaseConnection) -> DisplaySettings {
-    use crate::models::instance_setting;
-
-    let stored = instance_setting::Entity::find_by_id(SETTINGS_KEY)
-        .one(db)
-        .await
-        .ok()
-        .flatten();
-    match stored {
-        Some(row) => serde_json::from_str(&row.value).unwrap_or_default(),
-        None => DisplaySettings::default(),
-    }
-}
-
-/// The configured timezone, falling back to UTC when unset or invalid.
-/// Writes are validated, so the fallback only covers old rows.
-pub async fn timezone(db: &sea_orm::DatabaseConnection) -> Tz {
-    resolve(&load(db).await.timezone)
-}
-
-/// Parses a timezone name, defaulting to UTC.
-pub fn resolve(name: &str) -> Tz {
-    name.trim().parse::<Tz>().unwrap_or(Tz::UTC)
 }
 
 /// `GET /api/v1/settings/display` — any signed-in user: the console needs

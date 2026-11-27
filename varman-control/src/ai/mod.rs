@@ -16,7 +16,7 @@ use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{DatabaseConnection, DbErr, EntityTrait, Set};
 
-use crate::api::error::ApiError;
+use crate::error::ApiError;
 use crate::models::ai::TITLE_MAX_CHARS;
 use crate::models::{ai_defaults, ai_setting};
 

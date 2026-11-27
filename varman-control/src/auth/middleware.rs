@@ -10,9 +10,9 @@ use uuid::Uuid;
 
 use sea_orm::{DatabaseConnection, EntityTrait};
 
-use crate::api::error::error_response;
-use crate::api::state::AppState;
+use crate::app_state::AppState;
 use crate::auth::jwt::{verify_user_token, Claims, JwtError};
+use crate::error::error_response;
 use crate::models::{role, user};
 
 /// Scheme prefix accepted in the `Authorization` header.
@@ -133,15 +133,11 @@ impl From<JwtError> for AuthError {
     }
 }
 
-impl From<AuthError> for crate::api::error::ApiError {
+impl From<AuthError> for crate::error::ApiError {
     fn from(err: AuthError) -> Self {
         match err {
-            AuthError::Forbidden(msg) => {
-                crate::api::error::ApiError::Forbidden(msg)
-            },
-            other => {
-                crate::api::error::ApiError::Unauthorized(other.to_string())
-            },
+            AuthError::Forbidden(msg) => crate::error::ApiError::Forbidden(msg),
+            other => crate::error::ApiError::Unauthorized(other.to_string()),
         }
     }
 }

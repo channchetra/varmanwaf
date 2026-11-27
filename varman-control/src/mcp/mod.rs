@@ -32,7 +32,7 @@ use axum::Json;
 use axum::Router;
 use serde_json::{json, Value};
 
-use crate::api::state::AppState;
+use crate::app_state::AppState;
 pub use auth::McpPrincipal;
 use tools::ToolContext;
 

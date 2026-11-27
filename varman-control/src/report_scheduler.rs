@@ -12,12 +12,12 @@ use chrono::{DateTime, Duration, Utc};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
 use serde::{Deserialize, Serialize};
 
-use crate::api::common::parse_uuid;
-use crate::api::display::timezone;
+use crate::api_util::parse_uuid;
 use crate::error::ApiError;
 use crate::models::instance_setting;
 use crate::notify::{self, AlertAttachment, AlertEvent};
 use crate::report::{self, ActionFilter, ReportData, Window, MAX_RANGE_DAYS};
+use crate::time_util::timezone;
 
 /// Key of the report settings row in `instance_settings`.
 const SETTINGS_KEY: &str = "report_settings";

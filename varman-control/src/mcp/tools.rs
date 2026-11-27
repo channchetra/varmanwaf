@@ -22,10 +22,8 @@ use sea_orm::{
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::api::common::query_all;
-use crate::api::logs::escape_like;
-use crate::api::sites;
-use crate::api::state::AppState;
+use crate::api_util::{escape_like, query_all, touch_site};
+use crate::app_state::AppState;
 use crate::certificate_status as cert_status;
 use crate::defense_service;
 use crate::grpc::{notify_all_config_changed, notify_config_changed};
@@ -294,7 +292,7 @@ fn db_error(err: sea_orm::DbErr) -> String {
     "database query failed".to_string()
 }
 
-fn api_error(err: crate::api::ApiError) -> String {
+fn api_error(err: crate::error::ApiError) -> String {
     tracing::error!(error = %err, "tool operation failed");
     "the operation failed on the control plane".to_string()
 }
@@ -1130,7 +1128,7 @@ async fn set_site_status(
         let mut active: site::ActiveModel = row.into();
         active.status = Set(status.clone());
         active.update(&ctx.state.db).await.map_err(db_error)?;
-        sites::touch_site(ctx.state, id).await.map_err(api_error)?;
+        touch_site(ctx.state, id).await.map_err(api_error)?;
         notify_config_changed(ctx.state, id, Some(ctx.actor)).await;
         tracing::info!(
             actor = %ctx.actor,

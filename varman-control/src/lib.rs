@@ -12,6 +12,7 @@ pub mod ai;
 pub mod alerts;
 pub mod api;
 pub mod api_learn;
+pub mod api_util;
 pub mod app_state;
 pub mod auth;
 pub mod bundle;
@@ -47,6 +48,7 @@ pub mod report_scheduler;
 pub mod self_protection;
 pub mod site_credentials;
 pub mod subscription;
+pub mod time_util;
 pub mod tls;
 pub mod users;
 pub mod waf_values;
@@ -767,8 +769,8 @@ pub async fn embedded_agent_ca_pem(
                 sans: Set(serde_json::json!(sans)),
                 serial: Set(meta.serial.clone()),
                 fingerprint_sha256: Set(meta.fingerprint_sha256.clone()),
-                not_before: Set(crate::api::mtls::to_utc(meta.not_before)),
-                not_after: Set(crate::api::mtls::to_utc(meta.not_after)),
+                not_before: Set(crate::time_util::to_utc(meta.not_before)),
+                not_after: Set(crate::time_util::to_utc(meta.not_after)),
                 is_active: Set(true),
                 created_by: Set(None),
                 created_at: Set(chrono::Utc::now()),

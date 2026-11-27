@@ -215,10 +215,7 @@ fn mtls_error(err: MtlsError) -> ApiError {
     }
 }
 
-/// `time` (used by rcgen) to `chrono` (used by the database models).
-pub(crate) fn to_utc(value: time::OffsetDateTime) -> DateTime<Utc> {
-    DateTime::from_timestamp(value.unix_timestamp(), 0).unwrap_or_else(Utc::now)
-}
+pub(crate) use crate::time_util::to_utc;
 
 /// Rejects empty/oversized labels and values that would break DN rendering.
 fn validate_label(

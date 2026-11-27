@@ -9,7 +9,7 @@
 use sysinfo::System;
 
 use super::AlertEvent;
-use crate::api::state::AppState;
+use crate::app_state::AppState;
 use crate::models::{event_type, severity};
 
 /// How often the control plane samples itself.

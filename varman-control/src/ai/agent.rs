@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use super::provider::Provider;
 use super::{conversation_title, effective_system_prompt};
-use crate::api::state::AppState;
+use crate::app_state::AppState;
 use crate::mcp::tools::{self, ToolContext};
 use crate::models::ai::MAX_TOOL_ROUNDS_LIMIT;
 use crate::models::{ai_conversation, ai_message, ai_setting, message_role};
