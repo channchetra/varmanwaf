@@ -12,8 +12,9 @@
 //! `encoded_request` tests (raw wire bytes, no persistence across stages).
 //!
 //! CRS location: `CRS_DIR` env var, else `../../references/coreruleset`.
-//! When no clone is present the test skips, so builds without the reference
-//! checkout stay green.
+//! The corpus is not vendored, so these tests are `#[ignore]`d instead of
+//! passing silently: point `CRS_DIR` at a clone and run
+//! `CRS_DIR=/path/to/coreruleset cargo test -p varman-waf -- --ignored`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -98,6 +99,20 @@ fn crs_root() -> Option<PathBuf> {
         root.join("rules").is_dir()
             && root.join("tests/regression/tests").is_dir()
     })
+}
+
+/// Like [`crs_root`], but says why the test is skipping instead of returning
+/// quietly. The corpus is not vendored, so every test here is `#[ignore]`d:
+/// run `CRS_DIR=/path/to/coreruleset cargo test -p varman-waf -- --ignored`.
+fn require_crs_root() -> Option<PathBuf> {
+    let root = crs_root();
+    if root.is_none() {
+        eprintln!(
+            "crs_regression: CRS_DIR does not point at a CRS clone with rules/ \
+             and tests/regression/tests; skipping"
+        );
+    }
+    root
 }
 
 fn scalar(value: &serde_yaml::Value) -> String {
@@ -327,8 +342,9 @@ fn extract_rule_statement(source: &str, id: u64) -> String {
 }
 
 #[test]
+#[ignore = "requires CRS_DIR pointing at an OWASP CRS clone; run with --ignored"]
 fn targeted_950100_fires() {
-    let Some(root) = crs_root() else {
+    let Some(root) = require_crs_root() else {
         return;
     };
     let engine = compile_full_set(&root.join("rules"));
@@ -359,8 +375,9 @@ fn targeted_950100_fires() {
 }
 
 #[test]
+#[ignore = "requires CRS_DIR pointing at an OWASP CRS clone; run with --ignored"]
 fn targeted_singles_introspection() {
-    let Some(root) = crs_root() else {
+    let Some(root) = require_crs_root() else {
         return;
     };
     let cases: &[(&str, u64, &str)] = &[
@@ -470,8 +487,9 @@ fn targeted_singles_introspection() {
 }
 
 #[test]
+#[ignore = "requires CRS_DIR pointing at an OWASP CRS clone; run with --ignored"]
 fn targeted_920450_fires() {
-    let Some(root) = crs_root() else {
+    let Some(root) = require_crs_root() else {
         return;
     };
     let engine = compile_full_set(&root.join("rules"));
@@ -533,8 +551,9 @@ fn targeted_920450_fires() {
 }
 
 #[test]
+#[ignore = "requires CRS_DIR pointing at an OWASP CRS clone; run with --ignored"]
 fn targeted_943110_chain() {
-    let Some(root) = crs_root() else {
+    let Some(root) = require_crs_root() else {
         return;
     };
     let engine = compile_full_set(&root.join("rules"));
@@ -601,8 +620,9 @@ fn targeted_943110_chain() {
 }
 
 #[test]
+#[ignore = "requires CRS_DIR pointing at an OWASP CRS clone; run with --ignored"]
 fn targeted_944150_json_evasion_fires() {
-    let Some(root) = crs_root() else {
+    let Some(root) = require_crs_root() else {
         return;
     };
     let engine = compile_full_set(&root.join("rules"));
@@ -659,8 +679,9 @@ fn targeted_944150_json_evasion_fires() {
 }
 
 #[test]
+#[ignore = "requires CRS_DIR pointing at an OWASP CRS clone; run with --ignored"]
 fn targeted_933150_mixed_case_fires() {
-    let Some(root) = crs_root() else {
+    let Some(root) = require_crs_root() else {
         return;
     };
     let engine = compile_full_set(&root.join("rules"));
@@ -690,8 +711,9 @@ fn targeted_933150_mixed_case_fires() {
 }
 
 #[test]
+#[ignore = "requires CRS_DIR pointing at an OWASP CRS clone; run with --ignored"]
 fn targeted_942410_regex_matches() {
-    let Some(root) = crs_root() else {
+    let Some(root) = require_crs_root() else {
         return;
     };
     let source = fs::read_to_string(
@@ -745,8 +767,9 @@ fn targeted_942410_regex_matches() {
 }
 
 #[test]
+#[ignore = "requires CRS_DIR pointing at an OWASP CRS clone; run with --ignored"]
 fn targeted_942210_fires() {
-    let Some(root) = crs_root() else {
+    let Some(root) = require_crs_root() else {
         return;
     };
     let engine = compile_full_set(&root.join("rules"));
@@ -779,11 +802,9 @@ fn targeted_942210_fires() {
 }
 
 #[test]
+#[ignore = "requires CRS_DIR pointing at an OWASP CRS clone; run with --ignored"]
 fn targeted_944300_fires() {
-    let Some(root) = crs_root() else {
-        eprintln!(
-            "crs_regression: no CRS clone found; skipping targeted check"
-        );
+    let Some(root) = require_crs_root() else {
         return;
     };
     let engine = compile_full_set(&root.join("rules"));
@@ -820,11 +841,9 @@ fn targeted_944300_fires() {
 }
 
 #[test]
+#[ignore = "requires CRS_DIR pointing at an OWASP CRS clone; run with --ignored"]
 fn crs_regression_corpus() {
-    let Some(root) = crs_root() else {
-        eprintln!(
-            "crs_regression: no CRS clone found; skipping (set CRS_DIR to run)"
-        );
+    let Some(root) = require_crs_root() else {
         return;
     };
     let rules_dir = root.join("rules");

@@ -5,8 +5,9 @@
 //! printed with `-- --nocapture` and ratcheted in `docs/compatibility.md`.
 //!
 //! The harness looks for the clone at `CRS_DIR` (or the default sibling path
-//! `../../references/coreruleset`). When no clone is present the test skips,
-//! so builds without the reference checkout stay green.
+//! `../../references/coreruleset`). The corpus is not vendored, so the test is
+//! `#[ignore]`d instead of passing silently: point `CRS_DIR` at a clone and run
+//! `CRS_DIR=/path/to/coreruleset cargo test -p varman-waf -- --ignored`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -41,9 +42,13 @@ fn count_secrules(source: &str) -> usize {
 }
 
 #[test]
+#[ignore = "requires CRS_DIR pointing at an OWASP CRS clone; run with --ignored"]
 fn crs_rulesets_load_and_report() {
     let Some(rules_dir) = crs_rules_dir() else {
-        eprintln!("crs_conformance: no CRS clone found; skipping (set CRS_DIR to run)");
+        eprintln!(
+            "crs_conformance: CRS_DIR does not point at a clone with a rules/ \
+             directory; skipping (run with --ignored once it does)"
+        );
         return;
     };
 

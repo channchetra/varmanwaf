@@ -301,8 +301,11 @@ mod tests {
             ca.meta.subject_dn
         );
         assert_eq!(ca.meta.fingerprint_sha256.len(), 64);
-        // rcgen derives a 20-byte serial from the public key.
-        assert_eq!(ca.meta.serial.len(), 40);
+        // rcgen derives a serial of at most 20 bytes; leading zero nibbles
+        // are not printed, so the hex length is even but not always 40.
+        assert!(!ca.meta.serial.is_empty());
+        assert!(ca.meta.serial.len() <= 40);
+        assert_eq!(0, ca.meta.serial.len() % 2);
         assert!(ca.key_pem.is_some());
 
         let reparsed = parse_cert_meta(&ca.cert_pem).unwrap();

@@ -465,66 +465,131 @@ mod tests {
         );
     }
 
+    /// Asserts the parts of a response a client can observe: the status, the
+    /// body and the exact header list.
+    fn assert_response(
+        resp: &HttpResponse,
+        status: StatusCode,
+        body: &str,
+        headers: &[(&str, &str)],
+    ) {
+        assert_eq!(status, resp.status);
+        assert_eq!(body.as_bytes(), resp.body.as_ref());
+        // None of these constructors generate `Age`/`Cache-Control` data
+        // from the response itself; the static headers are asserted below.
+        assert_eq!(None, resp.max_age);
+        assert_eq!(None, resp.created_at);
+        assert_eq!(None, resp.cache_private);
+        let actual: Vec<(String, String)> = resp
+            .headers
+            .as_ref()
+            .map(|headers| {
+                headers
+                    .iter()
+                    .map(|(name, value)| {
+                        (
+                            name.as_str().to_string(),
+                            value.to_str().unwrap_or_default().to_string(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let expected: Vec<(String, String)> = headers
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        assert_eq!(expected, actual);
+    }
+
     #[test]
     fn test_http_response() {
-        assert_eq!(
-            r###"HttpResponse { status: 204, body: b"", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
-            format!("{:?}", HttpResponse::no_content())
+        assert_response(
+            &HttpResponse::no_content(),
+            StatusCode::NO_CONTENT,
+            "",
+            &[("cache-control", "private, no-store")],
         );
-        assert_eq!(
-            r###"HttpResponse { status: 404, body: b"Not Found", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "text/plain; charset=utf-8"), ("cache-control", "private, no-store")]) }"###,
-            format!("{:?}", HttpResponse::not_found("Not Found"))
+        assert_response(
+            &HttpResponse::not_found("Not Found"),
+            StatusCode::NOT_FOUND,
+            "Not Found",
+            &[
+                ("content-type", "text/plain; charset=utf-8"),
+                ("cache-control", "private, no-store"),
+            ],
         );
-        assert_eq!(
-            r###"HttpResponse { status: 500, body: b"Unknown Error", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "text/plain; charset=utf-8"), ("cache-control", "private, no-store")]) }"###,
-            format!("{:?}", HttpResponse::unknown_error("Unknown Error"))
+        assert_response(
+            &HttpResponse::unknown_error("Unknown Error"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Unknown Error",
+            &[
+                ("content-type", "text/plain; charset=utf-8"),
+                ("cache-control", "private, no-store"),
+            ],
         );
-
-        assert_eq!(
-            r###"HttpResponse { status: 400, body: b"Bad Request", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "text/plain; charset=utf-8"), ("cache-control", "private, no-store")]) }"###,
-            format!("{:?}", HttpResponse::bad_request("Bad Request"))
+        assert_response(
+            &HttpResponse::bad_request("Bad Request"),
+            StatusCode::BAD_REQUEST,
+            "Bad Request",
+            &[
+                ("content-type", "text/plain; charset=utf-8"),
+                ("cache-control", "private, no-store"),
+            ],
         );
-
-        assert_eq!(
-            r###"HttpResponse { status: 200, body: b"<p>Pingap</p>", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "text/html; charset=utf-8"), ("cache-control", "private, no-cache")]) }"###,
-            format!("{:?}", HttpResponse::html("<p>Pingap</p>"))
+        assert_response(
+            &HttpResponse::html("<p>Pingap</p>"),
+            StatusCode::OK,
+            "<p>Pingap</p>",
+            &[
+                ("content-type", "text/html; charset=utf-8"),
+                ("cache-control", "private, no-cache"),
+            ],
         );
-
-        assert_eq!(
-            r###"HttpResponse { status: 307, body: b"", max_age: None, created_at: None, cache_private: None, headers: Some([("location", "http://example.com/"), ("cache-control", "private, no-cache")]) }"###,
-            format!(
-                "{:?}",
-                HttpResponse::redirect("http://example.com/").unwrap()
-            )
+        assert_response(
+            &HttpResponse::redirect("http://example.com/").unwrap(),
+            StatusCode::TEMPORARY_REDIRECT,
+            "",
+            &[
+                ("location", "http://example.com/"),
+                ("cache-control", "private, no-cache"),
+            ],
         );
-
-        assert_eq!(
-            r###"HttpResponse { status: 200, body: b"Hello World!", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "text/plain; charset=utf-8"), ("cache-control", "private, no-cache")]) }"###,
-            format!("{:?}", HttpResponse::text("Hello World!"))
+        assert_response(
+            &HttpResponse::text("Hello World!"),
+            StatusCode::OK,
+            "Hello World!",
+            &[
+                ("content-type", "text/plain; charset=utf-8"),
+                ("cache-control", "private, no-cache"),
+            ],
         );
 
         #[derive(Serialize)]
         struct Data {
             message: String,
         }
+        let json = r#"{"message":"Hello World!"}"#;
+        let data = || Data {
+            message: "Hello World!".to_string(),
+        };
         let resp = HttpResponse::try_from_json_status(
-            &Data {
-                message: "Hello World!".to_string(),
-            },
+            &data(),
             StatusCode::BAD_REQUEST,
         )
         .unwrap();
-        assert_eq!(
-            r###"HttpResponse { status: 400, body: b"{\"message\":\"Hello World!\"}", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "application/json; charset=utf-8")]) }"###,
-            format!("{resp:?}")
+        assert_response(
+            &resp,
+            StatusCode::BAD_REQUEST,
+            json,
+            &[("content-type", "application/json; charset=utf-8")],
         );
-        let resp = HttpResponse::try_from_json(&Data {
-            message: "Hello World!".to_string(),
-        })
-        .unwrap();
-        assert_eq!(
-            r###"HttpResponse { status: 200, body: b"{\"message\":\"Hello World!\"}", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "application/json; charset=utf-8")]) }"###,
-            format!("{resp:?}")
+        let resp = HttpResponse::try_from_json(&data()).unwrap();
+        assert_response(
+            &resp,
+            StatusCode::OK,
+            json,
+            &[("content-type", "application/json; charset=utf-8")],
         );
 
         let resp = HttpResponse {

@@ -1431,22 +1431,18 @@ mod tests {
 
         assert_eq!(ALPN::H2.to_string(), up.alpn.to_string());
         assert_eq!(Some(100), up.max_h2_streams);
-        assert_eq!("Some(5s)", format!("{:?}", up.connection_timeout));
-        assert_eq!("Some(10s)", format!("{:?}", up.total_connection_timeout));
-        assert_eq!("Some(3s)", format!("{:?}", up.read_timeout));
-        assert_eq!("Some(30s)", format!("{:?}", up.idle_timeout));
-        assert_eq!("Some(5s)", format!("{:?}", up.write_timeout));
+        assert_eq!(Some(Duration::from_secs(5)), up.connection_timeout);
+        assert_eq!(Some(Duration::from_secs(10)), up.total_connection_timeout);
+        assert_eq!(Some(Duration::from_secs(3)), up.read_timeout);
+        assert_eq!(Some(Duration::from_secs(30)), up.idle_timeout);
+        assert_eq!(Some(Duration::from_secs(5)), up.write_timeout);
+        let keepalive = up.tcp_keepalive.as_ref().expect("tcp keepalive");
+        assert_eq!(Duration::from_secs(60), keepalive.idle);
+        assert_eq!(Duration::from_secs(60), keepalive.interval);
+        assert_eq!(100, keepalive.count);
         #[cfg(target_os = "linux")]
-        assert_eq!(
-            "Some(TcpKeepalive { idle: 60s, interval: 60s, count: 100, user_timeout: 0ns })",
-            format!("{:?}", up.tcp_keepalive)
-        );
-        #[cfg(not(target_os = "linux"))]
-        assert_eq!(
-            "Some(TcpKeepalive { idle: 60s, interval: 60s, count: 100 })",
-            format!("{:?}", up.tcp_keepalive)
-        );
-        assert_eq!("Some(1024)", format!("{:?}", up.tcp_recv_buf));
+        assert_eq!(Duration::ZERO, keepalive.user_timeout);
+        assert_eq!(Some(1024), up.tcp_recv_buf);
     }
 
     #[test]

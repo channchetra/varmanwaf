@@ -1137,7 +1137,13 @@ mod tests {
         let mut variables = None;
         let matched = lo.rewrite(&mut req_header, &mut variables);
         assert_eq!(true, matched);
-        assert_eq!(r#"Some({"upstream": "rest"})"#, format!("{:?}", variables));
+        assert_eq!(
+            Some("rest".to_string()),
+            variables
+                .as_ref()
+                .and_then(|variables| variables.get("upstream"))
+                .cloned()
+        );
         assert_eq!("/me?abc=1", req_header.uri.to_string());
 
         let mut req_header =

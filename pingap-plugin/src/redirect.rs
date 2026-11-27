@@ -331,9 +331,15 @@ prefix = "/api"
         let RequestPluginResult::Respond(resp) = result else {
             panic!("result is not Respond");
         };
+        let headers = resp.headers.as_ref().expect("redirect headers");
+        assert_eq!(1, headers.len());
         assert_eq!(
-            r###"Some([("location", "https://github.com/api/vicanso?size=1")])"###,
-            format!("{:?}", resp.headers)
+            "https://github.com/api/vicanso?size=1",
+            headers
+                .iter()
+                .find(|(name, _)| name.as_str() == "location")
+                .map(|(_, value)| value.to_str().unwrap_or_default())
+                .expect("location header")
         );
     }
 }
