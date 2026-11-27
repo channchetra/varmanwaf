@@ -115,6 +115,31 @@ Within ten minutes: 350 access rows, 181 security events, no buffer warnings.
 - [x] Logs kept flowing during and after the test.
 - [x] Image `sha256:817b17fb…`.
 
+## Follow-up: duplicate issuances on every restart
+
+While verifying 1.4.4, the certificate changed after each restart:
+
+```text
+03:53 issued   (manual retry)
+04:40 issued   (manual rotation test)
+04:43 issued   (1.4.3 restart)
+04:58 issued   (1.4.4 restart)
+```
+
+`build_pingap_config` creates `__management` on every rebuild without PEM
+material, and the ACME task reads the certificate from that config. An empty
+pair is indistinguishable from "nothing issued yet", so each restart ordered
+a duplicate.
+
+That is **four of the five** duplicate certificates allowed per week for the
+same IP. The renewal scheduled around 2026-12-01 must be the fifth, and no
+further order may be placed before **2026-12-04 03:53 UTC**.
+
+v1.4.5 seeds `__management` with the pair already served (`management_cert::
+set_seed`, updated by `load_active_certificate` and `store_and_activate`), so
+a rebuild no longer triggers an order. The 1.4.5 deploy itself must not add a
+`control_plane_certificates` row; that is the acceptance check.
+
 ## Lessons
 
 - A certificate that the process serves but never re-reads is an outage with a
