@@ -787,24 +787,18 @@ impl TryFrom<&PluginConf> for WafPlugin {
             },
         };
 
+        // `WafEngineConfig::default` owns every value the plugin does not
+        // deliberately override: three decode layers, managed rules and
+        // fast-path blocking on, no monitor/disable/score/exclusion sets.
         let engine_config = WafEngineConfig {
             mode,
             level,
             stacks,
-            monitor_categories,
-            monitor_stacks,
             threshold: anomaly_threshold,
             paranoia_level,
-            max_decode_layers: 3,
-            rules: Vec::new(),
-            enable_managed_rules: true,
-            fast_path_block_on_critical: true,
-            monitor_managed_rules: Default::default(),
-            monitor_custom_rules: Default::default(),
-            disabled_rules: Default::default(),
-            rule_scores: Default::default(),
-            rule_target_exclusions: Default::default(),
-            path_target_exclusions: Default::default(),
+            monitor_categories,
+            monitor_stacks,
+            ..Default::default()
         };
 
         Ok(Self {

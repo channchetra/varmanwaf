@@ -1,12 +1,17 @@
 //! Rule tester: evaluate one sample request against a candidate policy.
 //!
-//! The tester compiles the exact native engine configuration the edge would
+//! The tester compiles the native engine configuration the edge would
 //! receive (managed rules, custom rules, monitor/disable/score tuning,
 //! target exclusions and SecLang virtual patches) and evaluates a sample
-//! request against it. What it does **not** simulate is listed in
+//! request against it. It shares [`WafEngineConfig::default`]'s baseline —
+//! threshold 40, paranoia 2, three decode layers, all stacks, managed rules
+//! and fast-path blocking on — and only lists the fields the candidate view
+//! actually resolves. What it does **not** simulate is listed in
 //! [`TestResult::skipped`]: rate limits, IP/geo access and bot checks are
 //! edge decisions that depend on request history, so a tester that guessed
-//! them would lie. The compile step mirrors `bundle` field by field.
+//! them would lie. Path-scoped exclusion packages and the site's anomaly
+//! threshold are not carried by the candidate view either; they are
+//! reported as skipped rather than guessed.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -109,6 +114,11 @@ fn parse_stacks(names: &[String]) -> StackSet {
 
 /// Builds the engine configuration the edge would receive for the
 /// candidate policy (`effective`) plus the compiled custom rules.
+///
+/// Only the fields `effective` resolves are set; everything else (threshold,
+/// decode layers, stacks, managed rules, fast-path blocking) comes from
+/// [`WafEngineConfig::default`] so the tester cannot drift from the edge
+/// baseline.
 pub fn engine_config(
     effective: &EffectiveEngine,
     rules: Vec<CompiledRule>,
@@ -120,21 +130,15 @@ pub fn engine_config(
         } else {
             WafLevel::Normal
         },
-        stacks: StackSet::default(),
         monitor_categories: parse_categories(&effective.monitor_categories),
         monitor_stacks: parse_stacks(&effective.monitor_stacks),
-        threshold: 40,
         paranoia_level: effective.paranoia_level.clamp(1, 4) as u8,
-        max_decode_layers: 3,
         rules,
-        enable_managed_rules: true,
-        fast_path_block_on_critical: true,
         monitor_managed_rules: effective
             .monitor_managed_rules
             .iter()
             .cloned()
             .collect::<HashSet<_>>(),
-        monitor_custom_rules: HashSet::new(),
         disabled_rules: effective
             .disabled_rules
             .iter()
@@ -146,7 +150,7 @@ pub fn engine_config(
             .clone()
             .into_iter()
             .collect(),
-        path_target_exclusions: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -458,6 +462,33 @@ mod tests {
         )
         .expect("valid draft compiles");
         assert_eq!(compiled.id, "draft:2");
+    }
+
+    #[test]
+    fn tester_uses_engine_baseline_for_unresolved_fields() {
+        let effective = EffectiveEngine {
+            waf_enabled: true,
+            mode: Some("block".into()),
+            paranoia_level: 2,
+            advanced_mode: false,
+            engine_mode: "inherit".into(),
+            monitor_categories: Vec::new(),
+            monitor_stacks: Vec::new(),
+            monitor_managed_rules: Vec::new(),
+            disabled_rules: Vec::new(),
+            rule_scores: BTreeMap::new(),
+            rule_target_exclusions: BTreeMap::new(),
+        };
+        let config = engine_config(&effective, Vec::new());
+
+        // `EffectiveEngine` carries no stack selection, no threshold and no
+        // decode-layer setting: those must come from the engine baseline,
+        // never from a tester-local copy.
+        assert_eq!(config.threshold, 40);
+        assert_eq!(config.max_decode_layers, 3);
+        assert_eq!(config.stacks, StackSet::ALL);
+        assert!(config.enable_managed_rules);
+        assert!(config.fast_path_block_on_critical);
     }
 
     #[test]

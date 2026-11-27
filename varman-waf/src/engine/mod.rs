@@ -129,6 +129,15 @@ pub struct PathTargetExclusion {
     pub path_prefix: String,
 }
 
+/// The baseline every caller builds on: this `Default` is the single owner
+/// of the engine's default profile (Block, Normal, every stack, threshold
+/// 40, paranoia 2, three decode layers, managed rules and fast-path
+/// blocking on, no monitor/score/exclusion tuning).
+///
+/// Callers that need a different profile override only the fields that
+/// differ and take the rest from `..Default::default()`; restating a
+/// baseline value here is what lets the edge and the control plane drift
+/// apart.
 impl Default for WafEngineConfig {
     fn default() -> Self {
         Self {
@@ -1636,6 +1645,28 @@ mod tests {
             scheme: "https".into(),
             protocol: "HTTP/1.1".into(),
         }
+    }
+
+    #[test]
+    fn waf_engine_config_defaults_are_the_documented_baseline() {
+        let config = WafEngineConfig::default();
+        assert_eq!(config.mode, WafMode::Block);
+        assert_eq!(config.level, WafLevel::Normal);
+        assert_eq!(config.stacks, StackSet::ALL);
+        assert_eq!(config.threshold, 40);
+        assert_eq!(config.paranoia_level, 2);
+        assert_eq!(config.max_decode_layers, 3);
+        assert!(config.enable_managed_rules);
+        assert!(config.fast_path_block_on_critical);
+        assert!(config.rules.is_empty());
+        assert_eq!(config.monitor_categories, CategorySet::EMPTY);
+        assert_eq!(config.monitor_stacks, StackSet::EMPTY);
+        assert!(config.monitor_managed_rules.is_empty());
+        assert!(config.monitor_custom_rules.is_empty());
+        assert!(config.disabled_rules.is_empty());
+        assert!(config.rule_scores.is_empty());
+        assert!(config.rule_target_exclusions.is_empty());
+        assert!(config.path_target_exclusions.is_empty());
     }
 
     #[test]

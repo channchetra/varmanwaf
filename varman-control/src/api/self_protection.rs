@@ -40,10 +40,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use varman_waf::{
-    CategorySet, RequestData, StackSet, WafAction, WafEngine, WafEngineConfig,
-    WafLevel, WafMode,
-};
+use varman_waf::{RequestData, WafAction, WafEngine, WafEngineConfig, WafMode};
 
 use crate::api::error::error_response;
 use crate::api::state::AppState;
@@ -186,28 +183,15 @@ pub async fn refresh(
     }
     let waf_blocking = settings.waf_mode == waf_mode::BLOCK;
     let waf = settings.waf_enabled.then(|| {
+        // Only the mode differs from the engine baseline; every detection
+        // knob is deliberately left at `WafEngineConfig::default`.
         Arc::new(WafEngine::new(&WafEngineConfig {
             mode: if waf_blocking {
                 WafMode::Block
             } else {
                 WafMode::Monitor
             },
-            level: WafLevel::default(),
-            stacks: StackSet::default(),
-            monitor_categories: CategorySet::EMPTY,
-            monitor_stacks: StackSet::EMPTY,
-            monitor_managed_rules: std::collections::HashSet::new(),
-            monitor_custom_rules: std::collections::HashSet::new(),
-            disabled_rules: std::collections::HashSet::new(),
-            rule_scores: std::collections::HashMap::new(),
-            rule_target_exclusions: std::collections::HashMap::new(),
-            path_target_exclusions: Vec::new(),
-            threshold: 40,
-            paranoia_level: 2,
-            max_decode_layers: 3,
-            rules: Vec::new(),
-            enable_managed_rules: true,
-            fast_path_block_on_critical: true,
+            ..Default::default()
         }))
     });
 
