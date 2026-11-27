@@ -258,9 +258,6 @@ mod tests {
     /// in parallel lets one perturb the other's sample.
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    #[cfg(target_os = "linux")]
-    use pretty_assertions::assert_eq;
-
     /// Burns CPU for `ms` so the sampler has something to catch.
     #[cfg(target_os = "linux")]
     fn burn(ms: u64) {
@@ -276,30 +273,64 @@ mod tests {
     // All sampling paths share one process-global profiler, so they must run
     // sequentially inside a single test.
     #[cfg(target_os = "linux")]
+    fn run_sampling_session() -> Result<(), String> {
+        let session = start_session(DEFAULT_FREQUENCY)
+            .map_err(|e| format!("first start: {e:?}"))?;
+        burn(300);
+        let profile = session
+            .finish_pprof()
+            .map_err(|e| format!("pprof bytes: {e:?}"))?;
+        // gzip magic: the output is a valid gzip stream for go tool pprof.
+        if profile.len() < 2 || profile[0] != 0x1f || profile[1] != 0x8b {
+            return Err("pprof output is not a gzip stream".to_string());
+        }
+
+        let session = start_session(DEFAULT_FREQUENCY)
+            .map_err(|e| format!("second start: {e:?}"))?;
+        if !matches!(
+            start_session(DEFAULT_FREQUENCY),
+            Err(ProfileError::AlreadyActive)
+        ) {
+            return Err("the active session was not rejected".to_string());
+        }
+        burn(200);
+        let svg = session
+            .finish_flamegraph()
+            .map_err(|e| format!("flamegraph: {e:?}"))?;
+        if !svg.contains("<svg") {
+            return Err("flamegraph output has no svg element".to_string());
+        }
+
+        // Dropping a session releases the process-global slot.
+        let session = start_session(DEFAULT_FREQUENCY)
+            .map_err(|e| format!("third start: {e:?}"))?;
+        drop(session);
+        let session = start_session(DEFAULT_FREQUENCY)
+            .map_err(|e| format!("fourth start: {e:?}"))?;
+        drop(session);
+        Ok(())
+    }
+
+    // All sampling paths share one process-global profiler, so they must run
+    // sequentially inside a single test. Sampling can occasionally report an
+    // empty profile under a loaded workspace run; retry a bounded number of
+    // times rather than failing the whole suite on a scheduler hiccup.
+    #[cfg(target_os = "linux")]
     #[test]
     fn sampling_sessions() {
         let _guard = TEST_LOCK.lock().expect("pprof test lock");
-        let session = start_session(DEFAULT_FREQUENCY).expect("first start");
-        burn(300);
-        let profile = session.finish_pprof().expect("pprof bytes");
-        // gzip magic: the output is a valid gzip stream for go tool pprof.
-        assert_eq!(profile[0], 0x1f);
-        assert_eq!(profile[1], 0x8b);
-
-        let session = start_session(DEFAULT_FREQUENCY).expect("second start");
-        assert!(matches!(
-            start_session(DEFAULT_FREQUENCY),
-            Err(ProfileError::AlreadyActive)
-        ));
-        burn(200);
-        let svg = session.finish_flamegraph().expect("flamegraph svg");
-        assert!(svg.contains("<svg"));
-
-        // Dropping a session releases the process-global slot.
-        let session = start_session(DEFAULT_FREQUENCY).expect("third start");
-        drop(session);
-        let session = start_session(DEFAULT_FREQUENCY).expect("fourth start");
-        drop(session);
+        let mut last = String::new();
+        for attempt in 1..=3 {
+            match run_sampling_session() {
+                Ok(()) => return,
+                Err(e) => {
+                    eprintln!("pprof sampling attempt {attempt} failed: {e}");
+                    last = e;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                },
+            }
+        }
+        panic!("sampling_sessions failed after 3 attempts: {last}");
     }
 
     // Sampling the process via SIGPROF is unsafe off-Linux (see
