@@ -17,40 +17,12 @@
 //! Handles the three operating modes: Server (control plane only),
 //! Agent (data plane only), and AllInOne (both in a single process).
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::certificates::{new_certificate_provider, try_update_certificates};
 use crate::cli::{
     AgentOpts, AllInOneOpts, CommonOpts, ServerOpts, VarmanCli, VarmanCommand,
 };
-use crate::config_manager::try_init_memory_config_manager;
-use crate::locations::{new_location_provider, try_init_locations};
-use crate::plugin::{new_plugin_provider, try_init_plugins};
-use crate::server_locations::{
-    new_server_locations_provider, try_init_server_locations,
-};
-use crate::upstreams::{new_upstream_provider, try_init_upstreams};
-use pingap_acme::new_lets_encrypt_service;
-use pingap_config::{
-    BasicConf, CertificateConf, LocationConf, PingapConfig, PingapTomlConfig,
-    PluginConf, ServerConf as PingapServerConf, UpstreamConf,
-    normalize_dns_provider,
-};
-use pingap_core::BackgroundTaskService;
-use pingap_proxy::{
-    AppContext, Server as ProxyServer, ServerConf, parse_from_conf,
-};
-use pingap_upstream::new_upstream_health_check_task;
-use pingora::server;
-use pingora::server::configuration::Opt;
-use pingora::services::background::background_service;
-use tracing::{error, info, warn};
-use varman_agent::cache::{
-    CachedRules, HealthCheckConfig, RuleCache, SslConfig,
-};
+use tracing::{error, info};
 use varman_agent::config::AgentConfig;
 use varman_control::ServerConfig;
 
@@ -226,13 +198,8 @@ pub fn build_run_mode(cli: VarmanCli) -> RunMode {
     }
 }
 
-/// Sanitize a control-plane LB algorithm into a pingap `algo` value.
-///
-/// pingap accepts `round_robin` (its default), `random`,
-/// `least_connections` and `hash:<type>[:<key>]` with type in {ip, url,
-/// path, header, cookie, query}; anything else — including legacy enum
-/// Debug names such as `lbconsistenthash` — is a hard error at upstream
-/// construction, so it must collapse to the default here.
+mod acme;
+mod bundle_config;
 mod data_plane;
 use data_plane::start_data_plane;
 
@@ -466,12 +433,16 @@ fn log_directives(rust_log: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::data_plane::{
-        CACHE_PLUGIN_NAME, acme_certificate_conf,
-        cached_rules_to_pingap_config, health_check_url, merge_config_state,
+    use super::acme::{acme_certificate_conf, merge_config_state};
+    use super::bundle_config::{
+        CACHE_PLUGIN_NAME, cached_rules_to_pingap_config, health_check_url,
         sanitize_algo,
     };
     use clap::Parser;
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::time::Duration;
+    use varman_agent::cache::{HealthCheckConfig, SslConfig};
 
     #[test]
     fn config_is_a_maintenance_command() {
