@@ -48,6 +48,7 @@ pub mod self_protection;
 pub mod site_credentials;
 pub mod subscription;
 pub mod tls;
+pub mod users;
 pub mod waf_values;
 
 pub use config::ServerConfig;
@@ -540,38 +541,43 @@ async fn seed_admin(
         return Ok(());
     }
 
+    // The shared writer normalises the address, so the existence check must
+    // use the same form: a differently-cased configured address would
+    // otherwise miss and hit the unique constraint on insert.
+    let email = crate::email::normalise_email(&config.default_admin_email)
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "invalid default_admin_email in the configuration: {err}"
+            )
+        })?;
+
     // Check if the configured admin already exists (idempotent restart).
     let existing = user::Entity::find()
-        .filter(user::Column::Email.eq(&config.default_admin_email))
+        .filter(user::Column::Email.eq(&email))
         .one(db)
         .await?;
     if existing.is_some() {
         return Ok(());
     }
 
-    let password_hash = auth::hash_password(&config.default_admin_password)
-        .map_err(|err| {
-            anyhow::anyhow!("failed to hash admin password: {err}")
-        })?;
-
-    let now = chrono::Utc::now();
-    let admin = user::ActiveModel {
-        id: sea_orm::Set(uuid::Uuid::new_v4()),
-        email: sea_orm::Set(config.default_admin_email.clone()),
-        password_hash: sea_orm::Set(password_hash),
-        name: sea_orm::Set(Some("Administrator".to_string())),
-        role: sea_orm::Set(role::ADMIN.to_string()),
-        disabled: sea_orm::Set(false),
+    crate::users::create_user(
+        db,
+        &email,
+        &config.default_admin_password,
+        role::ADMIN,
+        Some("Administrator".to_string()),
         // The default password ships in the repository: force a change on
-        // first login.
-        must_change_password: sea_orm::Set(true),
-        token_version: sea_orm::Set(0),
-        created_at: sea_orm::Set(now),
-        updated_at: sea_orm::Set(now),
-    };
-
-    use sea_orm::ActiveModelTrait;
-    admin.insert(db).await?;
+        // first login. Unlike self-registration, seeding is an
+        // administrator-created account.
+        true,
+    )
+    .await
+    .map_err(|err| match err {
+        crate::users::UserWriteError::Password(err) => {
+            anyhow::anyhow!("failed to hash admin password: {err}")
+        },
+        other => anyhow::Error::new(other),
+    })?;
 
     if config.default_admin_password == config::DEFAULT_ADMIN_PASSWORD {
         tracing::warn!(
@@ -1039,5 +1045,159 @@ mod embedded_agent_tls_tests {
         assert_eq!(split_leaf_and_chain("").0, "");
         assert_eq!(split_leaf_and_chain("not a pem").1, "");
         assert_eq!(trust_anchor_pem("not a pem"), "");
+    }
+}
+
+#[cfg(test)]
+mod seed_admin_tests {
+    use std::collections::{BTreeMap, VecDeque};
+    use std::sync::{Arc, Mutex};
+
+    use chrono::Utc;
+    use sea_orm::{
+        Database, DatabaseBackend, DatabaseConnection, DbErr, EntityTrait,
+        IdenStatic, Iterable, ModelTrait, ProxyDatabaseTrait, ProxyExecResult,
+        ProxyRow, Statement, Value,
+    };
+    use uuid::Uuid;
+
+    use super::seed_admin;
+    use crate::auth::password::verify_password;
+    use crate::config::ServerConfig;
+    use crate::models::{role, user};
+
+    /// Answers queued reads in order and records every statement.
+    #[derive(Debug)]
+    struct RecordingQueue {
+        batches: Mutex<VecDeque<Vec<ProxyRow>>>,
+        statements: Arc<Mutex<Vec<Statement>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ProxyDatabaseTrait for RecordingQueue {
+        async fn query(
+            &self,
+            statement: Statement,
+        ) -> Result<Vec<ProxyRow>, DbErr> {
+            self.statements
+                .lock()
+                .expect("statement log")
+                .push(statement);
+            self.batches
+                .lock()
+                .expect("query queue")
+                .pop_front()
+                .ok_or_else(|| {
+                    DbErr::Custom("no queued query result".to_string())
+                })
+        }
+
+        async fn execute(
+            &self,
+            statement: Statement,
+        ) -> Result<ProxyExecResult, DbErr> {
+            self.statements
+                .lock()
+                .expect("statement log")
+                .push(statement);
+            Ok(ProxyExecResult::new(0, 0))
+        }
+    }
+
+    async fn database(
+        batches: Vec<Vec<ProxyRow>>,
+    ) -> (DatabaseConnection, Arc<Mutex<Vec<Statement>>>) {
+        let statements = Arc::new(Mutex::new(Vec::new()));
+        let queue = RecordingQueue {
+            batches: Mutex::new(batches.into()),
+            statements: Arc::clone(&statements),
+        };
+        let db = Database::connect_proxy(
+            DatabaseBackend::Postgres,
+            Arc::new(Box::new(queue)),
+        )
+        .await
+        .expect("the proxy connection cannot fail");
+        (db, statements)
+    }
+
+    fn count_row(count: i64) -> ProxyRow {
+        ProxyRow::new(BTreeMap::from([(
+            "num_items".to_string(),
+            Value::BigInt(Some(count)),
+        )]))
+    }
+
+    fn encode_row<M>(model: &M) -> ProxyRow
+    where
+        M: ModelTrait,
+    {
+        let values = <<M::Entity as EntityTrait>::Column as Iterable>::iter()
+            .map(|column| (column.as_str().to_string(), model.get(column)))
+            .collect::<BTreeMap<String, Value>>();
+        ProxyRow::new(values)
+    }
+
+    fn inserted_account() -> user::Model {
+        let now = Utc::now();
+        user::Model {
+            id: Uuid::new_v4(),
+            email: "admin@example.com".to_string(),
+            password_hash: String::new(),
+            name: Some("Administrator".to_string()),
+            role: role::ADMIN.to_string(),
+            disabled: false,
+            must_change_password: true,
+            token_version: 0,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn seeding_creates_exactly_one_normalised_administrator() {
+        let (db, statements) = database(vec![
+            vec![count_row(0)],
+            Vec::new(),
+            vec![encode_row(&inserted_account())],
+        ])
+        .await;
+        let config = ServerConfig {
+            default_admin_email: "  Admin@Example.COM ".to_string(),
+            default_admin_password: "correct horse battery".to_string(),
+            ..ServerConfig::default()
+        };
+
+        seed_admin(&db, &config)
+            .await
+            .expect("seeding must succeed");
+
+        let statements = statements.lock().expect("statement log");
+        let inserts: Vec<&Statement> = statements
+            .iter()
+            .filter(|statement| {
+                statement.sql.starts_with("INSERT INTO \"users\"")
+            })
+            .collect();
+        assert_eq!(inserts.len(), 1, "seeding must insert exactly one account");
+
+        let values = inserts[0].values.as_ref().expect("insert values");
+        let strings: Vec<String> = values
+            .iter()
+            .filter_map(|value| match value {
+                Value::String(Some(text)) => Some((**text).clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(strings.contains(&"admin@example.com".to_string()));
+        assert!(!strings.contains(&"  Admin@Example.COM ".to_string()));
+        assert!(strings.contains(&role::ADMIN.to_string()));
+        let hash = strings
+            .iter()
+            .find(|value| value.starts_with("$2"))
+            .expect("the seeded password is hashed");
+        assert!(verify_password(&config.default_admin_password, hash).unwrap());
+        assert!(values.iter().any(|value| *value == Value::Bool(Some(true))));
+        assert!(values.iter().any(|value| *value == Value::BigInt(Some(0))));
     }
 }

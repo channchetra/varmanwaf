@@ -18,12 +18,14 @@ use sea_orm::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::api::auth::{create_user, normalise_email, UserResponse};
+use crate::api::auth::{
+    create_user, normalise_email, user_write_error, UserResponse,
+};
 use crate::api::common::{parse_uuid, Page, Pagination};
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::auth::middleware::AdminUser;
-use crate::auth::password::{hash_password, validate_password};
+use crate::auth::password::validate_password;
 use crate::models::{login_history, role, user};
 
 #[derive(Debug, Deserialize)]
@@ -295,18 +297,10 @@ async fn reset_password(
     }
     validate_password(&payload.password)
         .map_err(|err| ApiError::BadRequest(err.to_string()))?;
-    let account = user::Entity::find_by_id(id)
-        .one(&state.db)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("user {id} not found")))?;
 
-    let mut active: user::ActiveModel = account.into();
-    active.password_hash = Set(hash_password(&payload.password)
-        .map_err(|err| ApiError::BadRequest(err.to_string()))?);
-    active.must_change_password = Set(true);
-    active.token_version = Set(active.token_version.unwrap() + 1);
-    active.updated_at = Set(Utc::now());
-    let updated = active.update(&state.db).await?;
+    let updated = crate::users::set_password(&state.db, id, &payload.password)
+        .await
+        .map_err(user_write_error)?;
 
     tracing::info!(
         user_id = %id,

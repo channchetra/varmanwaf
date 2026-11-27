@@ -27,6 +27,7 @@ use crate::auth::password::{
 use crate::auth::token_version_valid;
 use crate::auth::{create_refresh_token, create_token, verify_refresh_token};
 use crate::models::{role, user};
+use crate::users::UserWriteError;
 
 /// Public information about a dashboard account. The password hash never leaves
 /// the process (see [`crate::models::users`], which deliberately does not derive
@@ -496,6 +497,26 @@ pub(crate) fn normalise_email(raw: &str) -> Result<String, ApiError> {
         .map_err(|err| ApiError::BadRequest(err.to_string()))
 }
 
+/// Maps a shared account-write failure onto the API's error type.
+///
+/// The messages predate the shared module and are part of the REST contract,
+/// so the mapping lives here rather than in [`crate::users`].
+pub(crate) fn user_write_error(err: UserWriteError) -> ApiError {
+    match err {
+        UserWriteError::InvalidEmail(err) => {
+            ApiError::BadRequest(err.to_string())
+        },
+        UserWriteError::Password(err) => ApiError::BadRequest(err.to_string()),
+        UserWriteError::UnknownRole(role_name) => {
+            ApiError::Internal(format!("unknown role '{role_name}'"))
+        },
+        UserWriteError::NotFound(id) => {
+            ApiError::NotFound(format!("user {id} not found"))
+        },
+        UserWriteError::Database(err) => ApiError::from(err),
+    }
+}
+
 /// Inserts a new user row with a freshly hashed password.
 ///
 /// `must_change_password` marks the password as temporary: administrator-created
@@ -503,7 +524,8 @@ pub(crate) fn normalise_email(raw: &str) -> Result<String, ApiError> {
 /// sign-in.
 ///
 /// Accepts any connection so the registration transaction can run it on its
-/// own transaction handle.
+/// own transaction handle. The write rules themselves live in
+/// [`crate::users`], shared with the maintenance CLI and the boot seed.
 pub async fn create_user(
     db: &impl ConnectionTrait,
     email: &str,
@@ -512,27 +534,16 @@ pub async fn create_user(
     assigned_role: &str,
     must_change_password: bool,
 ) -> Result<user::Model, ApiError> {
-    if !role::is_valid(assigned_role) {
-        return Err(ApiError::Internal(format!(
-            "unknown role '{assigned_role}'"
-        )));
-    }
-    let password_hash = hash_password(password)
-        .map_err(|err| ApiError::BadRequest(err.to_string()))?;
-    let timestamp = Utc::now();
-    let active = user::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        email: Set(email.to_string()),
-        password_hash: Set(password_hash),
-        name: Set(name),
-        role: Set(assigned_role.to_string()),
-        disabled: Set(false),
-        must_change_password: Set(must_change_password),
-        token_version: Set(0),
-        created_at: Set(timestamp),
-        updated_at: Set(timestamp),
-    };
-    active.insert(db).await.map_err(ApiError::from)
+    crate::users::create_user(
+        db,
+        email,
+        password,
+        assigned_role,
+        name,
+        must_change_password,
+    )
+    .await
+    .map_err(user_write_error)
 }
 
 /// Mints an access/refresh pair for `account`.

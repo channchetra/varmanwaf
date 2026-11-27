@@ -35,15 +35,14 @@ use uuid::Uuid;
 
 use varman_control::api::defense;
 use varman_control::api::self_protection::{self, effective_allowlist};
-use varman_control::auth::password::{
-    MAX_PASSWORD_BYTES, hash_password, validate_password,
-};
+use varman_control::auth::password::{MAX_PASSWORD_BYTES, validate_password};
 use varman_control::config_history::{self, VersionScope};
 use varman_control::email::normalise_email;
 use varman_control::models::{
     api_protection_setting, config_version, defense_settings, ip_groups, role,
     site, user,
 };
+use varman_control::users::{self, UserWriteError};
 
 use crate::cli::{
     AddAdminOpts, AllowlistOpts, ConfigCommand, ConfigHistoryOpts,
@@ -182,28 +181,22 @@ async fn add_admin(opts: AddAdminOpts) -> anyhow::Result<()> {
         );
     }
 
-    let password_hash = hash_password(&password)
-        .map_err(|err| anyhow::anyhow!("cannot hash the password: {err}"))?;
-    let now = Utc::now();
-    let row = user::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        email: Set(email),
-        password_hash: Set(password_hash),
-        name: Set(Some(
-            opts.name
-                .clone()
-                .unwrap_or_else(|| "Administrator".to_string()),
-        )),
-        role: Set(role::ADMIN.to_string()),
-        disabled: Set(false),
-        must_change_password: Set(true),
-        token_version: Set(0),
-        created_at: Set(now),
-        updated_at: Set(now),
-    }
-    .insert(&db)
+    let name = opts
+        .name
+        .clone()
+        .unwrap_or_else(|| "Administrator".to_string());
+    let row = users::create_user(
+        &db,
+        &email,
+        &password,
+        role::ADMIN,
+        Some(name),
+        // The password may be generated or typed by the operator: either way
+        // it is temporary and the account replaces it at first sign-in.
+        true,
+    )
     .await
-    .context("cannot create the administrator")?;
+    .map_err(|err| map_user_write(err, "cannot create the administrator"))?;
 
     println!("administrator {} created (id {})", row.email, row.id);
     if generated {
@@ -228,12 +221,9 @@ async fn reset_password(opts: ResetPasswordOpts) -> anyhow::Result<()> {
         bail!("no user with e-mail {email}");
     };
 
-    let password_hash = hash_password(&password)
-        .map_err(|err| anyhow::anyhow!("cannot hash the password: {err}"))?;
-    let row = password_reset_change(row, password_hash)
-        .update(&db)
+    let row = users::set_password(&db, row.id, &password)
         .await
-        .context("cannot update the password")?;
+        .map_err(|err| map_user_write(err, "cannot update the password"))?;
 
     println!("password updated for {} ({})", row.email, row.role);
     if generated {
@@ -242,19 +232,22 @@ async fn reset_password(opts: ResetPasswordOpts) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Applies the credential invalidation of a password reset, matching the API:
-/// the new hash, a forced change at the next login, and a token-version bump
-/// that revokes every token minted before it.
-fn password_reset_change(
-    row: user::Model,
-    password_hash: String,
-) -> user::ActiveModel {
-    let mut active: user::ActiveModel = row.into();
-    active.password_hash = Set(password_hash);
-    active.must_change_password = Set(true);
-    active.token_version = Set(active.token_version.unwrap() + 1);
-    active.updated_at = Set(Utc::now());
-    active
+/// Maps a shared account-write failure onto the CLI's error style: password
+/// failures name the hashing step, storage failures carry the command's
+/// context, and the rest pass their message through.
+fn map_user_write(
+    err: UserWriteError,
+    storage_context: &'static str,
+) -> anyhow::Error {
+    match err {
+        UserWriteError::Password(err) => {
+            anyhow::anyhow!("cannot hash the password: {err}")
+        },
+        UserWriteError::Database(err) => {
+            anyhow::Error::new(err).context(storage_context)
+        },
+        other => anyhow::Error::new(other),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -697,24 +690,23 @@ mod tests {
     }
 
     #[test]
-    fn password_reset_forces_change_and_revokes_tokens() {
-        let now = Utc::now();
-        let row = user::Model {
-            id: Uuid::new_v4(),
-            email: "ops@example.com".to_string(),
-            password_hash: "old-hash".to_string(),
-            name: None,
-            role: role::ADMIN.to_string(),
-            disabled: false,
-            must_change_password: false,
-            token_version: 7,
-            created_at: now,
-            updated_at: now,
-        };
+    fn account_write_failures_keep_their_command_style() {
+        let password = map_user_write(
+            UserWriteError::Password(
+                varman_control::auth::password::PasswordError::TooShort,
+            ),
+            "cannot update the password",
+        );
+        assert!(
+            password
+                .to_string()
+                .starts_with("cannot hash the password:")
+        );
 
-        let active = password_reset_change(row, "new-hash".to_string());
-        assert_eq!(Set("new-hash".to_string()), active.password_hash);
-        assert_eq!(Set(true), active.must_change_password);
-        assert_eq!(Set(8), active.token_version);
+        let missing = map_user_write(
+            UserWriteError::NotFound(Uuid::new_v4()),
+            "cannot update the password",
+        );
+        assert!(missing.to_string().starts_with("user "));
     }
 }
