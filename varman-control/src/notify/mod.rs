@@ -216,13 +216,27 @@ impl NotificationSettings {
     pub async fn load(db: &DatabaseConnection) -> Self {
         use crate::models::instance_setting;
 
-        let stored = instance_setting::Entity::find_by_id(SETTINGS_KEY)
+        let stored = match instance_setting::Entity::find_by_id(SETTINGS_KEY)
             .one(db)
             .await
-            .ok()
-            .flatten();
+        {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "failed to load notification settings; using defaults"
+                );
+                return Self::default();
+            },
+        };
         match stored {
-            Some(row) => serde_json::from_str(&row.value).unwrap_or_default(),
+            Some(row) => serde_json::from_str(&row.value).unwrap_or_else(|e| {
+                tracing::warn!(
+                    error = %e,
+                    "notification settings are invalid; using defaults"
+                );
+                Self::default()
+            }),
             None => Self::default(),
         }
     }

@@ -317,11 +317,11 @@ impl AdminServe {
     ) -> pingora::Result<PingapConfig> {
         let config = self.manager.load_all().await.map_err(|e| {
             error!(target: LOG_TARGET, "failed to load config: {e}");
-            pingap_core::new_internal_error(400, e)
+            pingap_core::new_internal_error(500, e)
         })?;
         let config = config.to_pingap_config(replace_include).map_err(|e| {
             error!(target: LOG_TARGET, "failed to convert config: {e}");
-            pingap_core::new_internal_error(400, e)
+            pingap_core::new_internal_error(500, e)
         })?;
         Ok(config)
     }
@@ -333,16 +333,16 @@ impl AdminServe {
         if category == "full" {
             let full_conf = self.load_config(true).await?;
             let mut full_toml = toml::to_string_pretty(&full_conf)
-                .map_err(|e| pingap_core::new_internal_error(400, e))?;
+                .map_err(|e| pingap_core::new_internal_error(500, e))?;
             if let Ok(value) = pingap_util::toml_omit_empty_value(&full_toml) {
                 full_toml = value;
             };
             let hcl = convert_toml_to_hcl(&full_toml)
-                .map_err(|e| pingap_core::new_internal_error(400, e))?;
+                .map_err(|e| pingap_core::new_internal_error(500, e))?;
             let kdl = convert_toml_to_kdl(&full_toml)
-                .map_err(|e| pingap_core::new_internal_error(400, e))?;
+                .map_err(|e| pingap_core::new_internal_error(500, e))?;
             let mut original_toml = toml::to_string_pretty(&conf)
-                .map_err(|e| pingap_core::new_internal_error(400, e))?;
+                .map_err(|e| pingap_core::new_internal_error(500, e))?;
             if let Ok(value) =
                 pingap_util::toml_omit_empty_value(&original_toml)
             {
@@ -374,10 +374,10 @@ impl AdminServe {
         name: &str,
     ) -> pingora::Result<HttpResponse> {
         let category = Category::from_str(category)
-            .map_err(|e| pingap_core::new_internal_error(400, e))?;
+            .map_err(|e| pingap_core::new_internal_error(500, e))?;
         self.manager.delete(category, name).await.map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "delete config fail");
-            pingap_core::new_internal_error(400, e)
+            pingap_core::new_internal_error(500, e)
         })?;
         Ok(HttpResponse::no_content())
     }
@@ -397,11 +397,11 @@ impl AdminServe {
                 "parse {} config fail",
                 category.to_string()
             );
-            pingap_core::new_internal_error(400, e)
+            pingap_core::new_internal_error(500, e)
         })?;
         conf.validate().map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "validate config fail");
-            pingap_core::new_internal_error(400, e)
+            pingap_core::new_internal_error(500, e)
         })?;
 
         self.manager
@@ -409,7 +409,7 @@ impl AdminServe {
             .await
             .map_err(|e| {
                 error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
-                pingap_core::new_internal_error(400, e)
+                pingap_core::new_internal_error(500, e)
             })?;
 
         Ok(())
@@ -497,18 +497,18 @@ impl AdminServe {
         let buf = get_request_body(session).await?;
         let config: PingapTomlConfig = toml::from_slice(&buf).map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
-            pingap_core::new_internal_error(400, e)
+            pingap_core::new_internal_error(500, e)
         })?;
         // A per-category write validates before it is stored; a wholesale
         // import replaces every category at once, so it must pass the same
         // gate or it can install a config the process would refuse to boot.
         validate_import(&config).map_err(|e| {
             error!(target: LOG_TARGET, error = e, "import config fail");
-            pingap_core::new_internal_error(400, e)
+            pingap_core::new_internal_error(500, e)
         })?;
         self.manager.save_all(&config).await.map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
-            pingap_core::new_internal_error(400, e)
+            pingap_core::new_internal_error(500, e)
         })?;
 
         Ok(HttpResponse::no_content())
@@ -563,7 +563,7 @@ impl AdminServe {
     ) -> pingora::Result<HttpResponse> {
         let category = Category::from_str(category).map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "get config category fail");
-            pingap_core::new_internal_error(400, e)
+            pingap_core::new_internal_error(500, e)
         })?;
         // The name segment is optional in the url but not in the code below,
         // so reject a short url instead of indexing past the end of `params`.
@@ -593,7 +593,7 @@ impl AdminServe {
             .await
             .map_err(|e| {
                 error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
-                pingap_core::new_internal_error(400, e)
+                pingap_core::new_internal_error(500, e)
             })?
             .unwrap_or_default();
 
@@ -601,7 +601,7 @@ impl AdminServe {
         for item in arr {
             let data: toml::Table = toml::from_str(&item.data).map_err(|e| {
                 error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
-                pingap_core::new_internal_error(400, e)
+                pingap_core::new_internal_error(500, e)
             })?;
             let key = format_category(category);
             let Some(data) = data.get(key).cloned() else {
@@ -685,13 +685,13 @@ impl AdminServe {
     ) -> pingora::Result<HttpResponse> {
         let buf = get_request_body(session).await?;
         let params: AesParams = serde_json::from_slice(buf.as_ref())
-            .map_err(|e| pingap_core::new_internal_error(400, e))?;
+            .map_err(|e| pingap_core::new_internal_error(500, e))?;
         let value = if params.category == "encrypt" {
             pingap_util::aes_encrypt(&params.key, &params.data)
         } else {
             pingap_util::aes_decrypt(&params.key, &params.data)
         }
-        .map_err(|e| pingap_core::new_internal_error(400, e))?;
+        .map_err(|e| pingap_core::new_internal_error(500, e))?;
         Ok(HttpResponse::try_from_json(&AesResp { value })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
     }

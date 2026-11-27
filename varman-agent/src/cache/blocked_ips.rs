@@ -199,7 +199,12 @@ impl RuleCache {
         }
         if !expired_keys.is_empty() {
             debug!(count = expired_keys.len(), "Cleaned up expired IP blocks");
-            let _ = self.persist_blocked_ips();
+            if let Err(e) = self.persist_blocked_ips() {
+                warn!(
+                    error = %e,
+                    "expired IP blocks removed in memory but not persisted"
+                );
+            }
         }
     }
 
