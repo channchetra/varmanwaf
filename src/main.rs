@@ -70,6 +70,7 @@ use tracing::{error, info, warn};
 
 mod certificates;
 mod cli;
+mod config_apply;
 mod config_file;
 mod config_manager;
 mod data_plane;

@@ -13,24 +13,15 @@
 // limitations under the License.
 
 use super::restart;
-use crate::certificates::try_update_certificates;
-use crate::locations::try_init_locations;
-use crate::plugin;
-use crate::server_locations::try_init_server_locations;
-use crate::upstreams::try_update_upstreams;
-use crate::webhook::{
-    get_webhook_sender, reload_webhook_notification_sender, send_notification,
-};
+use crate::config_apply::{self, ApplyOptions, ApplyOutcome};
+use crate::webhook::send_notification;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_trait::async_trait;
 use pingap_certificate::validate_servers_tls_for_backend;
-use pingap_config::{
-    CATEGORY_CERTIFICATE, CATEGORY_LOCATION, CATEGORY_PLUGIN,
-    CATEGORY_UPSTREAM, ConfigManager, PingapConfig, PingapTomlConfig,
-};
+use pingap_config::{ConfigManager, PingapConfig, PingapTomlConfig};
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
-    NotificationData, NotificationLevel,
+    NotificationData,
 };
 use pingap_logger::LoggerReloadHandle;
 use pingap_logger::new_env_filter;
@@ -123,15 +114,6 @@ async fn diff_and_update_config(
 ///    triggers a full server restart
 ///
 /// Returns whether a restart was requested.
-/// Whether a pass applied every hot-reloadable component.
-///
-/// A partial apply must not be recorded as current: the next diff would be
-/// empty and the failed components would never be retried. The caller keeps
-/// the previous config and lets the watcher retry.
-fn should_commit_config(failures: &[String]) -> bool {
-    failures.is_empty()
-}
-
 async fn apply_config(
     config_manager: Arc<ConfigManager>,
     new_config: &PingapConfig,
@@ -139,273 +121,52 @@ async fn apply_config(
 ) -> Result<bool, Box<dyn std::error::Error>> {
     new_config.validate()?;
     validate_servers_tls_for_backend(&new_config.servers)?;
-    let current_config: PingapConfig =
-        config_manager.get_current_config().as_ref().clone();
+    let current_config = config_manager.get_current_config();
 
-    let (updated_category_list, original_diff_result) =
-        current_config.diff(new_config);
-    debug!(
-        target: LOG_TARGET,
-        updated_category_list = updated_category_list.join(","),
-        original_diff_result = original_diff_result.join("\n"),
-        "current config diff from new config"
-    );
-    // no update config
-    if original_diff_result.is_empty() {
-        return Ok(false);
-    }
+    let outcome = config_apply::apply_config(
+        &current_config,
+        new_config,
+        &ApplyOptions::daemon(!hot_reload_only),
+    )
+    .await;
 
-    let mut reload_fail_messages = vec![];
-    let mut hot_reload_config = current_config.clone();
-    {
-        // hot reload first,
-        // only validate server.locations, locations, upstreams and plugins
-        let mut should_reload_server_location = false;
-        let mut should_reload_upstream = false;
-        let mut should_reload_location = false;
-        let mut should_reload_plugin = false;
-        let mut should_reload_certificate = false;
-
-        // The webhook goes first, so the notifications for everything else
-        // this change reloads already go out with the new settings.
-        if reload_webhook_notification_sender(
-            &mut hot_reload_config.basic,
-            &new_config.basic,
-        ) {
-            info!(target: LOG_TARGET, "reload webhook success");
+    let (report, restart_reason) = match outcome {
+        ApplyOutcome::Unchanged => return Ok(false),
+        ApplyOutcome::Failed(message) => {
+            // A partial apply must not become the current config: the next
+            // diff would be empty, so the failed components would never be
+            // retried and the reported config would drift from the running
+            // providers. Keep the previous config; the watcher re-detects
+            // this diff and tries again.
+            error!(
+                target: LOG_TARGET,
+                failures = %message,
+                "config apply failed; keeping the previous config and retrying"
+            );
             send_notification(NotificationData {
-                category: "reload_config".to_string(),
-                level: NotificationLevel::Info,
-                message: "Webhook is modified".to_string(),
+                category: "reload_config_fail".to_string(),
+                message: message.clone(),
                 ..Default::default()
             })
             .await;
-        }
-
-        // update the values which can be hot reload
-        // set server locations
-        for (name, server) in new_config.servers.iter() {
-            if let Some(clone_server_conf) =
-                hot_reload_config.servers.get_mut(name)
-                && server.locations != clone_server_conf.locations
-            {
-                clone_server_conf.locations.clone_from(&server.locations);
-                should_reload_server_location = true;
-            }
-        }
-
-        // set upstream, location and plugin value
-        hot_reload_config.upstreams = new_config.upstreams.clone();
-        hot_reload_config.locations = new_config.locations.clone();
-        hot_reload_config.plugins = new_config.plugins.clone();
-
-        // acme will create a let's encrypt service
-        // so it can't be reloaded.
-        let mut exists_acme = false;
-        for cert in new_config.certificates.values() {
-            if cert.acme.is_some() {
-                exists_acme = true;
-            }
-        }
-        if !exists_acme {
-            hot_reload_config.certificates = new_config.certificates.clone();
-        }
-
-        // new_config.certificates
-
-        for category in updated_category_list {
-            match category.as_str() {
-                CATEGORY_LOCATION => {
-                    should_reload_location = true;
-                    // The server→location index owns host/path/weight ordering.
-                    // A location edit must rebuild it even when no server's
-                    // name list changed, or the new routing never applies.
-                    should_reload_server_location = true;
-                },
-                CATEGORY_UPSTREAM => should_reload_upstream = true,
-                CATEGORY_PLUGIN => should_reload_plugin = true,
-                // acme should be reload by let's encrypt service
-                CATEGORY_CERTIFICATE if !exists_acme => {
-                    should_reload_certificate = true;
-                },
-                _ => {},
-            };
-        }
-
-        let format_message = |name: &str, list: Vec<String>| -> String {
-            if list.is_empty() {
-                return format!("{name} is removed",);
-            }
-            if list.len() > 1 {
-                return format!("{name}s({}) are modified", list.join(","));
-            }
-            format!("{name}({}) is modified", list.join(","))
-        };
-
-        if should_reload_upstream {
-            match try_update_upstreams(
-                &new_config.upstreams,
-                get_webhook_sender(),
-            )
-            .await
-            {
-                Err(e) => {
-                    let error = e.to_string();
-                    reload_fail_messages
-                        .push(format!("upstream reload fail: {error}"));
-                    error!(
-                        target: LOG_TARGET,
-                        error, "reload upstream fail"
-                    );
-                },
-                Ok(updated_upstreams) => {
-                    info!(target: LOG_TARGET, "reload upstream success");
-                    send_notification(NotificationData {
-                        category: "reload_config".to_string(),
-                        level: NotificationLevel::Info,
-                        message: format_message("Upstream", updated_upstreams),
-                        ..Default::default()
-                    })
-                    .await;
-                },
-            };
-        }
-        if should_reload_location {
-            match try_init_locations(&new_config.locations) {
-                Err(e) => {
-                    let error = e.to_string();
-                    reload_fail_messages
-                        .push(format!("location reload fail: {error}",));
-                    error!(
-                        target: LOG_TARGET,
-                        error, "reload location fail"
-                    );
-                },
-                Ok(updated_locations) => {
-                    info!(target: LOG_TARGET, "reload location success");
-                    send_notification(NotificationData {
-                        category: "reload_config".to_string(),
-                        level: NotificationLevel::Info,
-                        message: format_message("Location", updated_locations),
-                        ..Default::default()
-                    })
-                    .await;
-                },
-            };
-        }
-        if should_reload_plugin {
-            let (updated_plugins, error) =
-                plugin::try_init_plugins(&new_config.plugins);
-            if !error.is_empty() {
-                reload_fail_messages
-                    .push(format!("plugin reload fail: {error}"));
-                error!(target: LOG_TARGET, error, "reload plugin fail");
-            } else if !updated_plugins.is_empty() {
-                info!(target: LOG_TARGET, "reload plugin success");
-                send_notification(NotificationData {
-                    category: "reload_config".to_string(),
-                    level: NotificationLevel::Info,
-                    message: format_message("Plugin", updated_plugins),
-                    ..Default::default()
-                })
-                .await;
-            }
-        }
-        if should_reload_certificate {
-            let (updated_certificates, errors) =
-                try_update_certificates(&new_config.certificates);
-            if errors.is_empty() {
-                info!(target: LOG_TARGET, "reload certificate success");
-                send_notification(NotificationData {
-                    category: "reload_config".to_string(),
-                    level: NotificationLevel::Info,
-                    message: format_message(
-                        "Certificate",
-                        updated_certificates,
-                    ),
-                    ..Default::default()
-                })
-                .await;
-            } else {
-                reload_fail_messages
-                    .push(format!("certificate reload fail: {errors}"));
-                error!(
-                    target: LOG_TARGET,
-                    error = errors,
-                    "parse certificate fail"
-                );
-                send_notification(NotificationData {
-                    category: "parse_certificate_fail".to_string(),
-                    level: NotificationLevel::Error,
-                    message: errors,
-                    ..Default::default()
-                })
-                .await;
-            }
-        }
-        if should_reload_server_location {
-            match try_init_server_locations(
-                &new_config.servers,
-                &new_config.locations,
-            ) {
-                Err(e) => {
-                    let error = e.to_string();
-                    reload_fail_messages
-                        .push(format!("server reload fail: {error}"));
-                    error!(
-                        target: LOG_TARGET,
-                        error, "reload server fail"
-                    );
-                },
-                Ok(updated_servers) => {
-                    info!(
-                        target: LOG_TARGET,
-                        "reload server location success"
-                    );
-                    send_notification(NotificationData {
-                        category: "reload_config".to_string(),
-                        level: NotificationLevel::Info,
-                        message: format_message(
-                            "Server Location",
-                            updated_servers,
-                        ),
-                        ..Default::default()
-                    })
-                    .await;
-                },
-            };
-        }
-    }
-
-    if !should_commit_config(&reload_fail_messages) {
-        let reload_fail_message = reload_fail_messages.join(";");
-        // A partial apply must not become the current config: the next diff
-        // would be empty, so the failed components would never be retried and
-        // the reported config would drift from the running providers. Keep the
-        // previous config; the watcher re-detects this diff and tries again.
-        error!(
-            target: LOG_TARGET,
-            failures = %reload_fail_message,
-            "config apply failed; keeping the previous config and retrying"
-        );
-        send_notification(NotificationData {
-            category: "reload_config_fail".to_string(),
-            message: reload_fail_message.clone(),
-            ..Default::default()
-        })
-        .await;
-        // Return an error, not `Ok(false)`: `diff_and_update_config` records
-        // the document hash as handled only on success, so an error is what
-        // makes the watcher retry this document on the next tick.
-        return Err(std::io::Error::other(format!(
-            "config apply failed: {reload_fail_message}"
-        ))
-        .into());
-    }
+            // Return an error, not `Ok(false)`: `diff_and_update_config`
+            // records the document hash as handled only on success, so an
+            // error is what makes the watcher retry this document on the next
+            // tick.
+            return Err(std::io::Error::other(format!(
+                "config apply failed: {message}"
+            ))
+            .into());
+        },
+        ApplyOutcome::Applied(report) => (report, None),
+        ApplyOutcome::RestartRequired { report, reason } => {
+            (report, Some(reason))
+        },
+    };
 
     if hot_reload_only {
         let (updated_category_list, original_diff_result) =
-            current_config.diff(&hot_reload_config);
+            current_config.diff(&report.config);
         debug!(
             target: LOG_TARGET,
             updated_category_list = updated_category_list.join(","),
@@ -417,43 +178,26 @@ async fn apply_config(
             return Ok(false);
         }
         // update current config to be hot reload config
-        config_manager.set_current_config(hot_reload_config);
-        if !original_diff_result.is_empty() {
-            send_notification(NotificationData {
-                category: "diff_config".to_string(),
-                message: original_diff_result.join("\n").trim().to_string(),
-                ..Default::default()
-            })
-            .await;
-        }
-        return Ok(false);
-    }
-    // restart mode
-    // update current config to be hot reload config
-    config_manager.set_current_config(hot_reload_config.clone());
-
-    // diff hot reload config and new config
-    let (_, new_config_result) = hot_reload_config.diff(new_config);
-    debug!(
-        target: LOG_TARGET,
-        new_config_result = new_config_result.join("\n"),
-        "hot reload config diff from new config"
-    );
-
-    let mut should_restart = true;
-    // no update other config update except hot reload config
-    if new_config_result.is_empty() {
-        should_restart = false;
-    }
-
-    if !original_diff_result.is_empty() {
+        config_manager.set_current_config(report.config);
         send_notification(NotificationData {
             category: "diff_config".to_string(),
             message: original_diff_result.join("\n").trim().to_string(),
             ..Default::default()
         })
         .await;
+        return Ok(false);
     }
+    // restart mode
+    // update current config to be hot reload config
+    config_manager.set_current_config(report.config);
+
+    let should_restart = restart_reason.is_some();
+    send_notification(NotificationData {
+        category: "diff_config".to_string(),
+        message: report.diff.join("\n").trim().to_string(),
+        ..Default::default()
+    })
+    .await;
     if should_restart {
         restart().await;
     }
@@ -721,16 +465,8 @@ fn reload_log_level(
 
 #[cfg(test)]
 mod tests {
-    use super::{LastSeen, should_commit_config, should_skip};
+    use super::{LastSeen, should_skip};
     use pretty_assertions::assert_eq;
-
-    #[test]
-    fn a_partial_config_apply_is_not_committed() {
-        assert!(should_commit_config(&[]));
-        assert!(!should_commit_config(&[
-            "upstream reload fail: refused".to_string()
-        ]));
-    }
 
     #[test]
     fn test_should_skip() {

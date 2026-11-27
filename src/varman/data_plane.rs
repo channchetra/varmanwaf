@@ -10,13 +10,12 @@ use pingora::services::background::background_service;
 use tracing::{error, info, warn};
 use varman_agent::cache::RuleCache;
 
-use crate::certificates::try_update_certificates;
+use crate::config_apply::{
+    ApplyOptions, ApplyOutcome, apply_config, commit_if_applied,
+};
 use crate::config_manager::try_init_memory_config_manager;
 use crate::data_plane::{DataPlaneOptions, assemble};
-use crate::locations::try_init_locations;
-use crate::plugin::try_init_plugins;
-use crate::server_locations::try_init_server_locations;
-use crate::upstreams::{new_upstream_provider, try_init_upstreams};
+use crate::upstreams::new_upstream_provider;
 
 use super::acme::{
     acme_state_path, merge_config_state, publish_management_certificate,
@@ -385,44 +384,32 @@ pub(super) async fn start_data_plane(
                     converted
                 },
             };
-            watcher_config_manager.set_current_config(config.clone());
-            publish_management_certificate(&config);
-            if let Err(e) = try_init_upstreams(&config.upstreams, None) {
-                error!(error = %e, "data plane: reload upstreams failed");
-            }
-            if let Err(e) = try_init_locations(&config.locations) {
-                error!(error = %e, "data plane: reload locations failed");
-            }
-            if let Err(e) =
-                try_init_server_locations(&config.servers, &config.locations)
-            {
-                error!(error = %e, "data plane: reload server locations failed");
-            }
-            let (updated, errors) =
-                try_update_certificates(&config.certificates);
-            if !updated.is_empty() {
-                info!(
-                    certs = updated.join(","),
-                    "data plane: certificates reloaded"
-                );
-            }
-            if !errors.is_empty() {
-                error!(error = errors, "data plane: certificate reload errors");
-            }
-            let (updated_plugins, plugin_errors) =
-                try_init_plugins(&config.plugins);
-            if !updated_plugins.is_empty() {
-                info!(
-                    plugins = updated_plugins.join(","),
-                    "data plane: plugins reloaded"
-                );
-            }
-            if !plugin_errors.is_empty() {
+            // Providers first: a config whose entries failed to rebuild must
+            // never become current, or the next diff would be empty and the
+            // failed entries would never be retried. On failure the previous
+            // config stays current and the bookkeeping below is left alone,
+            // so the next tick retries this document.
+            let previous = watcher_config_manager.get_current_config();
+            let outcome = apply_config(
+                &previous,
+                &config,
+                &ApplyOptions::agent_data_plane(),
+            )
+            .await;
+            if let ApplyOutcome::Failed(message) = &outcome {
                 error!(
-                    error = plugin_errors,
-                    "data plane: plugin reload errors"
+                    error = %message,
+                    "data plane: config reload failed, keeping current config"
                 );
             }
+            if !commit_if_applied(
+                &watcher_config_manager,
+                config.clone(),
+                &outcome,
+            ) {
+                continue;
+            }
+            publish_management_certificate(&config);
             last_hash = hash;
             last_management = management;
         }
