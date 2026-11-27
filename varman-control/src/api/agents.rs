@@ -27,8 +27,8 @@ use crate::api::error::ApiError;
 use crate::api::keys::{mint_key, BOOTSTRAP_KEY_NAME};
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
+use crate::bundle::now_timestamp;
 use crate::grpc::command_type;
-use crate::grpc::config::now_timestamp;
 use crate::grpc::serves_every_site;
 use crate::models::{
     agent, agent_status, api_key, host_sample, permission, site,

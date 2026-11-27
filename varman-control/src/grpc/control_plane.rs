@@ -30,14 +30,12 @@ use varman_protocol::control_plane::{
 use crate::api::keys::{authenticate_api_key, key_allows_agent};
 use crate::api::ssl::cert_status;
 use crate::auth::jwt::{create_agent_token, verify_agent_token};
+use crate::bundle::{build_rule_bundle, build_site_config, from_timestamp};
 use crate::config::ServerConfig;
 use crate::es::{
     AccessLogDocument, ElasticsearchClient, SecurityEventDocument,
 };
 use crate::grpc::cache_status::CacheStatusRegistry;
-use crate::grpc::config::{
-    build_rule_bundle, build_site_config, from_timestamp,
-};
 use crate::grpc::registry::{AgentRegistry, COMMAND_CHANNEL_CAPACITY};
 use crate::models::{
     access_log, action, agent, agent_blocked_ip, agent_metric, agent_status,

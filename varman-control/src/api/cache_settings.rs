@@ -25,9 +25,6 @@ use crate::auth::AuthUser;
 use crate::grpc::notify_all_config_changed;
 use crate::models::cache_settings;
 
-/// Primary key of the single row.
-const SETTINGS_ID: i32 = 1;
-
 /// Hard ceiling for [`UpdateCacheSettingsRequest::max_file_size_mb`]: a
 /// single cached object never exceeds 1 GiB.
 pub const MAX_CACHE_FILE_SIZE_MB: i32 = 1024;
@@ -173,45 +170,14 @@ async fn update(
 
 /// Reads the settings row, creating it with the defaults if it is missing.
 ///
-/// Shared with the gRPC layer, which stamps the ceiling onto every rule
-/// bundle it builds, and with the site cache-settings validation.
+/// Shared with the rule-bundle builder, which stamps the ceiling onto every
+/// rule bundle it builds, and with the site cache-settings validation.
 pub async fn load(
     db: &sea_orm::DatabaseConnection,
 ) -> Result<cache_settings::Model, ApiError> {
-    if let Some(row) = cache_settings::Entity::find_by_id(SETTINGS_ID)
-        .one(db)
-        .await?
-    {
-        return Ok(row);
-    }
-
-    let insert = cache_settings::ActiveModel {
-        id: Set(SETTINGS_ID),
-        max_file_size_mb: Set(16),
-        max_space_mb: Set(10240),
-        master_enabled: Set(true),
-        default_edge_ttl_seconds: Set(0),
-        updated_at: Set(Utc::now()),
-    };
-    use sea_orm::sea_query::OnConflict;
-    let ignore_conflict = OnConflict::column(cache_settings::Column::Id)
-        .do_nothing()
-        .to_owned();
-    match cache_settings::Entity::insert(insert)
-        .on_conflict(ignore_conflict)
-        .exec(db)
+    crate::bundle::load_cache_settings(db)
         .await
-    {
-        Ok(_) | Err(sea_orm::DbErr::RecordNotInserted) => {},
-        Err(err) => return Err(err.into()),
-    }
-
-    cache_settings::Entity::find_by_id(SETTINGS_ID)
-        .one(db)
-        .await?
-        .ok_or_else(|| {
-            ApiError::Internal("cache settings row vanished".to_string())
-        })
+        .map_err(ApiError::from)
 }
 
 #[cfg(test)]

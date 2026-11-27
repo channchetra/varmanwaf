@@ -26,9 +26,9 @@ use crate::api::error::ApiError;
 use crate::api::sites::touch_site;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
+use crate::bundle::now_timestamp;
 use crate::grpc::cache_status::SiteCacheStatus;
 use crate::grpc::command_type;
-use crate::grpc::config::now_timestamp;
 use crate::grpc::notify_config_changed;
 use crate::models::{agent, cache_rules, site};
 

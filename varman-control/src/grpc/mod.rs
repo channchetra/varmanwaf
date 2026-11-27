@@ -1,16 +1,15 @@
-//! gRPC control plane service, agent registry and configuration builder.
+//! gRPC control plane service and agent registry.
 //!
-//! This module exposes three submodules:
-//! - [`config`] — builds protocol messages from database rows
+//! This module exposes two submodules:
 //! - [`control_plane`] — implements the `ControlPlane` gRPC service
 //! - [`registry`] — in-memory map of live agent heartbeat streams
 //!
 //! The key integration point for the REST API is [`notify_config_changed`], which
 //! pushes a fresh `SiteConfig` to every agent that serves the changed site.
+//! The configuration builder itself lives at [`crate::bundle`].
 
 pub mod cache_status;
 pub mod command_type;
-pub mod config;
 pub mod control_plane;
 pub mod registry;
 
@@ -28,9 +27,9 @@ use varman_protocol::control_plane::{
 };
 
 use crate::api::keys::BOOTSTRAP_KEY_NAME;
-use crate::api::state::AppState;
+use crate::app_state::AppState;
+use crate::bundle::{build_site_config, now_timestamp};
 use crate::config_history::{self, VersionScope};
-use crate::grpc::config::{build_site_config, now_timestamp};
 use crate::models::{agent, api_key, config_version, site};
 
 /// An unbound agent holding the all-in-one bootstrap key is the embedded data

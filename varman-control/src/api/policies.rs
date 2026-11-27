@@ -1460,8 +1460,7 @@ async fn get_apply_status(
     let id = parse_uuid(&site_id, "site id")?;
     let site_row = load_site_read(&state.db, id, &current).await?;
 
-    let bundle =
-        crate::grpc::config::build_rule_bundle(&state.db, &site_row).await?;
+    let bundle = crate::bundle::build_rule_bundle(&state.db, &site_row).await?;
     let resolved = policy::resolve(&state.db, id).await?;
     let version = config_version::Entity::find()
         .filter(config_version::Column::SiteId.eq(id))

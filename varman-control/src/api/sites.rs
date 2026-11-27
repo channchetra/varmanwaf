@@ -116,8 +116,7 @@ impl SiteResponse {
         db: &DatabaseConnection,
         model: site::Model,
     ) -> Result<Self, sea_orm::DbErr> {
-        let mode =
-            crate::grpc::config::effective_protection_mode(db, &model).await?;
+        let mode = crate::bundle::effective_protection_mode(db, &model).await?;
         let mut response = Self::from(model);
         response.protection_mode = mode.to_string();
         Ok(response)

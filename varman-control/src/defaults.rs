@@ -91,7 +91,7 @@ pub struct DefaultWafRule {
     pub action: &'static str,
     /// 1 (info) … 5 (critical).
     pub severity: i32,
-    /// Tags drive the detection switches in `grpc::config`; keep the English
+    /// Tags drive the detection switches in `bundle`; keep the English
     /// keywords (`sqli`, `xss`, `rce`, `lfi`, `ssrf`, `bot`) intact.
     pub tags: &'static [&'static str],
 }
@@ -414,7 +414,7 @@ mod tests {
             .iter()
             .flat_map(|spec| spec.tags.iter().copied())
             .collect();
-        // These are the tags `grpc::config::waf_config_to_proto` looks for.
+        // These are the tags `bundle::waf_config_to_proto` looks for.
         for required in ["sqli", "xss", "rce", "lfi", "ssrf", "bot"] {
             assert!(tags.contains(&required), "missing tag {required}");
         }

@@ -29,10 +29,10 @@ use varman_protocol::control_plane::{
 
 use crate::models::{
     acme_challenge, action, api_learned_schemas, bot_protection, cache_rules,
-    challenge_settings, characteristic, client_cert_status, defense_settings,
-    error_pages, exclusion_packages, geo_rules, ip_access_rules,
-    ip_group_sites, ip_groups, mode, mtls_client_certificate, rate_limit_rules,
-    rewrite_rules, rule, rule_groups, site, site_basic_auth,
+    cache_settings, challenge_settings, characteristic, client_cert_status,
+    defense_settings, error_pages, exclusion_packages, geo_rules,
+    ip_access_rules, ip_group_sites, ip_groups, mode, mtls_client_certificate,
+    rate_limit_rules, rewrite_rules, rule, rule_groups, site, site_basic_auth,
     site_certificate_bindings, site_certificates, site_routes, site_ssl,
     site_status, site_upstream_pools, site_upstreams, waf_settings,
 };
@@ -178,6 +178,53 @@ async fn load_cache_rules(
         .filter(cache_rules::Column::SiteId.eq(site_id))
         .all(db)
         .await
+}
+
+/// Primary key of the single `cache_settings` row.
+const SETTINGS_ID: i32 = 1;
+
+/// Reads the global cache settings row, creating it with the defaults if it is
+/// missing.
+///
+/// Public because the REST API serves the same row and validates site-level
+/// limits against it; the builder stamps the ceiling onto every rule bundle.
+pub async fn load_cache_settings(
+    db: &DatabaseConnection,
+) -> Result<cache_settings::Model, sea_orm::DbErr> {
+    if let Some(row) = cache_settings::Entity::find_by_id(SETTINGS_ID)
+        .one(db)
+        .await?
+    {
+        return Ok(row);
+    }
+
+    let insert = cache_settings::ActiveModel {
+        id: sea_orm::Set(SETTINGS_ID),
+        max_file_size_mb: sea_orm::Set(16),
+        max_space_mb: sea_orm::Set(10240),
+        master_enabled: sea_orm::Set(true),
+        default_edge_ttl_seconds: sea_orm::Set(0),
+        updated_at: sea_orm::Set(Utc::now()),
+    };
+    let ignore_conflict =
+        sea_orm::sea_query::OnConflict::column(cache_settings::Column::Id)
+            .do_nothing()
+            .to_owned();
+    match cache_settings::Entity::insert(insert)
+        .on_conflict(ignore_conflict)
+        .exec(db)
+        .await
+    {
+        Ok(_) | Err(sea_orm::DbErr::RecordNotInserted) => {},
+        Err(err) => return Err(err),
+    }
+
+    cache_settings::Entity::find_by_id(SETTINGS_ID)
+        .one(db)
+        .await?
+        .ok_or_else(|| {
+            sea_orm::DbErr::Custom("cache settings row vanished".to_string())
+        })
 }
 
 async fn load_upstreams(
@@ -1642,7 +1689,7 @@ pub async fn build_rule_bundle(
     // Global cache ceiling + site-level cache limits; both optional so an
     // old row shape (or a read failure short of an error) degrades to the
     // agent-side defaults.
-    let cache_settings_row = crate::api::cache_settings::load(db).await.ok();
+    let cache_settings_row = load_cache_settings(db).await.ok();
     let global_cache =
         cache_settings_row.as_ref().map(|row| GlobalCacheSettings {
             max_file_size_mb: Some(row.max_file_size_mb.max(0) as u32),

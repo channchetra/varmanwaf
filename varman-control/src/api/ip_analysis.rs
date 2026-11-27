@@ -133,10 +133,8 @@ async fn analyze(
     let country = lookup_country(ip);
 
     // ── IP access rules and groups, in the compiled evaluation order ──
-    let rules =
-        crate::grpc::config::load_ip_access_rules(&state.db, site_id).await?;
-    let groups =
-        crate::grpc::config::load_ip_groups(&state.db, site_id).await?;
+    let rules = crate::bundle::load_ip_access_rules(&state.db, site_id).await?;
+    let groups = crate::bundle::load_ip_groups(&state.db, site_id).await?;
     let group_map: HashMap<Uuid, &ip_groups::Model> =
         groups.iter().map(|group| (group.id, group)).collect();
 

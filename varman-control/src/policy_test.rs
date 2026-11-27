@@ -6,7 +6,7 @@
 //! request against it. What it does **not** simulate is listed in
 //! [`TestResult::skipped`]: rate limits, IP/geo access and bot checks are
 //! edge decisions that depend on request history, so a tester that guessed
-//! them would lie. The compile step mirrors `grpc::config` field by field.
+//! them would lie. The compile step mirrors `bundle` field by field.
 
 use std::collections::{BTreeMap, HashSet};
 
