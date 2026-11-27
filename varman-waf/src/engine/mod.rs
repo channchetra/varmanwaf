@@ -15,27 +15,21 @@
 //! Internally the engine runs the multi-stage pipeline documented on
 //! [`WafEngine::inspect`].
 
-use std::net::IpAddr;
-use std::str::FromStr;
-
 use serde::{Deserialize, Serialize};
 
-use crate::normalize::ValueSource;
+mod inspect;
+
 use crate::normalize::{normalize_request, NormalizedRequest};
-use crate::rules::expression::{evaluate, EvalContext};
+use crate::rules::expression::EvalContext;
 use crate::rules::managed::{default_managed_rules, managed_rule_category};
 use crate::rules::signatures::{
-    ci_backtick_interleaved, ci_chr_chain, crlf_header_injection_shaped,
-    detect_deser_shape, detect_expr_injection, detect_js_call, detect_sqli,
-    detect_xss, path_tautology_segment, pt_double_exec_extension,
-    pt_remote_backslash_include, sqli_into_file_statement_shaped,
-    sqli_union_statement_shaped, ssrf_protocol_smuggling, xss_markup_shaped,
-    xss_script_tag_shaped, xss_script_uri_html_shaped, LegacyAttackCategory,
-    SignatureEngine, SignatureHit,
+    LegacyAttackCategory, SignatureEngine, SignatureHit,
 };
 use crate::rules::{CompiledRule, RuleAction};
-use crate::score::{AnomalyScorer, ScoreBreakdown, ScoreClass};
+use crate::score::{AnomalyScorer, ScoreBreakdown};
 use crate::{CategorySet, StackSet, WafAction, WafLevel, WafVerdict};
+
+use self::inspect::blocking_context;
 
 /// Operating mode for the engine.
 #[derive(
@@ -238,6 +232,42 @@ struct RuleRec<'a> {
     action: RuleAction,
     severity: u8,
     monitored: bool,
+}
+
+/// Mutable state accumulated across the stages of one inspection.
+struct InspectionState<'a> {
+    /// Aggregate / per-family anomaly scoring.
+    breakdown: ScoreBreakdown,
+    /// Stage-1 hit records; strings are materialized only for a non-Pass
+    /// verdict.
+    recs: Vec<HitRec<'a>>,
+    /// A blocking-eligible critical Stage-1 hit landed.
+    critical_hit: bool,
+    /// Stage-2 rule match records, stringified only for a non-Pass verdict.
+    rule_recs: Vec<RuleRec<'a>>,
+    /// Action forced by a matched enforcing rule; `Block` outranks
+    /// `Challenge`.
+    forced_action: Option<WafAction>,
+}
+
+impl<'a> InspectionState<'a> {
+    fn new() -> Self {
+        Self {
+            breakdown: ScoreBreakdown::clean(),
+            recs: Vec::new(),
+            critical_hit: false,
+            rule_recs: Vec::new(),
+            forced_action: None,
+        }
+    }
+}
+
+/// Reused scan buffers: a full request costs one allocation here instead of
+/// one per inspected value.
+#[derive(Default)]
+struct ScanScratch {
+    hits: Vec<SignatureHit>,
+    seen: Vec<u32>,
 }
 
 /// Owned storage for an evaluation context with excluded request targets
@@ -612,862 +642,52 @@ impl WafEngine {
             return WafVerdict::pass();
         }
 
-        let normalized = normalize_request(
-            &request.method,
-            &request.path,
-            &request.query,
-            &request.headers,
-            request.body.as_deref(),
-            self.max_decode_layers,
-            self.level.is_strict(),
-        );
+        // Stage 0 — normalized view of the request (URL multi-decode, HTML
+        // entity decode, path collapse, query/cookie split; escape-sequence
+        // decoding at Strict).
+        let normalized = self.normalize(request);
         let paranoia = self.effective_paranoia();
 
-        let mut breakdown = ScoreBreakdown::clean();
-        let mut recs: Vec<HitRec> = Vec::new();
-        let mut critical_hit = false;
+        let mut scratch = ScanScratch::default();
+        let mut state = InspectionState::new();
 
-        // Reused scan buffers: a full request costs one allocation here
-        // instead of one per inspected value.
-        let mut hits: Vec<SignatureHit> = Vec::new();
-        let mut seen: Vec<u32> = Vec::new();
+        // Stage 1 — signatures + libinjection over every decoded value, then
+        // the resolved path itself.
+        self.run_stage1_signatures(&normalized, &mut scratch, &mut state);
+        self.scan_normalized_path(&normalized, &mut scratch, &mut state);
 
-        // ----- Stage 1: signatures + libinjection over every decoded value -----
-        for value in &normalized.decoded_values {
-            let needle = value.decoded.as_str();
-            if needle.is_empty() {
-                continue;
-            }
-            // Reflected display metadata (Referer / User-Agent) is not an
-            // execution surface the way query/body/cookie values are: real
-            // SQLi lands in fields the backend feeds to an interpreter,
-            // while a Referer quoting "union select" is overwhelmingly
-            // search-result noise. Demote those two headers to weak signals
-            // for the reflected families — structural backend-parsing
-            // families (Log4Shell, XXE, deserialization) keep full severity
-            // because a JVM parses *every* header it receives.
-            let is_meta_header = value.source == ValueSource::Header
-                && (value.name.eq_ignore_ascii_case("referer")
-                    || value.name.eq_ignore_ascii_case("user-agent"))
-                && !xss_markup_shaped(needle);
+        // Evaluation contexts. Managed rules evaluate against the
+        // blocking-only snapshot: hits downgraded to monitor-only can never
+        // push a family or aggregate gate. The full snapshot stays available
+        // to custom rules (explicit operator configuration) and the Allow
+        // pre-pass (allowlists must not be blinded by monitor config).
+        let ctx = self.eval_context(request, &normalized, &state.breakdown);
+        let block_ctx = blocking_context(ctx, &state.breakdown);
 
-            self.signatures.scan_into(needle, &mut hits, &mut seen);
-            // A CRLF hit is only response-splitting material on its own
-            // surface shape; on strict it also escalates when the same value
-            // carries an injection-family companion — that combination is
-            // real CRLF-injection traffic (command / traversal / SSRF
-            // payload smuggled past the line break), while multi-line log
-            // or telemetry text has none.
-            let injection_company = self.level.is_strict()
-                && hits.iter().any(|h| {
-                    matches!(
-                        h.category,
-                        LegacyAttackCategory::CommandInjection
-                            | LegacyAttackCategory::PathTraversal
-                            | LegacyAttackCategory::Deserialization
-                            | LegacyAttackCategory::Ssrf
-                    )
-                });
-            for hit in &hits {
-                let mut severity = hit.severity;
-                let mut critical = severity >= 5;
-                // Per-site monitor downgrade: hits in monitored categories /
-                // stacks keep scoring into the aggregate but never into the
-                // blocking subset, and never trip the critical fast path.
-                let monitored = self.hit_monitored(
-                    hit.category,
-                    self.signatures.pattern(hit.pattern).stack,
-                );
-                let reflected_family = matches!(
-                    hit.category,
-                    LegacyAttackCategory::SqlInjection
-                        | LegacyAttackCategory::Xss
-                        | LegacyAttackCategory::CommandInjection
-                );
-                // Weak signals still feed the family sub-scores (three
-                // distinct weak features crossing a gate is the P0-tested
-                // blocking path for payloads reflected into Referer/UA),
-                // but at demoted severity so a single value cannot one-shot.
-                let pid = self.signatures.pattern_id(hit.pattern);
-                // A script-URI inside a body value without tag structure is
-                // collected markup — beacons re-serialize DOM attributes
-                // ("javascript: void(0)") verbatim as JSON, and the JSON
-                // unpacking surfaces them as plain `href` members. It is
-                // skipped entirely (zero score, like the SQL search-phrase
-                // rule): mirrors across blob and unpacked members must not
-                // pile weak features onto the XSS family gate. On
-                // URL-facing surfaces (query / cookie / headers) a bare
-                // script URI stays critical: `?url=javascript:…` is a real
-                // reflected-XSS shape. Same gate on every level — a
-                // body-borne `javascript:` without tag context cannot
-                // execute in any of the shapes it actually appears in. An
-                // unclosed `<script` (search prose quoting the word) is
-                // likewise zero value on every surface.
-                let collected_js_uri = (pid == "XSS-007"
-                    && value.source == ValueSource::Body
-                    && !xss_script_uri_html_shaped(needle))
-                    || (pid == "XSS-001"
-                        && !xss_script_tag_shaped(
-                            needle,
-                            value.source != ValueSource::Body,
-                        ));
-                let weak = (is_meta_header && reflected_family)
-                    || (value.source == ValueSource::Body
-                        && (!value.field
-                            || (value.decoded.len() > FIELD_STRONG_MAX_LEN
-                                && !self.level.is_strict()))
-                        && reflected_family);
-                // A bare "union select" without statement structure is a
-                // search phrase: the needle and its libinjection twin
-                // describe the same string, so neither scores — zero value,
-                // mirrored across query/Referer/body or not. Level-
-                // independent: `?bq=union select …` search phrases exist on
-                // every tier and are not injections on any of them.
-                let search_phrase = (matches!(pid, "SQL-001" | "SQL-002")
-                    && !sqli_union_statement_shaped(needle))
-                    || (matches!(pid, "SQL-008" | "SQL-009")
-                        && !sqli_into_file_statement_shaped(needle))
-                    || collected_js_uri;
-                if weak {
-                    severity = severity.min(2);
-                    critical = false;
-                } else if hit.category == LegacyAttackCategory::CrlfInjection
-                    && ((value.source != ValueSource::Body
-                        && crlf_header_injection_shaped(needle))
-                        || injection_company)
-                {
-                    // `…\r\nX-Foo:` is response-splitting material on any
-                    // surface except a body blob; bare multi-line text (a
-                    // multi-line form input echoed into a query, prose) is
-                    // not — CRLF-003/004 carry their own header shape at
-                    // sev5 and stay critical via `severity >= 5` above.
-                    // On strict, a same-value injection-family companion
-                    // (command / traversal / SSRF / deser payload smuggled
-                    // past the line break) restores the critical call that
-                    // the blanket-body demotion gave up.
-                    critical = true;
-                } else if self.level.is_strict()
-                    && value.source != ValueSource::Path
-                    && matches!(
-                        hit.category,
-                        LegacyAttackCategory::CommandInjection
-                            | LegacyAttackCategory::Deserialization
-                    )
-                {
-                    // High-confidence injection families block outright at
-                    // the Strict level instead of waiting for the scorer —
-                    // but only off the path surface. Bare multi-line text
-                    // in a body (`…\r\n` in log payloads) is far too common
-                    // for a blanket CRLF escalation, and path matrix
-                    // parameters (`/foo;cat=…`) are storage URL grammar,
-                    // not a shell; the path-source hits also stay out of
-                    // the RCE sub-score below.
-                    critical = true;
-                }
-                if critical && !search_phrase && !monitored {
-                    critical_hit = true;
-                }
-                if !search_phrase {
-                    if value.source == ValueSource::Path
-                        && matches!(
-                            hit.category,
-                            LegacyAttackCategory::CommandInjection
-                                | LegacyAttackCategory::Deserialization
-                        )
-                    {
-                        // A command shape inside the path itself never
-                        // reaches a shell — `;cat` is matrix-parameter
-                        // grammar on storage URLs. The hit keeps its
-                        // aggregate score but stays out of the RCE
-                        // sub-score, or VARMAN-1061 blocks benign
-                        // storage-style paths at Strict.
-                        self.scorer.add_severity_hit_ex(
-                            &mut breakdown,
-                            severity,
-                            monitored,
-                        );
-                        recs.push(HitRec::Sig {
-                            pattern: hit.pattern,
-                            severity,
-                            source: value.source.as_str(),
-                            name: &value.name,
-                            monitored,
-                        });
-                        continue;
-                    }
-                    self.scorer.add_category_hit_ex(
-                        &mut breakdown,
-                        hit.category,
-                        severity,
-                        monitored,
-                    );
-                    recs.push(HitRec::Sig {
-                        pattern: hit.pattern,
-                        severity,
-                        source: value.source.as_str(),
-                        name: &value.name,
-                        monitored,
-                    });
-                }
-            }
-
-            // libinjection-style detectors on user-controlled values only.
-            // Path/method/header-name are not attacker-typed strings the same
-            // way query / body / cookie values are.
-            if value.source == ValueSource::Path
-                && path_tautology_segment(needle)
-            {
-                let monitored = self.hit_monitored(
-                    LegacyAttackCategory::SqlInjection,
-                    StackSet::GENERIC,
-                );
-                if !monitored {
-                    critical_hit = true;
-                }
-                self.scorer.add_category_hit_ex(
-                    &mut breakdown,
-                    LegacyAttackCategory::SqlInjection,
-                    5,
-                    monitored,
-                );
-                recs.push(HitRec::Lib {
-                    kind: "libinjection-sqli",
-                    fingerprint: "path-segment-tautology".to_string(),
-                    source: value.source.as_str(),
-                    name: &value.name,
-                    monitored,
-                });
-            }
-            // Raw backticks inside the path (`/ax--exec=`id`--remote`): URL
-            // content never carries them unescaped, so a pair of them frames
-            // a command substitution written by an attack tool.
-            if value.source == ValueSource::Path
-                && needle.matches('`').count() >= 2
-            {
-                let monitored = self.hit_monitored(
-                    LegacyAttackCategory::CommandInjection,
-                    StackSet::GENERIC,
-                );
-                if !monitored {
-                    critical_hit = true;
-                }
-                self.scorer.add_category_hit_ex(
-                    &mut breakdown,
-                    LegacyAttackCategory::CommandInjection,
-                    5,
-                    monitored,
-                );
-                recs.push(HitRec::Lib {
-                    kind: "ci-shape",
-                    fingerprint: "path-backticks".to_string(),
-                    source: value.source.as_str(),
-                    name: &value.name,
-                    monitored,
-                });
-            }
-            // Double executable extension at the path tail
-            // (`/uploadfiles/apache.php.jpeg`): multi-extension parser abuse
-            // prepping a webshell — the image suffix is camouflage.
-            if value.source == ValueSource::Path
-                && pt_double_exec_extension(&value.decoded)
-            {
-                let monitored = self.hit_monitored(
-                    LegacyAttackCategory::PathTraversal,
-                    StackSet::GENERIC,
-                );
-                if !monitored {
-                    critical_hit = true;
-                }
-                self.scorer.add_category_hit_ex(
-                    &mut breakdown,
-                    LegacyAttackCategory::PathTraversal,
-                    5,
-                    monitored,
-                );
-                recs.push(HitRec::Lib {
-                    kind: "pt-shape",
-                    fingerprint: "double-exec-extension".to_string(),
-                    source: value.source.as_str(),
-                    name: &value.name,
-                    monitored,
-                });
-            }
-            if !matches!(
-                value.source,
-                ValueSource::QueryParam
-                    | ValueSource::Cookie
-                    | ValueSource::Body
-                    | ValueSource::Header
-            ) {
-                continue;
-            }
-            let (is_sqli, sqli_fp) = detect_sqli(needle);
-            if is_sqli {
-                let weak = is_meta_header
-                    || (value.source == ValueSource::Body
-                        && (!value.field
-                            || (value.decoded.len() > FIELD_STRONG_MAX_LEN
-                                && !self.level.is_strict())));
-                // Same zero-score rule as the needle gate: a union-select
-                // or into-file fingerprint without statement structure is
-                // a search phrase, and the needle hit for it is skipped
-                // as well. Tautology / quote-keyword fingerprints over
-                // long values are prose that quotes the tokens ("1 and 1=1
-                // is a basic operation", keyword-list documents) — real
-                // tautology probes are tiny, and long quote-keyword attacks
-                // carry a UNION clause that has its own gate.
-                let search_phrase = (sqli_fp.contains("union-select")
-                    && !sqli_union_statement_shaped(needle))
-                    || (sqli_fp.contains("into-file")
-                        && !sqli_into_file_statement_shaped(needle))
-                    || (sqli_fp.contains("tautology")
-                        && needle.len() > 32
-                        && !sqli_fp.contains("comment-terminator"))
-                    || (sqli_fp.contains("quote-keyword")
-                        && needle.len() > 256);
-                let (severity, critical) =
-                    if weak { (2, false) } else { (5, true) };
-                let monitored = self.hit_monitored(
-                    LegacyAttackCategory::SqlInjection,
-                    StackSet::GENERIC,
-                );
-                if critical && !search_phrase && !monitored {
-                    critical_hit = true;
-                }
-                if !search_phrase {
-                    self.scorer.add_category_hit_ex(
-                        &mut breakdown,
-                        LegacyAttackCategory::SqlInjection,
-                        severity,
-                        monitored,
-                    );
-                    recs.push(HitRec::Lib {
-                        kind: "libinjection-sqli",
-                        fingerprint: sqli_fp,
-                        source: value.source.as_str(),
-                        name: &value.name,
-                        monitored,
-                    });
-                }
-            }
-            let (is_xss, xss_fp) = detect_xss(needle);
-            if is_xss {
-                // Mirrors the needle gate: a js-uri fingerprint on body
-                // markup without tag structure is collected data — skipped
-                // entirely, and the needle hit for it is skipped as well.
-                // A script-tag fingerprint over an unclosed `<script` is
-                // prose quoting the word.
-                let collected_js_uri = (xss_fp.contains("js-uri")
-                    && value.source == ValueSource::Body
-                    && !xss_script_uri_html_shaped(needle))
-                    || (xss_fp.contains("script-tag")
-                        && !xss_script_tag_shaped(
-                            needle,
-                            value.source != ValueSource::Body,
-                        ));
-                let weak = is_meta_header
-                    || (value.source == ValueSource::Body
-                        && (!value.field
-                            || (value.decoded.len() > FIELD_STRONG_MAX_LEN
-                                && !self.level.is_strict())));
-                let (severity, critical) =
-                    if weak { (2, false) } else { (5, true) };
-                let monitored = self.hit_monitored(
-                    LegacyAttackCategory::Xss,
-                    StackSet::GENERIC,
-                );
-                if critical && !collected_js_uri && !monitored {
-                    critical_hit = true;
-                }
-                if !collected_js_uri {
-                    self.scorer.add_category_hit_ex(
-                        &mut breakdown,
-                        LegacyAttackCategory::Xss,
-                        severity,
-                        monitored,
-                    );
-                    recs.push(HitRec::Lib {
-                        kind: "libinjection-xss",
-                        fingerprint: xss_fp,
-                        source: value.source.as_str(),
-                        name: &value.name,
-                        monitored,
-                    });
-                }
-            }
-
-            // Structural PHP-serialization / OGNL shapes: no single literal,
-            // so they live beside the libinjection detectors. Weak signals
-            // (meta headers, body blobs, oversized values) score instead of
-            // blocking; Strict treats any such shape as a critical hit —
-            // these shapes are only produced by serializers and expression
-            // interpreters, which are exactly the surfaces being attacked.
-            if let Some(shape) = detect_deser_shape(needle) {
-                let weak = is_meta_header
-                    || (value.source == ValueSource::Body
-                        && (!value.field
-                            || value.decoded.len() > FIELD_STRONG_MAX_LEN)
-                        && !self.level.is_strict());
-                let (severity, critical) = if weak {
-                    (2, false)
-                } else if self.level.is_strict() {
-                    (5, true)
-                } else {
-                    (4, false)
-                };
-                let monitored = self.hit_monitored(
-                    LegacyAttackCategory::Deserialization,
-                    StackSet::GENERIC,
-                );
-                if critical && !monitored {
-                    critical_hit = true;
-                }
-                self.scorer.add_category_hit_ex(
-                    &mut breakdown,
-                    LegacyAttackCategory::Deserialization,
-                    severity,
-                    monitored,
-                );
-                recs.push(HitRec::Lib {
-                    kind: "deser-shape",
-                    fingerprint: shape.to_string(),
-                    source: value.source.as_str(),
-                    name: &value.name,
-                    monitored,
-                });
-            }
-
-            // Exploit-only shape compositions, each a critical with no
-            // honest counterpart: a shell command interleaved with an empty
-            // backtick pair (`;wh``oami`), an SSRF-exploit scheme carrying a
-            // framed newline (`ldap://…%0astats`), and a scheme prefix glued
-            // to backslash traversal (`dir=http\..\admin\…`).
-            if ci_backtick_interleaved(needle) {
-                let monitored = self.hit_monitored(
-                    LegacyAttackCategory::CommandInjection,
-                    StackSet::GENERIC,
-                );
-                if !monitored {
-                    critical_hit = true;
-                }
-                self.scorer.add_category_hit_ex(
-                    &mut breakdown,
-                    LegacyAttackCategory::CommandInjection,
-                    5,
-                    monitored,
-                );
-                recs.push(HitRec::Lib {
-                    kind: "ci-shape",
-                    fingerprint: "backtick-interleaved".to_string(),
-                    source: value.source.as_str(),
-                    name: &value.name,
-                    monitored,
-                });
-            }
-            if ci_chr_chain(needle) {
-                let monitored = self.hit_monitored(
-                    LegacyAttackCategory::CommandInjection,
-                    StackSet::GENERIC,
-                );
-                if !monitored {
-                    critical_hit = true;
-                }
-                self.scorer.add_category_hit_ex(
-                    &mut breakdown,
-                    LegacyAttackCategory::CommandInjection,
-                    5,
-                    monitored,
-                );
-                recs.push(HitRec::Lib {
-                    kind: "ci-shape",
-                    fingerprint: "chr-codepoint-chain".to_string(),
-                    source: value.source.as_str(),
-                    name: &value.name,
-                    monitored,
-                });
-            }
-            if ssrf_protocol_smuggling(needle) {
-                let monitored = self.hit_monitored(
-                    LegacyAttackCategory::Ssrf,
-                    StackSet::GENERIC,
-                );
-                if !monitored {
-                    critical_hit = true;
-                }
-                self.scorer.add_category_hit_ex(
-                    &mut breakdown,
-                    LegacyAttackCategory::Ssrf,
-                    5,
-                    monitored,
-                );
-                recs.push(HitRec::Lib {
-                    kind: "ssrf-shape",
-                    fingerprint: "protocol-smuggling".to_string(),
-                    source: value.source.as_str(),
-                    name: &value.name,
-                    monitored,
-                });
-            }
-            if pt_remote_backslash_include(needle) {
-                let monitored = self.hit_monitored(
-                    LegacyAttackCategory::PathTraversal,
-                    StackSet::GENERIC,
-                );
-                if !monitored {
-                    critical_hit = true;
-                }
-                self.scorer.add_category_hit_ex(
-                    &mut breakdown,
-                    LegacyAttackCategory::PathTraversal,
-                    5,
-                    monitored,
-                );
-                recs.push(HitRec::Lib {
-                    kind: "pt-shape",
-                    fingerprint: "remote-backslash-include".to_string(),
-                    source: value.source.as_str(),
-                    name: &value.name,
-                    monitored,
-                });
-            }
-
-            // Strict level: structural EL / SSTI detection over the decoded
-            // value. A container with interpreter-facing shape is treated as
-            // a critical hit; Normal only scores template openers.
-            if self.level.is_strict() {
-                let expr_monitored = self.hit_monitored(
-                    LegacyAttackCategory::TemplateInjection,
-                    StackSet::GENERIC,
-                );
-                if let Some(container) = detect_expr_injection(needle) {
-                    self.scorer.add_expr_hit_ex(&mut breakdown, expr_monitored);
-                    if !expr_monitored {
-                        critical_hit = true;
-                    }
-                    recs.push(HitRec::Expr {
-                        container,
-                        source: value.source.as_str(),
-                        name: &value.name,
-                        monitored: expr_monitored,
-                    });
-                } else if detect_js_call(needle)
-                    && (value.field || value.source != ValueSource::Body)
-                {
-                    // A bracket-call in a real member field or on a
-                    // URL-facing surface is structural attack material and
-                    // scores into the RCE gate. The same shape inside an
-                    // unstructured body blob (collected page text, log
-                    // dumps) is prose — skipped entirely, like the
-                    // search-phrase rule, or the RCE sub-score alone would
-                    // re-block what the critical gate let through.
-                    self.scorer.add_expr_hit_ex(&mut breakdown, expr_monitored);
-                    if !expr_monitored {
-                        critical_hit = true;
-                    }
-                    recs.push(HitRec::Expr {
-                        container: "js-call",
-                        source: value.source.as_str(),
-                        name: &value.name,
-                        monitored: expr_monitored,
-                    });
-                }
-            }
+        // Allow pre-pass — allowlist entries win over the Stage-1 fast path
+        // and every other rule.
+        if let Some(verdict) = self.apply_allow_prepass(&ctx, paranoia, &state)
+        {
+            return verdict;
         }
 
-        // Also scan the normalized path itself — traversal patterns commonly
-        // appear after `..` resolution rather than in raw query params.
-        self.signatures
-            .scan_into(&normalized.path, &mut hits, &mut seen);
-        for hit in &hits {
-            // Mirror of the decoded-value search-phrase gate: the path is a
-            // reflected surface, so a compact or attribute `<script>` tag is
-            // real attack material, while prose quoting the word
-            // (`…binary<script is incorrect` as a URL slug) must not
-            // one-shot through the sev-5 fast path. The gate also skips the
-            // score: the family sub-score alone would re-block through
-            // VARMAN-1003 what the critical gate let through.
-            let pid = self.signatures.pattern_id(hit.pattern);
-            let search_phrase = pid == "XSS-001"
-                && !xss_script_tag_shaped(&normalized.path, true);
-            if search_phrase {
-                continue;
-            }
-            let critical = (hit.severity >= 5)
-                || (self.level.is_strict()
-                    && hit.category == LegacyAttackCategory::CrlfInjection);
-            let monitored = self.hit_monitored(
-                hit.category,
-                self.signatures.pattern(hit.pattern).stack,
-            );
-            if critical && !monitored {
-                critical_hit = true;
-            }
-            // Mirror of the decoded-value gate: CI/Deser shapes found on the
-            // resolved path keep their aggregate score but stay out of the
-            // RCE sub-score.
-            if matches!(
-                hit.category,
-                LegacyAttackCategory::CommandInjection
-                    | LegacyAttackCategory::Deserialization
-            ) {
-                self.scorer.add_severity_hit_ex(
-                    &mut breakdown,
-                    hit.severity,
-                    monitored,
-                );
-            } else {
-                self.scorer.add_category_hit_ex(
-                    &mut breakdown,
-                    hit.category,
-                    hit.severity,
-                    monitored,
-                );
-            }
-            recs.push(HitRec::Sig {
-                pattern: hit.pattern,
-                severity: hit.severity,
-                source: "path",
-                name: "",
-                monitored,
-            });
-        }
-
-        // ----- Build evaluation context (snapshot of Stage-1 scores) -----
-        let parsed_ip = IpAddr::from_str(&request.client_ip).ok();
-        let ssl = request.scheme.eq_ignore_ascii_case("https");
-        let ctx = EvalContext {
-            method: &normalized.method,
-            path: &normalized.path,
-            full_uri: &normalized.full_uri,
-            host: normalized.host(),
-            user_agent: normalized.user_agent(),
-            body: normalized.body_str(),
-            headers: normalized.headers,
-            cookies: &normalized.cookies,
-            client_ip: &request.client_ip,
-            parsed_ip,
-            country_code: request.country_code.as_deref(),
-            ssl,
-            waf_score: breakdown.total,
-            waf_score_sqli: breakdown.sqli_score,
-            waf_score_xss: breakdown.xss_score,
-            waf_score_rce: breakdown.rce_score,
-        };
-        // Managed rules evaluate against the blocking-only snapshot: hits
-        // downgraded to monitor-only can never push a family or aggregate
-        // gate. The full snapshot stays available to custom rules (explicit
-        // operator configuration) and the Allow pre-pass (allowlists must
-        // not be blinded by monitor config).
-        let block_ctx = EvalContext {
-            waf_score: breakdown.block_total,
-            waf_score_sqli: breakdown.block_sqli_score,
-            waf_score_xss: breakdown.block_xss_score,
-            waf_score_rce: breakdown.block_rce_score,
-            ..ctx
-        };
-
-        // ----- Allow pre-pass -----
-        // Allow rules are allowlist entries: they must win over both the
-        // Stage-1 fast path and every other rule, otherwise an operator
-        // could not exempt a health-check endpoint or an internal network.
-        for rule in &self.rules {
-            if !rule.enabled || rule.action != RuleAction::Allow {
-                continue;
-            }
-            if self.rule_disabled(rule) {
-                continue;
-            }
-            if rule.paranoia_level > paranoia
-                || !self.stacks.contains(rule.stacks)
-            {
-                continue;
-            }
-            if !evaluate(&rule.expression, &ctx) {
-                continue;
-            }
-            let mut matched = self.matched_from(&recs, &[]);
-            matched.push(rule.id.clone());
-            return WafVerdict {
-                action: WafAction::Pass,
-                score: breakdown.total_u8(),
-                matched_rules: matched,
-                details: format!(
-                    "allow-rule matched: {} [{}]",
-                    rule.id, rule.name
-                ),
-                breakdown,
-            };
-        }
-
-        // ----- Fast-path Block on critical Stage-1 hit -----
-        if self.fast_path_block_on_critical && critical_hit {
+        // Fast-path Block on a critical Stage-1 hit.
+        if self.fast_path_block_on_critical && state.critical_hit {
             return self.finalize_verdict(
-                &mut breakdown,
-                self.matched_from(&recs, &[]),
-                self.details_from(&recs, &[]),
+                &mut state.breakdown,
+                self.matched_from(&state.recs, &[]),
+                self.details_from(&state.recs, &[]),
                 Some(WafAction::Block),
                 "stage1-critical",
             );
         }
 
-        // ----- Stage 2: rule engine (non-Allow rules) -----
-        let mut rule_recs: Vec<RuleRec> = Vec::new();
-        let mut forced_action: Option<WafAction> = None;
-        for rule in &self.rules {
-            if !rule.enabled || rule.action == RuleAction::Allow {
-                continue;
-            }
-            if self.rule_disabled(rule) {
-                continue;
-            }
-            if rule.paranoia_level > paranoia
-                || !self.stacks.contains(rule.stacks)
-            {
-                continue;
-            }
-            let is_managed = rule.id.starts_with("VARMAN-");
-            // Managed rules see the blocking-only score snapshot; custom
-            // rules see the full aggregate.
-            let rule_ctx = if is_managed { &block_ctx } else { &ctx };
-            let mut matched = evaluate(&rule.expression, rule_ctx);
-            // Target exclusions suppress a match only when the rule no
-            // longer matches against the context with those targets
-            // removed: a finding independent of the excluded source stays.
-            if matched {
-                let mut targets: Vec<String> = self
-                    .rule_target_exclusions
-                    .get(rule.id.as_str())
-                    .cloned()
-                    .unwrap_or_default();
-                // Exclusion packages: path-scoped exclusions merge with the
-                // site-wide ones while the request path matches.
-                for exclusion in &self.path_target_exclusions {
-                    if exclusion.rule_id == rule.id
-                        && !exclusion.path_prefix.is_empty()
-                        && request.path.starts_with(&exclusion.path_prefix)
-                    {
-                        targets.extend(exclusion.targets.iter().cloned());
-                    }
-                }
-                if !targets.is_empty() {
-                    let filtered = FilteredCtx::new(*rule_ctx, &targets);
-                    matched =
-                        evaluate(&rule.expression, &filtered.as_ctx(*rule_ctx));
-                }
-            }
-            if !matched {
-                continue;
-            }
-            let rule_monitored = self.rule_monitored(rule);
-            // Control-plane score override: replaces the severity-derived
-            // contribution of this rule; the rule's action still applies.
-            let override_points =
-                self.rule_scores.get(rule.id.as_str()).copied();
-            rule_recs.push(RuleRec {
-                id: &rule.id,
-                name: &rule.name,
-                action: rule.action,
-                severity: rule.severity,
-                monitored: rule_monitored,
-            });
-            match rule.action {
-                RuleAction::Allow => {
-                    unreachable!("allow rules handled in pre-pass")
-                },
-                RuleAction::Log => {
-                    // OWASP CRS anomaly-scoring semantics, kept deliberately:
-                    // a log-action hit feeds the same aggregate (including
-                    // the blocking subset), so several low-severity log hits
-                    // — or log hits stacked on signature hits — can cross
-                    // the threshold and block. Operators who want a rule to
-                    // never contribute to blocking use the per-rule monitor
-                    // switch instead, which routes through
-                    // `add_severity_hit_ex(monitored=true)`.
-                    match override_points {
-                        Some(points) => {
-                            self.scorer.add_points_hit(&mut breakdown, points)
-                        },
-                        None => self
-                            .scorer
-                            .add_severity_hit(&mut breakdown, rule.severity),
-                    }
-                },
-                RuleAction::Block => {
-                    match override_points {
-                        Some(points) => self.scorer.add_points_hit_ex(
-                            &mut breakdown,
-                            points,
-                            rule_monitored,
-                        ),
-                        None => self.scorer.add_severity_hit_ex(
-                            &mut breakdown,
-                            rule.severity,
-                            rule_monitored,
-                        ),
-                    }
-                    if !rule_monitored {
-                        forced_action = Some(WafAction::Block);
-                    }
-                },
-                RuleAction::Challenge | RuleAction::JsChallenge => {
-                    match override_points {
-                        Some(points) => self.scorer.add_points_hit_ex(
-                            &mut breakdown,
-                            points,
-                            rule_monitored,
-                        ),
-                        None => self.scorer.add_severity_hit_ex(
-                            &mut breakdown,
-                            rule.severity,
-                            rule_monitored,
-                        ),
-                    }
-                    if !rule_monitored
-                        && forced_action != Some(WafAction::Block)
-                    {
-                        forced_action = Some(WafAction::Challenge);
-                    }
-                },
-            }
-        }
+        // Stage 2 — rule engine (non-Allow rules).
+        self.evaluate_managed_rules(
+            request, &ctx, &block_ctx, paranoia, &mut state,
+        );
 
-        // ----- Final scoring -----
-        breakdown.overall_class = self.scorer.classify(breakdown.block_total);
-        let action = if let Some(a) = forced_action {
-            a
-        } else if self.scorer.should_block(breakdown.block_total) {
-            WafAction::Block
-        } else if breakdown.total > 0 {
-            // Below threshold but something fired — surface it as Monitor so
-            // the caller still logs the event. Monitor-only hits keep their
-            // aggregate score, so a downgrade surfaces here exactly as an
-            // ordinary sub-threshold detection does.
-            WafAction::Monitor
-        } else {
-            WafAction::Pass
-        };
-
-        // A clean pass never materializes hit strings — zero formatting
-        // cost on the happy path. `Pass` can only be reached when nothing
-        // fired anywhere (any hit or Log rule would have raised the score).
-        if action == WafAction::Pass {
-            debug_assert!(recs.is_empty() && rule_recs.is_empty());
-            return WafVerdict::pass();
-        }
-
-        let reason = match breakdown.overall_class {
-            ScoreClass::Clean => "clean",
-            ScoreClass::LikelyClean => "likely-clean",
-            ScoreClass::LikelyAttack => "likely-attack",
-            ScoreClass::Attack => "attack",
-        };
-        self.finalize_verdict(
-            &mut breakdown,
-            self.matched_from(&recs, &rule_recs),
-            self.details_from(&recs, &rule_recs),
-            Some(action),
-            reason,
-        )
+        self.assemble_verdict(&mut state)
     }
 
     /// Rule identifiers for every recorded hit, in first-seen order.
@@ -1625,6 +845,7 @@ impl WafEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::score::ScoreClass;
 
     fn engine() -> WafEngine {
         WafEngine::new(&WafEngineConfig::default())
