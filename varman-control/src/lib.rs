@@ -15,6 +15,7 @@ pub mod api_learn;
 pub mod app_state;
 pub mod auth;
 pub mod bundle;
+pub mod certificate_status;
 pub mod config;
 pub mod config_history;
 pub mod crs;
@@ -26,6 +27,7 @@ pub mod frontend;
 pub mod grpc;
 pub mod ip_lists;
 pub mod ipverse;
+pub mod key_auth;
 pub mod management_cert;
 pub mod mcp;
 pub mod migration;
@@ -777,7 +779,7 @@ pub async fn embedded_agent_ca_pem(
     }
 }
 
-use crate::api::keys::BOOTSTRAP_KEY_NAME;
+use crate::key_auth::BOOTSTRAP_KEY_NAME;
 const BOOTSTRAP_KEY_FILE: &str = "/var/lib/varman/bootstrap_api_key";
 
 /// Seeds a bootstrap API key for all-in-one mode.
@@ -793,8 +795,8 @@ pub async fn seed_bootstrap_api_key(
 ) -> anyhow::Result<String> {
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
-    use crate::api::keys::generate_key;
     use crate::auth::password::{hash_password_with_cost, verify_password};
+    use crate::key_auth::generate_key;
     use crate::models::{api_key, user};
 
     const KEY_HASH_COST: u32 = 10;

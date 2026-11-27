@@ -21,11 +21,11 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use uuid::Uuid;
 
-use crate::api::keys::authenticate_api_key;
 use crate::app_state::AppState;
 use crate::auth::jwt::verify_user_token;
 use crate::auth::middleware::{authenticate_user, AuthError, AuthUser};
 use crate::error::{error_response, ApiError};
+use crate::key_auth::authenticate_api_key;
 use crate::models::{api_key, permission, role, user};
 
 /// Identity behind an MCP request, with its effective capabilities.

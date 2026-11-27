@@ -26,10 +26,10 @@ use varman_protocol::control_plane::{
     server_command::Payload, ServerCommand, SiteConfig, UpdateSiteCommand,
 };
 
-use crate::api::keys::BOOTSTRAP_KEY_NAME;
 use crate::app_state::AppState;
 use crate::bundle::{build_site_config, now_timestamp};
 use crate::config_history::{self, VersionScope};
+use crate::key_auth::BOOTSTRAP_KEY_NAME;
 use crate::models::{agent, api_key, config_version, site};
 
 /// An unbound agent holding the all-in-one bootstrap key is the embedded data

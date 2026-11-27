@@ -24,9 +24,9 @@ use uuid::Uuid;
 
 use crate::api::common::query_all;
 use crate::api::logs::escape_like;
-use crate::api::ssl::cert_status;
 use crate::api::state::AppState;
 use crate::api::{defense, self_protection, sites};
+use crate::certificate_status as cert_status;
 use crate::grpc::{notify_all_config_changed, notify_config_changed};
 use crate::models::{
     access_log, agent, agent_status, control_plane_access_log,

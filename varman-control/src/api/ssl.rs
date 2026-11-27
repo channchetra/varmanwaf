@@ -27,23 +27,12 @@ use crate::api::sites::{
 };
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
+use crate::certificate_status as cert_status;
 use crate::grpc::notify_config_changed;
 use crate::models::{
     acme_challenge, certificate_events, site, site_certificate_bindings,
     site_certificates, site_ssl,
 };
-
-/// Certificate status values.
-pub(crate) mod cert_status {
-    pub const ACTIVE: &str = "active";
-    pub const PENDING: &str = "pending";
-    pub const EXPIRED: &str = "expired";
-    pub const FAILED: &str = "failed";
-
-    pub fn is_valid(status: &str) -> bool {
-        matches!(status, ACTIVE | PENDING | EXPIRED | FAILED)
-    }
-}
 
 /// Public certificate representation (never exposes the private key).
 #[derive(Debug, Serialize)]
