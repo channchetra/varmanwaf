@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
-};
+use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::Bytes;
@@ -340,6 +338,29 @@ fn get_predictor() -> &'static (dyn CacheablePredictor + Sync) {
     PREDICTOR.get_or_init(|| Predictor::new(128, None))
 }
 
+/// Typed view of `[plugins.<name>]` for the cache plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct CacheParams {
+    check_cache_control: bool,
+    directory: String,
+    disk_quota_mb: i64,
+    /// Presence of the key enables eviction; its value is not read.
+    eviction: Option<toml::Value>,
+    headers: Vec<String>,
+    lock: String,
+    /// Absent leaves pingora's default retry budget alone.
+    lock_retries: Option<i64>,
+    max_file_size: String,
+    max_ttl: String,
+    namespace: String,
+    /// Presence of the key enables the predictor; its value is not read.
+    predictor: Option<toml::Value>,
+    purge_ip_list: Vec<String>,
+    skip: String,
+    vary_headers: Vec<String>,
+}
+
 impl TryFrom<&PluginConf> for Cache {
     type Error = Error;
 
@@ -370,7 +391,8 @@ impl TryFrom<&PluginConf> for Cache {
     /// - Compiles skip regex if provided
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let directory = get_str_conf(value, "directory");
+        let params: CacheParams = parse_params(value, "cache")?;
+        let directory = params.directory;
 
         let cache = new_cache_backend(directory.as_str()).map_err(|e| {
             Error::Invalid {
@@ -380,7 +402,7 @@ impl TryFrom<&PluginConf> for Cache {
         })?;
         let cache_max_size = cache.max_size;
 
-        let eviction = if value.contains_key("eviction") {
+        let eviction = if params.eviction.is_some() {
             if cache_max_size > 0 {
                 let eviction = get_eviction_manager(cache_max_size);
                 Some(eviction as &'static (dyn EvictionManager + Sync))
@@ -398,9 +420,8 @@ impl TryFrom<&PluginConf> for Cache {
             None
         };
 
-        let lock = get_str_conf(value, "lock");
-        let lock = if !lock.is_empty() {
-            parse_duration(&lock).map_err(|e| Error::Invalid {
+        let lock = if !params.lock.is_empty() {
+            parse_duration(&params.lock).map_err(|e| Error::Invalid {
                 category: PluginCategory::Cache.to_string(),
                 message: e.to_string(),
             })?
@@ -408,40 +429,40 @@ impl TryFrom<&PluginConf> for Cache {
             Duration::from_secs(1)
         };
 
-        let lock_retries = if value.get("lock_retries").is_some() {
+        let lock_retries = if let Some(retries) = params.lock_retries {
             let retries =
-                usize::try_from(crate::get_int_conf(value, "lock_retries"))
-                    .map_err(|_| Error::Invalid {
-                        category: PluginCategory::Cache.to_string(),
-                        message:
-                            "lock_retries should be a non-negative integer"
-                                .to_string(),
-                    })?;
+                usize::try_from(retries).map_err(|_| Error::Invalid {
+                    category: PluginCategory::Cache.to_string(),
+                    message: "lock_retries should be a non-negative integer"
+                        .to_string(),
+                })?;
             Some(retries)
         } else {
             None
         };
 
-        let max_ttl = get_str_conf(value, "max_ttl");
-        let max_ttl = if !max_ttl.is_empty() {
-            Some(parse_duration(&max_ttl).map_err(|e| Error::Invalid {
-                category: PluginCategory::Cache.to_string(),
-                message: e.to_string(),
+        let max_ttl = if !params.max_ttl.is_empty() {
+            Some(parse_duration(&params.max_ttl).map_err(|e| {
+                Error::Invalid {
+                    category: PluginCategory::Cache.to_string(),
+                    message: e.to_string(),
+                }
             })?)
         } else {
             None
         };
 
-        let max_file_size = get_str_conf(value, "max_file_size");
-        let max_file_size = if !max_file_size.is_empty() {
-            ByteSize::from_str(&max_file_size).map_err(|e| Error::Invalid {
-                category: PluginCategory::Cache.to_string(),
-                message: e.to_string(),
+        let max_file_size = if !params.max_file_size.is_empty() {
+            ByteSize::from_str(&params.max_file_size).map_err(|e| {
+                Error::Invalid {
+                    category: PluginCategory::Cache.to_string(),
+                    message: e.to_string(),
+                }
             })?
         } else {
             ByteSize::mb(1)
         };
-        let namespace = get_str_conf(value, "namespace");
+        let namespace = params.namespace;
         if !namespace.is_empty() && cache.directory.is_some() {
             let path = format!(
                 "{}/{namespace}",
@@ -463,7 +484,7 @@ impl TryFrom<&PluginConf> for Cache {
         // Per-domain disk quota. The namespace is the accounting unit of the
         // ledger, so a quota without one has nothing to charge: refusing the
         // configuration beats silently letting the site grow without bound.
-        let disk_quota_mb = crate::get_int_conf(value, "disk_quota_mb");
+        let disk_quota_mb = params.disk_quota_mb;
         if disk_quota_mb < 0 {
             return Err(Error::Invalid {
                 category: PluginCategory::Cache.to_string(),
@@ -501,13 +522,13 @@ impl TryFrom<&PluginConf> for Cache {
                 message: message.to_string(),
             });
         }
-        let headers = get_str_slice_conf(value, "headers");
+        let headers = params.headers;
         let headers = if headers.is_empty() {
             None
         } else {
             Some(headers)
         };
-        let vary_headers = get_str_slice_conf(value, "vary_headers");
+        let vary_headers = params.vary_headers;
         let vary_headers = if vary_headers.is_empty() {
             None
         } else {
@@ -519,20 +540,21 @@ impl TryFrom<&PluginConf> for Cache {
             ))
         };
 
-        let predictor = if value.contains_key("predictor") {
+        let predictor = if params.predictor.is_some() {
             Some(get_predictor())
         } else {
             None
         };
 
         let purge_ip_rules =
-            IpRules::try_new(&get_str_slice_conf(value, "purge_ip_list"))
-                .map_err(|e| Error::Invalid {
+            IpRules::try_new(&params.purge_ip_list).map_err(|e| {
+                Error::Invalid {
                     category: PluginCategory::Cache.to_string(),
                     message: e.to_string(),
-                })?;
+                }
+            })?;
 
-        let skip_value = get_str_conf(value, "skip");
+        let skip_value = params.skip;
         let skip = if skip_value.is_empty() {
             None
         } else {
@@ -556,7 +578,7 @@ impl TryFrom<&PluginConf> for Cache {
             headers,
             vary_headers,
             purge_ip_rules,
-            check_cache_control: get_bool_conf(value, "check_cache_control"),
+            check_cache_control: params.check_cache_control,
             skip,
             site_cache_rules: DashMap::new(),
         };

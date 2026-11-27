@@ -24,10 +24,7 @@
 //! Verdicts map onto the proxy pipeline: `Pass`/`Monitor` continue, `Block`
 //! returns 403, and `Challenge` delegates to the challenge subsystem.
 
-use super::{
-    Error, get_bool_conf, get_hash_key, get_int_conf_or_default, get_str_conf,
-    get_str_slice_conf,
-};
+use super::{Error, get_hash_key, parse_params};
 use crate::challenge::{
     ChallengeKind, VERIFY_ENDPOINT, basic_auth_page, block_page,
     build_challenge_response, paused_page, rate_limit_page,
@@ -662,35 +659,113 @@ impl WafPlugin {
     }
 }
 
+/// Typed view of the flat keys of `[plugins.<name>]` for the WAF plugin.
+///
+/// Site- and rule-level configuration comes from the agent, not from here;
+/// every key the standalone constructor reads is listed so a misspelling or a
+/// wrong TOML type is rejected at `pingap -t`.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct WafParams {
+    mode: String,
+    advanced_mode: bool,
+    level: String,
+    stacks: Vec<String>,
+    #[serde(default = "default_paranoia_level")]
+    paranoia_level: i64,
+    #[serde(default = "default_anomaly_threshold")]
+    anomaly_threshold: i64,
+    detections: Vec<String>,
+    monitor_categories: Vec<String>,
+    monitor_stacks: Vec<String>,
+    ml_enabled: bool,
+    /// Accepted for compatibility with the documented option set. The
+    /// detection engine has no ML scorer, so the value is not read — the same
+    /// situation as `ml_enabled`, which is reported at construction time.
+    #[allow(dead_code)]
+    ml_threshold: f64,
+    inspect_body: bool,
+    #[serde(default = "default_max_body_size")]
+    max_body_size: i64,
+    body_policy: String,
+    #[serde(default = "default_body_read_timeout_ms")]
+    body_read_timeout_ms: i64,
+    #[serde(default = "default_true")]
+    tail_inspection: bool,
+    #[serde(default = "default_true")]
+    ws_inspection: bool,
+    #[serde(default = "default_waf_pow_difficulty")]
+    pow_difficulty: i64,
+    #[serde(default = "default_ato_failed_auth_threshold")]
+    ato_failed_auth_threshold: i64,
+    #[serde(default = "default_ato_window_secs")]
+    ato_window_secs: i64,
+    #[serde(default = "default_ato_block_secs")]
+    ato_block_secs: i64,
+}
+
+fn default_paranoia_level() -> i64 {
+    2
+}
+
+fn default_anomaly_threshold() -> i64 {
+    40
+}
+
+fn default_max_body_size() -> i64 {
+    64 * 1024
+}
+
+fn default_body_read_timeout_ms() -> i64 {
+    10_000
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_waf_pow_difficulty() -> i64 {
+    20
+}
+
+fn default_ato_failed_auth_threshold() -> i64 {
+    20
+}
+
+fn default_ato_window_secs() -> i64 {
+    300
+}
+
+fn default_ato_block_secs() -> i64 {
+    300
+}
+
 impl TryFrom<&PluginConf> for WafPlugin {
     type Error = Error;
 
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let category = PluginCategory::Waf.to_string();
+        let params: WafParams = parse_params(value, "waf")?;
 
-        let mode = parse_mode(&get_str_conf(value, "mode"));
-        let advanced_mode = get_bool_conf(value, "advanced_mode");
+        let mode = parse_mode(&params.mode);
+        let advanced_mode = params.advanced_mode;
         let level = if advanced_mode {
             WafLevel::Strict
         } else {
-            WafLevel::parse(&get_str_conf(value, "level")).unwrap_or_default()
+            WafLevel::parse(&params.level).unwrap_or_default()
         };
-        let stack_names = get_str_slice_conf(value, "stacks");
+        let stack_names = params.stacks;
         let stacks = if stack_names.is_empty() {
             StackSet::default()
         } else {
             StackSet::from_names(stack_names.iter().map(String::as_str))
         };
-        let paranoia_level =
-            (get_int_conf_or_default(value, "paranoia_level", 2) as u8)
-                .clamp(1, 4);
-        let anomaly_threshold =
-            get_int_conf_or_default(value, "anomaly_threshold", 40) as u32;
-        let detections = get_str_slice_conf(value, "detections");
-        let mut monitor_categories = parse_monitor_categories(
-            &get_str_slice_conf(value, "monitor_categories"),
-        );
+        let paranoia_level = (params.paranoia_level as u8).clamp(1, 4);
+        let anomaly_threshold = params.anomaly_threshold as u32;
+        let detections = params.detections;
+        let mut monitor_categories =
+            parse_monitor_categories(&params.monitor_categories);
         // `detections` is a whitelist of attack families allowed to block. The
         // engine cannot disable detection per family, so the faithful
         // semantic is a monitor downgrade for every family *not* listed:
@@ -713,9 +788,8 @@ impl TryFrom<&PluginConf> for WafPlugin {
             monitor_categories =
                 monitor_categories.union(CategorySet::ALL.difference(allowed));
         }
-        let monitor_stacks =
-            parse_monitor_stacks(&get_str_slice_conf(value, "monitor_stacks"));
-        let ml_enabled = get_bool_conf(value, "ml_enabled");
+        let monitor_stacks = parse_monitor_stacks(&params.monitor_stacks);
+        let ml_enabled = params.ml_enabled;
         if ml_enabled {
             // The engine has no ML scorer; the flag is accepted for
             // configuration compatibility and reported instead of silently
@@ -725,10 +799,8 @@ impl TryFrom<&PluginConf> for WafPlugin {
                  flag has no effect"
             );
         }
-        let inspect_body =
-            advanced_mode || get_bool_conf(value, "inspect_body");
-        let configured_body_size =
-            get_int_conf_or_default(value, "max_body_size", 64 * 1024) as usize;
+        let inspect_body = advanced_mode || params.inspect_body;
+        let configured_body_size = params.max_body_size as usize;
         // Pingora's retry buffer caps replay at 64 KiB: bytes read past that
         // would never reach the upstream, so the inspection window is clamped
         // to the same limit.
@@ -744,32 +816,21 @@ impl TryFrom<&PluginConf> for WafPlugin {
         // Phase 5 size policy: `process_partial` (default) inspects the head
         // window and forwards the rest; `reject` answers 413 once a body
         // exceeds `max_body_size` instead of inspecting a prefix.
-        let body_reject =
-            get_str_conf(value, "body_policy").eq_ignore_ascii_case("reject");
+        let body_reject = params.body_policy.eq_ignore_ascii_case("reject");
         // Slow-upload defense: the body read pass gets a total deadline, so a
         // trickling client cannot hold the connection open byte by byte.
-        let body_read_timeout_ms =
-            get_int_conf_or_default(value, "body_read_timeout_ms", 10_000)
-                .max(0) as u64;
+        let body_read_timeout_ms = params.body_read_timeout_ms.max(0) as u64;
         // Stream inspection: body tails beyond the early read pass and
         // WebSocket frames on upgraded connections (both default on).
-        let tail_inspection = value
-            .get("tail_inspection")
-            .and_then(|item| item.as_bool())
-            .unwrap_or(true);
-        let ws_inspection = value
-            .get("ws_inspection")
-            .and_then(|item| item.as_bool())
-            .unwrap_or(true);
-        let pow_difficulty =
-            get_int_conf_or_default(value, "pow_difficulty", 20) as u32;
+        let tail_inspection = params.tail_inspection;
+        let ws_inspection = params.ws_inspection;
+        let pow_difficulty = params.pow_difficulty as u32;
         // ATO: repeated upstream authentication failures on state-changing
         // requests from one client block that client for a while. 0 disables.
         let ato = Arc::new(FailedAuthTracker::new(
-            get_int_conf_or_default(value, "ato_failed_auth_threshold", 20)
-                as u32,
-            get_int_conf_or_default(value, "ato_window_secs", 300) as u64,
-            get_int_conf_or_default(value, "ato_block_secs", 300) as u64,
+            params.ato_failed_auth_threshold as u32,
+            params.ato_window_secs as u64,
+            params.ato_block_secs as u64,
         ));
 
         let plugin_step = match super::get_step_conf_in(

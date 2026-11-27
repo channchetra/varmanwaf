@@ -23,10 +23,7 @@
 //! the [`PENDING_CHALLENGES`] store so a challenge issued by one can be
 //! verified by the other's verify endpoint.
 
-use super::{
-    Error, get_hash_key, get_int_conf_or_default, get_str_conf,
-    get_str_slice_conf,
-};
+use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
@@ -752,43 +749,76 @@ impl ChallengePlugin {
     }
 }
 
+/// Typed view of `[plugins.<name>]` for the challenge plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ChallengeParams {
+    /// A challenge plugin that is added is meant to be active; only an
+    /// explicit `false` disables it.
+    #[serde(default = "default_true")]
+    enabled: bool,
+    under_attack_mode: bool,
+    #[serde(default = "default_clearance_duration_secs")]
+    clearance_duration_secs: i64,
+    #[serde(default = "default_rate_threshold")]
+    rate_threshold: i64,
+    #[serde(default = "default_pow_difficulty")]
+    pow_difficulty: i64,
+    cookie_secret: String,
+    cookie_name: String,
+    exempt_paths: Vec<String>,
+    exempt_user_agents: Vec<String>,
+    #[serde(default = "default_true")]
+    browser_integrity_check: bool,
+    #[serde(default = "default_submission_max_age_secs")]
+    submission_max_age_secs: i64,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_clearance_duration_secs() -> i64 {
+    1800
+}
+
+fn default_rate_threshold() -> i64 {
+    100
+}
+
+fn default_pow_difficulty() -> i64 {
+    20
+}
+
+fn default_submission_max_age_secs() -> i64 {
+    300
+}
+
 impl TryFrom<&PluginConf> for ChallengePlugin {
     type Error = Error;
 
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let category = PluginCategory::Challenge.to_string();
+        let params: ChallengeParams = parse_params(value, "challenge")?;
 
-        // A challenge plugin that is added is meant to be active; only an
-        // explicit `enabled = false` disables it.
-        let enabled = value
-            .get("enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        let under_attack_mode = value
-            .get("under_attack_mode")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let enabled = params.enabled;
+        let under_attack_mode = params.under_attack_mode;
 
-        let clearance_duration_secs =
-            get_int_conf_or_default(value, "clearance_duration_secs", 1800);
-        let rate_threshold =
-            get_int_conf_or_default(value, "rate_threshold", 100) as u32;
-        let pow_difficulty =
-            get_int_conf_or_default(value, "pow_difficulty", 20) as u32;
+        let clearance_duration_secs = params.clearance_duration_secs;
+        let rate_threshold = params.rate_threshold as u32;
+        let pow_difficulty = params.pow_difficulty as u32;
 
-        let mut cookie_secret =
-            resolve_cookie_secret(&get_str_conf(value, "cookie_secret"));
+        let mut cookie_secret = resolve_cookie_secret(&params.cookie_secret);
         if cookie_secret.is_empty() {
             cookie_secret = "change-me".to_string();
         }
-        let mut cookie_name = get_str_conf(value, "cookie_name");
+        let mut cookie_name = params.cookie_name;
         if cookie_name.is_empty() {
             cookie_name = "__varman_clearance".to_string();
         }
-        let exempt_paths = get_str_slice_conf(value, "exempt_paths");
-        let exempt_user_agents =
-            get_str_slice_conf(value, "exempt_user_agents");
+        let exempt_paths = params.exempt_paths;
+        let exempt_user_agents = params.exempt_user_agents;
 
         let plugin_step = match super::get_step_conf_in(
             value,
@@ -813,19 +843,12 @@ impl TryFrom<&PluginConf> for ChallengePlugin {
             exempt_paths,
             exempt_user_agents,
             rate_threshold,
-            browser_integrity_check: value
-                .get("browser_integrity_check")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
+            browser_integrity_check: params.browser_integrity_check,
             tls_fingerprint_check: false,
             cookie_secret: cookie_secret.clone(),
             cookie_name: cookie_name.clone(),
             pow_difficulty,
-            submission_max_age_secs: get_int_conf_or_default(
-                value,
-                "submission_max_age_secs",
-                300,
-            ),
+            submission_max_age_secs: params.submission_max_age_secs,
         };
 
         Ok(Self {

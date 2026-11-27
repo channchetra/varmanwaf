@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
-    get_str_slice_conf,
-};
+use super::{Error, get_hash_key, get_step_conf, parse_params};
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use glob::glob;
@@ -331,6 +328,24 @@ fn get_cacheable_and_headers_from_meta(
     (cacheable, size, headers)
 }
 
+/// Typed view of `[plugins.<name>]` for the directory plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct DirectoryParams {
+    autoindex: bool,
+    charset: String,
+    chunk_size: String,
+    download: bool,
+    /// Absent means symlinks are followed; only an explicit `false`
+    /// disables it.
+    follow_symlinks: Option<bool>,
+    headers: Vec<String>,
+    index: String,
+    max_age: String,
+    path: String,
+    private: bool,
+}
+
 impl TryFrom<&PluginConf> for Directory {
     type Error = Error;
 
@@ -348,41 +363,40 @@ impl TryFrom<&PluginConf> for Directory {
     /// - Sets appropriate defaults
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
+        let params: DirectoryParams = parse_params(value, "directory")?;
         let step = get_step_conf(value, PluginStep::Request);
 
-        let chunk_size = if let Ok(chunk_size) =
-            ByteSize::from_str(&get_str_conf(value, "chunk_size"))
-        {
-            chunk_size.0
-        } else {
-            4096
-        };
+        let chunk_size =
+            if let Ok(chunk_size) = ByteSize::from_str(&params.chunk_size) {
+                chunk_size.0
+            } else {
+                4096
+            };
         let chunk_size = if chunk_size > 0 {
             Some(chunk_size as usize)
         } else {
             None
         };
-        let max_age = get_str_conf(value, "max_age");
+        let max_age = params.max_age;
         let max_age = if !max_age.is_empty() {
             Some(parse_duration(&max_age).unwrap_or_default().as_secs() as u32)
         } else {
             None
         };
-        let charset = get_str_conf(value, "charset");
+        let charset = params.charset;
         let charset = if !charset.is_empty() {
             Some(charset)
         } else {
             None
         };
-        let headers = convert_headers(&get_str_slice_conf(value, "headers"))
-            .map_err(|e| Error::Invalid {
+        let headers =
+            convert_headers(&params.headers).map_err(|e| Error::Invalid {
                 category: PluginCategory::Directory.to_string(),
                 message: e.to_string(),
             })?;
 
-        let cache_private = get_bool_conf(value, "private");
-        let cache_private = if cache_private { Some(true) } else { None };
-        let mut index = get_str_conf(value, "index");
+        let cache_private = if params.private { Some(true) } else { None };
+        let mut index = params.index;
         if index.is_empty() {
             index = "index.html".to_string();
         }
@@ -390,8 +404,7 @@ impl TryFrom<&PluginConf> for Directory {
             index = format!("/{index}");
         }
         let path =
-            Path::new(&pingap_util::resolve_path(&get_str_conf(value, "path")))
-                .to_path_buf();
+            Path::new(&pingap_util::resolve_path(&params.path)).to_path_buf();
         // Resolve the root once so the per-request check compares two canonical
         // paths and therefore sees through symlinks. A root that does not exist
         // yet keeps its literal path; the lexical check still applies.
@@ -399,12 +412,11 @@ impl TryFrom<&PluginConf> for Directory {
 
         // `follow_symlinks` defaults to true so an existing deployment that
         // symlinks content into the served tree keeps working.
-        let follow_symlinks = !value.contains_key("follow_symlinks")
-            || get_bool_conf(value, "follow_symlinks");
+        let follow_symlinks = params.follow_symlinks.unwrap_or(true);
 
         let params = Self {
             hash_value,
-            autoindex: get_bool_conf(value, "autoindex"),
+            autoindex: params.autoindex,
             index,
             path,
             chunk_size,
@@ -412,7 +424,7 @@ impl TryFrom<&PluginConf> for Directory {
             charset,
             cache_private,
             plugin_step: step,
-            download: get_bool_conf(value, "download"),
+            download: params.download,
             follow_symlinks,
             headers: Some(headers),
         };
@@ -805,7 +817,7 @@ step = "proxy_upstream"
 path = "~/Downloads"
 index = "/index.html"
 autoindex = true
-chunk_size = 1024
+chunk_size = "4KiB"
 max_age = "10m"
 private = true
 charset = "utf8"
@@ -833,7 +845,7 @@ step = "response"
 path = "~/Downloads"
 index = "/index.html"
 autoindex = true
-chunk_size = 1024
+chunk_size = "4KiB"
 max_age = "10m"
 private = true
 charset = "utf8"
@@ -854,7 +866,7 @@ download = true
             &toml::from_str::<PluginConf>(
                 r###"
 path = "./"
-chunk_size = 1024
+chunk_size = "4KiB"
 max_age = "1h"
 private = true
 index = "/index.html"

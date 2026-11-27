@@ -79,10 +79,6 @@ pub fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub(crate) fn get_bool_conf(value: &PluginConf, key: &str) -> bool {
-    value.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
-}
-
 pub fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
     get_int_conf_or_default(value, key, 0)
 }

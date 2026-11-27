@@ -74,7 +74,7 @@ path = "~/Downloads"
 
 # Size of chunks when reading files (in bytes)
 # Default `4096`
-# chunk_size = 4096
+# chunk_size = "4KiB"
 
 # Browser cache duration for static files
 # Default `None`

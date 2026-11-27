@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_duration_conf, get_hash_key, get_str_conf};
+use super::{Error, get_hash_key, parse_params};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -299,17 +299,18 @@ fn is_asymmetric_alg(alg: Algorithm) -> bool {
 
 /// Builds a remote JWKS source when `jwks_url` is configured (`Ok(None)`
 /// otherwise). `jwks_ttl` controls the cache lifetime (default 1h).
-fn build_jwks_source(value: &PluginConf) -> Result<Option<Arc<JwksSource>>> {
-    let url = get_str_conf(value, "jwks_url");
+fn build_jwks_source(
+    url: &str,
+    jwks_ttl: Option<Duration>,
+) -> Result<Option<Arc<JwksSource>>> {
     if url.is_empty() {
         return Ok(None);
     }
-    reqwest::Url::parse(&url).map_err(|e| Error::Invalid {
+    reqwest::Url::parse(url).map_err(|e| Error::Invalid {
         category: PluginCategory::Jwt.to_string(),
         message: format!("invalid jwks_url: {e}"),
     })?;
-    let ttl = get_duration_conf(value, "jwks_ttl")
-        .unwrap_or(Duration::from_secs(3600));
+    let ttl = jwks_ttl.unwrap_or(Duration::from_secs(3600));
     let cooldown = ttl.min(Duration::from_secs(10));
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -319,13 +320,31 @@ fn build_jwks_source(value: &PluginConf) -> Result<Option<Arc<JwksSource>>> {
             message: e.to_string(),
         })?;
     Ok(Some(Arc::new(JwksSource {
-        url,
+        url: url.to_string(),
         ttl,
         cooldown,
         client,
         cache: ArcSwapOption::empty(),
         refresh_lock: tokio::sync::Mutex::new(()),
     })))
+}
+
+/// Typed view of `[plugins.<name>]` for the JWT authentication plugin.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct JwtAuthParams {
+    algorithm: String,
+    auth_path: String,
+    cookie: String,
+    delay: String,
+    header: String,
+    /// Only consulted when `jwks_url` is set; an unparsable value falls back
+    /// to the one-hour default, as before.
+    jwks_ttl: String,
+    jwks_url: String,
+    public_key: String,
+    query: String,
+    secret: String,
 }
 
 impl TryFrom<&PluginConf> for JwtAuth {
@@ -346,9 +365,10 @@ impl TryFrom<&PluginConf> for JwtAuth {
     /// * When delay duration is invalid
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let header = get_str_conf(value, "header");
-        let query = get_str_conf(value, "query");
-        let cookie = get_str_conf(value, "cookie");
+        let params: JwtAuthParams = parse_params(value, "jwt")?;
+        let header = params.header;
+        let query = params.query;
+        let cookie = params.cookie;
         if header.is_empty() && query.is_empty() && cookie.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::Jwt.to_string(),
@@ -366,7 +386,7 @@ impl TryFrom<&PluginConf> for JwtAuth {
         } else {
             Some(cookie)
         };
-        let delay = get_str_conf(value, "delay");
+        let delay = params.delay;
         let delay = if !delay.is_empty() {
             let d = parse_duration(&delay).map_err(|e| Error::Invalid {
                 category: PluginCategory::Jwt.to_string(),
@@ -376,18 +396,19 @@ impl TryFrom<&PluginConf> for JwtAuth {
         } else {
             None
         };
-        let algorithm = get_str_conf(value, "algorithm");
-        let decoding_key = build_asymmetric_key(
-            &algorithm,
-            &get_str_conf(value, "public_key"),
+        let algorithm = params.algorithm;
+        let decoding_key =
+            build_asymmetric_key(&algorithm, &params.public_key)?;
+        let jwks = build_jwks_source(
+            &params.jwks_url,
+            parse_duration(&params.jwks_ttl).ok(),
         )?;
-        let jwks = build_jwks_source(value)?;
 
         let params = Self {
             hash_value,
             plugin_step: PluginStep::Request,
-            secret: get_str_conf(value, "secret"),
-            auth_path: get_str_conf(value, "auth_path"),
+            secret: params.secret,
+            auth_path: params.auth_path,
             algorithm,
             decoding_key,
             jwks,
