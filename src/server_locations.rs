@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config_apply::ProviderUpdate;
 use crate::locations::new_location_provider;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use pingap_core::Error;
 use pingap_location::ServerLocationRoute;
 use pingap_proxy::{ServerLocations, ServerLocationsProvider};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, String>;
 
 struct Provider {
     server_locations: ArcSwap<ServerLocations>,
@@ -109,7 +109,7 @@ fn changed_server_locations(
 pub fn try_init_server_locations(
     servers: &HashMap<String, pingap_config::ServerConf>,
     locations: &HashMap<String, pingap_config::LocationConf>,
-) -> Result<Vec<String>> {
+) -> Result<ProviderUpdate> {
     // get the location weight
     let location_weights = locations
         .iter()
@@ -129,7 +129,10 @@ pub fn try_init_server_locations(
         server_locations.insert(name, Arc::new(route));
     }
     SERVER_LOCATIONS_PROVIDER.store(server_locations);
-    Ok(updated_servers)
+    Ok(ProviderUpdate {
+        updated: updated_servers,
+        errors: String::new(),
+    })
 }
 
 #[cfg(test)]
@@ -297,13 +300,14 @@ mod tests {
         )]);
 
         // Act
-        let first =
-            try_init_server_locations(&servers, &locations).unwrap_or_default();
+        let first = try_init_server_locations(&servers, &locations)
+            .expect("a server location index never fails to build")
+            .updated;
         let published = SERVER_LOCATIONS_PROVIDER
             .get("server-locations-order-test")
             .map(|route| route.ordered.as_slice().to_vec());
-        let second =
-            try_init_server_locations(&servers, &locations).unwrap_or_default();
+        let second = try_init_server_locations(&servers, &locations)
+            .expect("a server location index never fails to build");
 
         // Assert
         assert_eq!(names(&["server-locations-order-test"]), first);

@@ -52,6 +52,7 @@ use pingora::services::ServiceHandle;
 use tokio::sync::mpsc::Sender;
 
 use crate::certificates::{new_certificate_provider, try_update_certificates};
+use crate::config_apply::ProviderUpdate;
 use crate::locations::{new_location_provider, try_init_locations};
 use crate::plugin::{new_plugin_provider, try_init_plugins};
 use crate::server_locations::{
@@ -182,23 +183,6 @@ pub struct DataPlaneOptions {
     pub admin_only: bool,
 }
 
-/// Plugins rebuilt by [`assemble`], for the caller to log in its own words.
-pub struct PluginUpdate {
-    /// Names created or reloaded.
-    pub updated: Vec<String>,
-    /// Joined construction errors; empty on success.
-    pub errors: String,
-}
-
-/// Certificates loaded by [`assemble`], for the caller to log in its own
-/// words.
-pub struct CertificateUpdate {
-    /// Names whose certificate was (re)loaded.
-    pub updated: Vec<String>,
-    /// Joined parse errors; empty on success.
-    pub errors: String,
-}
-
 /// The assembled plane, plus the pieces each root still has to place itself.
 pub struct AssembledPlane {
     /// pingora's server. The caller owns its lifetime: `run` + webhook flush,
@@ -218,10 +202,10 @@ pub struct AssembledPlane {
     /// The caller adds its own tasks (ACME, Prometheus push, log handling)
     /// and registers the service at its historical point in start-up.
     pub background_tasks: Option<BackgroundTaskService>,
-    /// Plugin rebuild results.
-    pub plugins: PluginUpdate,
-    /// Certificate load results.
-    pub certificates: CertificateUpdate,
+    /// Plugin rebuild results, for the caller to log in its own words.
+    pub plugins: ProviderUpdate,
+    /// Certificate load results, for the caller to log in its own words.
+    pub certificates: ProviderUpdate,
 }
 
 impl AssembledPlane {
@@ -273,18 +257,18 @@ pub fn assemble(
         options.admin_plugin,
         config_manager.clone(),
     );
+    // `try_init_plugins` still reports the old tuple; `ProviderUpdate` treats
+    // the same non-empty error the same way (nothing was applied).
+    let plugins = ProviderUpdate { updated, errors };
 
     let certificate_provider = new_certificate_provider();
     // Nothing configured (the `--cp` node) leaves the provider untouched
     // instead of replacing it with an empty one.
     let certificates = if config.certificates.is_empty() {
-        CertificateUpdate {
-            updated: Vec::new(),
-            errors: String::new(),
-        }
+        ProviderUpdate::default()
     } else {
-        let (updated, errors) = try_update_certificates(&config.certificates);
-        CertificateUpdate { updated, errors }
+        try_update_certificates(&config.certificates)
+            .map_err(|e| anyhow::anyhow!("failed to init certificates: {e}"))?
     };
 
     let opt = Opt {
@@ -340,9 +324,9 @@ pub fn assemble(
         tasks
     });
 
-    if !errors.is_empty() || !certificates.errors.is_empty() {
+    if !plugins.is_ok() || !certificates.is_ok() {
         warn!(
-            plugin_errors = %errors,
+            plugin_errors = %plugins.errors,
             certificate_errors = %certificates.errors,
             "data plane assembled with deferred provider errors"
         );
@@ -354,7 +338,7 @@ pub fn assemble(
         config_manager,
         certificate_provider,
         background_tasks,
-        plugins: PluginUpdate { updated, errors },
+        plugins,
         certificates,
     })
 }

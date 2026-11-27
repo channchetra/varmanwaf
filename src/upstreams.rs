@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config_apply::ProviderUpdate;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_config::UpstreamConf;
@@ -26,7 +27,16 @@ use tracing::error;
 
 static LOG_TARGET: &str = "main::upstreams";
 
-type Result<T, E = Error> = std::result::Result<T, E>;
+type Result<T> = std::result::Result<T, String>;
+
+/// The construction failure in the wording the callers have always logged
+/// (`Error::Invalid`'s display).
+fn invalid_error(error: impl std::fmt::Display) -> String {
+    Error::Invalid {
+        message: error.to_string(),
+    }
+    .to_string()
+}
 
 struct Provider {
     upstreams: ArcSwap<Upstreams>,
@@ -69,35 +79,35 @@ pub fn new_upstream_provider() -> Arc<dyn UpstreamProvider> {
 /// * `sender` - The notification sender
 ///
 /// # Returns
+/// The names of the upstreams that were built, or the construction failure.
 pub fn try_init_upstreams(
     upstream_configs: &HashMap<String, UpstreamConf>,
     sender: Option<Arc<NotificationSender>>,
-) -> Result<()> {
-    let (upstreams, _) = new_ahash_upstreams(
+) -> Result<ProviderUpdate> {
+    let (upstreams, updated) = new_ahash_upstreams(
         upstream_configs,
         UPSTREAM_PROVIDER.clone(),
         sender,
     )
-    .map_err(|e| Error::Invalid {
-        message: e.to_string(),
-    })?;
+    .map_err(invalid_error)?;
 
     UPSTREAM_PROVIDER.store(upstreams);
-    Ok(())
+    Ok(ProviderUpdate {
+        updated,
+        errors: String::new(),
+    })
 }
 
 pub async fn try_update_upstreams(
     upstream_configs: &HashMap<String, UpstreamConf>,
     sender: Option<Arc<NotificationSender>>,
-) -> Result<Vec<String>> {
+) -> Result<ProviderUpdate> {
     let (upstreams, updated_upstreams) = new_ahash_upstreams(
         upstream_configs,
         UPSTREAM_PROVIDER.clone(),
         sender,
     )
-    .map_err(|e| Error::Invalid {
-        message: e.to_string(),
-    })?;
+    .map_err(invalid_error)?;
     for (name, up) in upstreams.iter() {
         // no need to run health check if not new upstream
         if !updated_upstreams.contains(name) {
@@ -114,5 +124,8 @@ pub async fn try_update_upstreams(
         }
     }
     UPSTREAM_PROVIDER.store(upstreams);
-    Ok(updated_upstreams)
+    Ok(ProviderUpdate {
+        updated: updated_upstreams,
+        errors: String::new(),
+    })
 }

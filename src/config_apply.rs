@@ -50,6 +50,32 @@ use tracing::{debug, error, info};
 
 static LOG_TARGET: &str = "main::config_apply";
 
+/// What one provider rebuild did.
+///
+/// Every provider's `try_init_*`/`try_update_*` returns this, so an apply pass
+/// consumes them all the same way: a non-empty `errors` means the provider
+/// kept its previous state and the update did not apply, while `Err` is a
+/// failure of the call itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProviderUpdate {
+    /// Names of the entries created or reloaded.
+    pub updated: Vec<String>,
+    /// Per-entry failures, joined with `;`. Empty when the update applied.
+    pub errors: String,
+}
+
+impl ProviderUpdate {
+    /// The update applied: no entry failed.
+    pub fn is_ok(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    /// Nothing changed and nothing failed.
+    pub fn is_empty(&self) -> bool {
+        self.updated.is_empty() && self.errors.is_empty()
+    }
+}
+
 /// The policy an apply pass follows.
 ///
 /// Every field exists because the two roots really do behave differently;
@@ -300,54 +326,43 @@ async fn apply_categories(
 
     if categories.upstreams {
         let result = if options.update_health_checks {
-            try_update_upstreams(&next.upstreams, Some(get_webhook_sender()))
-                .await
-                .map(StepReport::Named)
-                .map_err(|e| e.to_string())
+            as_step(
+                try_update_upstreams(
+                    &next.upstreams,
+                    Some(get_webhook_sender()),
+                )
+                .await,
+            )
         } else {
             // The agent-hosted plane's rebuild reports no names; it must not
             // gain the daemon's success log line.
-            try_init_upstreams(&next.upstreams, None)
-                .map(|()| StepReport::Silent)
-                .map_err(|e| e.to_string())
+            as_silent_step(try_init_upstreams(&next.upstreams, None))
         };
         if let Some(failure) = run_step(&UPSTREAM_STEP, options, result).await {
             failures.push(failure);
         }
     }
     if categories.locations {
-        let result = try_init_locations(&next.locations)
-            .map(StepReport::Named)
-            .map_err(|e| e.to_string());
+        let result = as_step(try_init_locations(&next.locations));
         if let Some(failure) = run_step(&LOCATION_STEP, options, result).await {
             failures.push(failure);
         }
     }
     if categories.plugins {
-        let (updated, error) = try_init_plugins(
+        let (updated, errors) = try_init_plugins(
             &next.plugins,
             admin_plugin.cloned(),
             config_manager.clone(),
         );
-        // A non-empty error means the provider kept the previous map; the
-        // partial list it returns must not be reported as applied.
-        let result = if error.is_empty() {
-            Ok(StepReport::Named(updated))
-        } else {
-            Err(error)
-        };
+        // `try_init_plugins` still reports the old tuple; a non-empty error
+        // means it kept the previous map.
+        let result = as_step(Ok(ProviderUpdate { updated, errors }));
         if let Some(failure) = run_step(&PLUGIN_STEP, options, result).await {
             failures.push(failure);
         }
     }
     if categories.certificates {
-        let (updated, errors) = try_update_certificates(&next.certificates);
-        // Same contract: a parse failure keeps the previous provider.
-        let result = if errors.is_empty() {
-            Ok(StepReport::Named(updated))
-        } else {
-            Err(errors)
-        };
+        let result = as_step(try_update_certificates(&next.certificates));
         if let Some(failure) =
             run_step(&CERTIFICATE_STEP, options, result).await
         {
@@ -355,9 +370,8 @@ async fn apply_categories(
         }
     }
     if categories.server_locations {
-        let result = try_init_server_locations(&next.servers, &next.locations)
-            .map(StepReport::Named)
-            .map_err(|e| e.to_string());
+        let result =
+            as_step(try_init_server_locations(&next.servers, &next.locations));
         if let Some(failure) =
             run_step(&SERVER_LOCATION_STEP, options, result).await
         {
@@ -485,11 +499,32 @@ const SERVER_LOCATION_STEP: Step = Step {
 
 /// What a provider reports after a successful rebuild.
 enum StepReport {
-    /// Names of the entries that were rebuilt, for the log and notification.
-    Named(Vec<String>),
+    /// The rebuild's names, for the log and notification.
+    Named(ProviderUpdate),
     /// The rebuild succeeded but reports no names (the agent-hosted plane's
     /// upstream call). Nothing is logged: it never was on that path.
     Silent,
+}
+
+/// Converts a provider result into a step report.
+///
+/// Per-entry `errors` mean the provider kept its previous map, so the step
+/// failed even though the call returned `Ok`; a fatal failure is the `Err`.
+fn as_step(
+    result: Result<ProviderUpdate, String>,
+) -> Result<StepReport, String> {
+    match result {
+        Ok(update) if update.is_ok() => Ok(StepReport::Named(update)),
+        Ok(update) => Err(update.errors),
+        Err(error) => Err(error),
+    }
+}
+
+/// [`as_step`] for a rebuild whose success reports no names and logs nothing.
+fn as_silent_step(
+    result: Result<ProviderUpdate, String>,
+) -> Result<StepReport, String> {
+    as_step(result).map(|_| StepReport::Silent)
 }
 
 /// Logs one step's result, sends its notification, and returns the failure
@@ -500,14 +535,14 @@ async fn run_step(
     result: Result<StepReport, String>,
 ) -> Option<String> {
     match result {
-        Ok(StepReport::Named(updated)) => {
-            if step.always_report || !updated.is_empty() {
+        Ok(StepReport::Named(update)) => {
+            if step.always_report || !update.is_empty() {
                 info!(target: LOG_TARGET, "{}", step.success);
                 if options.notify {
                     send_notification(NotificationData {
                         category: "reload_config".to_string(),
                         level: NotificationLevel::Info,
-                        message: format_message(step.label, updated),
+                        message: format_message(step.label, update.updated),
                         ..Default::default()
                     })
                     .await;
@@ -632,6 +667,56 @@ mod tests {
     ) -> Categories {
         let (changed, _) = previous.diff(next);
         dispatch(previous, next, &changed, options)
+    }
+
+    #[test]
+    fn a_clean_provider_update_becomes_the_reported_names() {
+        // Arrange
+        let update = ProviderUpdate {
+            updated: vec!["applied".to_string()],
+            errors: String::new(),
+        };
+
+        // Act
+        let report = as_step(Ok(update)).expect("a clean update must apply");
+
+        // Assert
+        match report {
+            StepReport::Named(update) => {
+                assert_eq!(vec!["applied".to_string()], update.updated);
+            },
+            StepReport::Silent => panic!("the named path must report names"),
+        }
+    }
+
+    #[test]
+    fn a_provider_update_with_entry_errors_fails_the_step() {
+        // Arrange: the provider kept its previous map.
+        let update = ProviderUpdate {
+            updated: vec!["kept".to_string()],
+            errors: "parse fail(bad)".to_string(),
+        };
+
+        // Act
+        let result = as_step(Ok(update));
+
+        // Assert: the partial list must not be reported as applied.
+        match result {
+            Err(error) => assert_eq!("parse fail(bad)", error),
+            Ok(_) => panic!("entry errors must fail the step"),
+        }
+    }
+
+    #[test]
+    fn a_fatal_provider_error_is_the_step_failure() {
+        // Act
+        let result = as_step(Err("init fail".to_string()));
+
+        // Assert
+        match result {
+            Err(error) => assert_eq!("init fail", error),
+            Ok(_) => panic!("a fatal provider error must fail the step"),
+        }
     }
 
     #[test]
