@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::rules::signatures::AttackCategory;
+use crate::rules::signatures::LegacyAttackCategory;
 
 /// How suspicious the aggregate score makes a request look.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,7 +173,7 @@ impl AnomalyScorer {
     pub fn add_category_hit(
         &self,
         breakdown: &mut ScoreBreakdown,
-        category: AttackCategory,
+        category: LegacyAttackCategory,
         severity: u8,
     ) {
         self.add_category_hit_ex(breakdown, category, severity, false);
@@ -184,7 +184,7 @@ impl AnomalyScorer {
     pub fn add_category_hit_ex(
         &self,
         breakdown: &mut ScoreBreakdown,
-        category: AttackCategory,
+        category: LegacyAttackCategory,
         severity: u8,
         monitored: bool,
     ) {
@@ -196,7 +196,7 @@ impl AnomalyScorer {
         }
         let bump = u8::try_from(points * 12).unwrap_or(u8::MAX);
         match category {
-            AttackCategory::SqlInjection => {
+            LegacyAttackCategory::SqlInjection => {
                 breakdown.sqli_score =
                     breakdown.sqli_score.saturating_add(bump);
                 if !monitored {
@@ -204,15 +204,15 @@ impl AnomalyScorer {
                         breakdown.block_sqli_score.saturating_add(bump);
                 }
             },
-            AttackCategory::Xss => {
+            LegacyAttackCategory::Xss => {
                 breakdown.xss_score = breakdown.xss_score.saturating_add(bump);
                 if !monitored {
                     breakdown.block_xss_score =
                         breakdown.block_xss_score.saturating_add(bump);
                 }
             },
-            AttackCategory::CommandInjection
-            | AttackCategory::Deserialization => {
+            LegacyAttackCategory::CommandInjection
+            | LegacyAttackCategory::Deserialization => {
                 breakdown.rce_score = breakdown.rce_score.saturating_add(bump);
                 if !monitored {
                     breakdown.block_rce_score =
@@ -223,11 +223,11 @@ impl AnomalyScorer {
             // their own — they stay out of the RCE sub-score so the Strict
             // RCE gate only trips on confirmed structure. Structural hits
             // feed the sub-score through [`AnomalyScorer::add_expr_hit`].
-            AttackCategory::TemplateInjection
-            | AttackCategory::PathTraversal
-            | AttackCategory::Ssrf
-            | AttackCategory::CrlfInjection
-            | AttackCategory::Xxe => {
+            LegacyAttackCategory::TemplateInjection
+            | LegacyAttackCategory::PathTraversal
+            | LegacyAttackCategory::Ssrf
+            | LegacyAttackCategory::CrlfInjection
+            | LegacyAttackCategory::Xxe => {
                 // Non-family attacks contribute to the aggregate only.
             },
         }
@@ -302,8 +302,8 @@ mod tests {
     fn accumulates_category_scores() {
         let s = AnomalyScorer::new(40, 2);
         let mut b = ScoreBreakdown::clean();
-        s.add_category_hit(&mut b, AttackCategory::SqlInjection, 5);
-        s.add_category_hit(&mut b, AttackCategory::SqlInjection, 4);
+        s.add_category_hit(&mut b, LegacyAttackCategory::SqlInjection, 5);
+        s.add_category_hit(&mut b, LegacyAttackCategory::SqlInjection, 4);
         assert_eq!(b.total, 9);
         assert!(b.sqli_score >= 60);
         assert_eq!(b.xss_score, 0);
@@ -314,7 +314,7 @@ mod tests {
         let s = AnomalyScorer::new(40, 2);
         let mut b = ScoreBreakdown::clean();
         for _ in 0..200 {
-            s.add_category_hit(&mut b, AttackCategory::Xss, 5);
+            s.add_category_hit(&mut b, LegacyAttackCategory::Xss, 5);
         }
         assert_eq!(b.xss_score, u8::MAX);
         assert!(b.total > u32::from(u8::MAX));

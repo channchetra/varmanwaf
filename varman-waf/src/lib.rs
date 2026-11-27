@@ -31,10 +31,13 @@ pub mod virtual_patches;
 pub use engine::{
     PathTargetExclusion, RequestData, WafEngine, WafEngineConfig, WafMode,
 };
+pub use pipeline::AttackCategory;
 pub use rules::managed::{
     managed_rule_catalogue, ManagedRuleInfo, MANAGED_RULE_IDS,
 };
-pub use rules::{AttackCategory, CompiledRule, RuleAction};
+pub use rules::{
+    CompiledRule, LegacyAttackCategory, RuleAction, ATTACK_CATEGORY_NAMES,
+};
 pub use score::{AnomalyScorer, ScoreBreakdown, ScoreClass};
 pub use virtual_patches::{
     templates as virtual_patch_templates, VirtualPatchTemplate,
@@ -222,17 +225,20 @@ impl CategorySet {
     }
 
     /// `true` when `category` is in this monitor set.
-    pub const fn contains_category(self, category: AttackCategory) -> bool {
+    pub const fn contains_category(
+        self,
+        category: LegacyAttackCategory,
+    ) -> bool {
         let bit = match category {
-            AttackCategory::SqlInjection => Self::SQLI.0,
-            AttackCategory::Xss => Self::XSS.0,
-            AttackCategory::CommandInjection => Self::RCE.0,
-            AttackCategory::PathTraversal => Self::LFI.0,
-            AttackCategory::Ssrf => Self::SSRF.0,
-            AttackCategory::Deserialization => Self::DESER.0,
-            AttackCategory::CrlfInjection => Self::CRLF.0,
-            AttackCategory::Xxe => Self::XXE.0,
-            AttackCategory::TemplateInjection => Self::SSTI.0,
+            LegacyAttackCategory::SqlInjection => Self::SQLI.0,
+            LegacyAttackCategory::Xss => Self::XSS.0,
+            LegacyAttackCategory::CommandInjection => Self::RCE.0,
+            LegacyAttackCategory::PathTraversal => Self::LFI.0,
+            LegacyAttackCategory::Ssrf => Self::SSRF.0,
+            LegacyAttackCategory::Deserialization => Self::DESER.0,
+            LegacyAttackCategory::CrlfInjection => Self::CRLF.0,
+            LegacyAttackCategory::Xxe => Self::XXE.0,
+            LegacyAttackCategory::TemplateInjection => Self::SSTI.0,
         };
         self.0 & bit != 0
     }
@@ -317,4 +323,42 @@ pub enum WafAction {
     Block,
     /// Issue a JS / managed challenge instead of blocking outright.
     Challenge,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The operator-facing names are the single source both the legacy
+    /// parser and the control plane use. Lock them to the enum so adding a
+    /// variant without the list (or vice versa) fails here.
+    #[test]
+    fn canonical_category_names_match_the_legacy_enum() {
+        let mut names = ATTACK_CATEGORY_NAMES.to_vec();
+        names.sort_unstable();
+        let mut variants: Vec<&str> = [
+            LegacyAttackCategory::SqlInjection,
+            LegacyAttackCategory::Xss,
+            LegacyAttackCategory::CommandInjection,
+            LegacyAttackCategory::PathTraversal,
+            LegacyAttackCategory::Ssrf,
+            LegacyAttackCategory::Deserialization,
+            LegacyAttackCategory::CrlfInjection,
+            LegacyAttackCategory::Xxe,
+            LegacyAttackCategory::TemplateInjection,
+        ]
+        .iter()
+        .map(|category| category.as_str())
+        .collect();
+        variants.sort_unstable();
+        assert_eq!(names, variants);
+
+        for name in ATTACK_CATEGORY_NAMES {
+            assert!(
+                CategorySet::parse_name(name).is_some(),
+                "the canonical name {name:?} must parse in the legacy engine"
+            );
+        }
+        assert_eq!(CategorySet::ALL.bits().count_ones(), 9);
+    }
 }

@@ -3,9 +3,9 @@
 //! Zentinel-inspired processors are out-of-process components that inspect a
 //! request and contribute extra findings (fraud checks, tenant-specific
 //! logic, external threat feeds). This module owns the **contract and the
-//! failure semantics** so they are testable without a network; the transport
-//! (UDS/gRPC client) lands next and stays a thin adapter over
-//! [`ExternalProcessor`].
+//! failure semantics** so they are testable without a network. The transport
+//! lives in `pingap-plugin::waf_processor`: it owns the socket I/O and the
+//! asynchronous timeout, and consumes the contract types below.
 //!
 //! # Invariants (mandate §9)
 //!
@@ -258,27 +258,12 @@ pub fn merge_findings(
     }
 }
 
-/// The contract every processor implementation (and transport adapter)
-/// satisfies. Synchronous by design: the caller owns the async runtime and
-/// applies its own timeout before resolving a [`ProcessorOutcome`].
-pub trait ExternalProcessor: Send + Sync {
-    /// Stable processor name used in rule ids and logs.
-    fn name(&self) -> &str;
-
-    /// Inspect one request. `Err` carries a transport-level reason.
-    fn inspect(
-        &self,
-        request: &ProcessorRequest,
-    ) -> Result<ProcessorResponse, String>;
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        merge_findings, ExternalProcessor, FailurePolicy, ProcessorFinding,
-        ProcessorOutcome, ProcessorRequest, ProcessorResponse,
-        MAX_PROCESSOR_FINDINGS, MAX_PROCESSOR_FINDING_SCORE,
-        MAX_PROCESSOR_SCORE,
+        merge_findings, FailurePolicy, ProcessorFinding, ProcessorOutcome,
+        ProcessorRequest, ProcessorResponse, MAX_PROCESSOR_FINDINGS,
+        MAX_PROCESSOR_FINDING_SCORE, MAX_PROCESSOR_SCORE,
     };
     use crate::canonical::{Canonicalizer, RequestParts};
     use crate::pipeline::{Action, AttackCategory, PipelineVerdict};
@@ -434,39 +419,5 @@ mod tests {
         assert_eq!(summary.raw_query, "id=7");
         assert_eq!(summary.client_ip, "203.0.113.9");
         assert!(summary.headers.iter().any(|(name, _)| name == "host"));
-    }
-
-    #[test]
-    fn the_trait_is_object_safe_and_usable() {
-        struct Echo;
-        impl ExternalProcessor for Echo {
-            fn name(&self) -> &str {
-                "echo"
-            }
-            fn inspect(
-                &self,
-                _request: &ProcessorRequest,
-            ) -> Result<ProcessorResponse, String> {
-                Ok(ProcessorResponse {
-                    findings: vec![finding(15, Action::Monitor)],
-                    processor: None,
-                })
-            }
-        }
-        let processors: Vec<Box<dyn ExternalProcessor>> = vec![Box::new(Echo)];
-        assert_eq!(processors[0].name(), "echo");
-        let summary = ProcessorRequest {
-            method: "GET".into(),
-            authority: "example.com".into(),
-            path: "/".into(),
-            raw_query: String::new(),
-            headers: Vec::new(),
-            client_ip: "203.0.113.9".into(),
-        };
-        let outcome = match processors[0].inspect(&summary) {
-            Ok(response) => ProcessorOutcome::Responded(response),
-            Err(reason) => ProcessorOutcome::Failed(reason),
-        };
-        assert_eq!(outcome.findings("echo", FailurePolicy::FailOpen).len(), 1);
     }
 }

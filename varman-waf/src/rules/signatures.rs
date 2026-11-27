@@ -23,7 +23,7 @@ use crate::{StackSet, WafLevel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AttackCategory {
+pub enum LegacyAttackCategory {
     SqlInjection,
     Xss,
     CommandInjection,
@@ -35,23 +35,33 @@ pub enum AttackCategory {
     TemplateInjection,
 }
 
-impl AttackCategory {
+/// Operator-facing names of the monitorable categories.
+///
+/// This is the single source of the names the control plane accepts: the
+/// legacy `CategorySet` parser and `varman-control::waf_values::CATEGORIES`
+/// both derive from it. The pipeline's own taxonomy is larger, but only these
+/// families have a dashboard monitor switch.
+pub const ATTACK_CATEGORY_NAMES: [&str; 9] = [
+    "sqli", "xss", "rce", "lfi", "ssrf", "deser", "crlf", "xxe", "ssti",
+];
+
+impl LegacyAttackCategory {
     pub fn as_str(self) -> &'static str {
         match self {
-            AttackCategory::SqlInjection => "sqli",
-            AttackCategory::Xss => "xss",
-            AttackCategory::CommandInjection => "rce",
-            AttackCategory::PathTraversal => "lfi",
-            AttackCategory::Ssrf => "ssrf",
-            AttackCategory::Deserialization => "deser",
-            AttackCategory::CrlfInjection => "crlf",
-            AttackCategory::Xxe => "xxe",
-            AttackCategory::TemplateInjection => "ssti",
+            LegacyAttackCategory::SqlInjection => "sqli",
+            LegacyAttackCategory::Xss => "xss",
+            LegacyAttackCategory::CommandInjection => "rce",
+            LegacyAttackCategory::PathTraversal => "lfi",
+            LegacyAttackCategory::Ssrf => "ssrf",
+            LegacyAttackCategory::Deserialization => "deser",
+            LegacyAttackCategory::CrlfInjection => "crlf",
+            LegacyAttackCategory::Xxe => "xxe",
+            LegacyAttackCategory::TemplateInjection => "ssti",
         }
     }
 }
 
-impl fmt::Display for AttackCategory {
+impl fmt::Display for LegacyAttackCategory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -63,7 +73,7 @@ impl fmt::Display for AttackCategory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SignaturePattern {
     pub id: &'static str,
-    pub category: AttackCategory,
+    pub category: LegacyAttackCategory,
     /// 1 (info) … 5 (critical).
     pub severity: u8,
     /// Backend stacks whose runtime actually interprets this payload family.
@@ -86,7 +96,7 @@ pub struct SignatureHit {
     /// Index into the engine's active pattern list; resolve metadata via
     /// [`SignatureEngine::pattern`].
     pub pattern: u32,
-    pub category: AttackCategory,
+    pub category: LegacyAttackCategory,
     pub severity: u8,
     /// Byte offset where the needle was found.
     pub offset: usize,
@@ -104,7 +114,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     // out below.
     {
         let mut push = |id: &'static str,
-                        cat: AttackCategory,
+                        cat: LegacyAttackCategory,
                         sev: u8,
                         desc: &'static str,
                         needle: &'static str| {
@@ -122,84 +132,84 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // ---- Path traversal ----
         push(
             "PT-001",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             4,
             "directory traversal (../)",
             "../",
         );
         push(
             "PT-002",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             4,
             "directory traversal (..\\)",
             "..\\",
         );
         push(
             "PT-003",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             5,
             "etc/passwd access",
             "/etc/passwd",
         );
         push(
             "PT-004",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             5,
             "etc/shadow access",
             "/etc/shadow",
         );
         push(
             "PT-005",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             4,
             "proc/self enumeration",
             "/proc/self",
         );
         push(
             "PT-006",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             4,
             "windows system32 access",
             "windows\\system32",
         );
         push(
             "PT-007",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             4,
             "windows system32 access (forward slash)",
             "/windows/system32",
         );
         push(
             "PT-008",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             3,
             "htaccess probe",
             ".htaccess",
         );
         push(
             "PT-009",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             3,
             "htpasswd probe",
             ".htpasswd",
         );
         push(
             "PT-010",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             3,
             "web.config probe",
             "web.config",
         );
         push(
             "PT-011",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             3,
             "boot.ini probe",
             "boot.ini",
         );
         push(
             "PT-012",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             4,
             "double-encoded traversal",
             "....//",
@@ -208,49 +218,49 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // so a leading "../" can swallow the "/" that PT-003/004/005 need.
         push(
             "PT-013",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             5,
             "etc/passwd access (no leading slash)",
             "etc/passwd",
         );
         push(
             "PT-014",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             5,
             "etc/shadow access (no leading slash)",
             "etc/shadow",
         );
         push(
             "PT-015",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             4,
             "proc/self enumeration (no leading slash)",
             "proc/self",
         );
         push(
             "PT-016",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             5,
             "windows win.ini access",
             "win.ini",
         );
         push(
             "PT-017",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             5,
             "WEB-INF deployment descriptor dir",
             "web-inf",
         );
         push(
             "PT-020",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             5,
             "web.xml deployment descriptor probe",
             "web.xml",
         );
         push(
             "PT-018",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             5,
             "Cisco ASA +CSCOE+ traversal",
             "portal_inc.lua",
@@ -259,7 +269,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // appears when a caller is smuggling past a path-normalizing proxy.
         push(
             "PT-019",
-            AttackCategory::PathTraversal,
+            LegacyAttackCategory::PathTraversal,
             5,
             "semicolon path traversal",
             "..;/",
@@ -267,294 +277,294 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // ---- Command injection ----
         push(
             "CI-001",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "command substitution $(whoami)",
             "$(whoami)",
         );
         push(
             "CI-002",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "command substitution $(id)",
             "$(id)",
         );
         push(
             "CI-003",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "backtick command",
             "`id`",
         );
         push(
             "CI-004",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "backtick command (whoami)",
             "`whoami`",
         );
         push(
             "CI-005",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "shell pipe to cat",
             "|cat",
         );
         push(
             "CI-006",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "shell pipe to ls",
             "|ls",
         );
         push(
             "CI-007",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "shell pipe to wget",
             "|wget",
         );
         push(
             "CI-008",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "shell pipe to curl",
             "|curl",
         );
         push(
             "CI-009",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "semicolon chained ls",
             ";ls",
         );
         push(
             "CI-010",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "semicolon chained cat",
             ";cat",
         );
         push(
             "CI-011",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "semicolon chained id",
             ";id",
         );
         push(
             "CI-012",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "semicolon chained wget",
             ";wget",
         );
         push(
             "CI-013",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "semicolon chained curl",
             ";curl",
         );
         push(
             "CI-014",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "&& chained wget",
             "&&wget",
         );
         push(
             "CI-015",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "&& chained curl",
             "&&curl",
         );
         push(
             "CI-016",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "|| chained curl",
             "||curl",
         );
         push(
             "CI-017",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "|| chained wget",
             "||wget",
         );
         push(
             "CI-018",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "IFS variable",
             "${ifs}",
         );
         push(
             "CI-019",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "/bin/sh invocation",
             "/bin/sh",
         );
         push(
             "CI-020",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "/bin/bash invocation",
             "/bin/bash",
         );
         push(
             "CI-021",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "interactive bash",
             "bash -i",
         );
         push(
             "CI-022",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "cmd.exe invocation",
             "cmd.exe",
         );
         push(
             "CI-023",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "powershell invocation",
             "powershell",
         );
         push(
             "CI-024",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "nc reverse shell",
             "nc -e",
         );
         push(
             "CI-025",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "newline before /bin/",
             "\n/bin/",
         );
         push(
             "CI-026",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "python os.system call",
             "os.system",
         );
         push(
             "CI-027",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "python __import__ call",
             "__import__",
         );
         push(
             "CI-028",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "php shell_exec call",
             "shell_exec(",
         );
         push(
             "CI-029",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "php passthru call",
             "passthru(",
         );
         push(
             "CI-030",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "php proc_open call",
             "proc_open(",
         );
         push(
             "CI-031",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "python subprocess call",
             "subprocess.",
         );
         push(
             "CI-032",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "powershell invoke-expression",
             "invoke-expression",
         );
         push(
             "CI-033",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "powershell iex alias",
             "iex (",
         );
         push(
             "CI-034",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "windows cmd /c chain",
             "cmd /c",
         );
         push(
             "CI-035",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "windows cmd.exe /c chain",
             "cmd.exe /c",
         );
         push(
             "CI-036",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "powershell encoded command",
             "powershell -enc",
         );
         push(
             "CI-037",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "C/PHP system() call",
             "system(",
         );
         push(
             "CI-038",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "shell pipe to whoami",
             "|whoami",
         );
         push(
             "CI-039",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "semicolon chained whoami",
             ";whoami",
         );
         push(
             "CI-040",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "shell pipe to uname",
             "|uname",
         );
         push(
             "CI-041",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "backtick command (uname)",
             "`uname`",
         );
         push(
             "CI-042",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "semicolon chained uname",
             ";uname",
@@ -563,7 +573,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // Struts2/SpringEL RCE exploit, critical even at Normal.
         push(
             "CI-043",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Java runtime exec chain",
             "getruntime().exec",
@@ -572,7 +582,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // — the class name is exploit-specific, never a benign path token.
         push(
             "CI-044",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Jenkins Groovy sandbox endpoint",
             "securegroovy",
@@ -583,133 +593,133 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // out of these hits.
         push(
             "CI-045",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "spaced command separator",
             "; whoami",
         );
         push(
             "CI-046",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "spaced command separator",
             "; uname",
         );
         push(
             "CI-047",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "spaced command separator",
             "; ping ",
         );
         push(
             "CI-048",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "spaced command separator",
             "; curl ",
         );
         push(
             "CI-049",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "spaced command separator",
             "; wget ",
         );
         push(
             "CI-04a",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "spaced command separator",
             "; sleep ",
         );
         push(
             "CI-04b",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "spaced command separator",
             "; echo ",
         );
         push(
             "CI-050",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "piped spaced command",
             "| whoami",
         );
         push(
             "CI-051",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "piped spaced command",
             "| uname",
         );
         push(
             "CI-052",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "piped spaced command",
             "| ping ",
         );
         push(
             "CI-053",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "piped spaced command",
             "| curl ",
         );
         push(
             "CI-054",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "piped spaced command",
             "| wget ",
         );
         push(
             "CI-055",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "piped spaced command",
             "| sleep ",
         );
         push(
             "CI-060",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "double-pipe spaced command",
             "|| whoami",
         );
         push(
             "CI-061",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "double-pipe spaced command",
             "|| uname",
         );
         push(
             "CI-062",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "double-pipe spaced command",
             "|| ping ",
         );
         push(
             "CI-063",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "double-pipe spaced command",
             "|| curl ",
         );
         push(
             "CI-064",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "double-pipe spaced command",
             "|| wget ",
         );
         push(
             "CI-065",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "double-pipe spaced command",
             "|| sleep ",
@@ -718,28 +728,28 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // `` `ping collab` ``, `` `curl …` ``. Complements CI-041 (uname).
         push(
             "CI-070",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "backtick command",
             "`ping ",
         );
         push(
             "CI-071",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "backtick command",
             "`curl ",
         );
         push(
             "CI-072",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "backtick command",
             "`wget ",
         );
         push(
             "CI-078",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "eval(atob()) payload wrapper",
             "eval(atob(",
@@ -748,21 +758,21 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // filter-grammar, never benign query text.
         push(
             "CI-080",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "LDAP filter injection break",
             ")(uid=",
         );
         push(
             "CI-081",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "LDAP filter injection break",
             ")(|(",
         );
         push(
             "CI-082",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "LDAP filter injection break",
             "*)(objectclass=",
@@ -771,7 +781,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // blind-RCE probe; the flag pair never appears as benign text.
         push(
             "CI-083",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "chained ping probe",
             "ping -c ",
@@ -780,7 +790,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // context lookup is OGNL grammar, never a benign search phrase.
         push(
             "CI-084",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "OGNL context variable chain",
             "#context.get(",
@@ -789,7 +799,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // is upload/code-execution payload, not document text.
         push(
             "CI-085",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "PHP code tag",
             "<?php",
@@ -798,28 +808,28 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // `\\think\\app/invokefunction` with call_user_func is the POC core.
         push(
             "CI-086",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "ThinkPHP invokefunction route",
             "think\\app/invokefunction",
         );
         push(
             "CI-087",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "backtick touch command",
             "`touch ",
         );
         push(
             "CI-088",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "DedeCMS runphp template exec",
             "runphp=",
         );
         push(
             "CI-089",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "LDAP filter injection break",
             "*)((|",
@@ -829,7 +839,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // inclusion; the ini flag never appears in benign request input.
         push(
             "CI-090",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "PHP-CGI ini override flag",
             "allow_url_include",
@@ -840,35 +850,35 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // zero benign hits.
         push(
             "CI-091",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Drupal render-array post_render key",
             "#post_render",
         );
         push(
             "CI-092",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Drupal render-array pre_render key",
             "#pre_render",
         );
         push(
             "CI-093",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Drupal render-array lazy_builder key",
             "#lazy_builder",
         );
         push(
             "CI-094",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Drupal render-array markup key",
             "#markup",
         );
         push(
             "CI-095",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Drupal render-array elements key",
             "#elements",
@@ -877,21 +887,21 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // scriptlet-plus-eval pair never occurs in honest markup.
         push(
             "CI-096",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "ASP scriptlet eval backdoor",
             "<%eval",
         );
         push(
             "CI-097",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "ASP scriptlet execute backdoor",
             "<%execute",
         );
         push(
             "CI-098",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "ASP eval-request one-liner",
             "eval request(",
@@ -900,7 +910,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // pattern (`t=file_put_contents&t1=./shell.php&t3=http://…/txt`).
         push(
             "CI-099",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "PHP file write primitive",
             "file_put_contents",
@@ -911,7 +921,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // query decode already turns `+nslookup` into ` nslookup`.
         push(
             "CI-107",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "piped DNS lookup",
             "||nslookup ",
@@ -921,7 +931,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // shell; `touch /` never appears in an honest value.
         push(
             "CI-108",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             4,
             "piped file write",
             "|touch /",
@@ -933,14 +943,14 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // honestly.
         push(
             "CI-109",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "git pager option injection",
             "--open-files-in-pager=",
         );
         push(
             "CI-110",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "git shell option injection",
             "--upload-pack=",
@@ -950,14 +960,14 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // honest payloads never load `os` by name.
         push(
             "CI-111",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Lua os library escape",
             "require('os')",
         );
         push(
             "CI-112",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Lua os library escape",
             "require(\"os\")",
@@ -968,7 +978,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // parameter, JSON member or form field.
         push(
             "CI-113",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Java runtime introspection",
             "getruntime()",
@@ -979,14 +989,14 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // exists inside exploit payloads.
         push(
             "CI-114",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Nexus EL arithmetic probe (A variant)",
             "$\\a{",
         );
         push(
             "CI-115",
-            AttackCategory::CommandInjection,
+            LegacyAttackCategory::CommandInjection,
             5,
             "Nexus EL arithmetic probe (B variant)",
             "$\\b{",
@@ -995,7 +1005,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // `[(+{}+[])` only occurs inside obfuscated execution payloads.
         push(
             "XSS-022",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             5,
             "JSFuck invocation prefix",
             "[(+{}+[])",
@@ -1004,7 +1014,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // smuggle rides on this fixed prefix; honest text never emits it.
         push(
             "XSS-023",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             5,
             "UTF-7 encoded markup opener",
             "+ADw-",
@@ -1014,7 +1024,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // the exact `alert(1)` literal does not occur in benign corpus.
         push(
             "XSS-024",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             5,
             "alert(1) literal probe",
             "alert(1)",
@@ -1023,84 +1033,84 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // ---- SSRF ----
         push(
             "SSRF-001",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             5,
             "AWS metadata endpoint",
             "169.254.169.254",
         );
         push(
             "SSRF-002",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             5,
             "GCP metadata host",
             "metadata.google",
         );
         push(
             "SSRF-003",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             5,
             "AWS task metadata",
             "169.254.170.2",
         );
         push(
             "SSRF-004",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             4,
             "loopback IPv6",
             "[::1]",
         );
         push(
             "SSRF-005",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             4,
             "loopback IPv4",
             "127.0.0.1",
         );
         push(
             "SSRF-006",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             3,
             "wildcard IPv4",
             "0.0.0.0",
         );
         push(
             "SSRF-007",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             4,
             "localhost with port",
             "localhost:",
         );
         push(
             "SSRF-008",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             5,
             "file:// scheme",
             "file://",
         );
         push(
             "SSRF-009",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             5,
             "gopher:// scheme",
             "gopher://",
         );
         push(
             "SSRF-010",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             5,
             "dict:// scheme",
             "dict://",
         );
         push(
             "SSRF-011",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             4,
             "ldap:// scheme",
             "ldap://",
         );
         push(
             "SSRF-012",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             4,
             "ftp:// scheme",
             "ftp://",
@@ -1111,35 +1121,35 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // "localhost" shows up in dev traffic.
         push(
             "SSRF-013",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             4,
             "localhost name",
             "localhost",
         );
         push(
             "SSRF-014",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             4,
             "loopback IPv4",
             "127.0.0.1",
         );
         push(
             "SSRF-015",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             5,
             "hex loopback encoding",
             "0x7f000001",
         );
         push(
             "SSRF-016",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             5,
             "decimal loopback encoding",
             "2130706433",
         );
         push(
             "SSRF-017",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             5,
             "octal loopback encoding",
             "0177.0.0.1",
@@ -1150,7 +1160,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // exploit's own route.
         push(
             "SSRF-018",
-            AttackCategory::Ssrf,
+            LegacyAttackCategory::Ssrf,
             5,
             "Atlassian gadget makeRequest proxy",
             "gadgets/makerequest",
@@ -1159,77 +1169,77 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // ---- Deserialization ----
         push(
             "DZ-001",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             5,
             "Java serialized stream",
             "aced0005",
         );
         push(
             "DZ-002",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             5,
             "Python __reduce__",
             "__reduce__",
         );
         push(
             "DZ-003",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             5,
             "Node.js prototype pollution",
             "__proto__",
         );
         push(
             "DZ-004",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             4,
             "Python class introspection",
             "__class__",
         );
         push(
             "DZ-005",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             4,
             "PHP magic __wakeup",
             ":__wakeup",
         );
         push(
             "DZ-006",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             4,
             "PHP magic __destruct",
             ":__destruct",
         );
         push(
             "DZ-007",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             4,
             "PHP magic __toString",
             ":__tostring",
         );
         push(
             "DZ-008",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             5,
             "Java Runtime.exec",
             "runtime.exec",
         );
         push(
             "DZ-009",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             5,
             "Java ProcessBuilder",
             "processbuilder",
         );
         push(
             "DZ-010",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             4,
             "PHP unserialize call",
             "unserialize(",
         );
         push(
             "DZ-011",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             4,
             "YAML unsafe_load",
             "yaml.unsafe_load",
@@ -1243,28 +1253,28 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // would force a Normal-level block instead.
         push(
             "DZ-012",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             4,
             "OGNL static class call",
             "@java.lang.",
         );
         push(
             "DZ-013",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             4,
             "Struts2 context reference",
             "#context=",
         );
         push(
             "DZ-014",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             4,
             "Struts2 attr reference",
             "#attr[",
         );
         push(
             "DZ-015",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             4,
             "Struts2 application reference",
             "#application",
@@ -1274,7 +1284,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // ever a web-parameter value inside an exploit.
         push(
             "DZ-016",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             5,
             "getClass().forName gadget chain",
             "getclass().forname",
@@ -1284,7 +1294,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // (ViewState, RMI, cookie blobs) and never in benign parameters.
         push(
             "DZ-017",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             5,
             "Java serialized object magic (b64)",
             "rO0AB",
@@ -1294,14 +1304,14 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // are produced only by the exploit's hand-written XML stream.
         push(
             "DZ-018",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             4,
             "XStream java element",
             "<java.util.",
         );
         push(
             "DZ-019",
-            AttackCategory::Deserialization,
+            LegacyAttackCategory::Deserialization,
             5,
             "XStream custom serialization",
             "serialization='custom'",
@@ -1313,35 +1323,35 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // SYSTEM id, so the opener itself must not be a critical hit.
         push(
             "XXE-001",
-            AttackCategory::Xxe,
+            LegacyAttackCategory::Xxe,
             3,
             "DOCTYPE declaration",
             "<!doctype",
         );
         push(
             "XXE-002",
-            AttackCategory::Xxe,
+            LegacyAttackCategory::Xxe,
             5,
             "ENTITY declaration",
             "<!entity",
         );
         push(
             "XXE-003",
-            AttackCategory::Xxe,
+            LegacyAttackCategory::Xxe,
             5,
             "SYSTEM file: entity",
             "system \"file:",
         );
         push(
             "XXE-004",
-            AttackCategory::Xxe,
+            LegacyAttackCategory::Xxe,
             5,
             "SYSTEM file: entity (single-quoted)",
             "system 'file:",
         );
         push(
             "XXE-005",
-            AttackCategory::Xxe,
+            LegacyAttackCategory::Xxe,
             4,
             "PUBLIC identifier",
             "public \"-//",
@@ -1350,14 +1360,14 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // ---- CRLF ----
         push(
             "CRLF-001",
-            AttackCategory::CrlfInjection,
+            LegacyAttackCategory::CrlfInjection,
             4,
             "raw CRLF in value",
             "\r\n",
         );
         push(
             "CRLF-002",
-            AttackCategory::CrlfInjection,
+            LegacyAttackCategory::CrlfInjection,
             4,
             "raw CR in value",
             "\r",
@@ -1367,14 +1377,14 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // name is unambiguous response-splitting intent.
         push(
             "CRLF-003",
-            AttackCategory::CrlfInjection,
+            LegacyAttackCategory::CrlfInjection,
             5,
             "CRLF before set-cookie header",
             "\r\nset-cookie",
         );
         push(
             "CRLF-004",
-            AttackCategory::CrlfInjection,
+            LegacyAttackCategory::CrlfInjection,
             5,
             "CRLF before location header",
             "\r\nlocation:",
@@ -1383,56 +1393,56 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // ---- Template injection ----
         push(
             "TI-001",
-            AttackCategory::TemplateInjection,
+            LegacyAttackCategory::TemplateInjection,
             4,
             "Jinja/Twig double brace",
             "{{",
         );
         push(
             "TI-002",
-            AttackCategory::TemplateInjection,
+            LegacyAttackCategory::TemplateInjection,
             4,
             "Jinja statement block",
             "{%",
         );
         push(
             "TI-003",
-            AttackCategory::TemplateInjection,
+            LegacyAttackCategory::TemplateInjection,
             4,
             "EL/Shell expression",
             "${",
         );
         push(
             "TI-004",
-            AttackCategory::TemplateInjection,
+            LegacyAttackCategory::TemplateInjection,
             4,
             "Ruby/JS template hash",
             "#{",
         );
         push(
             "TI-005",
-            AttackCategory::TemplateInjection,
+            LegacyAttackCategory::TemplateInjection,
             4,
             "EJS/JSP expression",
             "<%=",
         );
         push(
             "TI-006",
-            AttackCategory::TemplateInjection,
+            LegacyAttackCategory::TemplateInjection,
             5,
             "Log4Shell JNDI lookup",
             "${jndi:",
         );
         push(
             "TI-007",
-            AttackCategory::TemplateInjection,
+            LegacyAttackCategory::TemplateInjection,
             5,
             "Jinja self reference",
             "{{self",
         );
         push(
             "TI-008",
-            AttackCategory::TemplateInjection,
+            LegacyAttackCategory::TemplateInjection,
             5,
             "Jinja config leak",
             "{{config",
@@ -1441,133 +1451,133 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // ---- SQL injection (literal needles; libinjection catches the rest) ----
         push(
             "SQL-001",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "UNION SELECT",
             "union select",
         );
         push(
             "SQL-002",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "UNION ALL SELECT",
             "union all select",
         );
         push(
             "SQL-003",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             4,
             "SLEEP function",
             "sleep(",
         );
         push(
             "SQL-004",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "BENCHMARK function",
             "benchmark(",
         );
         push(
             "SQL-005",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "pg_sleep function",
             "pg_sleep(",
         );
         push(
             "SQL-006",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "waitfor delay",
             "waitfor delay",
         );
         push(
             "SQL-007",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "load_file function",
             "load_file(",
         );
         push(
             "SQL-008",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "INTO OUTFILE",
             "into outfile",
         );
         push(
             "SQL-009",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "INTO DUMPFILE",
             "into dumpfile",
         );
         push(
             "SQL-010",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             3,
             "information_schema probe",
             "information_schema",
         );
         push(
             "SQL-011",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             3,
             "sqlite_master probe",
             "sqlite_master",
         );
         push(
             "SQL-012",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             3,
             "pg_catalog probe",
             "pg_catalog",
         );
         push(
             "SQL-013",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             4,
             "group_concat aggregation",
             "group_concat(",
         );
         push(
             "SQL-014",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             4,
             "concat_ws aggregation",
             "concat_ws(",
         );
         push(
             "SQL-015",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             4,
             "extractvalue function",
             "extractvalue(",
         );
         push(
             "SQL-016",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             4,
             "updatexml function",
             "updatexml(",
         );
         push(
             "SQL-017",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             4,
             "DROP TABLE",
             "drop table",
         );
         push(
             "SQL-018",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             4,
             "TRUNCATE TABLE",
             "truncate table",
         );
         push(
             "SQL-019",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             4,
             "exec xp_cmdshell",
             "xp_cmdshell",
@@ -1576,7 +1586,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // exploit (utl_inaddr.get_host_name), critical at Normal.
         push(
             "SQL-020",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "utl_inaddr error-based probe",
             "utl_inaddr",
@@ -1585,7 +1595,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // the quoted program name only occurs in an exfiltration statement.
         push(
             "SQL-021",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "COPY TO PROGRAM exfiltration",
             "to program '",
@@ -1595,7 +1605,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // sequence never occurs in prose.
         push(
             "SQL-022",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "nested CAST((SELECT exfiltration",
             "cast((select",
@@ -1604,7 +1614,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // function pair is exploit-specific.
         push(
             "SQL-023",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "extractvalue XPATH error-based probe",
             "extractvalue(",
@@ -1613,7 +1623,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // forces row truncation; bare prose never chains "or 1 limit".
         push(
             "SQL-024",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "or-1-limit tautology truncation",
             "or 1 limit",
@@ -1623,14 +1633,14 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // inside live exploitation chains.
         push(
             "SQL-025",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "xp_dirtree filesystem probe",
             "xp_dirtree",
         );
         push(
             "SQL-026",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "Oracle dbms_pipe time-based blind",
             "dbms_pipe.receive_message",
@@ -1640,110 +1650,146 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // core (Drupal form-array key injection and friends).
         push(
             "SQL-027",
-            AttackCategory::SqlInjection,
+            LegacyAttackCategory::SqlInjection,
             5,
             "updatexml error-based exfiltration",
             "updatexml(",
         );
 
         // ---- XSS (literal needles; detect_xss catches structured payloads) ----
-        push("XSS-001", AttackCategory::Xss, 5, "<script tag", "<script");
+        push(
+            "XSS-001",
+            LegacyAttackCategory::Xss,
+            5,
+            "<script tag",
+            "<script",
+        );
         push(
             "XSS-002",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             5,
             "</script tag",
             "</script",
         );
-        push("XSS-003", AttackCategory::Xss, 4, "<iframe tag", "<iframe");
-        push("XSS-004", AttackCategory::Xss, 4, "<object tag", "<object");
-        push("XSS-005", AttackCategory::Xss, 4, "<embed tag", "<embed");
-        push("XSS-006", AttackCategory::Xss, 4, "<svg tag", "<svg");
+        push(
+            "XSS-003",
+            LegacyAttackCategory::Xss,
+            4,
+            "<iframe tag",
+            "<iframe",
+        );
+        push(
+            "XSS-004",
+            LegacyAttackCategory::Xss,
+            4,
+            "<object tag",
+            "<object",
+        );
+        push(
+            "XSS-005",
+            LegacyAttackCategory::Xss,
+            4,
+            "<embed tag",
+            "<embed",
+        );
+        push("XSS-006", LegacyAttackCategory::Xss, 4, "<svg tag", "<svg");
         push(
             "XSS-007",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             5,
             "javascript: URI",
             "javascript:",
         );
         push(
             "XSS-008",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             5,
             "vbscript: URI",
             "vbscript:",
         );
         push(
             "XSS-009",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             4,
             "data:text/html URI",
             "data:text/html",
         );
         push(
             "XSS-010",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             4,
             "onerror handler",
             "onerror=",
         );
         push(
             "XSS-011",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             4,
             "onload handler",
             "onload=",
         );
         push(
             "XSS-012",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             4,
             "onmouseover handler",
             "onmouseover=",
         );
         push(
             "XSS-013",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             4,
             "onclick handler",
             "onclick=",
         );
         push(
             "XSS-014",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             4,
             "onfocus handler",
             "onfocus=",
         );
         push(
             "XSS-015",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             3,
             "document.cookie access",
             "document.cookie",
         );
         push(
             "XSS-016",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             3,
             "window.location assignment",
             "window.location",
         );
         push(
             "XSS-017",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             4,
             "CSS expression()",
             "expression(",
         );
-        push("XSS-018", AttackCategory::Xss, 4, "eval() call", "eval(");
-        push("XSS-019", AttackCategory::Xss, 3, "alert() call", "alert(");
+        push(
+            "XSS-018",
+            LegacyAttackCategory::Xss,
+            4,
+            "eval() call",
+            "eval(",
+        );
+        push(
+            "XSS-019",
+            LegacyAttackCategory::Xss,
+            3,
+            "alert() call",
+            "alert(",
+        );
         // Chained prototype traversal is the DOM-clobbering / client-side
         // gadget shape (`toString.constructor.prototype.toString=…`); plain
         // `.prototype` on its own is ordinary JS, the two-token chain is not.
         push(
             "XSS-020",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             4,
             "constructor.prototype chain",
             "constructor.prototype",
@@ -1752,7 +1798,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
         // appears in self-obfuscating JS payloads.
         push(
             "XSS-021",
-            AttackCategory::Xss,
+            LegacyAttackCategory::Xss,
             4,
             "JSFuck alphabet",
             "+!![]",
@@ -1779,7 +1825,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     // beyond the always-on `$(whoami)`/`$(id)` pair, and Log4j lookup
     // containers used by obfuscated Log4Shell variants.
     let mut push_strict = |id: &'static str,
-                           cat: AttackCategory,
+                           cat: LegacyAttackCategory,
                            sev: u8,
                            stack: StackSet,
                            desc: &'static str,
@@ -1796,7 +1842,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     };
     push_strict(
         "CI-101",
-        AttackCategory::CommandInjection,
+        LegacyAttackCategory::CommandInjection,
         5,
         StackSet::GENERIC,
         "command substitution (cat)",
@@ -1804,7 +1850,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     );
     push_strict(
         "CI-102",
-        AttackCategory::CommandInjection,
+        LegacyAttackCategory::CommandInjection,
         5,
         StackSet::GENERIC,
         "command substitution (ping)",
@@ -1812,7 +1858,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     );
     push_strict(
         "CI-103",
-        AttackCategory::CommandInjection,
+        LegacyAttackCategory::CommandInjection,
         5,
         StackSet::GENERIC,
         "command substitution (curl)",
@@ -1820,7 +1866,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     );
     push_strict(
         "CI-104",
-        AttackCategory::CommandInjection,
+        LegacyAttackCategory::CommandInjection,
         5,
         StackSet::GENERIC,
         "command substitution (wget)",
@@ -1828,7 +1874,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     );
     push_strict(
         "CI-105",
-        AttackCategory::CommandInjection,
+        LegacyAttackCategory::CommandInjection,
         5,
         StackSet::GENERIC,
         "command substitution (netcat)",
@@ -1836,7 +1882,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     );
     push_strict(
         "CI-106",
-        AttackCategory::CommandInjection,
+        LegacyAttackCategory::CommandInjection,
         5,
         StackSet::GENERIC,
         "command substitution (bash)",
@@ -1844,7 +1890,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     );
     push_strict(
         "TI-101",
-        AttackCategory::TemplateInjection,
+        LegacyAttackCategory::TemplateInjection,
         5,
         StackSet::JAVA,
         "Log4j case-normalization lookup",
@@ -1852,7 +1898,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     );
     push_strict(
         "TI-102",
-        AttackCategory::TemplateInjection,
+        LegacyAttackCategory::TemplateInjection,
         5,
         StackSet::JAVA,
         "Log4j case-normalization lookup (upper)",
@@ -1860,7 +1906,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     );
     push_strict(
         "TI-103",
-        AttackCategory::TemplateInjection,
+        LegacyAttackCategory::TemplateInjection,
         5,
         StackSet::JAVA,
         "Log4j environment lookup",
@@ -1868,7 +1914,7 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
     );
     push_strict(
         "TI-104",
-        AttackCategory::TemplateInjection,
+        LegacyAttackCategory::TemplateInjection,
         5,
         StackSet::JAVA,
         "Log4j system-property lookup",
@@ -1894,7 +1940,7 @@ static BUILTIN_PATTERNS: Lazy<Vec<SignaturePattern>> =
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SignatureInfo {
     pub id: &'static str,
-    pub category: AttackCategory,
+    pub category: LegacyAttackCategory,
     /// 1 (info) … 5 (critical).
     pub severity: u8,
     /// Only loaded when the engine runs at [`WafLevel::Strict`].
@@ -3103,7 +3149,7 @@ mod tests {
         let hits = e.scan("../../etc/passwd");
         assert!(hits
             .iter()
-            .any(|h| h.category == AttackCategory::PathTraversal));
+            .any(|h| h.category == LegacyAttackCategory::PathTraversal));
     }
 
     #[test]
@@ -3498,7 +3544,7 @@ mod tests {
         let info = builtin_signature_info("ssrf-006")
             .expect("signature lookup is case-insensitive");
         assert_eq!(info.id, "SSRF-006");
-        assert_eq!(info.category, AttackCategory::Ssrf);
+        assert_eq!(info.category, LegacyAttackCategory::Ssrf);
         assert_eq!(info.severity, 3);
         assert_eq!(info.description, "wildcard IPv4");
     }

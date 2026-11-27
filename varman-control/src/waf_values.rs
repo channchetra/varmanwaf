@@ -58,9 +58,10 @@ pub mod ip_action {
 }
 
 /// Attack categories a site can downgrade to monitor-only.
-pub const CATEGORIES: [&str; 9] = [
-    "sqli", "xss", "rce", "lfi", "ssrf", "deser", "crlf", "xxe", "ssti",
-];
+///
+/// Derived from the engine so the API, the policy compiler and the data
+/// plane cannot drift; a new monitorable family is added in one place.
+pub const CATEGORIES: [&str; 9] = varman_waf::ATTACK_CATEGORY_NAMES;
 
 /// Backend stacks a site can downgrade to monitor-only. Must stay in sync
 /// with `StackSet::parse_name` in `varman-waf`.

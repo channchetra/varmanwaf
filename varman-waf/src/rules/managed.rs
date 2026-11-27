@@ -10,7 +10,7 @@
 //! and adds rules that are too aggressive for general traffic (e.g. blocking
 //! on the RCE sub-score alone).
 
-use crate::rules::signatures::AttackCategory;
+use crate::rules::signatures::LegacyAttackCategory;
 use crate::rules::{CompiledRule, RuleAction};
 use crate::{StackSet, WafLevel};
 
@@ -316,11 +316,11 @@ pub fn managed_rule_catalogue(level: WafLevel) -> Vec<ManagedRuleInfo> {
 /// policy, …) return `None` and are never downgraded.
 pub(crate) fn managed_rule_category(
     rule: &CompiledRule,
-) -> Option<AttackCategory> {
-    const FAMILY_TAGS: [(&str, AttackCategory); 3] = [
-        ("sqli", AttackCategory::SqlInjection),
-        ("xss", AttackCategory::Xss),
-        ("rce", AttackCategory::CommandInjection),
+) -> Option<LegacyAttackCategory> {
+    const FAMILY_TAGS: [(&str, LegacyAttackCategory); 3] = [
+        ("sqli", LegacyAttackCategory::SqlInjection),
+        ("xss", LegacyAttackCategory::Xss),
+        ("rce", LegacyAttackCategory::CommandInjection),
     ];
     FAMILY_TAGS
         .iter()

@@ -30,7 +30,7 @@ use crate::rules::signatures::{
     detect_xss, path_tautology_segment, pt_double_exec_extension,
     pt_remote_backslash_include, sqli_into_file_statement_shaped,
     sqli_union_statement_shaped, ssrf_protocol_smuggling, xss_markup_shaped,
-    xss_script_tag_shaped, xss_script_uri_html_shaped, AttackCategory,
+    xss_script_tag_shaped, xss_script_uri_html_shaped, LegacyAttackCategory,
     SignatureEngine, SignatureHit,
 };
 use crate::rules::{CompiledRule, RuleAction};
@@ -505,7 +505,11 @@ impl WafEngine {
     /// monitor-only by the per-site monitor sets. `GENERIC`-only stacks are
     /// never stack-downgraded — a language-agnostic payload cannot be
     /// attributed to a disabled backend.
-    fn hit_monitored(&self, category: AttackCategory, stack: StackSet) -> bool {
+    fn hit_monitored(
+        &self,
+        category: LegacyAttackCategory,
+        stack: StackSet,
+    ) -> bool {
         if self.monitor_categories.contains_category(category) {
             return true;
         }
@@ -649,10 +653,10 @@ impl WafEngine {
                 && hits.iter().any(|h| {
                     matches!(
                         h.category,
-                        AttackCategory::CommandInjection
-                            | AttackCategory::PathTraversal
-                            | AttackCategory::Deserialization
-                            | AttackCategory::Ssrf
+                        LegacyAttackCategory::CommandInjection
+                            | LegacyAttackCategory::PathTraversal
+                            | LegacyAttackCategory::Deserialization
+                            | LegacyAttackCategory::Ssrf
                     )
                 });
             for hit in &hits {
@@ -667,9 +671,9 @@ impl WafEngine {
                 );
                 let reflected_family = matches!(
                     hit.category,
-                    AttackCategory::SqlInjection
-                        | AttackCategory::Xss
-                        | AttackCategory::CommandInjection
+                    LegacyAttackCategory::SqlInjection
+                        | LegacyAttackCategory::Xss
+                        | LegacyAttackCategory::CommandInjection
                 );
                 // Weak signals still feed the family sub-scores (three
                 // distinct weak features crossing a gate is the P0-tested
@@ -718,7 +722,7 @@ impl WafEngine {
                 if weak {
                     severity = severity.min(2);
                     critical = false;
-                } else if hit.category == AttackCategory::CrlfInjection
+                } else if hit.category == LegacyAttackCategory::CrlfInjection
                     && ((value.source != ValueSource::Body
                         && crlf_header_injection_shaped(needle))
                         || injection_company)
@@ -737,8 +741,8 @@ impl WafEngine {
                     && value.source != ValueSource::Path
                     && matches!(
                         hit.category,
-                        AttackCategory::CommandInjection
-                            | AttackCategory::Deserialization
+                        LegacyAttackCategory::CommandInjection
+                            | LegacyAttackCategory::Deserialization
                     )
                 {
                     // High-confidence injection families block outright at
@@ -758,8 +762,8 @@ impl WafEngine {
                     if value.source == ValueSource::Path
                         && matches!(
                             hit.category,
-                            AttackCategory::CommandInjection
-                                | AttackCategory::Deserialization
+                            LegacyAttackCategory::CommandInjection
+                                | LegacyAttackCategory::Deserialization
                         )
                     {
                         // A command shape inside the path itself never
@@ -805,7 +809,7 @@ impl WafEngine {
                 && path_tautology_segment(needle)
             {
                 let monitored = self.hit_monitored(
-                    AttackCategory::SqlInjection,
+                    LegacyAttackCategory::SqlInjection,
                     StackSet::GENERIC,
                 );
                 if !monitored {
@@ -813,7 +817,7 @@ impl WafEngine {
                 }
                 self.scorer.add_category_hit_ex(
                     &mut breakdown,
-                    AttackCategory::SqlInjection,
+                    LegacyAttackCategory::SqlInjection,
                     5,
                     monitored,
                 );
@@ -832,7 +836,7 @@ impl WafEngine {
                 && needle.matches('`').count() >= 2
             {
                 let monitored = self.hit_monitored(
-                    AttackCategory::CommandInjection,
+                    LegacyAttackCategory::CommandInjection,
                     StackSet::GENERIC,
                 );
                 if !monitored {
@@ -840,7 +844,7 @@ impl WafEngine {
                 }
                 self.scorer.add_category_hit_ex(
                     &mut breakdown,
-                    AttackCategory::CommandInjection,
+                    LegacyAttackCategory::CommandInjection,
                     5,
                     monitored,
                 );
@@ -859,7 +863,7 @@ impl WafEngine {
                 && pt_double_exec_extension(&value.decoded)
             {
                 let monitored = self.hit_monitored(
-                    AttackCategory::PathTraversal,
+                    LegacyAttackCategory::PathTraversal,
                     StackSet::GENERIC,
                 );
                 if !monitored {
@@ -867,7 +871,7 @@ impl WafEngine {
                 }
                 self.scorer.add_category_hit_ex(
                     &mut breakdown,
-                    AttackCategory::PathTraversal,
+                    LegacyAttackCategory::PathTraversal,
                     5,
                     monitored,
                 );
@@ -915,7 +919,7 @@ impl WafEngine {
                 let (severity, critical) =
                     if weak { (2, false) } else { (5, true) };
                 let monitored = self.hit_monitored(
-                    AttackCategory::SqlInjection,
+                    LegacyAttackCategory::SqlInjection,
                     StackSet::GENERIC,
                 );
                 if critical && !search_phrase && !monitored {
@@ -924,7 +928,7 @@ impl WafEngine {
                 if !search_phrase {
                     self.scorer.add_category_hit_ex(
                         &mut breakdown,
-                        AttackCategory::SqlInjection,
+                        LegacyAttackCategory::SqlInjection,
                         severity,
                         monitored,
                     );
@@ -959,15 +963,17 @@ impl WafEngine {
                                 && !self.level.is_strict())));
                 let (severity, critical) =
                     if weak { (2, false) } else { (5, true) };
-                let monitored =
-                    self.hit_monitored(AttackCategory::Xss, StackSet::GENERIC);
+                let monitored = self.hit_monitored(
+                    LegacyAttackCategory::Xss,
+                    StackSet::GENERIC,
+                );
                 if critical && !collected_js_uri && !monitored {
                     critical_hit = true;
                 }
                 if !collected_js_uri {
                     self.scorer.add_category_hit_ex(
                         &mut breakdown,
-                        AttackCategory::Xss,
+                        LegacyAttackCategory::Xss,
                         severity,
                         monitored,
                     );
@@ -1001,7 +1007,7 @@ impl WafEngine {
                     (4, false)
                 };
                 let monitored = self.hit_monitored(
-                    AttackCategory::Deserialization,
+                    LegacyAttackCategory::Deserialization,
                     StackSet::GENERIC,
                 );
                 if critical && !monitored {
@@ -1009,7 +1015,7 @@ impl WafEngine {
                 }
                 self.scorer.add_category_hit_ex(
                     &mut breakdown,
-                    AttackCategory::Deserialization,
+                    LegacyAttackCategory::Deserialization,
                     severity,
                     monitored,
                 );
@@ -1029,7 +1035,7 @@ impl WafEngine {
             // to backslash traversal (`dir=http\..\admin\…`).
             if ci_backtick_interleaved(needle) {
                 let monitored = self.hit_monitored(
-                    AttackCategory::CommandInjection,
+                    LegacyAttackCategory::CommandInjection,
                     StackSet::GENERIC,
                 );
                 if !monitored {
@@ -1037,7 +1043,7 @@ impl WafEngine {
                 }
                 self.scorer.add_category_hit_ex(
                     &mut breakdown,
-                    AttackCategory::CommandInjection,
+                    LegacyAttackCategory::CommandInjection,
                     5,
                     monitored,
                 );
@@ -1051,7 +1057,7 @@ impl WafEngine {
             }
             if ci_chr_chain(needle) {
                 let monitored = self.hit_monitored(
-                    AttackCategory::CommandInjection,
+                    LegacyAttackCategory::CommandInjection,
                     StackSet::GENERIC,
                 );
                 if !monitored {
@@ -1059,7 +1065,7 @@ impl WafEngine {
                 }
                 self.scorer.add_category_hit_ex(
                     &mut breakdown,
-                    AttackCategory::CommandInjection,
+                    LegacyAttackCategory::CommandInjection,
                     5,
                     monitored,
                 );
@@ -1072,14 +1078,16 @@ impl WafEngine {
                 });
             }
             if ssrf_protocol_smuggling(needle) {
-                let monitored =
-                    self.hit_monitored(AttackCategory::Ssrf, StackSet::GENERIC);
+                let monitored = self.hit_monitored(
+                    LegacyAttackCategory::Ssrf,
+                    StackSet::GENERIC,
+                );
                 if !monitored {
                     critical_hit = true;
                 }
                 self.scorer.add_category_hit_ex(
                     &mut breakdown,
-                    AttackCategory::Ssrf,
+                    LegacyAttackCategory::Ssrf,
                     5,
                     monitored,
                 );
@@ -1093,7 +1101,7 @@ impl WafEngine {
             }
             if pt_remote_backslash_include(needle) {
                 let monitored = self.hit_monitored(
-                    AttackCategory::PathTraversal,
+                    LegacyAttackCategory::PathTraversal,
                     StackSet::GENERIC,
                 );
                 if !monitored {
@@ -1101,7 +1109,7 @@ impl WafEngine {
                 }
                 self.scorer.add_category_hit_ex(
                     &mut breakdown,
-                    AttackCategory::PathTraversal,
+                    LegacyAttackCategory::PathTraversal,
                     5,
                     monitored,
                 );
@@ -1119,7 +1127,7 @@ impl WafEngine {
             // a critical hit; Normal only scores template openers.
             if self.level.is_strict() {
                 let expr_monitored = self.hit_monitored(
-                    AttackCategory::TemplateInjection,
+                    LegacyAttackCategory::TemplateInjection,
                     StackSet::GENERIC,
                 );
                 if let Some(container) = detect_expr_injection(needle) {
@@ -1177,7 +1185,7 @@ impl WafEngine {
             }
             let critical = (hit.severity >= 5)
                 || (self.level.is_strict()
-                    && hit.category == AttackCategory::CrlfInjection);
+                    && hit.category == LegacyAttackCategory::CrlfInjection);
             let monitored = self.hit_monitored(
                 hit.category,
                 self.signatures.pattern(hit.pattern).stack,
@@ -1190,8 +1198,8 @@ impl WafEngine {
             // RCE sub-score.
             if matches!(
                 hit.category,
-                AttackCategory::CommandInjection
-                    | AttackCategory::Deserialization
+                LegacyAttackCategory::CommandInjection
+                    | LegacyAttackCategory::Deserialization
             ) {
                 self.scorer.add_severity_hit_ex(
                     &mut breakdown,
@@ -2290,9 +2298,9 @@ mod tests {
     fn category_and_stack_monitor_set_helpers() {
         // CategorySet: unknown names ignored, empty default = enforce all.
         let set = CategorySet::from_names(["sqli", "nonsense", "xss"]);
-        assert!(set.contains_category(AttackCategory::SqlInjection));
-        assert!(set.contains_category(AttackCategory::Xss));
-        assert!(!set.contains_category(AttackCategory::CommandInjection));
+        assert!(set.contains_category(LegacyAttackCategory::SqlInjection));
+        assert!(set.contains_category(LegacyAttackCategory::Xss));
+        assert!(!set.contains_category(LegacyAttackCategory::CommandInjection));
         assert!(CategorySet::default().is_empty());
 
         // StackSet::from_names_exact does NOT force GENERIC (unlike

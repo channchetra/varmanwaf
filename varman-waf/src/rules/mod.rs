@@ -21,8 +21,8 @@ pub use managed::{
 };
 pub use signatures::{
     builtin_signature_info, detect_expr_injection, detect_sqli, detect_xss,
-    AttackCategory, SignatureEngine, SignatureHit, SignatureInfo,
-    SignaturePattern,
+    LegacyAttackCategory, SignatureEngine, SignatureHit, SignatureInfo,
+    SignaturePattern, ATTACK_CATEGORY_NAMES,
 };
 
 use serde::{Deserialize, Serialize};
