@@ -254,6 +254,10 @@ pub fn memory_snapshot() -> MemorySnapshot {
 mod tests {
     use super::*;
 
+    /// Both tests touch the process-global profiler / allocator; running them
+    /// in parallel lets one perturb the other's sample.
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[cfg(target_os = "linux")]
     use pretty_assertions::assert_eq;
 
@@ -274,6 +278,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn sampling_sessions() {
+        let _guard = TEST_LOCK.lock().expect("pprof test lock");
         let session = start_session(DEFAULT_FREQUENCY).expect("first start");
         burn(300);
         let profile = session.finish_pprof().expect("pprof bytes");
@@ -310,6 +315,7 @@ mod tests {
 
     #[test]
     fn memory_snapshot_is_populated() {
+        let _guard = TEST_LOCK.lock().expect("pprof test lock");
         let snapshot = memory_snapshot();
         assert!(snapshot.rss_bytes > 0);
         assert!(snapshot.total_memory_bytes > 0);
