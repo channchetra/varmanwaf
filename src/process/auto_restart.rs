@@ -45,7 +45,27 @@ struct LastSeen {
     restart_eligible: bool,
 }
 
-static LAST_SEEN: ArcSwapOption<LastSeen> = ArcSwapOption::const_empty();
+/// Per-watcher memo of the raw document the last pass handled.
+///
+/// Deliberately a field of each service, not a global: two watchers in one
+/// process (a second service, a test) must not inherit each other's state.
+#[derive(Default)]
+struct LastSeenCell(ArcSwapOption<LastSeen>);
+
+impl LastSeenCell {
+    /// Whether a pass over a document hashing to `hash` has nothing to do.
+    fn skipped(&self, hash: u64, hot_reload_only: bool) -> bool {
+        should_skip(self.0.load().as_deref(), hash, hot_reload_only)
+    }
+
+    /// Records a document as handled by a pass that finished.
+    fn record(&self, hash: u64, restart_eligible: bool) {
+        self.0.store(Some(Arc::new(LastSeen {
+            hash,
+            restart_eligible,
+        })));
+    }
+}
 
 fn raw_hash(raw: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -74,12 +94,13 @@ fn should_skip(
 /// a validation (which resolves every static upstream address) and a diff.
 async fn diff_and_update_config(
     config_manager: Arc<ConfigManager>,
+    last_seen: &LastSeenCell,
     hot_reload_only: bool,
     admin_plugin: Option<AdminPlugin>,
 ) -> Result<Option<PingapConfig>, Box<dyn std::error::Error>> {
     let raw = config_manager.load_all_raw().await?;
     let hash = raw_hash(&raw);
-    if should_skip(LAST_SEEN.load().as_deref(), hash, hot_reload_only) {
+    if last_seen.skipped(hash, hot_reload_only) {
         debug!(target: LOG_TARGET, "config is unchanged");
         return Ok(None);
     }
@@ -96,10 +117,7 @@ async fn diff_and_update_config(
     // does not parse, an address does not resolve - is retried on the next
     // tick, and a pass that asked for a restart is repeated by the next
     // restart-eligible tick in case the restart was abandoned.
-    LAST_SEEN.store(Some(Arc::new(LastSeen {
-        hash,
-        restart_eligible: !hot_reload_only && !restart_requested,
-    })));
+    last_seen.record(hash, !hot_reload_only && !restart_requested);
     Ok(Some(new_config))
 }
 
@@ -232,6 +250,8 @@ struct AutoRestart {
     /// Re-registered with every plugin rebuild, or the admin listener would
     /// lose its plugin after the first reload.
     admin_plugin: Option<AdminPlugin>,
+    /// The document this watcher last handled. Per instance, never shared.
+    last_seen: LastSeenCell,
 }
 
 /// Creates a new auto-restart service that checks for config changes periodically
@@ -263,6 +283,7 @@ pub fn new_auto_restart_service(
         restart_unit,
         current_log_level: ArcSwap::from_pointee(current_log_level),
         admin_plugin,
+        last_seen: LastSeenCell::default(),
     });
     let name = "auto_restart";
     BackgroundTaskService::new_single(name, interval.min(unit), name, task)
@@ -291,6 +312,8 @@ pub struct ConfigObserverService {
     /// Re-registered with every plugin rebuild, like the polling service.
     admin_plugin: Option<AdminPlugin>,
     delay: AtomicU32,
+    /// The document this watcher last handled. Per instance, never shared.
+    last_seen: LastSeenCell,
 }
 
 const MIN_DELAY: u32 = 500;
@@ -318,6 +341,7 @@ pub fn new_observer_service(
         current_log_level: ArcSwap::from_pointee(current_log_level),
         admin_plugin,
         delay: AtomicU32::new(MIN_DELAY),
+        last_seen: LastSeenCell::default(),
     }
 }
 
@@ -361,6 +385,7 @@ impl BackgroundService for ConfigObserverService {
                     // some change may be restart
                     if let Some(new_config) = run_diff_and_update_config(
                         self.config_manager.clone(),
+                        &self.last_seen,
                         self.only_hot_reload,
                         self.admin_plugin.clone(),
                     ).await {
@@ -384,6 +409,7 @@ impl BackgroundService for ConfigObserverService {
                             // only hot reload for observe updated
                             run_diff_and_update_config(
                                 self.config_manager.clone(),
+                                &self.last_seen,
                                 true,
                                 self.admin_plugin.clone(),
                             ).await;
@@ -410,11 +436,17 @@ impl BackgroundService for ConfigObserverService {
 /// Logs any errors that occur during the update
 async fn run_diff_and_update_config(
     config_manager: Arc<ConfigManager>,
+    last_seen: &LastSeenCell,
     hot_reload_only: bool,
     admin_plugin: Option<AdminPlugin>,
 ) -> Option<PingapConfig> {
-    match diff_and_update_config(config_manager, hot_reload_only, admin_plugin)
-        .await
+    match diff_and_update_config(
+        config_manager,
+        last_seen,
+        hot_reload_only,
+        admin_plugin,
+    )
+    .await
     {
         Ok(new_config) => new_config,
         Err(e) => {
@@ -449,6 +481,7 @@ impl BackgroundTask for AutoRestart {
             .store(hot_reload_only, Ordering::Relaxed);
         if let Some(new_config) = run_diff_and_update_config(
             self.config_manager.clone(),
+            &self.last_seen,
             hot_reload_only,
             self.admin_plugin.clone(),
         )
@@ -495,8 +528,49 @@ fn reload_log_level(
 
 #[cfg(test)]
 mod tests {
-    use super::{LastSeen, should_skip};
+    use super::{AutoRestart, LastSeen, LastSeenCell, should_skip};
+    use arc_swap::ArcSwap;
+    use pingap_config::ConfigManager;
+    use pingap_logger::{LoggerReloadHandle, new_env_filter};
     use pretty_assertions::assert_eq;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    /// A watcher with its own memo. The reload handle is never used: the test
+    /// exercises the handled-document memo, not a log-level reload.
+    fn test_watcher(config_manager: Arc<ConfigManager>) -> AutoRestart {
+        let (_layer, log_reload_handle): (_, LoggerReloadHandle) =
+            tracing_subscriber::reload::Layer::new(new_env_filter("INFO"));
+        AutoRestart {
+            restart_unit: 1,
+            only_hot_reload: false,
+            running_hot_reload: AtomicBool::new(false),
+            config_manager,
+            log_reload_handle,
+            current_log_level: ArcSwap::from_pointee(String::new()),
+            admin_plugin: None,
+            last_seen: LastSeenCell::default(),
+        }
+    }
+
+    /// The handled document used to live in a process global, so a second
+    /// watcher inherited it and skipped a document it had never applied.
+    #[test]
+    fn two_watchers_do_not_share_the_handled_document_memo() {
+        let config_manager = Arc::new(
+            pingap_config::new_memory_config_manager("[basic]\n", None),
+        );
+        let first = test_watcher(config_manager.clone());
+        let second = test_watcher(config_manager);
+
+        first.last_seen.record(7, true);
+
+        assert!(first.last_seen.skipped(7, false));
+        assert!(
+            !second.last_seen.skipped(7, false),
+            "a second watcher must still apply the document its first pass sees"
+        );
+    }
 
     #[test]
     fn test_should_skip() {

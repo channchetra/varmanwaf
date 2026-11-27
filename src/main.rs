@@ -313,6 +313,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     // never run the proxy loops.
     let mut assembled = data_plane::assemble(
         &PingapConfig::default(),
+        config_manager,
         data_plane::DataPlaneOptions {
             daemon: args.daemon,
             upgrade: false,
@@ -680,6 +681,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let mut assembled = data_plane::assemble(
         &config,
+        config_manager.clone(),
         data_plane::DataPlaneOptions {
             daemon: args.daemon,
             upgrade: args.upgrade,

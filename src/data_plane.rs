@@ -51,7 +51,6 @@ use pingora::services::ServiceHandle;
 use tokio::sync::mpsc::Sender;
 
 use crate::certificates::{new_certificate_provider, try_update_certificates};
-use crate::config_manager::get_config_manager;
 use crate::locations::{new_location_provider, try_init_locations};
 use crate::plugin::{new_plugin_provider, try_init_plugins};
 use crate::server_locations::{
@@ -208,7 +207,7 @@ pub struct AssembledPlane {
     /// listening service builds its sockets from inherited fds when it
     /// starts, and would bind fresh ones if it ran before bootstrap.
     pub bootstrap: ServiceHandle,
-    /// The process' config manager, already initialised by the caller.
+    /// The caller's config manager, the instance [`assemble`] was handed.
     pub config_manager: Arc<ConfigManager>,
     /// The process-wide certificate provider the listeners resolve SNI
     /// against.
@@ -252,14 +251,15 @@ impl AssembledPlane {
 /// `configuration`: the constructor snapshots the configuration into its
 /// private bootstrap, and that snapshot - not `Server::configuration` - is
 /// what the receiving half of a hot upgrade reads `upgrade_sock` from.
+///
+/// `config_manager` is the caller's already initialised manager. It is used
+/// for provider construction and handed back in the result; assembly never
+/// reads the process-global slot, so it has no hidden initialisation order.
 pub fn assemble(
     config: &PingapConfig,
+    config_manager: Arc<ConfigManager>,
     options: DataPlaneOptions,
 ) -> anyhow::Result<AssembledPlane> {
-    let config_manager = get_config_manager().map_err(|e| {
-        anyhow::anyhow!("config manager is not initialised: {e}")
-    })?;
-
     try_init_upstreams(&config.upstreams, get_webhook_sender())
         .map_err(|e| anyhow::anyhow!("failed to init upstreams: {e}"))?;
     try_init_locations(&config.locations)
@@ -350,14 +350,12 @@ pub fn assemble(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config_manager::try_init_memory_config_manager;
     use pingap_config::BasicConf;
 
-    /// `assemble` needs the process' config manager, exactly like every entry
-    /// point, which initialises it before calling in.
-    fn init_config_manager() {
-        try_init_memory_config_manager("[basic]\n", None)
-            .expect("in-memory config manager");
+    /// A local manager: `assemble` takes the instance as a parameter, so the
+    /// tests no longer have to install anything process-wide first.
+    fn new_config_manager() -> Arc<ConfigManager> {
+        Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None))
     }
 
     #[test]
@@ -376,9 +374,10 @@ mod tests {
     /// and a data plane gets the shared background loops.
     #[test]
     fn data_plane_assembly_applies_the_cli_overrides() {
-        init_config_manager();
+        let config_manager = new_config_manager();
         let assembled = assemble(
             &PingapConfig::default(),
+            config_manager.clone(),
             DataPlaneOptions {
                 daemon: true,
                 upgrade: false,
@@ -393,7 +392,11 @@ mod tests {
         assert!(assembled.server.configuration.daemon);
         assert_eq!(3, assembled.server.configuration.threads);
         assert!(assembled.background_tasks.is_some());
+        // The manager that was passed in is the one handed back and the one
+        // every listener context is built on - not a process-global lookup.
+        assert!(Arc::ptr_eq(&config_manager, &assembled.config_manager));
         let ctx = assembled.app_context(None);
+        assert!(Arc::ptr_eq(&config_manager, &ctx.config_manager));
         assert!(ctx.logger.is_none(), "no access logger without a directive");
     }
 
@@ -402,9 +405,10 @@ mod tests {
     /// the data-plane loops.
     #[test]
     fn admin_only_assembly_keeps_pingora_defaults() {
-        init_config_manager();
+        let config_manager = new_config_manager();
         let assembled = assemble(
             &PingapConfig::default(),
+            config_manager,
             DataPlaneOptions {
                 daemon: false,
                 upgrade: false,

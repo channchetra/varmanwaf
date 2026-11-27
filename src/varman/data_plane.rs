@@ -109,6 +109,7 @@ pub(super) async fn start_data_plane(
     // adds ACME to it and registers it before its listeners.
     let mut assembled = assemble(
         &config,
+        config_manager.clone(),
         DataPlaneOptions {
             daemon: false,
             upgrade: false,
