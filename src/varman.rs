@@ -184,6 +184,21 @@ fn extract_port(addr: &str) -> &str {
     addr.rsplit(':').next().unwrap_or("9090")
 }
 
+/// Whether this command runs against the database and exits.
+///
+/// Every variant that is not a run mode must be listed here: `main` routes
+/// these to [`crate::admin::run`], and [`build_run_mode`] treats anything
+/// else as unreachable. Omitting one (Config was) panics the CLI.
+fn is_maintenance_command(command: &VarmanCommand) -> bool {
+    matches!(
+        command,
+        VarmanCommand::User { .. }
+            | VarmanCommand::Mode { .. }
+            | VarmanCommand::Security { .. }
+            | VarmanCommand::Config { .. }
+    )
+}
+
 /// Build the `RunMode` from the parsed CLI.
 ///
 /// The maintenance commands never reach this: [`main`] routes them to
@@ -1636,15 +1651,7 @@ pub fn main() {
         .build()
         .expect("failed to create tokio runtime");
 
-    // Maintenance commands run against the database and exit; only the three
-    // run modes start the long-running process.
-    let is_maintenance = matches!(
-        &cli.command,
-        VarmanCommand::User { .. }
-            | VarmanCommand::Mode { .. }
-            | VarmanCommand::Security { .. }
-    );
-    let result = if is_maintenance {
+    let result = if is_maintenance_command(&cli.command) {
         rt.block_on(crate::admin::run(cli))
     } else {
         rt.block_on(run(build_run_mode(cli)))
@@ -1698,6 +1705,17 @@ fn log_directives(rust_log: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+
+    #[test]
+    fn config_is_a_maintenance_command() {
+        let cli = VarmanCli::try_parse_from(["varman", "config", "history"])
+            .expect("config history must parse");
+        assert!(
+            is_maintenance_command(&cli.command),
+            "config must be routed to the maintenance runner, not build_run_mode"
+        );
+    }
     use super::*;
     use varman_agent::cache::{
         CacheRule as AgentCacheRule, CachedRules, GlobalCacheSettings,
