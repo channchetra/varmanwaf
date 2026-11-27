@@ -187,7 +187,7 @@ fn extract_port(addr: &str) -> &str {
 /// Whether this command runs against the database and exits.
 ///
 /// Every variant that is not a run mode must be listed here: `main` routes
-/// these to [`crate::admin::run`], and [`build_run_mode`] treats anything
+/// these to [`crate::maintenance::run`], and [`build_run_mode`] treats anything
 /// else as unreachable. Omitting one (Config was) panics the CLI.
 fn is_maintenance_command(command: &VarmanCommand) -> bool {
     matches!(
@@ -202,7 +202,7 @@ fn is_maintenance_command(command: &VarmanCommand) -> bool {
 /// Build the `RunMode` from the parsed CLI.
 ///
 /// The maintenance commands never reach this: [`main`] routes them to
-/// [`crate::admin::run`] before a run mode is built, and a panic here means
+/// [`crate::maintenance::run`] before a run mode is built, and a panic here means
 /// that routing was broken.
 pub fn build_run_mode(cli: VarmanCli) -> RunMode {
     match cli.command {
@@ -413,7 +413,7 @@ pub fn main() {
         .expect("failed to create tokio runtime");
 
     let result = if is_maintenance_command(&cli.command) {
-        rt.block_on(crate::admin::run(cli))
+        rt.block_on(crate::maintenance::run(cli))
     } else {
         rt.block_on(run(build_run_mode(cli)))
     };

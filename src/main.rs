@@ -81,12 +81,12 @@ use sysinfo::System;
 
 use tracing::{error, info, warn};
 
-mod admin;
 mod certificates;
 mod cli;
 mod config_file;
 mod config_manager;
 mod locations;
+mod maintenance;
 mod plugin;
 mod process;
 mod quick_start;
