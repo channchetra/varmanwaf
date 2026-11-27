@@ -279,7 +279,7 @@ async fn list(
     };
 
     let mut condition = Condition::all();
-    if !current.is_admin() {
+    if !current.can_read_all() {
         let owned: Vec<Uuid> = site::Entity::find()
             .filter(site::Column::UserId.eq(current.id))
             .all(&state.db)
@@ -639,7 +639,7 @@ pub async fn load_agent(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id} not found")))?;
 
-    if !current.is_admin() {
+    if !current.can_read_all() {
         if let Some(site_id) = row.site_id {
             // `load_site_read` hides sites owned by somebody else behind a 404.
             load_site_read(&state.db, site_id, current).await?;

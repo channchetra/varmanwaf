@@ -337,9 +337,9 @@ struct GlobalAttackStats {
 }
 
 /// `GET /api/v1/blocked-ips` — every dynamic block in force, merged across
-/// agents and folded per (site, ip), with the site's display name. Admins
-/// see all sites; other accounts only their own. Optional `site_id` and
-/// `ip` (substring) filters narrow the result.
+/// agents and folded per (site, ip), with the site's display name.
+/// Administrators and auditors see all sites; other accounts only their own.
+/// Optional `site_id` and `ip` (substring) filters narrow the result.
 async fn global_list(
     State(state): State<AppState>,
     current: AuthUser,
@@ -355,7 +355,7 @@ async fn global_list(
         let id = parse_uuid(raw, "site id")?;
         load_site_read(&state.db, id, &current).await?;
         Some(vec![id])
-    } else if current.is_admin() {
+    } else if current.can_read_all() {
         None
     } else {
         Some(

@@ -206,18 +206,14 @@ pub struct IpGroupResponse {
     pub site_count: usize,
 }
 
-/// `GET /api/v1/ip-groups`
-async fn list(
-    State(state): State<AppState>,
-    current: AuthUser,
-    Query(query): Query<ListQuery>,
-) -> Result<Json<Page<IpGroupResponse>>, ApiError> {
-    let pagination = query.pagination.normalise();
-
+/// Restricts IP groups to the ones `user` may read: every group for accounts
+/// with global read access, otherwise the global groups plus the groups
+/// linked to one of the caller's own sites.
+fn visible_group_condition(user: &AuthUser) -> sea_orm::Condition {
     let mut condition = sea_orm::Condition::all();
-    if !current.is_admin() {
+    if !user.can_read_all() {
         let user_site_ids = site::Entity::find()
-            .filter(site::Column::UserId.eq(current.id))
+            .filter(site::Column::UserId.eq(user.id))
             .select_only()
             .column(site::Column::Id)
             .into_query();
@@ -234,6 +230,34 @@ async fn list(
                 .or(ip_groups::Column::Id.in_subquery(linked_group_ids)),
         );
     }
+    condition
+}
+
+/// Loads a group the caller may read. A group outside the caller's visibility
+/// is reported as `404`, matching the [`list`] rule and not leaking existence.
+async fn find_visible_group(
+    state: &AppState,
+    group_id: Uuid,
+    current: &AuthUser,
+) -> Result<ip_groups::Model, ApiError> {
+    ip_groups::Entity::find_by_id(group_id)
+        .filter(visible_group_condition(current))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("IP group {group_id} not found"))
+        })
+}
+
+/// `GET /api/v1/ip-groups`
+async fn list(
+    State(state): State<AppState>,
+    current: AuthUser,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<Page<IpGroupResponse>>, ApiError> {
+    let pagination = query.pagination.normalise();
+
+    let mut condition = visible_group_condition(&current);
     if let Some(ref action) = non_empty(&query.action) {
         if !ip_group_action::is_valid(action) {
             return Err(ApiError::BadRequest(format!(
@@ -291,9 +315,10 @@ async fn list(
 /// `POST /api/v1/ip-groups`
 async fn create(
     State(state): State<AppState>,
-    _current: AuthUser,
+    current: AuthUser,
     Json(payload): Json<CreateRequest>,
 ) -> Result<Response, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
     validate_name(&payload.name)?;
     if !ip_group_action::is_valid(&payload.action) {
         return Err(ApiError::BadRequest(format!(
@@ -349,11 +374,11 @@ async fn create(
 /// `GET /api/v1/ip-groups/{group_id}`
 async fn show(
     State(state): State<AppState>,
-    _current: AuthUser,
+    current: AuthUser,
     Path(group_id): Path<String>,
 ) -> Result<Json<IpGroupResponse>, ApiError> {
     let target = parse_uuid(&group_id, "IP group id")?;
-    let group = find_group(&state, target).await?;
+    let group = find_visible_group(&state, target, &current).await?;
     let site_count = ip_group_sites::Entity::find()
         .filter(ip_group_sites::Column::IpGroupId.eq(target))
         .count(&state.db)
@@ -364,10 +389,11 @@ async fn show(
 /// `PUT /api/v1/ip-groups/{group_id}`
 async fn update(
     State(state): State<AppState>,
-    _current: AuthUser,
+    current: AuthUser,
     Path(group_id): Path<String>,
     Json(payload): Json<UpdateRequest>,
 ) -> Result<Json<ip_groups::Model>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
     let target = parse_uuid(&group_id, "IP group id")?;
     let row = find_group(&state, target).await?;
     if row.subscription_kind.as_deref() == Some(subscription_kind::BUILTIN)
@@ -434,7 +460,7 @@ async fn update(
 
     let updated = active.update(&state.db).await?;
     tracing::info!(group_id = %target, "IP group updated");
-    propagate_group_change(&state, target, Some(&_current.email)).await;
+    propagate_group_change(&state, target, Some(&current.email)).await;
 
     Ok(Json(updated))
 }
@@ -442,9 +468,10 @@ async fn update(
 /// `DELETE /api/v1/ip-groups/{group_id}`
 async fn remove(
     State(state): State<AppState>,
-    _current: AuthUser,
+    current: AuthUser,
     Path(group_id): Path<String>,
 ) -> Result<Response, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
     let target = parse_uuid(&group_id, "IP group id")?;
     find_group(&state, target).await?;
 
@@ -465,7 +492,7 @@ async fn remove(
         .await?;
 
     tracing::info!(group_id = %target, "IP group deleted");
-    propagate_group_change(&state, target, Some(&_current.email)).await;
+    propagate_group_change(&state, target, Some(&current.email)).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -569,11 +596,11 @@ async fn propagate_group_change(
 /// `GET /api/v1/ip-groups/{group_id}/sites`
 async fn list_sites(
     State(state): State<AppState>,
-    _current: AuthUser,
+    current: AuthUser,
     Path(group_id): Path<String>,
 ) -> Result<Json<Vec<site::Model>>, ApiError> {
     let target = parse_uuid(&group_id, "IP group id")?;
-    find_group(&state, target).await?;
+    find_visible_group(&state, target, &current).await?;
 
     let associations = ip_group_sites::Entity::find()
         .filter(ip_group_sites::Column::IpGroupId.eq(target))
@@ -596,10 +623,11 @@ async fn list_sites(
 /// `PUT /api/v1/ip-groups/{group_id}/sites`
 async fn set_sites(
     State(state): State<AppState>,
-    _current: AuthUser,
+    current: AuthUser,
     Path(group_id): Path<String>,
     Json(payload): Json<SetSitesRequest>,
 ) -> Result<Response, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
     let target = parse_uuid(&group_id, "IP group id")?;
     let group = find_group(&state, target).await?;
 
@@ -617,7 +645,7 @@ async fn set_sites(
         .collect::<Result<Vec<_>, _>>()?;
 
     for sid in &site_ids {
-        load_site_read(&state.db, *sid, &_current).await?;
+        load_site_read(&state.db, *sid, &current).await?;
     }
 
     let old_site_ids: Vec<Uuid> = ip_group_sites::Entity::find()
@@ -657,7 +685,7 @@ async fn set_sites(
     affected.dedup();
     for sid in affected {
         touch_site(&state, sid).await?;
-        notify_config_changed(&state, sid, Some(&_current.email)).await;
+        notify_config_changed(&state, sid, Some(&current.email)).await;
     }
 
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -668,13 +696,14 @@ async fn set_sites(
 /// upstream error is recorded in `last_sync_error` (and returned here).
 async fn sync_now(
     State(state): State<AppState>,
-    _current: AuthUser,
+    current: AuthUser,
     Path(group_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
     let target = parse_uuid(&group_id, "IP group id")?;
     let group = find_group(&state, target).await?;
 
-    let updated = sync_subscription(&state, group, Some(&_current.email))
+    let updated = sync_subscription(&state, group, Some(&current.email))
         .await
         .map_err(|message| {
             tracing::warn!(

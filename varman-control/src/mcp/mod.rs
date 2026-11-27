@@ -193,6 +193,8 @@ async fn handle_message(
             let ctx = ToolContext {
                 state,
                 actor: &principal.label,
+                subject: principal.subject,
+                can_read_all: principal.can_read_all,
                 can_write: principal.can_write,
             };
             tracing::info!(
@@ -217,7 +219,7 @@ async fn handle_message(
                     "resources/read requires a uri",
                 ));
             };
-            Some(match resources::read(state, &principal.label, uri).await {
+            Some(match resources::read(state, principal, uri).await {
                 Ok(value) => protocol::result(&id, value),
                 Err(message) => {
                     protocol::error(&id, protocol::INVALID_PARAMS, message)

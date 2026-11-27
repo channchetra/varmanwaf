@@ -18,8 +18,10 @@ pub mod bundle;
 pub mod certificate_status;
 pub mod config;
 pub mod config_history;
+pub mod control_tls;
 pub mod crs;
 pub mod defaults;
+pub mod defense_service;
 pub mod error;
 pub mod es;
 pub mod exclusions;
@@ -39,6 +41,8 @@ pub mod policy;
 pub mod policy_content;
 pub mod policy_test;
 pub mod provenance;
+pub mod report;
+pub mod report_scheduler;
 pub mod self_protection;
 pub mod site_credentials;
 pub mod subscription;
@@ -178,7 +182,7 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
     // Load the initial policy (access log, IP allowlist, WAF), start the log
     // writer and the background refresher; the latter is what picks up edits
     // made by another process, e.g. the `varman security` CLI.
-    match api::self_protection::refresh(&db).await {
+    match self_protection::refresh(&db).await {
         Ok(policy) => {
             tracing::info!(
                 access_log_enabled = policy.access_log_enabled,
@@ -194,14 +198,13 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
         ),
     }
     state.protection.spawn_writer(db.clone());
-    let _protection_handle =
-        api::self_protection::start_refresh_task(state.clone());
+    let _protection_handle = self_protection::start_refresh_task(state.clone());
 
     // ── 6e. Observation mode watcher ────────────────────────────────────────
     // Picks up `defense_settings` edits made by another process (the
     // `varman mode` CLI) and fans them out to the agents.
     let _defense_watch_handle =
-        api::defense::start_watch_task(state.clone()).await;
+        defense_service::start_watch_task(state.clone()).await;
 
     // ── 6e-bis. Management (dashboard) certificate ──────────────────────────
     // Re-arm the last ACME request so a restart resumes issuance/renewal
@@ -247,10 +250,10 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
     // The report scheduler dispatches through the same notification manager;
     // a due schedule generates the HTML report and delivers it (e-mail
     // channels attach the file).
-    let _report_scheduler_handle = api::reports::spawn(db.clone());
+    let _report_scheduler_handle = report_scheduler::spawn(db.clone());
 
     if control_tls.is_enabled() {
-        match api::system_tls::load_active_certificate(&state).await {
+        match control_tls::load_active_certificate(&state).await {
             Ok(Some(certificate)) => tracing::info!(
                 subject = %certificate.subject_dn,
                 expires = %certificate.not_after,
@@ -258,7 +261,7 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
             ),
             Ok(None) => {
                 let certificate =
-                    api::system_tls::bootstrap_self_signed(&state).await?;
+                    control_tls::bootstrap_self_signed(&state).await?;
                 tracing::warn!(
                     subject = %certificate.subject_dn,
                     "control plane HTTPS enabled with a freshly generated \
@@ -275,7 +278,7 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
                     "the stored control plane certificate could not be loaded, \
                      falling back to a self-signed one"
                 );
-                api::system_tls::bootstrap_self_signed(&state).await?;
+                control_tls::bootstrap_self_signed(&state).await?;
             },
         }
     } else {
@@ -335,7 +338,7 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
                 // The acceptor shares `control_tls`'s reloadable resolver, so
                 // an ACME renewal reaches the gRPC listener on the next
                 // handshake instead of waiting for a process restart.
-                let row = match api::system_tls::load_active_certificate(&state)
+                let row = match control_tls::load_active_certificate(&state)
                     .await
                 {
                     Ok(Some(row)) => Some(row),
@@ -354,9 +357,7 @@ pub async fn start_server(mut config: ServerConfig) -> anyhow::Result<()> {
                 };
                 let row = match row {
                     Some(row) => row,
-                    None => {
-                        api::system_tls::bootstrap_self_signed(&state).await?
-                    },
+                    None => control_tls::bootstrap_self_signed(&state).await?,
                 };
                 tracing::info!(
                     %grpc_addr,
@@ -742,7 +743,7 @@ pub async fn embedded_agent_ca_pem(
             let material = crate::pki::tls::generate_self_signed(
                 config::DEFAULT_TLS_COMMON_NAME,
                 &sans,
-                crate::api::system_tls::DEFAULT_SELF_SIGNED_DAYS,
+                control_tls::DEFAULT_SELF_SIGNED_DAYS,
             )
             .map_err(|err| anyhow::anyhow!("{err}"))?;
             let key_pem = material.key_pem.clone().ok_or_else(|| {

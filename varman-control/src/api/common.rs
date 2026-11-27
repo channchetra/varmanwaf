@@ -190,12 +190,13 @@ pub fn require_write(user: &AuthUser) -> Result<(), ApiError> {
 
 /// Loads a site and asserts that `user` may see (and optionally mutate) it.
 ///
-/// Administrators see every site; other roles only see sites they own. A site
-/// owned by somebody else is reported as `404` rather than `403` so that the API
-/// does not leak which domains exist.
+/// Administrators and auditors see every site; other roles only see sites they
+/// own. A site owned by somebody else is reported as `404` rather than `403` so
+/// that the API does not leak which domains exist.
 ///
 /// Mutations are additionally gated by [`require_write`] for every role, so an
-/// administrator flagged `must_change_password` cannot write either.
+/// auditor — or an administrator flagged `must_change_password` — cannot write
+/// either: [`Self::can_read_all`] only widens reads.
 pub async fn load_site(
     db: &DatabaseConnection,
     site_id: Uuid,
@@ -209,9 +210,10 @@ pub async fn load_site(
             ApiError::NotFound(format!("site {site_id} not found"))
         })?;
 
-    // Ownership is checked first, so a non-owner writing to somebody else's
-    // site still gets the leak-avoiding 404 rather than a 403.
-    if !user.is_admin() && model.user_id != user.id {
+    // Visibility is checked first, so a caller without global read access
+    // writing to somebody else's site still gets the leak-avoiding 404 rather
+    // than a 403.
+    if !user.can_read_all() && model.user_id != user.id {
         return Err(ApiError::NotFound(format!("site {site_id} not found")));
     }
     if write {
@@ -261,15 +263,16 @@ pub fn host_without_port(host: &str) -> &str {
 
 /// Restricts a site id filter to what `user` is allowed to query.
 ///
-/// Returns `None` when the caller asked for "all sites" *and* is an admin; in
-/// every other case handlers must filter by the returned id.
+/// Returns `None` when the caller asked for "all sites" *and* may read every
+/// site (administrator or auditor); in every other case handlers must filter
+/// by the returned id.
 pub fn scope_site(
     requested: Option<Uuid>,
     user: &AuthUser,
 ) -> Result<Option<Uuid>, ApiError> {
     match requested {
         Some(id) => Ok(Some(id)),
-        None if user.is_admin() => Ok(None),
+        None if user.can_read_all() => Ok(None),
         None => Err(ApiError::BadRequest(
             "site_id is required for non-admin accounts".to_string(),
         )),

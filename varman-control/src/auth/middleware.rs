@@ -50,6 +50,13 @@ impl AuthUser {
         self.role == role::ADMIN
     }
 
+    /// True when the caller may read every resource, not only the ones it
+    /// owns: administrators and the read-only `auditor` role qualify,
+    /// `viewer` does not. Mutations stay behind [`Self::is_admin`].
+    pub fn can_read_all(&self) -> bool {
+        self.is_admin() || self.role == role::AUDITOR
+    }
+
     /// Fails with `403` unless the caller is an administrator.
     pub fn require_admin(&self) -> Result<(), AuthError> {
         if self.is_admin() {
@@ -287,6 +294,23 @@ mod tests {
         let admin = AuthUser::new(Uuid::new_v4(), "a@example.com", role::ADMIN);
         assert!(admin.is_admin());
         assert!(admin.require_admin().is_ok());
+    }
+
+    #[test]
+    fn can_read_all_covers_admins_and_auditors_only() {
+        let viewer =
+            AuthUser::new(Uuid::new_v4(), "v@example.com", role::VIEWER);
+        assert!(!viewer.can_read_all());
+
+        let auditor =
+            AuthUser::new(Uuid::new_v4(), "r@example.com", role::AUDITOR);
+        assert!(auditor.can_read_all());
+        // Auditors read everything but never mutate.
+        assert!(!auditor.is_admin());
+        assert!(auditor.require_admin().is_err());
+
+        let admin = AuthUser::new(Uuid::new_v4(), "a@example.com", role::ADMIN);
+        assert!(admin.can_read_all());
     }
 
     #[test]

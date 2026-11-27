@@ -21,6 +21,8 @@ dist
 dhat*.json
 default_*
 report.*
+# The control plane's report engine is source, not a generated report.
+!varman-control/src/report.rs
 .shuttle*
 Secrets*.toml
 .claude/settings.local.json

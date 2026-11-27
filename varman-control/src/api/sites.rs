@@ -951,7 +951,7 @@ async fn list(
     let pagination = query.pagination.normalise();
 
     let mut condition = Condition::all();
-    if !current.is_admin() {
+    if !current.can_read_all() {
         condition = condition.add(site::Column::UserId.eq(current.id));
     }
     if let Some(status) = non_empty(&query.status) {

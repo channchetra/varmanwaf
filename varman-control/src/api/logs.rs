@@ -132,8 +132,9 @@ pub fn routes() -> Router<AppState> {
 
 /// Resolves the site filter and the caller's visibility at once.
 ///
-/// Returns `Ok(None)` for an administrator that did not name a site (meaning "all
-/// sites") and a list of allowed site ids otherwise.
+/// Returns `Ok(None)` for an account that may read every site (administrator
+/// or auditor) that did not name a site (meaning "all sites") and a list of
+/// allowed site ids otherwise.
 async fn resolve_scope(
     db: &DatabaseConnection,
     requested: &Option<String>,
@@ -150,7 +151,7 @@ async fn resolve_scope(
         load_site_read(db, id, current).await?;
         return Ok(Some(vec![id]));
     }
-    if current.is_admin() {
+    if current.can_read_all() {
         return Ok(None);
     }
     // A non-admin asking for "everything" is narrowed to its own sites, so
@@ -196,9 +197,10 @@ async fn explain_security(
         .await?
         .ok_or_else(|| ApiError::not_found("security event not found"))?;
 
-    // Same visibility rule as the log list: non-admins only see their own
-    // sites; an invisible event answers 404 rather than revealing existence.
-    if !current.is_admin() {
+    // Same visibility rule as the log list: accounts limited to their own
+    // sites only see their site's events; an invisible event answers 404
+    // rather than revealing existence.
+    if !current.can_read_all() {
         let visible = match event.site_id {
             Some(site_id) => {
                 let scope = resolve_scope(
@@ -648,7 +650,7 @@ async fn run_retention_sweep(state: &AppState) -> Result<(), ApiError> {
     .await?;
 
     // The control plane's own access log keeps its own window.
-    let protection = crate::api::self_protection::load_settings(&state.db)
+    let protection = crate::self_protection::load_settings(&state.db)
         .await
         .map_err(ApiError::from)?;
     let deleted_control = crate::api::self_protection::purge_access_logs(

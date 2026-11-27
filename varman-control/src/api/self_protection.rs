@@ -12,10 +12,11 @@
 //!    [`varman_waf`] engine and blocks (or only records, in `monitor` mode).
 //!
 //! Health probes (`/healthz`, `/api/v1/health`) are exempt from all three so
-//! container and load balancer probes keep working. The policy is loaded from
-//! `api_protection_settings` at boot and refreshed by a background task, so a
-//! change made through the API — or by the `varman security` CLI on another
-//! process — takes effect within [`REFRESH_INTERVAL`] without a restart.
+//! container and load balancer probes keep working. The policy, its loader
+//! and the refresher live in [`crate::self_protection`]; the task there
+//! re-reads `api_protection_settings`, so a change made through the API — or
+//! by the `varman security` CLI on another process — takes effect within
+//! [`crate::self_protection::REFRESH_INTERVAL`] without a restart.
 //!
 //! The middlewares never trust forwarding headers for the client address:
 //! the allowlist and the log use the TCP peer. A console behind a reverse
@@ -23,8 +24,7 @@
 //! allowlisted.
 
 use std::net::IpAddr;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::{Request, State};
@@ -32,33 +32,27 @@ use axum::http::header::{HeaderMap, AUTHORIZATION, HOST, REFERER, USER_AGENT};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::Response;
-use chrono::{DateTime, Utc};
-use sea_orm::sea_query::OnConflict;
+use chrono::Utc;
 use sea_orm::{
     ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter,
-    QuerySelect, QueryTrait, Set,
+    QuerySelect, QueryTrait,
 };
 use uuid::Uuid;
 
-use varman_waf::{RequestData, WafAction, WafEngine, WafEngineConfig, WafMode};
+use varman_waf::{RequestData, WafAction};
 
 use crate::api::error::error_response;
 use crate::api::state::AppState;
 use crate::auth::jwt::verify_user_token;
-use crate::models::api_protection::{action, waf_mode};
-use crate::models::{
-    api_protection_setting, control_plane_access_log, ip_groups,
-};
+use crate::models::api_protection::action;
+use crate::models::control_plane_access_log;
+// The settings loader and the allowlist resolver stay reachable through this
+// module for the `varman` binary, which reads them from the API module.
 pub use crate::self_protection::{
-    normalize_ip, Allowlist, LogRecord, ProtectionPolicy, SelfProtection,
+    effective_allowlist, load_settings, normalize_ip, Allowlist, LogRecord,
+    ProtectionPolicy, SelfProtection,
 };
 use crate::tls::ConnInfo;
-
-/// Primary key of the single settings row.
-const SETTINGS_ID: i32 = 1;
-
-/// How often the background task re-reads the settings row.
-pub const REFRESH_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Request-body prefix the WAF inspects. Bodies above this are refused with
 /// `413` while the WAF is enabled, so a truncated body can never slip past
@@ -67,189 +61,6 @@ const WAF_BODY_LIMIT: usize = 128 * 1024;
 
 /// Correlation header stamped on every response.
 const REQUEST_ID_HEADER: &str = "x-request-id";
-
-// ─────────────────────────────────────────────────────────────
-// Settings
-// ─────────────────────────────────────────────────────────────
-
-/// Reads the settings row, creating it with the defaults if it is missing.
-pub async fn load_settings(
-    db: &DatabaseConnection,
-) -> Result<api_protection_setting::Model, DbErr> {
-    if let Some(row) = api_protection_setting::Entity::find_by_id(SETTINGS_ID)
-        .one(db)
-        .await?
-    {
-        return Ok(row);
-    }
-
-    let now = Utc::now();
-    let insert = api_protection_setting::ActiveModel {
-        id: Set(SETTINGS_ID),
-        access_log_enabled: Set(true),
-        access_log_retention_days: Set(
-            crate::models::api_protection::DEFAULT_RETENTION_DAYS,
-        ),
-        ip_allowlist_enabled: Set(false),
-        ip_allowlist_ranges: Set(Vec::new()),
-        ip_allowlist_group_id: Set(None),
-        ip_denylist_enabled: Set(false),
-        ip_denylist_ranges: Set(Vec::new()),
-        waf_enabled: Set(false),
-        waf_mode: Set(waf_mode::BLOCK.to_string()),
-        updated_at: Set(now),
-    };
-    let ignore_conflict =
-        OnConflict::column(api_protection_setting::Column::Id)
-            .do_nothing()
-            .to_owned();
-    match api_protection_setting::Entity::insert(insert)
-        .on_conflict(ignore_conflict)
-        .exec(db)
-        .await
-    {
-        Ok(_) | Err(DbErr::RecordNotInserted) => {},
-        Err(err) => return Err(err),
-    }
-
-    api_protection_setting::Entity::find_by_id(SETTINGS_ID)
-        .one(db)
-        .await?
-        .ok_or_else(|| {
-            DbErr::RecordNotFound(
-                "api protection settings row vanished".to_string(),
-            )
-        })
-}
-
-/// The effective allowlist of a settings row: inline ranges plus the ranges
-/// of the referenced group (when it exists and is enabled — a disabled group
-/// is not deployed anywhere, so it contributes nothing here either).
-pub async fn effective_allowlist(
-    db: &DatabaseConnection,
-    settings: &api_protection_setting::Model,
-) -> Result<(Allowlist, Option<DateTime<Utc>>), DbErr> {
-    let mut ranges = settings.ip_allowlist_ranges.clone();
-    let mut group_updated_at = None;
-    if let Some(group_id) = settings.ip_allowlist_group_id {
-        let group = ip_groups::Entity::find_by_id(group_id).one(db).await?;
-        match group {
-            Some(group) => {
-                // Track the row even while it is disabled: enabling or
-                // editing the group later must rebuild the policy. Before
-                // this timestamp was compared, the policy only rebuilt when
-                // the *settings* row changed, so a group enabled after the
-                // save kept being ignored until the next save or restart.
-                group_updated_at = Some(group.updated_at);
-                if group.enabled {
-                    ranges.extend(group.ip_ranges);
-                } else {
-                    tracing::warn!(
-                        group_id = %group_id,
-                        "API allowlist references a disabled ip group; only the inline ranges apply"
-                    );
-                }
-            },
-            None => tracing::warn!(
-                group_id = %group_id,
-                "API allowlist references a missing ip group; only the inline ranges apply"
-            ),
-        }
-    }
-    let (allowlist, invalid) = Allowlist::parse(ranges);
-    if !invalid.is_empty() {
-        tracing::warn!(
-            invalid = ?invalid,
-            "ignoring invalid API allowlist entries"
-        );
-    }
-    Ok((allowlist, group_updated_at))
-}
-
-/// Builds the enforcement policy from the current settings row.
-pub async fn refresh(
-    db: &DatabaseConnection,
-) -> Result<ProtectionPolicy, DbErr> {
-    let settings = load_settings(db).await?;
-    let (allowlist, group_updated_at) =
-        effective_allowlist(db, &settings).await?;
-    let (denylist, invalid_deny) =
-        Allowlist::parse(&settings.ip_denylist_ranges);
-    if !invalid_deny.is_empty() {
-        tracing::warn!(
-            invalid = ?invalid_deny,
-            "ignoring invalid API denylist entries"
-        );
-    }
-    let waf_blocking = settings.waf_mode == waf_mode::BLOCK;
-    let waf = settings.waf_enabled.then(|| {
-        // Only the mode differs from the engine baseline; every detection
-        // knob is deliberately left at `WafEngineConfig::default`.
-        Arc::new(WafEngine::new(&WafEngineConfig {
-            mode: if waf_blocking {
-                WafMode::Block
-            } else {
-                WafMode::Monitor
-            },
-            ..Default::default()
-        }))
-    });
-
-    Ok(ProtectionPolicy {
-        access_log_enabled: settings.access_log_enabled,
-        allowlist_enabled: settings.ip_allowlist_enabled,
-        allowlist,
-        denylist_enabled: settings.ip_denylist_enabled,
-        denylist,
-        waf,
-        waf_blocking,
-        settings_updated_at: settings.updated_at,
-        group_updated_at,
-    })
-}
-
-/// Whether a freshly built policy differs from the one in force.
-///
-/// Both inputs matter: the settings row *and* the referenced IP group. The
-/// group is edited on its own page (and enabled by its own switch), so
-/// comparing only the settings timestamp left a group enabled after the save
-/// out of the enforced policy until something else touched the settings.
-fn inputs_changed(
-    current: &ProtectionPolicy,
-    fresh: &ProtectionPolicy,
-) -> bool {
-    fresh.settings_updated_at != current.settings_updated_at
-        || fresh.group_updated_at != current.group_updated_at
-}
-
-/// Background task: re-read the settings every [`REFRESH_INTERVAL`] and swap
-/// the policy in when the row changed. Failures keep the previous policy.
-pub fn start_refresh_task(state: AppState) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(REFRESH_INTERVAL).await;
-            match refresh(&state.db).await {
-                Ok(policy) => {
-                    let current = state.protection.policy();
-                    if inputs_changed(&current, &policy) {
-                        tracing::info!(
-                            allowlist_enabled = policy.allowlist_enabled,
-                            allowlist_entries = policy.allowlist.len(),
-                            group_updated_at = ?policy.group_updated_at,
-                            waf_enabled = policy.waf.is_some(),
-                            "control plane protection settings reloaded"
-                        );
-                        state.protection.store(policy);
-                    }
-                },
-                Err(err) => tracing::warn!(
-                    error = %err,
-                    "could not reload control plane protection settings"
-                ),
-            }
-        }
-    })
-}
 
 /// Marker the inner middlewares leave on the response, read back by
 /// [`access_log`] once the response is on its way out.
@@ -715,47 +526,5 @@ mod tests {
         assert!(!allowlist.contains(&ip("116.197.156.1")));
         assert!(allowlist.contains(&ip("103.16.60.21")));
         assert!(!allowlist.contains(&ip("103.16.60.22")));
-    }
-
-    #[test]
-    fn a_referenced_group_edit_rebuilds_the_policy() {
-        let base = Utc::now();
-        let current = ProtectionPolicy {
-            settings_updated_at: base,
-            group_updated_at: Some(base),
-            ..Default::default()
-        };
-
-        // Unchanged inputs: no rebuild.
-        let same = ProtectionPolicy {
-            settings_updated_at: base,
-            group_updated_at: Some(base),
-            ..Default::default()
-        };
-        assert!(!inputs_changed(&current, &same));
-
-        // The group was enabled/edited after the settings save: rebuild.
-        let group_edited = ProtectionPolicy {
-            settings_updated_at: base,
-            group_updated_at: Some(base + chrono::Duration::seconds(1)),
-            ..Default::default()
-        };
-        assert!(inputs_changed(&current, &group_edited));
-
-        // A group appearing or disappearing also rebuilds.
-        let group_cleared = ProtectionPolicy {
-            settings_updated_at: base,
-            group_updated_at: None,
-            ..Default::default()
-        };
-        assert!(inputs_changed(&current, &group_cleared));
-
-        // A settings save still rebuilds.
-        let settings_saved = ProtectionPolicy {
-            settings_updated_at: base + chrono::Duration::seconds(1),
-            group_updated_at: Some(base),
-            ..Default::default()
-        };
-        assert!(inputs_changed(&current, &settings_saved));
     }
 }

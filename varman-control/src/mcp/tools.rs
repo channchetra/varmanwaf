@@ -17,22 +17,25 @@ use std::collections::HashMap;
 use chrono::{DateTime, Duration, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set,
+    QueryFilter, QueryOrder, QuerySelect, QueryTrait, Set,
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::api::common::query_all;
 use crate::api::logs::escape_like;
+use crate::api::sites;
 use crate::api::state::AppState;
-use crate::api::{defense, self_protection, sites};
 use crate::certificate_status as cert_status;
+use crate::defense_service;
 use crate::grpc::{notify_all_config_changed, notify_config_changed};
+use crate::mcp::auth::role_can_read_all;
 use crate::models::{
-    access_log, agent, agent_status, control_plane_access_log,
-    defense_settings, ip_groups, security_event, site, site_certificates,
-    site_status,
+    access_log, agent, agent_status, api_key, control_plane_access_log,
+    defense_settings, ip_group_sites, ip_groups, security_event, site,
+    site_certificates, site_status, user,
 };
+use crate::self_protection;
 
 /// Upper bound on rows any single tool returns.
 const MAX_ROWS: u64 = 50;
@@ -46,6 +49,11 @@ pub struct ToolContext<'a> {
     pub state: &'a AppState,
     /// Identity recorded in audit logs, e.g. `api key pwk_abcd (grafana)`.
     pub actor: &'a str,
+    /// Owning user id of the caller. Tools scope tenant data to it unless
+    /// `can_read_all` is set.
+    pub subject: Uuid,
+    /// Whether reads may span every tenant (administrator or auditor).
+    pub can_read_all: bool,
     /// Whether write tools may be invoked.
     pub can_write: bool,
 }
@@ -362,6 +370,117 @@ async fn site_names(
 }
 
 // ─────────────────────────────────────────────────────────────
+// Tenant scope
+// ─────────────────────────────────────────────────────────────
+
+/// Error for a site the caller may not read. Missing and foreign sites answer
+/// identically so site ids cannot be probed.
+pub const SITE_NOT_VISIBLE: &str = "site not found or not visible";
+
+/// True when `ctx` may read a site owned by `owner`.
+fn site_visible(ctx: &ToolContext<'_>, owner: Uuid) -> bool {
+    ctx.can_read_all || owner == ctx.subject
+}
+
+/// Site ids a caller limited to its own tenant may see; `None` means the
+/// caller may read every site.
+pub async fn visible_site_ids(
+    ctx: &ToolContext<'_>,
+) -> Result<Option<Vec<Uuid>>, String> {
+    if ctx.can_read_all {
+        return Ok(None);
+    }
+    let ids = site::Entity::find()
+        .select_only()
+        .column(site::Column::Id)
+        .filter(site::Column::UserId.eq(ctx.subject))
+        .into_tuple::<Uuid>()
+        .all(&ctx.state.db)
+        .await
+        .map_err(db_error)?;
+    Ok(Some(ids))
+}
+
+/// Fails unless the caller may read `site_id`.
+async fn ensure_site_visible(
+    ctx: &ToolContext<'_>,
+    site_id: Uuid,
+) -> Result<(), String> {
+    if ctx.can_read_all {
+        return Ok(());
+    }
+    let row = site::Entity::find_by_id(site_id)
+        .one(&ctx.state.db)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| SITE_NOT_VISIBLE.to_string())?;
+    if site_visible(ctx, row.user_id) {
+        Ok(())
+    } else {
+        Err(SITE_NOT_VISIBLE.to_string())
+    }
+}
+
+/// Tenant predicate for `column`. An empty id set renders the constant
+/// `FALSE` (`Condition::any()`), keeping the query valid where `IN ()` would
+/// be a syntax error.
+fn site_scope<C>(column: C, ids: &[Uuid]) -> Condition
+where
+    C: ColumnTrait,
+{
+    if ids.is_empty() {
+        return Condition::any();
+    }
+    Condition::all().add(column.is_in(ids.to_vec()))
+}
+
+/// Appends the tenant predicate to a raw-SQL `WHERE` body, numbering the
+/// placeholders after the values already collected. `visible` is `None` for
+/// read-all callers; an empty set renders `AND FALSE`.
+fn append_raw_site_scope(
+    where_sql: &mut String,
+    values: &mut Vec<sea_orm::Value>,
+    site_id: Option<Uuid>,
+    visible: &Option<Vec<Uuid>>,
+) {
+    if let Some(id) = site_id {
+        where_sql.push_str(&format!(" AND site_id = ${}", values.len() + 1));
+        values.push(id.into());
+        return;
+    }
+    let Some(ids) = visible else {
+        return;
+    };
+    if ids.is_empty() {
+        where_sql.push_str(" AND FALSE");
+        return;
+    }
+    let start = values.len() + 1;
+    let placeholders: Vec<String> = (0..ids.len())
+        .map(|index| format!("${}", start + index))
+        .collect();
+    where_sql
+        .push_str(&format!(" AND site_id IN ({})", placeholders.join(", ")));
+    values.extend(ids.iter().copied().map(sea_orm::Value::from));
+}
+
+/// Loads the caller's role to decide whether tool reads span every tenant.
+/// Fails closed: a missing row or a database error means "own tenant only".
+pub(crate) async fn can_read_all_user(state: &AppState, user_id: Uuid) -> bool {
+    match user::Entity::find_by_id(user_id).one(&state.db).await {
+        Ok(Some(row)) => role_can_read_all(&row.role),
+        Ok(None) => false,
+        Err(err) => {
+            tracing::error!(
+                error = %err,
+                "could not load the role of a tool caller"
+            );
+            false
+        },
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
 // Read tools
 // ─────────────────────────────────────────────────────────────
 
@@ -371,6 +490,9 @@ async fn list_sites(
 ) -> Result<Value, String> {
     let limit = arg_limit(args, 50);
     let mut condition = Condition::all();
+    if !ctx.can_read_all {
+        condition = condition.add(site::Column::UserId.eq(ctx.subject));
+    }
     if let Some(search) = arg_string(args, "search") {
         let pattern = contains_pattern(&search);
         condition = condition.add(
@@ -388,10 +510,19 @@ async fn list_sites(
         .await
         .map_err(db_error)?;
 
+    // The count only feeds the page above, so scoping it to those site ids
+    // keeps other tenants' agent counts out of the answer at no extra query.
+    let mut online_condition =
+        Condition::all().add(agent::Column::Status.eq(agent_status::ONLINE));
+    if !ctx.can_read_all {
+        let page_ids: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
+        online_condition =
+            online_condition.add(site_scope(agent::Column::SiteId, &page_ids));
+    }
     let online_ids = agent::Entity::find()
         .select_only()
         .column(agent::Column::SiteId)
-        .filter(agent::Column::Status.eq(agent_status::ONLINE))
+        .filter(online_condition)
         .into_tuple::<Option<Uuid>>()
         .all(&ctx.state.db)
         .await
@@ -417,6 +548,39 @@ async fn list_sites(
     Ok(json!({ "count": sites.len(), "sites": sites }))
 }
 
+/// Visibility predicate for a caller limited to its own tenant, mirroring
+/// `api::agents::list` and `grpc::agent_visible_site_ids`: a bound agent shows
+/// under the site it serves, an unbound one through the API keys its owner
+/// registered. The bootstrap-key all-in-one agent is registered by its owner's
+/// key, so it stays visible to exactly the same callers as in the REST list.
+async fn agent_visibility_condition(
+    ctx: &ToolContext<'_>,
+) -> Result<Condition, String> {
+    let owned_site_ids: Vec<Uuid> = site::Entity::find()
+        .select_only()
+        .column(site::Column::Id)
+        .filter(site::Column::UserId.eq(ctx.subject))
+        .into_tuple::<Uuid>()
+        .all(&ctx.state.db)
+        .await
+        .map_err(db_error)?;
+    let key_ids: Vec<Uuid> = api_key::Entity::find()
+        .select_only()
+        .column(api_key::Column::Id)
+        .filter(api_key::Column::UserId.eq(ctx.subject))
+        .into_tuple::<Uuid>()
+        .all(&ctx.state.db)
+        .await
+        .map_err(db_error)?;
+    Ok(Condition::any()
+        .add(agent::Column::SiteId.is_in(owned_site_ids))
+        .add(
+            Condition::all()
+                .add(agent::Column::SiteId.is_null())
+                .add(agent::Column::ApiKeyId.is_in(key_ids)),
+        ))
+}
+
 async fn list_agents(
     ctx: &ToolContext<'_>,
     args: &Value,
@@ -434,6 +598,9 @@ async fn list_agents(
             return Err(format!("unknown agent status '{status}'"));
         }
         condition = condition.add(agent::Column::Status.eq(status));
+    }
+    if !ctx.can_read_all {
+        condition = condition.add(agent_visibility_condition(ctx).await?);
     }
 
     let rows = agent::Entity::find()
@@ -472,10 +639,15 @@ async fn list_agents(
 }
 
 async fn certificate_summary(ctx: &ToolContext<'_>) -> Result<Value, String> {
-    let rows = site_certificates::Entity::find()
+    let mut query = site_certificates::Entity::find()
         .select_only()
         .column(site_certificates::Column::Status)
-        .column(site_certificates::Column::ExpiresAt)
+        .column(site_certificates::Column::ExpiresAt);
+    if let Some(visible) = visible_site_ids(ctx).await? {
+        query = query
+            .filter(site_scope(site_certificates::Column::SiteId, &visible));
+    }
+    let rows = query
         .into_tuple::<(String, Option<DateTime<Utc>>)>()
         .all(&ctx.state.db)
         .await
@@ -520,7 +692,11 @@ async fn query_access_logs(
     let mut condition =
         Condition::all().add(access_log::Column::Timestamp.gte(from));
     if let Some(site_id) = arg_uuid(args, "site_id")? {
+        ensure_site_visible(ctx, site_id).await?;
         condition = condition.add(access_log::Column::SiteId.eq(site_id));
+    } else if let Some(visible) = visible_site_ids(ctx).await? {
+        condition =
+            condition.add(site_scope(access_log::Column::SiteId, &visible));
     }
     if let Some(class) = args.get("status_class").and_then(Value::as_i64) {
         if !(1..=5).contains(&class) {
@@ -603,7 +779,11 @@ async fn query_waf_events(
     let mut condition =
         Condition::all().add(security_event::Column::Timestamp.gte(from));
     if let Some(site_id) = arg_uuid(args, "site_id")? {
+        ensure_site_visible(ctx, site_id).await?;
         condition = condition.add(security_event::Column::SiteId.eq(site_id));
+    } else if let Some(visible) = visible_site_ids(ctx).await? {
+        condition =
+            condition.add(site_scope(security_event::Column::SiteId, &visible));
     }
     if let Some(action) = arg_string(args, "action") {
         condition = condition.add(security_event::Column::Action.eq(action));
@@ -662,15 +842,20 @@ async fn get_traffic_summary(
 ) -> Result<Value, String> {
     let hours = window_hours(args, DEFAULT_WINDOW_HOURS);
     let site_id = arg_uuid(args, "site_id")?;
+    if let Some(id) = site_id {
+        ensure_site_visible(ctx, id).await?;
+    }
+    let visible = if site_id.is_some() {
+        None
+    } else {
+        visible_site_ids(ctx).await?
+    };
     let to = Utc::now();
     let from = to - Duration::hours(hours);
 
     let mut where_sql = "timestamp >= $1 AND timestamp < $2".to_string();
     let mut values: Vec<sea_orm::Value> = vec![from.into(), to.into()];
-    if let Some(id) = site_id {
-        where_sql.push_str(" AND site_id = $3");
-        values.push(id.into());
-    }
+    append_raw_site_scope(&mut where_sql, &mut values, site_id, &visible);
 
     let access_sql = format!(
         "SELECT COUNT(*) AS requests, \
@@ -690,10 +875,12 @@ async fn get_traffic_summary(
 
     let mut event_where = "timestamp >= $1 AND timestamp < $2".to_string();
     let mut event_values: Vec<sea_orm::Value> = vec![from.into(), to.into()];
-    if let Some(id) = site_id {
-        event_where.push_str(" AND site_id = $3");
-        event_values.push(id.into());
-    }
+    append_raw_site_scope(
+        &mut event_where,
+        &mut event_values,
+        site_id,
+        &visible,
+    );
     let event_sql = format!(
         "SELECT COUNT(*) AS security_events, \
                 COUNT(*) FILTER (WHERE action = 'block') AS blocked_requests, \
@@ -740,7 +927,9 @@ fn read_i64(row: &Option<sea_orm::QueryResult>, column: &str) -> i64 {
 }
 
 async fn get_defense_status(ctx: &ToolContext<'_>) -> Result<Value, String> {
-    let defense = defense::load(&ctx.state.db).await.map_err(api_error)?;
+    let defense = defense_service::load(&ctx.state.db)
+        .await
+        .map_err(api_error)?;
     let settings = self_protection::load_settings(&ctx.state.db)
         .await
         .map_err(db_error)?;
@@ -763,7 +952,28 @@ async fn get_defense_status(ctx: &ToolContext<'_>) -> Result<Value, String> {
 }
 
 async fn list_ip_groups(ctx: &ToolContext<'_>) -> Result<Value, String> {
+    let mut condition = Condition::all();
+    if !ctx.can_read_all {
+        // Mirrors `api::ip_groups::list`: global groups plus the groups linked
+        // to a site this caller owns.
+        let user_site_ids = site::Entity::find()
+            .filter(site::Column::UserId.eq(ctx.subject))
+            .select_only()
+            .column(site::Column::Id)
+            .into_query();
+        let linked_group_ids = ip_group_sites::Entity::find()
+            .filter(ip_group_sites::Column::SiteId.in_subquery(user_site_ids))
+            .select_only()
+            .column(ip_group_sites::Column::IpGroupId)
+            .into_query();
+        condition = condition.add(
+            ip_groups::Column::IsGlobal
+                .eq(true)
+                .or(ip_groups::Column::Id.in_subquery(linked_group_ids)),
+        );
+    }
     let rows = ip_groups::Entity::find()
+        .filter(condition)
         .order_by_asc(ip_groups::Column::Name)
         .all(&ctx.state.db)
         .await
@@ -801,6 +1011,12 @@ async fn query_control_plane_logs(
     if let Some(action) = arg_string(args, "action") {
         condition =
             condition.add(control_plane_access_log::Column::Action.eq(action));
+    }
+    if !ctx.can_read_all {
+        // Only the caller's own control-plane activity; rows without an
+        // attributable user (anonymous probes, failed logins) stay hidden.
+        condition = condition
+            .add(control_plane_access_log::Column::UserId.eq(ctx.subject));
     }
 
     let total = control_plane_access_log::Entity::find()
@@ -853,7 +1069,9 @@ async fn set_observation_mode(
         .and_then(Value::as_bool)
         .ok_or_else(|| "'enabled' (boolean) is required".to_string())?;
 
-    let row = defense::load(&ctx.state.db).await.map_err(api_error)?;
+    let row = defense_service::load(&ctx.state.db)
+        .await
+        .map_err(api_error)?;
     let previous = row.observation_mode;
     if previous != enabled {
         let mut active: defense_settings::ActiveModel = row.into();
@@ -898,7 +1116,13 @@ async fn set_site_status(
         (None, None) => return Err("provide 'site_id' or 'domain'".to_string()),
     }
     .map_err(db_error)?
-    .ok_or_else(|| "site not found".to_string())?;
+    .ok_or_else(|| SITE_NOT_VISIBLE.to_string())?;
+
+    // Tenant check before any write, config touch or agent push: a foreign
+    // site is reported exactly like a missing one.
+    if !site_visible(ctx, row.user_id) {
+        return Err(SITE_NOT_VISIBLE.to_string());
+    }
 
     let id = row.id;
     let previous = row.status.clone();
@@ -1024,5 +1248,52 @@ mod tests {
             arg_uuid(&json!({ "site_id": "not-a-uuid" }), "site_id").is_err()
         );
         assert!(arg_uuid(&json!({ "site_id": 7 }), "site_id").is_err());
+    }
+
+    #[test]
+    fn an_empty_visible_set_renders_false_not_an_empty_in_list() {
+        use sea_orm::sea_query::PostgresQueryBuilder;
+
+        let none = site::Entity::find()
+            .filter(site_scope(access_log::Column::SiteId, &[]))
+            .into_query()
+            .to_string(PostgresQueryBuilder);
+        assert!(none.contains("FALSE"), "{none}");
+        assert!(!none.contains("IN ()"), "{none}");
+
+        let ids = vec![Uuid::new_v4()];
+        let scoped = site::Entity::find()
+            .filter(site_scope(access_log::Column::SiteId, &ids))
+            .into_query()
+            .to_string(PostgresQueryBuilder);
+        assert!(scoped.contains("\"site_id\" IN"), "{scoped}");
+    }
+
+    #[test]
+    fn raw_sql_scope_numbers_placeholders_and_never_emits_in_empty() {
+        let mut where_sql = "timestamp >= $1 AND timestamp < $2".to_string();
+        let mut values: Vec<sea_orm::Value> = vec![1_i64.into()];
+        append_raw_site_scope(&mut where_sql, &mut values, None, &Some(vec![]));
+        assert_eq!(where_sql, "timestamp >= $1 AND timestamp < $2 AND FALSE");
+        assert_eq!(values.len(), 1);
+
+        let id = Uuid::new_v4();
+        let mut where_sql = "timestamp >= $1".to_string();
+        let mut values: Vec<sea_orm::Value> = vec![1_i64.into()];
+        append_raw_site_scope(
+            &mut where_sql,
+            &mut values,
+            None,
+            &Some(vec![id]),
+        );
+        assert_eq!(where_sql, "timestamp >= $1 AND site_id IN ($2)");
+        assert_eq!(values.len(), 2);
+
+        // A read-all caller gets no predicate.
+        let mut where_sql = "timestamp >= $1".to_string();
+        let mut values: Vec<sea_orm::Value> = vec![1_i64.into()];
+        append_raw_site_scope(&mut where_sql, &mut values, None, &None);
+        assert_eq!(where_sql, "timestamp >= $1");
+        assert_eq!(values.len(), 1);
     }
 }

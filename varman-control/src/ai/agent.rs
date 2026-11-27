@@ -189,9 +189,12 @@ async fn execute(
     // 3. Tool-calling rounds, then one final tool-less round.
     let max_rounds = settings.max_tool_rounds.clamp(1, MAX_TOOL_ROUNDS_LIMIT);
     let actor = format!("{} (AI assistant)", request.user_email);
+    let can_read_all = tools::can_read_all_user(state, request.user_id).await;
     let tool_ctx = ToolContext {
         state,
         actor: &actor,
+        subject: request.user_id,
+        can_read_all,
         can_write: request.can_write,
     };
     let mut answer = String::new();

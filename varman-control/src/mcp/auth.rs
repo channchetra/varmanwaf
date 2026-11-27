@@ -6,7 +6,8 @@
 //!   key's `read` / `write` permissions deciding what the session may call.
 //!   `write` additionally requires the key's owner to be an administrator.
 //! - a console **JWT** — the same tokens the dashboard uses; `admin` maps to
-//!   read+write, `viewer` to read-only. Beyond the signature, the account
+//!   read+write and `auditor` to read-only over every tenant, `viewer` to
+//!   read-only over its own sites. Beyond the signature, the account
 //!   row is re-checked on every request exactly like the REST API: disabled
 //!   accounts, revoked sessions (token version) and the forced first-login
 //!   password change all refuse access here too.
@@ -40,7 +41,17 @@ pub struct McpPrincipal {
     /// Key id when the caller authenticated with an API key.
     pub key_id: Option<Uuid>,
     pub can_read: bool,
+    /// Whether reads may span every tenant: administrators and the read-only
+    /// `auditor` role qualify, `viewer` does not.
+    pub can_read_all: bool,
     pub can_write: bool,
+}
+
+/// True when `role_name` may read every tenant's resources. Mirrors
+/// [`AuthUser::can_read_all`]; writes stay behind [`McpPrincipal::can_write`],
+/// which is administrator-only.
+pub fn role_can_read_all(role_name: &str) -> bool {
+    role_name == role::ADMIN || role_name == role::AUDITOR
 }
 
 /// Rejection of [`McpPrincipal`]; renders as `401`/`403`/`500` JSON.
@@ -134,6 +145,7 @@ fn key_principal(
         key_id: Some(key.id),
         // A writer can always read; `write` keys are the broader grant.
         can_read: true,
+        can_read_all: role_can_read_all(&owner.role),
         can_write: has_write && owner.role == role::ADMIN,
     })
 }
@@ -151,6 +163,7 @@ fn jwt_principal(user: &AuthUser) -> Result<McpPrincipal, McpAuthError> {
         label: user.email.clone(),
         key_id: None,
         can_read: true,
+        can_read_all: role_can_read_all(&user.role),
         can_write: user.is_admin(),
     })
 }
@@ -277,13 +290,33 @@ mod tests {
     fn roles_map_onto_capabilities() {
         let admin =
             AuthUser::new(Uuid::new_v4(), "admin@example.com", role::ADMIN);
-        assert!(jwt_principal(&admin).unwrap().can_write);
+        let admin = jwt_principal(&admin).unwrap();
+        assert!(admin.can_write);
+        assert!(admin.can_read_all);
 
         let viewer =
             AuthUser::new(Uuid::new_v4(), "v@example.com", role::VIEWER);
         let viewer = jwt_principal(&viewer).unwrap();
         assert!(viewer.can_read);
         assert!(!viewer.can_write);
+        assert!(!viewer.can_read_all);
+    }
+
+    #[test]
+    fn auditors_read_every_tenant_but_never_write() {
+        let auditor =
+            AuthUser::new(Uuid::new_v4(), "audit@example.com", role::AUDITOR);
+        let auditor = jwt_principal(&auditor).unwrap();
+        assert!(auditor.can_read);
+        assert!(auditor.can_read_all);
+        assert!(!auditor.can_write);
+
+        // The API-key path takes the role of the key's owner.
+        let auditor_key =
+            key_principal(&key(&[permission::READ]), &owner(role::AUDITOR))
+                .unwrap();
+        assert!(auditor_key.can_read_all);
+        assert!(!auditor_key.can_write);
     }
 
     #[test]

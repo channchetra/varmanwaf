@@ -10,6 +10,7 @@ use chrono::Utc;
 use serde_json::{json, Value};
 
 use crate::api::state::AppState;
+use crate::mcp::auth::McpPrincipal;
 use crate::mcp::tools::{self, ToolContext};
 
 /// Metadata of one resource, mirroring MCP's `resources/list` shape.
@@ -73,12 +74,14 @@ pub fn list() -> Value {
 /// `resources/read` payload for one URI.
 pub async fn read(
     state: &AppState,
-    actor: &str,
+    principal: &McpPrincipal,
     uri: &str,
 ) -> Result<Value, String> {
     let ctx = ToolContext {
         state,
-        actor,
+        actor: &principal.label,
+        subject: principal.subject,
+        can_read_all: principal.can_read_all,
         // Resources are read-only by construction.
         can_write: false,
     };

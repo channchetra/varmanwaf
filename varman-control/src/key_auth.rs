@@ -119,9 +119,12 @@ pub async fn authenticate_api_key(
 }
 
 /// True when the key is allowed to register agents and ship telemetry.
+///
+/// Permissions are an explicit allow-list: the key must carry the `agent`
+/// permission. Keys minted before this check with an empty permission list are
+/// no longer allowed to enrol agents and must be re-granted the permission.
 pub fn key_allows_agent(key: &api_key::Model) -> bool {
-    key.permissions.is_empty()
-        || key.permissions.iter().any(|p| p == permission::AGENT)
+    key.permissions.iter().any(|p| p == permission::AGENT)
 }
 
 #[cfg(test)]
@@ -170,7 +173,9 @@ mod tests {
 
         let mut empty = key.clone();
         empty.permissions = Vec::new();
-        assert!(key_allows_agent(&empty));
+        // Empty permissions must not imply `agent`; legacy keys have to be
+        // re-granted explicitly.
+        assert!(!key_allows_agent(&empty));
     }
 
     #[test]

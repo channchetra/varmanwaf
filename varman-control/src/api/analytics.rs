@@ -240,10 +240,11 @@ async fn resolve(
             load_site_read(&state.db, id, current).await?;
             Some(id)
         },
-        None if current.is_admin() => None,
+        None if current.can_read_all() => None,
         None => {
-            // Non-admins may still see everything they own; pick the single site
-            // when they only have one, otherwise require the parameter.
+            // Other accounts may still see everything they own; pick the
+            // single site when they only have one, otherwise require the
+            // parameter.
             let owned = site::Entity::find()
                 .filter(site::Column::UserId.eq(current.id))
                 .all(&state.db)
@@ -570,8 +571,8 @@ async fn sites_over_time(
     }
 
     let (mut where_sql, mut where_values) = resolved.filter("a");
-    if resolved.site_id.is_none() && !current.is_admin() {
-        // Non-admins only see their own sites.
+    if resolved.site_id.is_none() && !current.can_read_all() {
+        // Accounts limited to their own sites only see those sites.
         let user_placeholder = where_values.len() + 1;
         where_sql.push_str(&format!(" AND s.user_id = ${user_placeholder}"));
         where_values.push(current.id.into());

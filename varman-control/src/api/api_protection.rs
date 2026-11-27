@@ -26,7 +26,6 @@ use uuid::Uuid;
 use crate::api::common::{non_empty, Page, Pagination};
 use crate::api::error::ApiError;
 use crate::api::logs::{free_text_filter, resolve_window, text_filter};
-use crate::api::self_protection;
 use crate::api::state::AppState;
 use crate::auth::AuthUser;
 use crate::models::api_protection::{
@@ -35,6 +34,7 @@ use crate::models::api_protection::{
 use crate::models::{
     api_protection_setting, control_plane_access_log, ip_groups,
 };
+use crate::self_protection;
 use crate::tls::ConnInfo;
 
 /// Routes contributed to `/api/v1`.

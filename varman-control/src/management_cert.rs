@@ -34,8 +34,8 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::api::system_tls::store_and_activate;
 use crate::app_state::AppState;
+use crate::control_tls::store_and_activate;
 use crate::models::certificate_events;
 use crate::models::management_certificate::management_certificate as model;
 use crate::models::{event_type, severity};
