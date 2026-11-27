@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Plugin, get_hash_key, get_step_conf, get_str_conf};
+use super::{Plugin, get_hash_key, get_step_conf_in, get_str_conf};
 use crate::process::get_start_time;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -101,22 +101,19 @@ impl TryFrom<&PluginConf> for Stats {
     /// or an Error if the configuration is invalid
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
+        // Stats responses are produced on the request path only.
+        let step = get_step_conf_in(
+            value,
+            &PluginCategory::Stats.to_string(),
+            PluginStep::Request,
+            &[PluginStep::Request, PluginStep::ProxyUpstream],
+        )?;
 
-        let params = Self {
+        Ok(Self {
             hash_value,
             plugin_step: step,
             path: get_str_conf(value, "path"),
-        };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
-            return Err(Error::Invalid {
-                category: PluginCategory::Stats.to_string(),
-                message: "Stats plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
-        Ok(params)
+        })
     }
 }
 
@@ -230,6 +227,7 @@ mod tests {
         .unwrap();
 
         assert_eq!("/stats", params.path);
+        assert_eq!("request", params.plugin_step.to_string());
 
         let result = Stats::try_from(
             &toml::from_str::<PluginConf>(
@@ -242,7 +240,7 @@ mod tests {
         );
 
         assert_eq!(
-            "Plugin stats invalid, message: Stats plugin should be executed at request or proxy upstream step",
+            "Plugin stats invalid, message: Invalid step(response), expect one of: request, proxy_upstream",
             result.err().unwrap().to_string()
         );
     }

@@ -45,6 +45,9 @@ use tracing::error;
 
 const PLUGIN_ID: &str = "_jwt_";
 
+/// JWKS cache lifetime used when `jwks_ttl` is absent or empty.
+const DEFAULT_JWKS_TTL: Duration = Duration::from_secs(3600);
+
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// JwtAuth struct holds configuration for JWT authentication and validation.
@@ -298,7 +301,8 @@ fn is_asymmetric_alg(alg: Algorithm) -> bool {
 }
 
 /// Builds a remote JWKS source when `jwks_url` is configured (`Ok(None)`
-/// otherwise). `jwks_ttl` controls the cache lifetime (default 1h).
+/// otherwise). `jwks_ttl` controls the cache lifetime; `None` keeps
+/// [`DEFAULT_JWKS_TTL`].
 fn build_jwks_source(
     url: &str,
     jwks_ttl: Option<Duration>,
@@ -310,7 +314,7 @@ fn build_jwks_source(
         category: PluginCategory::Jwt.to_string(),
         message: format!("invalid jwks_url: {e}"),
     })?;
-    let ttl = jwks_ttl.unwrap_or(Duration::from_secs(3600));
+    let ttl = jwks_ttl.unwrap_or(DEFAULT_JWKS_TTL);
     let cooldown = ttl.min(Duration::from_secs(10));
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -338,8 +342,8 @@ struct JwtAuthParams {
     cookie: String,
     delay: String,
     header: String,
-    /// Only consulted when `jwks_url` is set; an unparsable value falls back
-    /// to the one-hour default, as before.
+    /// JWKS cache lifetime. Empty keeps the one-hour default; a non-empty
+    /// invalid duration is rejected.
     jwks_ttl: String,
     jwks_url: String,
     public_key: String,
@@ -399,10 +403,20 @@ impl TryFrom<&PluginConf> for JwtAuth {
         let algorithm = params.algorithm;
         let decoding_key =
             build_asymmetric_key(&algorithm, &params.public_key)?;
-        let jwks = build_jwks_source(
-            &params.jwks_url,
-            parse_duration(&params.jwks_ttl).ok(),
-        )?;
+        let jwks_ttl = if params.jwks_ttl.is_empty() {
+            None
+        } else {
+            Some(parse_duration(&params.jwks_ttl).map_err(|e| {
+                Error::Invalid {
+                    category: PluginCategory::Jwt.to_string(),
+                    message: format!(
+                        "invalid jwks_ttl({}): {e}",
+                        params.jwks_ttl
+                    ),
+                }
+            })?)
+        };
+        let jwks = build_jwks_source(&params.jwks_url, jwks_ttl)?;
 
         let params = Self {
             hash_value,
@@ -788,6 +802,30 @@ secret = "123123"
         assert_eq!(
             "Plugin jwt invalid, message: Jwt key or key type is not allowed empty",
             result.err().unwrap().to_string()
+        );
+    }
+
+    /// `jwks_ttl`: a valid duration is honoured, an absent/empty one keeps the
+    /// default, and an invalid one is rejected instead of silently defaulted.
+    #[test]
+    fn test_jwt_jwks_ttl() {
+        let conf = |ttl: &str| {
+            toml::from_str::<PluginConf>(&format!(
+                "header = \"Authorization\"\njwks_url = \"http://127.0.0.1:1/jwks\"\njwks_ttl = \"{ttl}\"\n"
+            ))
+            .unwrap()
+        };
+
+        let auth = JwtAuth::new(&conf("60s")).unwrap();
+        assert_eq!(Duration::from_secs(60), auth.jwks.as_ref().unwrap().ttl);
+
+        let auth = JwtAuth::new(&conf("")).unwrap();
+        assert_eq!(DEFAULT_JWKS_TTL, auth.jwks.as_ref().unwrap().ttl);
+
+        let err = JwtAuth::new(&conf("not-a-duration")).err().unwrap();
+        assert_eq!(
+            true,
+            err.to_string().contains("invalid jwks_ttl(not-a-duration)")
         );
     }
 

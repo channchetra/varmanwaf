@@ -31,6 +31,9 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 const CATEGORY: &str = "forward_auth";
 
+/// Per-request timeout used when `timeout` is absent or empty.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// ForwardAuth delegates authentication to an external HTTP service, similar to
 /// nginx's `auth_request` or Traefik's ForwardAuth.
 ///
@@ -54,6 +57,20 @@ pub struct ForwardAuth {
     /// Auth-response header names to copy onto the upstream request on success.
     add_headers: Vec<String>,
     hash_value: String,
+}
+
+/// Parses the `timeout` field.
+///
+/// An absent or empty value keeps [`DEFAULT_TIMEOUT`]; a non-empty value that
+/// is not a human-readable duration is an error instead of a silent fallback.
+fn parse_timeout(value: &str) -> Result<Duration> {
+    if value.is_empty() {
+        return Ok(DEFAULT_TIMEOUT);
+    }
+    parse_duration(value).map_err(|e| Error::Invalid {
+        category: CATEGORY.to_string(),
+        message: format!("invalid timeout({value}): {e}"),
+    })
 }
 
 /// Typed view of `[plugins.<name>]` for the forward auth plugin.
@@ -85,9 +102,7 @@ impl TryFrom<&PluginConf> for ForwardAuth {
             message: format!("invalid auth_url: {e}"),
         })?;
 
-        // An absent or unparseable timeout keeps the 10s default, as before.
-        let timeout =
-            parse_duration(&params.timeout).unwrap_or(Duration::from_secs(10));
+        let timeout = parse_timeout(&params.timeout)?;
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
@@ -236,9 +251,10 @@ register_plugin!("forward_auth", ForwardAuth);
 
 #[cfg(test)]
 mod tests {
-    use super::ForwardAuth;
+    use super::{DEFAULT_TIMEOUT, ForwardAuth, parse_timeout};
     use pingap_config::PluginConf;
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
 
     #[test]
     fn test_forward_auth_params() {
@@ -285,5 +301,31 @@ auth_url = "not a url"
         .err()
         .unwrap();
         assert_eq!(true, err.to_string().contains("invalid auth_url"));
+    }
+
+    #[test]
+    fn test_forward_auth_timeout() {
+        // A valid duration is honoured.
+        assert_eq!(Duration::from_secs(5), parse_timeout("5s").unwrap());
+        // An absent/empty timeout keeps the documented default.
+        assert_eq!(DEFAULT_TIMEOUT, parse_timeout("").unwrap());
+
+        // A non-empty invalid duration is rejected, not defaulted.
+        let err = ForwardAuth::try_from(
+            &toml::from_str::<PluginConf>(
+                r#"
+category = "forward_auth"
+auth_url = "http://127.0.0.1:9000/verify"
+timeout = "not-a-duration"
+"#,
+            )
+            .unwrap(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            true,
+            err.to_string().contains("invalid timeout(not-a-duration)")
+        );
     }
 }

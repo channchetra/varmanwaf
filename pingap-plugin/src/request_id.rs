@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_step_conf};
+use super::{Error, get_hash_key, get_step_conf_in};
 use async_trait::async_trait;
 use http::HeaderName;
 use nanoid::nanoid;
@@ -85,8 +85,14 @@ impl TryFrom<&PluginConf> for RequestId {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate a unique hash key for this plugin instance based on its configuration
         let hash_value = get_hash_key(value);
-        // Extract the execution step from configuration
-        let step = get_step_conf(value, PluginStep::Request);
+        // Extract the execution step from configuration; request IDs are only
+        // applied on the request path, so no other step can take effect.
+        let step = get_step_conf_in(
+            value,
+            &PluginCategory::RequestId.to_string(),
+            PluginStep::Request,
+            &[PluginStep::Request, PluginStep::ProxyUpstream],
+        )?;
         let params: RequestIdParams = super::parse_params(value, "request_id")?;
 
         // Parse and validate the custom header name if provided
@@ -108,25 +114,13 @@ impl TryFrom<&PluginConf> for RequestId {
             size = 8;
         }
 
-        let params = Self {
+        Ok(Self {
             hash_value,
             plugin_step: step,
             algorithm: params.algorithm,
             size,
             header_name,
-        };
-
-        // Validate execution step - request IDs should be set early in the pipeline
-        // Either during initial request processing or just before forwarding to upstream
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
-            return Err(Error::Invalid {
-                category: PluginCategory::RequestId.to_string(),
-                message: "Request id should be executed at request or proxy upstream step".to_string(),
-            });
-        }
-        Ok(params)
+        })
     }
 }
 
@@ -250,6 +244,7 @@ size = 10
         .unwrap();
         assert_eq!("nanoid", params.algorithm);
         assert_eq!(10, params.size);
+        assert_eq!("request", params.plugin_step.to_string());
 
         let params = RequestId::new(
             &toml::from_str::<PluginConf>(
@@ -275,7 +270,7 @@ size = 10
             .unwrap(),
         );
         assert_eq!(
-            "Plugin request_id invalid, message: Request id should be executed at request or proxy upstream step",
+            "Plugin request_id invalid, message: Invalid step(response), expect one of: request, proxy_upstream",
             result.err().unwrap().to_string()
         );
     }

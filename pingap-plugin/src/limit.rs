@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_step_conf};
+use super::{Error, get_hash_key, get_step_conf_in};
 use async_trait::async_trait;
 use http::StatusCode;
 use humantime::parse_duration;
@@ -121,7 +121,13 @@ impl TryFrom<&PluginConf> for Limiter {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
+        // Limiting only makes sense on the request path.
+        let step = get_step_conf_in(
+            value,
+            &PluginCategory::Limit.to_string(),
+            PluginStep::Request,
+            &[PluginStep::Request, PluginStep::ProxyUpstream],
+        )?;
         let params: LimitParams = super::parse_params(value, "limit")?;
 
         // Parse the tag type from config, defaulting to IP-based limiting
@@ -161,7 +167,7 @@ impl TryFrom<&PluginConf> for Limiter {
 
         let weight = params.weight.clamp(0, 100) as f64 / 100.0;
 
-        let params = Self {
+        Ok(Self {
             hash_value,
             tag,
             key: params.key,
@@ -170,18 +176,7 @@ impl TryFrom<&PluginConf> for Limiter {
             rate,
             plugin_step: step,
             weight,
-        };
-
-        // Validate plugin step - limiting only makes sense during request or upstream phases
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
-            return Err(Error::Invalid {
-                category: PluginCategory::Limit.to_string(),
-                message: "Limit plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
-        Ok(params)
+        })
     }
 }
 
@@ -394,7 +389,7 @@ max = 10
             .unwrap(),
         );
         assert_eq!(
-            "Plugin limit invalid, message: Limit plugin should be executed at request or proxy upstream step",
+            "Plugin limit invalid, message: Invalid step(response), expect one of: request, proxy_upstream",
             result.err().unwrap().to_string()
         );
     }

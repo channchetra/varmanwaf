@@ -12,13 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use humantime::parse_duration;
 use pingap_config::PluginConf;
 use pingap_core::PluginStep;
 use snafu::Snafu;
 use std::fmt::Write;
 use std::str::FromStr;
-use std::time::Duration;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -56,14 +54,6 @@ pub fn get_str_conf(value: &PluginConf, key: &str) -> String {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string()
-}
-
-/// Helper functions for accessing plugin configuration values
-pub fn get_duration_conf(value: &PluginConf, key: &str) -> Option<Duration> {
-    value
-        .get(key)
-        .and_then(|v| v.as_str())
-        .and_then(|s| parse_duration(s).ok())
 }
 
 pub fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
@@ -138,30 +128,11 @@ pub fn get_int_conf_or_default(
         .unwrap_or(default_value)
 }
 
-/// Resolves `step`, falling back to `default_value` when the key is missing or
-/// holds an unrecognised value.
-///
-/// Prefer [`get_step_conf_in`] for a plugin that implements only some steps:
-/// this function silently accepts an unsupported step, and the plugin then
-/// never runs. The fallback is only appropriate for plugins that handle every
-/// step.
-pub fn get_step_conf(
-    value: &PluginConf,
-    default_value: PluginStep,
-) -> PluginStep {
-    value
-        .get("step")
-        .and_then(|v| v.as_str())
-        .and_then(|s| PluginStep::from_str(s).ok())
-        .unwrap_or(default_value)
-}
-
 /// Resolves `step`, rejecting a value the plugin does not implement.
 ///
-/// `get_step_conf` falls back to the default for an unknown or unsupported
-/// value, which turns a misconfigured `step` into a plugin that quietly never
-/// runs. Plugins that implement only some of the steps should use this so the
-/// mistake surfaces at `pingap -t` instead.
+/// A missing `step` keeps `default_value`; an unknown or unsupported value is
+/// an error, so a misconfigured `step` surfaces at `pingap -t` instead of
+/// turning into a plugin that quietly never runs.
 pub fn get_step_conf_in(
     value: &PluginConf,
     category: &str,

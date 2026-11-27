@@ -15,13 +15,14 @@
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_config::PluginConf;
-use pingap_core::{Plugin, PluginProvider, PluginStep, Plugins};
+use pingap_core::{Plugin, PluginProvider, Plugins};
 use pingap_plugin::get_plugin_factory;
 // Reuse the canonical plugin-config helpers instead of keeping a second copy.
 // `get_hash_key` in particular MUST stay byte-identical to the one plugins use
 // to compute their config key, otherwise hot-reload change detection breaks.
 pub(crate) use pingap_plugin::{
-    get_hash_key, get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf,
+    get_hash_key, get_int_conf, get_step_conf_in, get_str_conf,
+    get_str_slice_conf,
 };
 use pingap_proxy::ServerConf;
 use pingap_util::base64_encode;
@@ -359,7 +360,12 @@ pub fn try_init_plugins(
             continue;
         }
         // changed (or new) -> rebuild from the configuration
-        let step = get_step_conf(&conf, PluginStep::Request).to_string();
+        // This only labels the build log: the category's own constructor
+        // validates `step` and rejects one it does not implement.
+        let step = conf
+            .get("step")
+            .and_then(|value| value.as_str())
+            .unwrap_or("request");
         let category = conf
             .get("category")
             .and_then(|value| value.as_str())

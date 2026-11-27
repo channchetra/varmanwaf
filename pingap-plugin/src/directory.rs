@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_step_conf, parse_params};
+use super::{Error, get_hash_key, get_step_conf_in, parse_params};
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use glob::glob;
@@ -364,7 +364,13 @@ impl TryFrom<&PluginConf> for Directory {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let params: DirectoryParams = parse_params(value, "directory")?;
-        let step = get_step_conf(value, PluginStep::Request);
+        // Static file serving only happens on the request path.
+        let step = get_step_conf_in(
+            value,
+            &PluginCategory::Directory.to_string(),
+            PluginStep::Request,
+            &[PluginStep::Request, PluginStep::ProxyUpstream],
+        )?;
 
         let chunk_size =
             if let Ok(chunk_size) = ByteSize::from_str(&params.chunk_size) {
@@ -414,7 +420,7 @@ impl TryFrom<&PluginConf> for Directory {
         // symlinks content into the served tree keeps working.
         let follow_symlinks = params.follow_symlinks.unwrap_or(true);
 
-        let params = Self {
+        Ok(Self {
             hash_value,
             autoindex: params.autoindex,
             index,
@@ -427,16 +433,7 @@ impl TryFrom<&PluginConf> for Directory {
             download: params.download,
             follow_symlinks,
             headers: Some(headers),
-        };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
-            return Err(Error::Invalid {
-                category: PluginCategory::Directory.to_string(),
-                message: "Directory serve plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
-        Ok(params)
+        })
     }
 }
 
@@ -838,6 +835,13 @@ download = true
         assert_eq!("utf8", params.charset.unwrap_or_default());
         assert_eq!(true, params.download);
 
+        // An absent step keeps the request default.
+        let params = Directory::try_from(
+            &toml::from_str::<PluginConf>(r#"path = "~/Downloads""#).unwrap(),
+        )
+        .unwrap();
+        assert_eq!("request", params.plugin_step.to_string());
+
         let result = Directory::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
@@ -855,7 +859,7 @@ download = true
             .unwrap(),
         );
         assert_eq!(
-            "Plugin directory invalid, message: Directory serve plugin should be executed at request or proxy upstream step",
+            "Plugin directory invalid, message: Invalid step(response), expect one of: request, proxy_upstream",
             result.err().unwrap().to_string()
         );
     }
