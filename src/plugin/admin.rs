@@ -1017,7 +1017,12 @@ mod tests {
 
     /// Builds the `token:ts` header the admin API expects.
     fn auth_header(user: &str, pass: &str) -> String {
-        let ts = pingap_core::now_sec();
+        auth_header_at(user, pass, pingap_core::now_sec())
+    }
+
+    /// Signs `user:pass` for a specific timestamp, so tests can age the token
+    /// without changing the secret.
+    fn auth_header_at(user: &str, pass: &str, ts: u64) -> String {
         let mut hasher = Sha256::new();
         hasher.update(format!("{user}:{pass}:{ts}").as_bytes());
         format!("{}:{ts}", hasher.finalize().encode_hex::<String>())
@@ -1031,6 +1036,41 @@ mod tests {
             .await
             .unwrap()
             .unwrap()
+    }
+
+    /// A plugin over a per-test in-memory manager, unauthenticated so the
+    /// mutation handlers can be driven without signing every request.
+    fn admin_with_config(config: &str) -> (AdminServe, Arc<ConfigManager>) {
+        let manager =
+            Arc::new(pingap_config::new_memory_config_manager(config, None));
+        let admin = AdminServe::new(
+            &toml::from_str::<PluginConf>(
+                r#"
+    category = "admin"
+    allow_unauthenticated = true
+    "#,
+            )
+            .unwrap(),
+            manager.clone(),
+        )
+        .unwrap();
+        (admin, manager)
+    }
+
+    /// Drives the admin router with a request body, which is how the mutation
+    /// handlers receive their payload.
+    async fn admin_json_response(
+        admin: &AdminServe,
+        method: &str,
+        path: &str,
+        body: &str,
+    ) -> HttpResponse {
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: localhost\r\n\
+             Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        admin_response(admin, &request).await
     }
 
     #[test]
@@ -1503,6 +1543,226 @@ allow_unauthenticated = true
             assert!(
                 body.contains(&format!("log_level = \\\"{log_level}\\\"")),
                 "the injected manager's document must be served: {body}"
+            );
+        }
+    }
+
+    /// A freshly signed token is accepted; ageing it past `max_age`, or
+    /// signing it for the wrong password, is not.
+    #[test]
+    fn test_auth_validate_accepts_a_fresh_token() {
+        // spellchecker:off
+        let admin = AdminServe::new(
+            &toml::from_str::<PluginConf>(
+                r#"
+    category = "admin"
+    path = "/"
+    authorizations = ["YWRtaW46MTIzMTIz"]
+    "#,
+            )
+            .unwrap(),
+            new_config_manager(),
+        )
+        .unwrap();
+        // spellchecker:on
+        let request = |authorization: &str| {
+            let mut req = pingora::http::RequestHeader::build(
+                Method::GET,
+                b"/configs/full",
+                None,
+            )
+            .unwrap();
+            req.insert_header("authorization", authorization).unwrap();
+            req
+        };
+
+        let now = pingap_core::now_sec();
+        assert!(
+            admin.auth_validate(&request(&auth_header_at(
+                "admin", "123123", now
+            ))),
+            "a fresh token must authenticate"
+        );
+
+        // The hash is valid for the stale timestamp, so the only reason to
+        // refuse it is the two-day window.
+        let stale = now - 3 * 24 * 3600;
+        assert!(
+            !admin.auth_validate(&request(&auth_header_at(
+                "admin", "123123", stale
+            ))),
+            "a token older than max_age must be refused"
+        );
+
+        assert!(
+            !admin.auth_validate(&request(&auth_header_at(
+                "admin", "wrong", now
+            ))),
+            "a token signed for the wrong password must be refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_config_writes_a_valid_entry() {
+        let (admin, manager) =
+            admin_with_config("[basic]\nname = \"before\"\n");
+
+        let resp = admin_json_response(
+            &admin,
+            "POST",
+            "/configs/upstream/backend",
+            r#"{"addrs":["127.0.0.1:8080"]}"#,
+        )
+        .await;
+        assert_eq!(204, resp.status.as_u16());
+
+        let config = manager.load_all().await.unwrap();
+        let upstreams = config.upstreams.expect("the upstream section");
+        let entry = upstreams
+            .get("backend")
+            .expect("the update must be persisted");
+        assert_eq!(
+            Some(&toml::Value::Array(vec![toml::Value::String(
+                "127.0.0.1:8080".to_string()
+            )])),
+            entry.get("addrs")
+        );
+        // A single entry write is not a whole-document replace: the rest of
+        // the document survives.
+        assert_eq!(
+            Some(&toml::Value::String("before".to_string())),
+            config.basic.as_ref().and_then(|basic| basic.get("name"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_config_rejects_an_invalid_entry() {
+        let (admin, manager) = admin_with_config(
+            "[basic]\nname = \"before\"\n\
+             [upstreams.keep]\naddrs = [\"127.0.0.1:8080\"]\n",
+        );
+
+        let resp = admin_json_response(
+            &admin,
+            "POST",
+            "/configs/upstream/bad",
+            r#"{"addrs":[]}"#,
+        )
+        .await;
+        // `handle_configs` reports handler failures as 500 today; what matters
+        // here is that the invalid entry is refused instead of persisted.
+        assert_eq!(500, resp.status.as_u16());
+        let body = String::from_utf8_lossy(&resp.body);
+        assert!(body.contains("upstream addrs is empty"), "body: {body}");
+
+        let config = manager.load_all().await.unwrap();
+        let upstreams = config.upstreams.expect("the upstream section");
+        assert!(
+            !upstreams.contains_key("bad"),
+            "an invalid entry must not be stored"
+        );
+        assert!(
+            upstreams.contains_key("keep"),
+            "the rejected write must not drop other entries"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_remove_config_deletes_an_existing_entry() {
+        let (admin, manager) = admin_with_config(
+            "[upstreams.backend]\naddrs = [\"127.0.0.1:8080\"]\n",
+        );
+
+        let resp = admin_json_response(
+            &admin,
+            "DELETE",
+            "/configs/upstream/backend",
+            "",
+        )
+        .await;
+        assert_eq!(204, resp.status.as_u16());
+
+        let config = manager.load_all().await.unwrap();
+        assert!(
+            config
+                .upstreams
+                .is_none_or(|upstreams| !upstreams.contains_key("backend")),
+            "the deleted entry must be gone"
+        );
+    }
+
+    /// In the single-document mode the admin writes through, deleting an
+    /// absent name is a no-op rather than an error: the handler answers 204
+    /// and every other entry survives.
+    #[tokio::test]
+    async fn test_removing_a_missing_entry_leaves_the_document_intact() {
+        let (admin, manager) = admin_with_config(
+            "[basic]\nname = \"before\"\n\
+             [upstreams.backend]\naddrs = [\"127.0.0.1:8080\"]\n",
+        );
+
+        let resp = admin_json_response(
+            &admin,
+            "DELETE",
+            "/configs/upstream/missing",
+            "",
+        )
+        .await;
+        assert_eq!(204, resp.status.as_u16());
+
+        let config = manager.load_all().await.unwrap();
+        let upstreams = config.upstreams.expect("the upstream section");
+        assert!(
+            upstreams.contains_key("backend"),
+            "deleting a missing name must not touch the others"
+        );
+        assert!(!upstreams.contains_key("missing"));
+    }
+
+    #[tokio::test]
+    async fn test_import_config_replaces_the_whole_document() {
+        let (admin, manager) =
+            admin_with_config("[basic]\nname = \"before\"\n");
+
+        let resp = admin_json_response(
+            &admin,
+            "POST",
+            "/configs/import",
+            "[upstreams.imported]\naddrs = [\"127.0.0.1:9090\"]\n",
+        )
+        .await;
+        assert_eq!(204, resp.status.as_u16());
+
+        let config = manager.load_all().await.unwrap();
+        assert!(
+            config.basic.is_none(),
+            "a whole import replaces the basic section too"
+        );
+        let upstreams = config.upstreams.expect("the imported section");
+        assert!(upstreams.contains_key("imported"));
+    }
+
+    #[tokio::test]
+    async fn test_import_config_rejects_invalid_documents() {
+        let (admin, manager) =
+            admin_with_config("[basic]\nname = \"before\"\n");
+        let before = manager.load_all_raw().await.unwrap();
+
+        for body in [
+            // Not TOML at all.
+            "this is not toml = [",
+            // Valid TOML that fails startup validation (an upstream without
+            // addresses could never serve traffic).
+            "[upstreams.bad]\naddrs = []\n",
+        ] {
+            let resp =
+                admin_json_response(&admin, "POST", "/configs/import", body)
+                    .await;
+            assert_eq!(500, resp.status.as_u16(), "body: {body}");
+            assert_eq!(
+                before,
+                manager.load_all_raw().await.unwrap(),
+                "a rejected import must not replace the stored document: {body}"
             );
         }
     }

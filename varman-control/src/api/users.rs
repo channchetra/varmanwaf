@@ -332,3 +332,216 @@ async fn ensure_other_enabled_admin(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, VecDeque};
+    use std::sync::{Arc, Mutex};
+
+    use chrono::Utc;
+    use sea_orm::{
+        Database, DatabaseBackend, DbErr, EntityTrait, IdenStatic, Iterable,
+        ModelTrait, ProxyDatabaseTrait, ProxyExecResult, ProxyRow, Statement,
+        Value,
+    };
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::auth::AuthUser;
+    use crate::config::ServerConfig;
+    use crate::grpc::registry::AgentRegistry;
+
+    /// Answers each query with the next queued batch of rows, in order.
+    #[derive(Debug, Default)]
+    struct QueryQueue {
+        batches: Mutex<VecDeque<Vec<ProxyRow>>>,
+    }
+
+    impl QueryQueue {
+        fn boxed(
+            batches: Vec<Vec<ProxyRow>>,
+        ) -> Arc<Box<dyn ProxyDatabaseTrait>> {
+            Arc::new(Box::new(Self {
+                batches: Mutex::new(batches.into_iter().collect()),
+            }))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProxyDatabaseTrait for QueryQueue {
+        async fn query(
+            &self,
+            _statement: Statement,
+        ) -> Result<Vec<ProxyRow>, DbErr> {
+            let mut batches = self.batches.lock().expect("query queue lock");
+            batches.pop_front().ok_or_else(|| {
+                DbErr::Custom("no queued query result".to_string())
+            })
+        }
+
+        async fn execute(
+            &self,
+            _statement: Statement,
+        ) -> Result<ProxyExecResult, DbErr> {
+            Ok(ProxyExecResult::new(0, 0))
+        }
+    }
+
+    /// SeaORM's `count` selects the count as `num_items`.
+    fn count_row(count: i64) -> ProxyRow {
+        ProxyRow::new(BTreeMap::from([(
+            "num_items".to_string(),
+            Value::BigInt(Some(count)),
+        )]))
+    }
+
+    fn encode_row<M>(model: &M) -> ProxyRow
+    where
+        M: ModelTrait,
+    {
+        let values = <<M::Entity as EntityTrait>::Column as Iterable>::iter()
+            .map(|column| (column.as_str().to_string(), model.get(column)))
+            .collect::<BTreeMap<String, Value>>();
+        ProxyRow::new(values)
+    }
+
+    async fn state_with(batches: Vec<Vec<ProxyRow>>) -> AppState {
+        let db = Database::connect_proxy(
+            DatabaseBackend::Postgres,
+            QueryQueue::boxed(batches),
+        )
+        .await
+        .expect("the proxy connection cannot fail");
+        AppState::new(db, ServerConfig::default(), AgentRegistry::new())
+    }
+
+    fn user_row(id: Uuid, role_name: &str, disabled: bool) -> user::Model {
+        let now = Utc::now();
+        user::Model {
+            id,
+            email: format!("{id}@example.com"),
+            password_hash: String::new(),
+            name: None,
+            role: role_name.to_string(),
+            disabled,
+            must_change_password: false,
+            token_version: 1,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn admin_caller(id: Uuid) -> AdminUser {
+        AdminUser(AuthUser::new(id, "admin@example.com", role::ADMIN))
+    }
+
+    #[tokio::test]
+    async fn the_last_enabled_administrator_cannot_be_demoted_or_disabled() {
+        // Arrange: the target is the only administrator, and the caller is
+        // somebody else (self-lockout is rejected earlier).
+        let caller = Uuid::new_v4();
+        let target = Uuid::new_v4();
+
+        for payload in [
+            UpdateUserRequest {
+                name: None,
+                email: None,
+                role: Some(role::VIEWER.to_string()),
+                disabled: None,
+            },
+            UpdateUserRequest {
+                name: None,
+                email: None,
+                role: None,
+                disabled: Some(true),
+            },
+        ] {
+            let state = state_with(vec![
+                vec![encode_row(&user_row(target, role::ADMIN, false))],
+                vec![count_row(0)],
+            ])
+            .await;
+
+            // Act
+            let err = update(
+                State(state),
+                admin_caller(caller),
+                Path(target.to_string()),
+                Json(payload),
+            )
+            .await
+            .expect_err("the last enabled administrator must not lose access");
+
+            // Assert
+            assert!(
+                matches!(&err, ApiError::BadRequest(_)),
+                "expected ApiError::BadRequest, got {err:?}"
+            );
+            assert!(
+                err.to_string().contains("last enabled administrator"),
+                "unexpected error: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn demoting_an_administrator_is_allowed_when_another_admin_exists() {
+        // Arrange: one other enabled administrator remains.
+        let caller = Uuid::new_v4();
+        let target = Uuid::new_v4();
+        let mut demoted = user_row(target, role::VIEWER, false);
+        demoted.token_version += 1;
+        let state = state_with(vec![
+            vec![encode_row(&user_row(target, role::ADMIN, false))],
+            vec![count_row(1)],
+            vec![encode_row(&demoted)],
+        ])
+        .await;
+
+        // Act
+        let updated = update(
+            State(state),
+            admin_caller(caller),
+            Path(target.to_string()),
+            Json(UpdateUserRequest {
+                name: None,
+                email: None,
+                role: Some(role::VIEWER.to_string()),
+                disabled: None,
+            }),
+        )
+        .await
+        .expect("another enabled administrator remains");
+
+        // Assert
+        assert_eq!(role::VIEWER, updated.0.role);
+
+        // Disabling is the other way to lose admin access, and follows the
+        // same rule.
+        let target = Uuid::new_v4();
+        let mut disabled = user_row(target, role::ADMIN, true);
+        disabled.token_version += 1;
+        let state = state_with(vec![
+            vec![encode_row(&user_row(target, role::ADMIN, false))],
+            vec![count_row(1)],
+            vec![encode_row(&disabled)],
+        ])
+        .await;
+
+        let updated = update(
+            State(state),
+            admin_caller(caller),
+            Path(target.to_string()),
+            Json(UpdateUserRequest {
+                name: None,
+                email: None,
+                role: None,
+                disabled: Some(true),
+            }),
+        )
+        .await
+        .expect("another enabled administrator remains");
+
+        assert!(updated.0.disabled);
+    }
+}

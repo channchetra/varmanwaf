@@ -447,22 +447,21 @@ mod tests {
     use tokio::fs;
     #[test]
     fn test_new_cache_control_header() {
-        assert_eq!(
-            r###"("cache-control", "private, max-age=3600")"###,
-            format!("{:?}", new_cache_control_header(Some(3600), Some(true)))
-        );
-        assert_eq!(
-            r###"("cache-control", "public, max-age=3600")"###,
-            format!("{:?}", new_cache_control_header(Some(3600), None))
-        );
-        assert_eq!(
-            r###"("cache-control", "private, no-cache")"###,
-            format!("{:?}", new_cache_control_header(Some(0), Some(false)))
-        );
-        assert_eq!(
-            r###"("cache-control", "private, no-cache")"###,
-            format!("{:?}", new_cache_control_header(None, None))
-        );
+        let (name, value) = new_cache_control_header(Some(3600), Some(true));
+        assert_eq!(header::CACHE_CONTROL, name);
+        assert_eq!("private, max-age=3600", value.to_str().unwrap());
+
+        let (name, value) = new_cache_control_header(Some(3600), None);
+        assert_eq!(header::CACHE_CONTROL, name);
+        assert_eq!("public, max-age=3600", value.to_str().unwrap());
+
+        let (name, value) = new_cache_control_header(Some(0), Some(false));
+        assert_eq!(header::CACHE_CONTROL, name);
+        assert_eq!("private, no-cache", value.to_str().unwrap());
+
+        let (name, value) = new_cache_control_header(None, None);
+        assert_eq!(header::CACHE_CONTROL, name);
+        assert_eq!("private, no-cache", value.to_str().unwrap());
     }
 
     /// Asserts the parts of a response a client can observe: the status, the

@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::time::{Duration, Instant};
 
 /// A minimal HTTP-only configuration: one upstream, one location and one
 /// server on a port the kernel can hand out, no TLS and no ACME.
@@ -35,6 +36,25 @@ name = "boot-smoke-invalid"
 path = "/"
 
 [servers.http]
+locations = ["root"]
+"#;
+
+/// The same minimal proxy with JSON logs, so the startup line can be checked
+/// without parsing the human-readable format.
+const ENV_CONFIG: &str = r#"
+[basic]
+name = "boot-smoke-env"
+log_format_json = true
+
+[upstreams.backend]
+addrs = ["127.0.0.1:9"]
+
+[locations.root]
+path = "/"
+upstream = "backend"
+
+[servers.http]
+addr = "127.0.0.1:0"
 locations = ["root"]
 "#;
 
@@ -68,6 +88,24 @@ fn write_config(dir: &tempfile::TempDir, name: &str, body: &str) -> PathBuf {
         panic!("failed to write {}: {error}", path.display());
     }
     path
+}
+
+/// Every log file under `dir`, concatenated. The rolling appender suffixes
+/// the file name with the date, so the exact path is not predictable.
+fn read_logs(dir: &std::path::Path) -> String {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return String::new();
+    };
+    let mut logs = String::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file()
+            && let Ok(body) = std::fs::read_to_string(&path)
+        {
+            logs.push_str(&body);
+        }
+    }
+    logs
 }
 
 #[test]
@@ -133,4 +171,87 @@ fn test_mode_rejects_a_server_without_an_addr() {
     let stderr = stderr(&output);
     assert!(stderr.contains("server(http)"), "stderr: {stderr}");
     assert!(stderr.contains("missing field `addr`"), "stderr: {stderr}");
+}
+
+/// The `PINGAP_*` overlay in `parse_arguments` must reach the child process.
+/// Every value is set on the child only — `pingap()` strips the developer's
+/// own variables first — so nothing has to be restored afterwards.
+#[test]
+fn environment_overrides_reach_the_binary() {
+    // Arrange
+    let dir = tempfile::TempDir::new().unwrap();
+    let valid = write_config(&dir, "env-ok.toml", ENV_CONFIG);
+    let invalid = write_config(&dir, "env-invalid.toml", INVALID_CONFIG);
+    let validate_logs = dir.path().join("validate-logs");
+
+    // PINGAP_CONF is the config when no `-c` is passed: the broken document
+    // only exists at the environment path, so `-t` must fail on it.
+    let output = pingap()
+        .env("PINGAP_CONF", &invalid)
+        .arg("-t")
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "an invalid PINGAP_CONF must fail -t"
+    );
+    let first_stderr = stderr(&output);
+    assert!(
+        first_stderr.contains("missing field `addr`"),
+        "stderr: {first_stderr}"
+    );
+
+    // PINGAP_LOG sends the log to the configured file instead of stderr.
+    let output = pingap()
+        .env("PINGAP_CONF", &valid)
+        .env("PINGAP_LOG", validate_logs.join("validate.log"))
+        .arg("-t")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let logs = read_logs(&validate_logs);
+    assert!(
+        logs.contains("Validate config success"),
+        "the log file must carry the validation result: {logs}"
+    );
+
+    // PINGAP_AUTORELOAD only takes effect once a server assembles, so start
+    // the proxy on an ephemeral port and wait for the startup line that
+    // records every parsed flag. The child is killed and reaped here; the
+    // parent process environment is never touched.
+    let run_logs = dir.path().join("run-logs");
+    let mut child = pingap()
+        .env("PINGAP_CONF", &valid)
+        .env("PINGAP_LOG", run_logs.join("server.log"))
+        .env("PINGAP_AUTORELOAD", "1")
+        .env("RUST_LOG", "info")
+        .spawn()
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let logs = loop {
+        let logs = read_logs(&run_logs);
+        if logs.contains("server is running") {
+            break logs;
+        }
+        if let Some(status) = child.try_wait().unwrap() {
+            let _ = child.wait();
+            panic!("pingap exited before the startup line ({status}): {logs}");
+        }
+        if Instant::now() >= deadline {
+            break logs;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let startup = logs
+        .lines()
+        .find(|line| line.contains("server is running"))
+        .unwrap_or_default();
+    assert!(
+        startup.contains("\"auto_reload\":true"),
+        "the startup line must record the environment flag: {logs}"
+    );
 }

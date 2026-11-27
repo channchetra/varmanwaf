@@ -506,3 +506,77 @@ fn reload_channels() {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::notification_channel;
+
+    fn channel(config: Value) -> notification_channel::Model {
+        let now = Utc::now();
+        notification_channel::Model {
+            id: Uuid::new_v4(),
+            name: "ops".to_string(),
+            kind: channel_kind::WEBHOOK.to_string(),
+            config,
+            events: json!([]),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn a_configured_secret_is_masked_in_the_api_response() {
+        // Arrange: the row holds the sealed secret and non-secret settings.
+        let row = channel(json!({
+            "url": "https://hooks.example.com/ops",
+            "secret": "s3cret-value",
+        }));
+
+        // Act: the view is what the API serialises.
+        let view = ChannelView::from(row);
+        let body = serde_json::to_value(&view).unwrap();
+
+        // Assert: the secret is replaced, the rest is untouched, and the
+        // stored value never appears in the response.
+        assert_eq!(REDACTED, body["config"]["secret"]);
+        assert_eq!("https://hooks.example.com/ops", body["config"]["url"]);
+        assert!(!body.to_string().contains("s3cret-value"));
+    }
+
+    #[test]
+    fn unredact_restores_the_stored_secret() {
+        // Arrange: redact a stored config, as the API does before sending it.
+        let stored = json!({
+            "url": "https://hooks.example.com/ops",
+            "secret": "s3cret-value",
+            "bot_token": "",
+        });
+        let mut echoed = stored.clone();
+        redact(&mut echoed);
+        assert_eq!(REDACTED, echoed["secret"]);
+        assert_eq!("", echoed["bot_token"], "an unset secret stays unset");
+
+        // Act: the client echoes the masked config back unchanged.
+        unredact(&mut echoed, &stored);
+
+        // Assert: the stored values are restored, not the placeholder.
+        assert_eq!(stored, echoed);
+    }
+
+    #[test]
+    fn a_literal_masked_value_cannot_overwrite_a_secret() {
+        // Arrange: a client sends the placeholder text as the new secret.
+        let stored = json!({ "bot_token": "real-token" });
+        let mut payload = json!({ "bot_token": REDACTED });
+
+        // Act
+        unredact(&mut payload, &stored);
+
+        // Assert: the update keeps the stored secret instead of persisting
+        // the literal placeholder.
+        assert_eq!("real-token", payload["bot_token"]);
+        assert_ne!(json!(REDACTED), payload["bot_token"]);
+    }
+}
