@@ -113,12 +113,17 @@ pub fn try_update_certificates(
         }
     }
 
+    let failed = !errors.is_empty();
     let error_messages: Vec<String> = errors
         .into_iter()
         .map(|(name, msg)| format!("{}({})", msg, name))
         .collect();
 
-    CERTIFICATE_PROVIDER.store(new_certs);
+    // A partial map would take the failed entry's domains out of the SNI
+    // table. Keep the previous provider until every changed entry parses.
+    if !failed {
+        CERTIFICATE_PROVIDER.store(new_certs);
+    }
     (updated_certificates, error_messages.join(";"))
 }
 

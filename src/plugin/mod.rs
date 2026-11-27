@@ -365,8 +365,13 @@ pub fn try_init_plugins(
     let (new_plugins, new_errors) = parse_plugins(plugin_configs);
     plugins.extend(new_plugins);
     errors.extend(new_errors);
-    PLUGIN_PROVIDER.store(plugins);
-    let error = if !errors.is_empty() {
+    // Swap the registry only when every plugin built. Storing the partial map
+    // would drop the plugins that failed to rebuild, so the running config
+    // would reference plugins that no longer exist.
+    let error = if errors.is_empty() {
+        PLUGIN_PROVIDER.store(plugins);
+        String::new()
+    } else {
         let error = errors
             .iter()
             .map(|e| e.to_string())
@@ -374,8 +379,6 @@ pub fn try_init_plugins(
             .join(";");
         error!(target: LOG_TARGET, error, "parse plugins failed");
         error
-    } else {
-        "".to_string()
     };
 
     (updated_plugins, error)

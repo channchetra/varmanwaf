@@ -123,6 +123,15 @@ async fn diff_and_update_config(
 ///    triggers a full server restart
 ///
 /// Returns whether a restart was requested.
+/// Whether a pass applied every hot-reloadable component.
+///
+/// A partial apply must not be recorded as current: the next diff would be
+/// empty and the failed components would never be retried. The caller keeps
+/// the previous config and lets the watcher retry.
+fn should_commit_config(failures: &[String]) -> bool {
+    failures.is_empty()
+}
+
 async fn apply_config(
     config_manager: Arc<ConfigManager>,
     new_config: &PingapConfig,
@@ -287,7 +296,11 @@ async fn apply_config(
         if should_reload_plugin {
             let (updated_plugins, error) =
                 plugin::try_init_plugins(&new_config.plugins);
-            if !updated_plugins.is_empty() {
+            if !error.is_empty() {
+                reload_fail_messages
+                    .push(format!("plugin reload fail: {error}"));
+                error!(target: LOG_TARGET, error, "reload plugin fail");
+            } else if !updated_plugins.is_empty() {
                 info!(target: LOG_TARGET, "reload plugin success");
                 send_notification(NotificationData {
                     category: "reload_config".to_string(),
@@ -297,29 +310,25 @@ async fn apply_config(
                 })
                 .await;
             }
-            if !error.is_empty() {
-                error!(target: LOG_TARGET, error, "reload plugin fail");
-                send_notification(NotificationData {
-                    category: "reload_config_fail".to_string(),
-                    level: NotificationLevel::Error,
-                    message: error,
-                    ..Default::default()
-                })
-                .await;
-            }
         }
         if should_reload_certificate {
             let (updated_certificates, errors) =
                 try_update_certificates(&new_config.certificates);
-            info!(target: LOG_TARGET, "reload certificate success");
-            send_notification(NotificationData {
-                category: "reload_config".to_string(),
-                level: NotificationLevel::Info,
-                message: format_message("Certificate", updated_certificates),
-                ..Default::default()
-            })
-            .await;
-            if !errors.is_empty() {
+            if errors.is_empty() {
+                info!(target: LOG_TARGET, "reload certificate success");
+                send_notification(NotificationData {
+                    category: "reload_config".to_string(),
+                    level: NotificationLevel::Info,
+                    message: format_message(
+                        "Certificate",
+                        updated_certificates,
+                    ),
+                    ..Default::default()
+                })
+                .await;
+            } else {
+                reload_fail_messages
+                    .push(format!("certificate reload fail: {errors}"));
                 error!(
                     target: LOG_TARGET,
                     error = errors,
@@ -368,7 +377,31 @@ async fn apply_config(
         }
     }
 
-    let reload_fail_message = reload_fail_messages.join(";");
+    if !should_commit_config(&reload_fail_messages) {
+        let reload_fail_message = reload_fail_messages.join(";");
+        // A partial apply must not become the current config: the next diff
+        // would be empty, so the failed components would never be retried and
+        // the reported config would drift from the running providers. Keep the
+        // previous config; the watcher re-detects this diff and tries again.
+        error!(
+            target: LOG_TARGET,
+            failures = %reload_fail_message,
+            "config apply failed; keeping the previous config and retrying"
+        );
+        send_notification(NotificationData {
+            category: "reload_config_fail".to_string(),
+            message: reload_fail_message.clone(),
+            ..Default::default()
+        })
+        .await;
+        // Return an error, not `Ok(false)`: `diff_and_update_config` records
+        // the document hash as handled only on success, so an error is what
+        // makes the watcher retry this document on the next tick.
+        return Err(std::io::Error::other(format!(
+            "config apply failed: {reload_fail_message}"
+        ))
+        .into());
+    }
 
     if hot_reload_only {
         let (updated_category_list, original_diff_result) =
@@ -392,14 +425,6 @@ async fn apply_config(
                 ..Default::default()
             })
             .await;
-            if !reload_fail_message.is_empty() {
-                send_notification(NotificationData {
-                    category: "reload_config_fail".to_string(),
-                    message: reload_fail_message.clone(),
-                    ..Default::default()
-                })
-                .await;
-            }
         }
         return Ok(false);
     }
@@ -428,14 +453,6 @@ async fn apply_config(
             ..Default::default()
         })
         .await;
-        if !reload_fail_message.is_empty() {
-            send_notification(NotificationData {
-                category: "reload_config_fail".to_string(),
-                message: reload_fail_message.clone(),
-                ..Default::default()
-            })
-            .await;
-        }
     }
     if should_restart {
         restart().await;
@@ -704,8 +721,16 @@ fn reload_log_level(
 
 #[cfg(test)]
 mod tests {
-    use super::{LastSeen, should_skip};
+    use super::{LastSeen, should_commit_config, should_skip};
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn a_partial_config_apply_is_not_committed() {
+        assert!(should_commit_config(&[]));
+        assert!(!should_commit_config(&[
+            "upstream reload fail: refused".to_string()
+        ]));
+    }
 
     #[test]
     fn test_should_skip() {
