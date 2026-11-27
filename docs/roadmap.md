@@ -671,7 +671,7 @@ Investigation results (2026-10-06):
   `varman-protocol/proto/control_plane.proto` carries only
   `enabled`/`action`/`known_bots_whitelist`, and the agent cache mirrors the
   proto. Full implementation order per flag:
-  1. proto fields + `varman-control/src/grpc/config.rs` conversion
+  1. proto fields + `varman-control/src/bundle.rs` conversion
   2. `varman-agent/src/cache` conversion + `pingap-plugin` config struct
   3. detection logic in the plugin's bot check (`pingap-plugin/src/waf.rs`)
   4. dashboard: remove `comingSoon`/`disabled` on the toggle

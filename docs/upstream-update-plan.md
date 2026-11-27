@@ -181,7 +181,7 @@ the interconnected core, in dependency order:
 4. **`src/grpc/mod.rs`** - per-agent visibility (`agent_visible_site_ids`,
    `update_payload_for_agent`), config-version recording, actor-aware
    `notify_config_changed`/`notify_all_config_changed`.
-5. **`src/grpc/config.rs`** - map the new schema (mode/paranoia, waf_enabled,
+5. **`varman-control/src/bundle.rs`** - map the new schema (mode/paranoia, waf_enabled,
    monitor_managed_rules, proxy trust, cache settings, failover policies,
    event types) into the proto, keeping our engine fields.
 6. **`src/api/waf_settings.rs`** - add the upstream fields beside our

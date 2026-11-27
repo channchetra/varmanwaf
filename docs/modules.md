@@ -2,7 +2,7 @@
 
 VarmanWAF is one Cargo workspace with two layers: the **Varman** crates (the
 WAF platform) and the **`pingap-*` foundation** (the proxy engine the fork is
-built on). This page is the map; each crate's own README goes deeper.
+built on). This page is the map; crate-level guidance lives in `docs/` and the module documentation in each crate.
 
 ## Varman crates
 
