@@ -26,7 +26,7 @@ describes it, in the same commit**.
 | A database table/column | `varman-control/src/migration/` (SeaORM migration + `mod.rs` entry) |
 | An engine detector or rule family | `varman-waf/src/` (pipeline stage), with corpora in `varman-waf/tests/corpus` |
 | A SecLang feature | `varman-waf/src/seclang/` (+ compatibility notes in `docs/compatibility.md`) |
-| A policy layer | `varman-control/src/api/policies.rs` (kind + config), bundle compiler in `varman-control/src/grpc/config.rs`, console editor in `web/src/pages/` |
+| A policy layer | `varman-control/src/api/policies.rs` (kind + config), bundle compiler in `varman-control/src/bundle.rs`, console editor in `web/src/pages/` |
 | A console page | `web/src/pages/`, route in `web/src/router/index.tsx`, nav in `web/src/components/ui/Sidebar.tsx`, API module in `web/src/api/`, i18n keys in `web/src/i18n/locales/en/common.json` |
 | A graph/node type in the topology | `web/src/components/topology/` (graph builder + nodes + panel) |
 | An E2E check | `build-artifacts/run-e2e-<feature>.ps1` (next to the repository) |

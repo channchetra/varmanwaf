@@ -3375,3 +3375,21 @@ async fn test_rate_limit_challenge_and_clearance() {
             == RequestPluginResult::Continue
     );
 }
+
+#[test]
+fn site_engine_inherits_the_engine_baseline() {
+    let cfg = cache_waf_config(false, Vec::new(), Vec::new());
+    let config = super::state::build_site_engine_config(&cfg);
+    let baseline = varman_waf::engine::WafEngineConfig::default();
+    // Fields the site does not override must come from the one baseline
+    // owner, so changing the engine default reaches the edge.
+    assert_eq!(config.level, baseline.level);
+    assert_eq!(config.stacks, baseline.stacks);
+    assert_eq!(config.threshold, baseline.threshold);
+    assert_eq!(config.max_decode_layers, baseline.max_decode_layers);
+    assert_eq!(config.enable_managed_rules, baseline.enable_managed_rules);
+    assert_eq!(
+        config.fast_path_block_on_critical,
+        baseline.fast_path_block_on_critical
+    );
+}

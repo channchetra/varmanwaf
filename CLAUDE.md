@@ -10,13 +10,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 VarmanWAF is a self-hosted WAF platform: the `varman` binary runs the control
 plane (`varman-control`), the edge agent (`varman-agent`) and the Varman
 detection engine (`varman-waf`), on top of the Pingap/Pingora foundation
-crates (`pingap-*`). MSRV is `1.96.0` (Rust edition 2024). Pingora is `0.9.0` from crates.io; only the `lb`/`cache` features are enabled there, and the TLS backend feature (pingora's `openssl` or `rustls`) is added by pingap's own top-level `openssl` / `tls-rustls` features. The three `pingora*` entries in `[workspace.dependencies]` must always name the same version, or cargo resolves two copies of `pingora-core`.
+crates (`pingap-*`). MSRV is `1.96.0`; the workspace package defaults to edition 2024, while several foundation crates still declare edition 2021. Pingora is `0.9.0` from crates.io; only the `lb`/`cache` features are enabled there, and the TLS backend feature (pingora's `openssl` or `rustls`) is added by pingap's own top-level `openssl` / `tls-rustls` features. The three `pingora*` entries in `[workspace.dependencies]` must always name the same version, or cargo resolves two copies of `pingora-core`.
 
 **Build the pingora `Server` with `Server::new_with_opt_and_conf`, never `Server::new` followed by assigning `my_server.configuration`.** Since 0.8.1 the constructor snapshots the configuration into a private `Bootstrap`, and that snapshot — not `Server::configuration` — is what the receiving half of a hot upgrade reads `upgrade_sock` from. A later assignment silently leaves the two halves on different sockets.
 
 ### Versioning
 
-The binary and every crate share one version, declared once in `[workspace.package]`; members inherit it with `version.workspace = true`. The internal `pingap-*` dependencies live in `[workspace.dependencies]`, so a member depends on a sibling with `{ workspace = true }`.
+Most crates inherit the workspace version `1.4.5` with `version.workspace = true`. Three internally published crates are the exception: `varman-waf`, `varman-challenge` and `varman-pprof` declare `version = "0.1.0"`, and `varman-pprof` is pinned at `0.1.0` in `[workspace.dependencies]`. A version bump must update those manifests and the `varman-pprof` requirement as well as `[workspace.package]` and the `pingap-*` dependency entries.
+
+Editions are mixed by design: the workspace default is 2024, but `varman-agent`, `varman-protocol`, `varman-control` and most `pingap-*` foundation crates still declare 2021. MSRV is 1.96.0 for both. The internal `pingap-*` dependencies live in `[workspace.dependencies]`, so a member depends on a sibling with `{ workspace = true }`.
 
 **Bumping the version means editing two places in the root `Cargo.toml`**: `workspace.package.version`, and the `version = "..."` on each `pingap-*` entry in `[workspace.dependencies]` — cargo has no way to inherit the package version into a dependency requirement. `publish.sh` then publishes all crates at the new version in dependency order.
 

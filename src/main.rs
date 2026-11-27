@@ -573,11 +573,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    // `--cp` is the admin-only control-panel mode; without an admin
+    // listener it would silently run a full proxy instead.
+    if args.cp && args.admin.is_none() {
+        return Err("--cp requires --admin user:pass@host:port[/prefix]".into());
+    }
+
     // Set up admin node if specified
     if let Some(admin) = &args.admin {
         set_admin_addr(admin);
     }
-    if args.cp && args.admin.is_some() {
+    if args.cp {
         return run_admin_node(args);
     }
 

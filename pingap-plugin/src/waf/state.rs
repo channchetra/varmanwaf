@@ -658,6 +658,14 @@ pub(crate) fn cap_to_site_mode(
 }
 
 pub(crate) fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
+    WafEngine::new(&build_site_engine_config(cfg))
+}
+
+/// Builds the engine config for one site, inheriting every value the site
+/// does not deliberately override from [`WafEngineConfig::default`].
+pub(crate) fn build_site_engine_config(
+    cfg: &CacheWafConfig,
+) -> WafEngineConfig {
     let mode = site_mode(cfg);
     let rules: Vec<CompiledRule> = cfg
         .custom_rules
@@ -694,28 +702,25 @@ pub(crate) fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
         })
         .collect();
 
-    let engine_config = WafEngineConfig {
+    // The engine baseline (level, stacks, threshold, decode layers, managed
+    // rules, fast-path blocking, empty tuning sets) is owned by
+    // `WafEngineConfig::default`; only the policy-derived values are set here.
+    WafEngineConfig {
         mode,
-        // Advanced mode turns on the strict rule set; a site without the
-        // switch keeps the default level.
         level: if cfg.advanced_mode {
             WafLevel::Strict
         } else {
-            WafLevel::default()
+            WafEngineConfig::default().level
         },
-        stacks: StackSet::default(),
         monitor_categories: parse_monitor_categories(&cfg.monitor_categories),
         monitor_stacks: parse_monitor_stacks(&cfg.monitor_stacks),
         threshold: if cfg.anomaly_threshold > 0 {
             cfg.anomaly_threshold
         } else {
-            40
+            WafEngineConfig::default().threshold
         },
         paranoia_level: (cfg.paranoia_level as u8).clamp(1, 4),
-        max_decode_layers: 3,
         rules,
-        enable_managed_rules: true,
-        fast_path_block_on_critical: true,
         // Per-rule monitor downgrades from the control plane: managed rule
         // ids arrive on the site's WAF config; a custom rule's own `mode`
         // decides (`monitor` records the hit without enforcing).
@@ -753,6 +758,6 @@ pub(crate) fn build_site_engine(cfg: &CacheWafConfig) -> WafEngine {
                 path_prefix: entry.path_prefix.clone(),
             })
             .collect(),
-    };
-    WafEngine::new(&engine_config)
+        ..Default::default()
+    }
 }

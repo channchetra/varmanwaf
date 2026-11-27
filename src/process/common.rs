@@ -281,10 +281,7 @@ impl ReadyListener {
         let (mut stream, _) = self.listener.accept().await?;
         let mut buf = [0u8; 32];
         let n = stream.read(&mut buf).await?;
-        Ok(std::str::from_utf8(&buf[..n])
-            .ok()
-            .and_then(|pid| pid.trim().parse().ok())
-            .unwrap_or_default())
+        parse_ready_pid(&buf[..n])
     }
 }
 
@@ -293,6 +290,28 @@ impl Drop for ReadyListener {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
     }
+}
+
+/// Parses the pid a replacement reports on the readiness socket.
+///
+/// An empty, non-numeric or zero report is an error: treating it as ready
+/// would hand the listening sockets to a process that never identified
+/// itself.
+#[cfg(unix)]
+fn parse_ready_pid(buf: &[u8]) -> io::Result<u32> {
+    let text = std::str::from_utf8(buf)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let pid: u32 = text
+        .trim()
+        .parse()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    if pid == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "readiness report contained pid 0",
+        ));
+    }
+    Ok(pid)
 }
 
 /// Waits until the replacement reports that it is ready for the listening
@@ -564,6 +583,16 @@ mod tests {
         .expect_err("must time out");
         assert_eq!(io::ErrorKind::TimedOut, err.kind());
         assert_eq!(false, path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_ready_pid_requires_a_real_pid() {
+        assert_eq!(1234, parse_ready_pid(b"1234").expect("valid pid"));
+        assert_eq!(1234, parse_ready_pid(b" 1234\n").expect("valid pid"));
+        assert!(parse_ready_pid(b"").is_err());
+        assert!(parse_ready_pid(b"abc").is_err());
+        assert!(parse_ready_pid(b"0").is_err());
     }
 
     #[test]
