@@ -31,8 +31,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 static LOG_TARGET: &str = "main::process";
 
-static START_TIME: LazyLock<Duration> =
-    LazyLock::new(|| Duration::from_secs(pingap_core::now_sec()));
+/// Process start time as epoch seconds. Set once by [`init_start_time`];
+/// the lazy fallback keeps tests and library users working without it.
+static START_TIME: OnceLock<u64> = OnceLock::new();
 
 static ADMIN_ADDR: OnceLock<String> = OnceLock::new();
 
@@ -53,11 +54,21 @@ pub fn get_admin_addr() -> Option<String> {
     ADMIN_ADDR.get().cloned()
 }
 
+/// Records the process start time as epoch seconds.
+///
+/// Call this once at startup, as early as possible: without it
+/// [`get_start_time`] falls back to the first read, which reports the first
+/// caller rather than the process start. Idempotent; later calls keep the
+/// value recorded by the first one.
+pub fn init_start_time() {
+    let _ = START_TIME.set(pingap_core::now_sec());
+}
+
 /// Returns the process start time as epoch seconds (not an uptime).
 ///
 /// Callers that need uptime subtract this from `pingap_core::now_sec()`.
 pub fn get_start_time() -> u64 {
-    START_TIME.as_secs()
+    *START_TIME.get_or_init(pingap_core::now_sec)
 }
 
 #[derive(Debug, Default)]
@@ -502,6 +513,25 @@ pub async fn restart() {
             ..Default::default()
         })
         .await;
+    }
+}
+
+#[cfg(test)]
+mod start_time_tests {
+    use super::*;
+
+    #[test]
+    fn init_start_time_is_idempotent_and_never_in_the_future() {
+        // Act
+        init_start_time();
+        let first = get_start_time();
+        init_start_time();
+        let second = get_start_time();
+
+        // Assert: the second call keeps the first value, and it is not later
+        // than the current clock.
+        assert_eq!(first, second);
+        assert!(first <= pingap_core::now_sec(), "{first}");
     }
 }
 

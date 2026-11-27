@@ -54,7 +54,7 @@ use pingap_upstream::new_upstream_health_check_task;
 use pingora::server;
 use pingora::services::background::background_service;
 use process::{
-    get_admin_addr, get_start_time, new_auto_restart_service,
+    get_admin_addr, init_start_time, new_auto_restart_service,
     new_observer_service, set_admin_addr,
 };
 use std::collections::HashMap;
@@ -345,7 +345,6 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
         .add_service(services.lb)
         .add_dependency(&assembled.bootstrap);
     info!(target: LOG_TARGET, "Admin node server is running");
-    let _ = get_start_time();
 
     // TODO not process exit until pingora supports
     assembled.server.run_forever();
@@ -975,7 +974,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         control_plane = args.cp,
         "server is running"
     );
-    let _ = get_start_time();
 
     // `run`, not `run_forever`: it returns once the runtimes have exited, and
     // a fast shutdown (SIGINT) takes them down without running the flush
@@ -990,6 +988,11 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn main() {
+    // Record the process start before anything reads it: the lazy fallback in
+    // `get_start_time` would report its first caller instead. Covers both the
+    // platform mode and the plain proxy started below.
+    init_start_time();
+
     // Same rationale as varman::main: the graph pulls in two rustls crypto
     // providers (ring + aws-lc-rs), so install ring explicitly before any
     // TLS listener or client initialises. No-op if already installed.

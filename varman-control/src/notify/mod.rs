@@ -9,10 +9,11 @@
 //!
 //! The manager is a process-wide singleton ([`init`]/[`global`]) so both the
 //! REST handlers and the gRPC service can raise alerts without threading a
-//! handle through every constructor. Delivery is best-effort: a failing
-//! channel is logged, never propagated, and repeated alerts are suppressed
-//! per channel for a configurable window so a flapping agent cannot turn
-//! into a notification storm.
+//! handle through every constructor. Before [`init`] runs, an emitted alert
+//! cannot be delivered: it is dropped and a warning is logged. Delivery is
+//! best-effort: a failing channel is logged, never propagated, and repeated
+//! alerts are suppressed per channel for a configurable window so a flapping
+//! agent cannot turn into a notification storm.
 
 pub mod cert_expiry;
 pub mod email;
@@ -285,7 +286,8 @@ pub fn global() -> Option<&'static NotificationManager> {
 }
 
 /// Raises an alert on the global manager; a no-op before [`init`], which
-/// keeps unit tests and the maintenance CLI silent.
+/// keeps unit tests and the maintenance CLI silent. The drop is logged by
+/// [`emit_to`].
 pub async fn emit(event: AlertEvent) {
     emit_to(event, None).await;
 }
@@ -301,21 +303,39 @@ pub struct AlertAttachment {
 /// Raises an alert restricted to the given channel ids; `None` delivers to
 /// every channel subscribed to the event type. Security alert rules bind
 /// their own channels through this.
+///
+/// When [`init`] has not run, the alert is dropped and a warning naming the
+/// event type is logged, so a misordered startup does not hide alerts
+/// silently.
 pub async fn emit_to(event: AlertEvent, channels: Option<Vec<Uuid>>) {
-    if let Some(manager) = global() {
-        manager.dispatch_to(event, channels).await;
-    }
+    let Some(manager) = global() else {
+        tracing::warn!(
+            event_type = %event.event_type,
+            "notification dropped: the notification manager is not initialized"
+        );
+        return;
+    };
+    manager.dispatch_to(event, channels).await;
 }
 
 /// Raises an alert carrying a generated artifact (the scheduled reports
 /// path): e-mail channels attach it, every other channel gets the message.
+///
+/// When [`init`] has not run, the alert and its artifact are dropped and a
+/// warning naming the event type is logged, so a misordered startup does not
+/// hide alerts silently.
 pub async fn emit_with_attachment(
     event: AlertEvent,
     attachment: AlertAttachment,
 ) {
-    if let Some(manager) = global() {
-        manager.dispatch_with_attachment(event, attachment).await;
-    }
+    let Some(manager) = global() else {
+        tracing::warn!(
+            event_type = %event.event_type,
+            "notification with attachment dropped: the notification manager is not initialized"
+        );
+        return;
+    };
+    manager.dispatch_with_attachment(event, attachment).await;
 }
 
 impl NotificationManager {
