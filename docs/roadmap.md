@@ -9,6 +9,12 @@
 
 ## Status board
 
+> **1.2.0 - 1.4.5 (2026-10 / 11):** multi-SAN and shared imported
+> certificates (migration 068), policy JSON export/import, one-click IP
+> unblock, WebSocket stream-enforcement fixes, ACME/gRPC certificate rotation
+> without restarts, NUL-safe telemetry ingest, per-site stream policy, and
+> local CI/test gates.
+>
 > **1.1.9 (2026-10-23):** the accessibility and performance round - WCAG
 > contrast for ember, danger and warning text; keyboard-sortable table headers
 > with `aria-sort`; focus-trapped dialogs with an inert background and focus

@@ -1,3 +1,6 @@
+> **Historical (v1.1.9).** The current release is **v1.4.5** — see
+> [`docs/releases/v1.4.5.md`](docs/releases/v1.4.5.md) and `docs/README.md`.
+
 # VarmanWAF Handoff — 2026-10-23
 
 This is the continuation memory for the console/site-management, public-website,

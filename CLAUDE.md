@@ -1,13 +1,16 @@
 # CLAUDE.md
 
-> **Current handoff:** [HANDOFF.md](HANDOFF.md) — v1.1.9 console, public website
-> and Impeccable state. Read it before resuming this multi-round work.
+> **Current release:** [v1.4.5](docs/releases/v1.4.5.md). [HANDOFF.md](HANDOFF.md)
+> is historical (v1.1.9); start from `docs/README.md`.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project
 
-Pingap is a Cloudflare-Pingora-based reverse proxy. The binary lives in `src/`; all reusable logic is split across `pingap-*` workspace crates. MSRV is `1.96.0` (Rust edition 2024). Pingora is `0.9.0` from crates.io; only the `lb`/`cache` features are enabled there, and the TLS backend feature (pingora's `openssl` or `rustls`) is added by pingap's own top-level `openssl` / `tls-rustls` features. The three `pingora*` entries in `[workspace.dependencies]` must always name the same version, or cargo resolves two copies of `pingora-core`.
+VarmanWAF is a self-hosted WAF platform: the `varman` binary runs the control
+plane (`varman-control`), the edge agent (`varman-agent`) and the Varman
+detection engine (`varman-waf`), on top of the Pingap/Pingora foundation
+crates (`pingap-*`). MSRV is `1.96.0` (Rust edition 2024). Pingora is `0.9.0` from crates.io; only the `lb`/`cache` features are enabled there, and the TLS backend feature (pingora's `openssl` or `rustls`) is added by pingap's own top-level `openssl` / `tls-rustls` features. The three `pingora*` entries in `[workspace.dependencies]` must always name the same version, or cargo resolves two copies of `pingora-core`.
 
 **Build the pingora `Server` with `Server::new_with_opt_and_conf`, never `Server::new` followed by assigning `my_server.configuration`.** Since 0.8.1 the constructor snapshots the configuration into a private `Bootstrap`, and that snapshot — not `Server::configuration` — is what the receiving half of a hot upgrade reads `upgrade_sock` from. A later assignment silently leaves the two halves on different sockets.
 
@@ -46,8 +49,8 @@ make release             # default features
 make release-full        # tracing + imageoptim
 make release-perf        # release-perf profile, includes pyroscope agent
 
-# Web admin assets (rust-embed'd into the binary at build time)
-make build-web           # cd web && npm install && npm run build, then cp dist ../
+# Web admin assets (rust-embed'd from web/dist into both binaries)
+make build-web           # cd web && npm install && npm run build
 
 # Pre-commit hook (runs `make lint`)
 make hooks               # cp hooks/* .git/hooks/
@@ -57,17 +60,17 @@ Bacon shortcuts: `bacon` (check), `bacon clippy-all`, `bacon test`, `bacon test 
 
 ## Architecture
 
-The dependency layering (see `docs/modules.md` for the full mermaid graph) is roughly:
+The workspace has two layers (the graph in `docs/modules.md` is generated
+from every member's `Cargo.toml` by `src/bin/generate-mermaid.rs`):
 
-```
-util -> core -> {discovery, config, logger, location, cache, certificate, upstream, plugin, health}
-                        |
-                        v
-              acme, performance, otel, sentry, pyroscope, imageoptim, webhook
-                        |
-                        v
-                     proxy <- top binary (`src/main.rs`)
-```
+- **Varman platform** — the root `varman` binary, `varman-control` (control
+  plane, REST/gRPC, console), `varman-agent` (edge client), `varman-waf`
+  (pipeline engine), `varman-protocol`, `varman-challenge`, `varman-pprof`.
+- **Pingap foundation** — `pingap-core`, `pingap-config`, `pingap-proxy`,
+  `pingap-plugin`, `pingap-upstream`, `pingap-discovery`, `pingap-health`,
+  `pingap-location`, `pingap-cache`, `pingap-certificate`, `pingap-acme`,
+  `pingap-logger`, `pingap-performance`, `pingap-otel`/`sentry`/`pyroscope`,
+  `pingap-webhook`, `pingap-imageoptim`, `pingap-util`.
 
 - `pingap-core` — `HttpResponse`, `Ctx`, plugin traits, clock helpers (`now_sec`/`now_ms`), `BackgroundTaskService`. Every other crate depends on it.
 - `pingap-config` — `PingapConfig` model plus storage backends (`file_storage.rs`, `etcd_storage.rs`) chosen at runtime by URL prefix (`file://`, `etcd://`). Supports TOML, HCL (`hcl.rs`), and KDL (`kdl.rs`) input formats.
@@ -133,7 +136,9 @@ CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot u
 
 ## CI gates
 
-`.github/workflows/test.yml` runs every gate listed below on pushes to `main`, on pull requests against `main`, and on manual dispatch (`gh workflow run test.yml --ref <branch>`); any one of them failing breaks the build. The same file also publishes the `vicanso/pingap:latest`/`:full`/`:rustls-full` Docker images from its `build`/`merge` jobs, which are guarded to pushes on `main` - a PR or dispatch run must never reach them. Reproduce locally with the corresponding command:
+CI is local: the GitHub Actions workflows were removed. Run the gates below
+before committing; `hooks/pre-push` runs `make test`. The table maps each
+historical CI step to its local command:
 
 | CI step | Local equivalent |
 |---|---|
@@ -149,11 +154,16 @@ CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot u
 
 ### Release toolchain vs MSRV
 
-The MSRV (`rust-version` in `Cargo.toml`, `msrv` in `clippy.toml`, first entry of the `test.yml` matrix) is a floor that `test.yml` proves. Release binaries are built with a **pinned recent stable**, deliberately newer: the two `toolchain:` pins in `.github/workflows/publish.yml` (macOS, linux-gnu) and `FROM rust:…` in the `Dockerfile` are one setting and move together. The musl jobs build inside the `messense/rust-musl-cross` image and use whatever toolchain it ships. Every Linux job (musl and gnu, x86_64 and aarch64) publishes three tarballs per arch: the default build, `-full`, and `-rustls-full` from `make release-rustls-full` (`tls-rustls,full`, no OpenSSL); `install.sh` selects the last one with `PINGAP_TLS=rustls`. macOS and Windows ship OpenSSL builds only. The Docker matrices in both workflows carry the same three variants; `rustls-full` is the one entry whose name is not a cargo feature, so the `Set build args` step maps it to `--no-default-features --features=tls-rustls,full`. Both toolchain jobs use `dtolnay/rust-toolchain`, which runs `rustup default`; the archived `actions-rs/toolchain` only installed the toolchain, so its pin never took effect on macOS. `.github/dependabot.yml` watches the workflow actions weekly; Cargo is intentionally not covered there (Dependabot ignores `rust-version` and cannot follow the pingora git pin).
+The MSRV (`rust-version` in `Cargo.toml`, `msrv` in `clippy.toml`) is a floor
+proved by `cargo msrv list`. Release binaries use the **pinned recent stable**
+in the `Dockerfile`, deliberately newer. `make release-all` builds the default
+and `-full` binaries; `make release-rustls-full` builds `tls-rustls,full`
+without OpenSSL. The published tarballs and Docker variants are produced from
+these targets and the `Dockerfile`; the former workflow steps now run locally.
 
 ## Web admin
 
-`web/` is a Vite/React app. After editing it, run `make build-web` so the compiled assets in `dist/` get embedded into the binary via `rust-embed` at compile time. `--admin user:pass@host:port[/prefix]` exposes the admin UI; in `make dev` it's on `127.0.0.1:3018`.
+`web/` is a Vite/React app. After editing it, run `make build-web` so the compiled assets in `web/dist/` get embedded into both binaries via `rust-embed` at compile time. `--admin user:pass@host:port[/prefix]` exposes the admin UI; in `make dev` it's on `127.0.0.1:3018`.
 
 **Every config field must have a form item in `web/`.** A field added to a `pingap-config` struct (`BasicConf`, `ServerConf`, `LocationConf`, `UpstreamConf`, `CertificateConf`, `StorageConf`) or to a plugin's config is not done until the admin can show and edit it. For a config struct, add the field to the matching interface in `web/src/states/config.ts` and an item to the page in `web/src/pages/` (`Basic.tsx`, `Servers.tsx`, `Locations.tsx`, `Upstreams.tsx`, `Certificates.tsx`, `Storages.tsx`); for a plugin field, add it to that plugin's builder in `web/src/plugin-fields.ts`. Each item needs its label/placeholder (and a `tips` line when the semantics are not obvious) in **both** `web/src/i18n/en.ts` and `web/src/i18n/zh.ts`, under the page's section. Pick the control by the Rust type: `Option<bool>` -> `RADIOS` + `newBooleanOptions()` with `defaultValue: conf.field` (never `|| null`, that turns an explicit `false` into Unset); enum-like `Option<String>` -> `RADIOS`/`SELECT` + `newStringOptions(..., withNone = true)` with `defaultValue: conf.field || ""` so an unset field stays unset instead of being saved as the first option; `Option<Vec<String>>` of free-form entries (`name` or `name:value`) -> `TEXTS`, and only use `KV_LIST` when every entry really is `key<sep>value` (its placeholder is `"key hint : value hint"`, split on `" : "`); numbers -> `NUMBER`; durations/sizes -> `TEXT` with the `newZodDuration()`/`newZodBytes()` schema entry.
 

@@ -31,6 +31,7 @@ unwrap_used = "deny"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+substring = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
@@ -91,7 +92,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 snafu = { workspace = true }
-substring = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time"] }
 toml = { workspace = true }
 tracing = { workspace = true }
@@ -278,6 +278,7 @@ members = [
 version = "1.4.5"
 
 [workspace.dependencies]
+substring = "1.4.5"
 aes-gcm-siv = { version = "0.12.1", default-features = false, features = [
     "aes",
     "alloc",
@@ -408,7 +409,6 @@ sha1 = "0.11.0"
 sha2 = { version = "0.11.0", default-features = false }
 strum = { version = "0.28.0", features = ["derive"] }
 tar = "0.4"
-substring = "1.4.5"
 ring = "0.17"
 maxminddb = "0.27"
 lettre = { version = "0.11", default-features = false, features = [

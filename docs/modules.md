@@ -42,30 +42,112 @@ built on). This page is the map; each crate's own README goes deeper.
 
 ```mermaid
 graph TD
-    root["varman (root binary)"] --> control
-    root --> agent
-    root --> waf
-    root --> proxy
-    root --> challenge
+    challenge["challenge"]
+    core["core"]
+    otel["otel"]
+    pprof["pprof"]
+    protocol["protocol"]
+    pyroscope["pyroscope"]
+    sentry["sentry"]
+    util["util"]
+    waf["waf"]
+    acme --> certificate
+    acme --> config
+    acme --> core
 
-    control["varman-control"] --> protocol["varman-protocol"]
+    agent --> cache
+    agent --> core
+    agent --> protocol
+
+    cache --> core
+
+    certificate --> config
+    certificate --> core
+    certificate --> util
+
+
+    config --> core
+    config --> discovery
+    config --> util
+
+    control --> pprof
+    control --> protocol
     control --> waf
-    control --> agent
-    agent["varman-agent"] --> protocol
-    agent --> waf
-    proxy["pingap-proxy"] --> plugin["pingap-plugin"]
+
+
+    discovery --> core
+
+    health --> util
+
+    imageoptim --> config
+    imageoptim --> core
+    imageoptim --> plugin
+
+    location --> config
+    location --> core
+
+    logger --> core
+    logger --> util
+
+
+    performance --> cache
+    performance --> core
+    performance --> location
+    performance --> upstream
+
+    plugin --> agent
+    plugin --> cache
+    plugin --> challenge
+    plugin --> config
+    plugin --> core
+    plugin --> util
     plugin --> waf
-    plugin --> challenge["varman-challenge"]
-    plugin --> cache["pingap-cache"]
-    plugin --> core["pingap-core"]
-    proxy --> certificate["pingap-certificate"]
-    proxy --> upstream["pingap-upstream"]
-    proxy --> location["pingap-location"]
-    proxy --> logger["pingap-logger"]
-    certificate --> acme["pingap-acme"]
-    upstream --> health["pingap-health"]
-    upstream --> discovery["pingap-discovery"]
-    core --> util["pingap-util"]
+
+
+
+    proxy --> acme
+    proxy --> certificate
+    proxy --> config
+    proxy --> core
+    proxy --> location
+    proxy --> logger
+    proxy --> otel
+    proxy --> performance
+    proxy --> upstream
+    proxy --> util
+
+
+    root --> acme
+    root --> agent
+    root --> cache
+    root --> certificate
+    root --> config
+    root --> control
+    root --> core
+    root --> imageoptim
+    root --> location
+    root --> logger
+    root --> otel
+    root --> performance
+    root --> plugin
+    root --> pprof
+    root --> proxy
+    root --> pyroscope
+    root --> sentry
+    root --> upstream
+    root --> util
+    root --> webhook
+
+
+    upstream --> config
+    upstream --> core
+    upstream --> discovery
+    upstream --> health
+    upstream --> util
+
+
+
+    webhook --> core
 ```
 
 Request flow, invariants and failure semantics live in
