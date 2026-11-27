@@ -826,7 +826,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             new_lets_encrypt_service(
                 config_manager.clone(),
                 certificate_provider.clone(),
-                webhook::get_webhook_sender(),
+                Some(webhook::get_webhook_sender()),
             ),
         );
     }
@@ -918,7 +918,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     if args.autorestart || args.autoreload {
-        let only_hot_reload = !args.autorestart;
+        let hot_reload_only = !args.autorestart;
         // The admin listener outlives every reload, so its plugin is passed to
         // each rebuild instead of being re-derived from a process-global.
         if config_manager.support_observer() {
@@ -928,7 +928,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     config_manager.clone(),
                     reload_handle,
                     auto_restart_check_interval,
-                    only_hot_reload,
+                    hot_reload_only,
                     admin_plugin,
                 ),
             ));
@@ -937,7 +937,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 config_manager.clone(),
                 reload_handle,
                 auto_restart_check_interval,
-                only_hot_reload,
+                hot_reload_only,
                 admin_plugin,
             );
             let name = auto_restart_task.name().to_string();
@@ -956,7 +956,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let upstream_health_check_task = new_upstream_health_check_task(
         new_upstream_provider(),
         Duration::from_secs(10),
-        webhook::get_webhook_sender(),
+        Some(webhook::get_webhook_sender()),
     );
     let name = upstream_health_check_task.name().to_string();
     assembled

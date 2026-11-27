@@ -42,10 +42,10 @@ fn server_config_from_opts(opts: &ServerOpts) -> ServerConfig {
     apply_cli_server_overrides(
         &mut config,
         &opts.common,
-        opts.jwt_secret.as_str(),
-        &opts.admin_email,
-        &opts.admin_password,
-        opts.serve_frontend,
+        opts.server.jwt_secret.as_str(),
+        &opts.server.admin_email,
+        &opts.server.admin_password,
+        opts.server.serve_frontend,
     );
     apply_tls_opts(&mut config, &opts.common);
     config
@@ -104,10 +104,10 @@ fn server_config_from_all_in_one(opts: &AllInOneOpts) -> ServerConfig {
     apply_cli_server_overrides(
         &mut config,
         &opts.common,
-        opts.jwt_secret.as_str(),
-        &opts.admin_email,
-        &opts.admin_password,
-        opts.serve_frontend,
+        opts.server.jwt_secret.as_str(),
+        &opts.server.admin_email,
+        &opts.server.admin_password,
+        opts.server.serve_frontend,
     );
     apply_tls_opts(&mut config, &opts.common);
     config
@@ -133,22 +133,22 @@ fn apply_tls_opts(config: &mut ServerConfig, opts: &CommonOpts) {
 fn agent_config_from_opts(opts: &AgentOpts) -> AgentConfig {
     AgentConfig {
         server_url: opts.server_url.clone(),
-        api_key: opts.api_key.clone(),
+        api_key: opts.agent.api_key.clone(),
         agent_id: String::new(),
         server_ca_cert: opts.server_ca_cert.clone(),
         server_ca_pem: None,
         server_tls_name: None,
-        heartbeat_interval_secs: opts.heartbeat_interval_secs,
-        cache_dir: opts.cache_dir.clone(),
-        log_batch_size: opts.log_batch_size,
-        log_flush_interval_secs: opts.log_flush_interval_secs,
-        max_body_log_size: opts.max_body_log_size,
+        heartbeat_interval_secs: opts.agent.heartbeat_interval_secs,
+        cache_dir: opts.agent.cache_dir.clone(),
+        log_batch_size: opts.agent.log_batch_size,
+        log_flush_interval_secs: opts.agent.log_flush_interval_secs,
+        max_body_log_size: opts.agent.max_body_log_size,
         reconnect_initial_delay_ms: 1000,
         reconnect_max_delay_ms: 60000,
-        fail_open: opts.fail_open,
+        fail_open: opts.agent.fail_open,
         probe_interval_secs: varman_agent::probe::DEFAULT_INTERVAL_SECS,
         probe_disk_path: "/".to_string(),
-        metrics_ship_interval_secs: opts.metrics_ship_interval_secs,
+        metrics_ship_interval_secs: opts.agent.metrics_ship_interval_secs,
     }
 }
 
@@ -178,22 +178,22 @@ fn agent_config_from_all_in_one(opts: &AllInOneOpts) -> AgentConfig {
         };
     AgentConfig {
         server_url,
-        api_key: opts.api_key.clone(),
+        api_key: opts.agent.api_key.clone(),
         agent_id: String::new(),
         server_ca_cert,
         server_ca_pem: None,
         server_tls_name: None,
-        heartbeat_interval_secs: opts.heartbeat_interval_secs,
-        cache_dir: opts.cache_dir.clone(),
-        log_batch_size: opts.log_batch_size,
-        log_flush_interval_secs: opts.log_flush_interval_secs,
-        max_body_log_size: opts.max_body_log_size,
+        heartbeat_interval_secs: opts.agent.heartbeat_interval_secs,
+        cache_dir: opts.agent.cache_dir.clone(),
+        log_batch_size: opts.agent.log_batch_size,
+        log_flush_interval_secs: opts.agent.log_flush_interval_secs,
+        max_body_log_size: opts.agent.max_body_log_size,
         reconnect_initial_delay_ms: 1000,
         reconnect_max_delay_ms: 60000,
-        fail_open: opts.fail_open,
+        fail_open: opts.agent.fail_open,
         probe_interval_secs: varman_agent::probe::DEFAULT_INTERVAL_SECS,
         probe_disk_path: "/".to_string(),
-        metrics_ship_interval_secs: opts.metrics_ship_interval_secs,
+        metrics_ship_interval_secs: opts.agent.metrics_ship_interval_secs,
     }
 }
 
@@ -494,10 +494,10 @@ mod tests {
         apply_cli_server_overrides(
             &mut config,
             &opts.common,
-            &opts.jwt_secret,
-            &opts.admin_email,
-            &opts.admin_password,
-            opts.serve_frontend,
+            &opts.server.jwt_secret,
+            &opts.server.admin_email,
+            &opts.server.admin_password,
+            opts.server.serve_frontend,
         );
 
         assert_eq!("postgres://alias/db", config.db_url);
@@ -520,10 +520,10 @@ mod tests {
         apply_cli_server_overrides(
             &mut config,
             &opts.common,
-            &opts.jwt_secret,
-            &opts.admin_email,
-            &opts.admin_password,
-            opts.serve_frontend,
+            &opts.server.jwt_secret,
+            &opts.server.admin_email,
+            &opts.server.admin_password,
+            opts.server.serve_frontend,
         );
 
         assert_eq!("postgres://cli/db", config.db_url);

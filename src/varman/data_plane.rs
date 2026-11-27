@@ -234,7 +234,7 @@ pub(super) async fn start_data_plane(
             new_lets_encrypt_service(
                 config_manager.clone(),
                 cert_provider.clone(),
-                crate::webhook::get_webhook_sender(),
+                Some(crate::webhook::get_webhook_sender()),
             ),
         );
         info!("data plane: ACME certificate management enabled");

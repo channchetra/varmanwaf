@@ -65,7 +65,8 @@ struct AdminPluginParams {
 /// - PluginConf: The plugin configuration
 ///
 /// # Errors
-/// Returns Error::Invalid if URL parsing fails
+/// Returns Error::Invalid if URL parsing, the username's percent-encoding or
+/// the query string fails to parse
 pub fn parse_admin_plugin(
     addr: &str,
 ) -> Result<(ServerConf, String, PluginConf)> {
@@ -81,7 +82,12 @@ pub fn parse_admin_plugin(
     let mut authorization = "".to_string();
     if !info.username().is_empty() {
         authorization = urlencoding::decode(info.username())
-            .unwrap_or_default()
+            .map_err(|e| Error::Invalid {
+                category: "admin".to_string(),
+                message: format!(
+                    "invalid percent-encoding in admin username: {e}"
+                ),
+            })?
             .to_string();
         // if not base64 string
         if let Some(pass) = info.password() {
@@ -93,8 +99,12 @@ pub fn parse_admin_plugin(
         path = "/".to_string();
     }
     let params: AdminPluginParams =
-        serde_qs::from_str(info.query().unwrap_or_default())
-            .unwrap_or_default();
+        serde_qs::from_str(info.query().unwrap_or_default()).map_err(|e| {
+            Error::Invalid {
+                category: "admin".to_string(),
+                message: format!("invalid admin query: {e}"),
+            }
+        })?;
     let max_age = params.max_age.unwrap_or("2d".to_string());
 
     let data = format!(
@@ -399,6 +409,66 @@ pub fn try_init_plugins(
     };
 
     (updated_plugins, error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The message of a rejected admin address, asserting the `admin`
+    /// category so a decode failure cannot pass as a URL-parse failure.
+    fn admin_error(addr: &str) -> String {
+        let error = parse_admin_plugin(addr)
+            .expect_err("the admin address must be rejected");
+        let Error::Invalid { category, message } = error;
+        assert_eq!("admin", category);
+        message
+    }
+
+    #[test]
+    fn a_valid_admin_address_is_parsed() {
+        let (server, name, conf) =
+            parse_admin_plugin("admin:secret@127.0.0.1:3018/?max_age=1d")
+                .expect("a valid admin address must parse");
+
+        assert_eq!("127.0.0.1:3018", server.addr);
+        assert!(server.admin);
+        assert_eq!(ADMIN_SERVER_PLUGIN, name);
+        assert_eq!(
+            Some("1d"),
+            conf.get("max_age").and_then(|value| value.as_str())
+        );
+        assert_eq!(
+            Some("/"),
+            conf.get("path").and_then(|value| value.as_str())
+        );
+    }
+
+    #[test]
+    fn a_malformed_query_is_rejected_instead_of_defaulted() {
+        // `max_age` is a string, not a nested map: the parse must fail
+        // instead of silently falling back to the defaults.
+        let message = admin_error("127.0.0.1:3018/?max_age[a]=1");
+        assert!(message.contains("invalid admin query"), "{message}");
+    }
+
+    #[test]
+    fn a_malformed_username_encoding_is_rejected() {
+        // `%FF` is a valid escape that does not decode to UTF-8.
+        let message = admin_error("ad%FFmin:secret@127.0.0.1:3018/");
+        assert!(
+            message.contains("invalid percent-encoding in admin username"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_port_is_rejected() {
+        let error = parse_admin_plugin("127.0.0.1:99999")
+            .expect_err("an out-of-range port must be rejected");
+        let Error::Invalid { category, .. } = error;
+        assert_eq!("url", category);
+    }
 }
 
 #[cfg(test)]

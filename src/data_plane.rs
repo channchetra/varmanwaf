@@ -260,7 +260,7 @@ pub fn assemble(
     config_manager: Arc<ConfigManager>,
     options: DataPlaneOptions,
 ) -> anyhow::Result<AssembledPlane> {
-    try_init_upstreams(&config.upstreams, get_webhook_sender())
+    try_init_upstreams(&config.upstreams, Some(get_webhook_sender()))
         .map_err(|e| anyhow::anyhow!("failed to init upstreams: {e}"))?;
     try_init_locations(&config.locations)
         .map_err(|e| anyhow::anyhow!("failed to init locations: {e}"))?;
@@ -312,7 +312,7 @@ pub fn assemble(
                     "validity_checker".to_string(),
                     new_certificate_validity_service(
                         certificate_provider.clone(),
-                        get_webhook_sender(),
+                        Some(get_webhook_sender()),
                     ),
                 ),
                 (

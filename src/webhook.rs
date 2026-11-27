@@ -104,9 +104,10 @@ pub fn reload_webhook_notification_sender(
     true
 }
 
-/// Always `Some`; the `Option` is what the consumers accept.
-pub fn get_webhook_sender() -> Option<Arc<NotificationSender>> {
-    Some(CURRENT_WEBHOOK.clone())
+/// The sender every consumer shares. It forwards to whichever webhook is in
+/// effect when a notification is sent.
+pub fn get_webhook_sender() -> Arc<NotificationSender> {
+    CURRENT_WEBHOOK.clone()
 }
 
 pub async fn send_notification(data: NotificationData) {
@@ -228,7 +229,7 @@ mod tests {
         };
         set_webhook_notification_sender(&current);
         // Taken before the reload, the way upstreams and discovery hold it.
-        let sender = get_webhook_sender().unwrap();
+        let sender = get_webhook_sender();
         let notify = |category: &str| {
             sender.notify(NotificationData {
                 category: category.to_string(),

@@ -152,19 +152,9 @@ pub struct CommonOpts {
     pub public_host: Option<String>,
 }
 
-/// Control plane server options.
-#[derive(Parser, Debug, Clone)]
-#[command(args_override_self = true)]
-pub struct ServerOpts {
-    #[command(flatten)]
-    pub common: CommonOpts,
-
-    /// TOML configuration file; its `[server]` and `[agent]` tables hold
-    /// these same settings. Precedence is this file, then the `VARMAN_*`
-    /// environment variables, then the command line.
-    #[arg(long, env = "VARMAN_CONFIG")]
-    pub config: Option<String>,
-
+/// Control plane settings shared by `server` and `all-in-one`.
+#[derive(clap::Args, Debug, Clone)]
+pub struct ServerSharedOpts {
     /// JWT signing secret (must be at least 16 characters)
     #[arg(
         long,
@@ -197,29 +187,9 @@ pub struct ServerOpts {
     pub serve_frontend: bool,
 }
 
-/// Data plane agent options.
-#[derive(Parser, Debug, Clone)]
-#[command(args_override_self = true)]
-pub struct AgentOpts {
-    /// TOML configuration file; its `[server]` and `[agent]` tables hold
-    /// these same settings. Precedence is this file, then the `VARMAN_*`
-    /// environment variables, then the command line.
-    #[arg(long, env = "VARMAN_CONFIG")]
-    pub config: Option<String>,
-
-    /// Control plane gRPC URL to connect to
-    #[arg(
-        long,
-        env = "VARMAN_SERVER_URL",
-        default_value = "http://localhost:9090"
-    )]
-    pub server_url: String,
-
-    /// Optional PEM file with the CA (or chain) that signed the control
-    /// plane's gRPC certificate; defaults to the bundled webpki roots.
-    #[arg(long, env = "VARMAN_SERVER_CA_CERT")]
-    pub server_ca_cert: Option<String>,
-
+/// Data plane settings shared by `agent` and `all-in-one`.
+#[derive(clap::Args, Debug, Clone)]
+pub struct AgentSharedOpts {
     /// API key for agent authentication
     #[arg(long, env = "VARMAN_API_KEY", default_value = "")]
     pub api_key: String,
@@ -262,6 +232,50 @@ pub struct AgentOpts {
     pub metrics_ship_interval_secs: u64,
 }
 
+/// Control plane server options.
+#[derive(Parser, Debug, Clone)]
+#[command(args_override_self = true)]
+pub struct ServerOpts {
+    #[command(flatten)]
+    pub common: CommonOpts,
+
+    /// TOML configuration file; its `[server]` and `[agent]` tables hold
+    /// these same settings. Precedence is this file, then the `VARMAN_*`
+    /// environment variables, then the command line.
+    #[arg(long, env = "VARMAN_CONFIG")]
+    pub config: Option<String>,
+
+    #[command(flatten)]
+    pub server: ServerSharedOpts,
+}
+
+/// Data plane agent options.
+#[derive(Parser, Debug, Clone)]
+#[command(args_override_self = true)]
+pub struct AgentOpts {
+    /// TOML configuration file; its `[server]` and `[agent]` tables hold
+    /// these same settings. Precedence is this file, then the `VARMAN_*`
+    /// environment variables, then the command line.
+    #[arg(long, env = "VARMAN_CONFIG")]
+    pub config: Option<String>,
+
+    /// Control plane gRPC URL to connect to
+    #[arg(
+        long,
+        env = "VARMAN_SERVER_URL",
+        default_value = "http://localhost:9090"
+    )]
+    pub server_url: String,
+
+    /// Optional PEM file with the CA (or chain) that signed the control
+    /// plane's gRPC certificate; defaults to the bundled webpki roots.
+    #[arg(long, env = "VARMAN_SERVER_CA_CERT")]
+    pub server_ca_cert: Option<String>,
+
+    #[command(flatten)]
+    pub agent: AgentSharedOpts,
+}
+
 /// All-in-one mode options (server + agent in one process).
 #[derive(Parser, Debug, Clone)]
 #[command(args_override_self = true)]
@@ -275,79 +289,11 @@ pub struct AllInOneOpts {
     #[arg(long, env = "VARMAN_CONFIG")]
     pub config: Option<String>,
 
-    // ── Server ────────────────────────────────────────────────────────
-    /// JWT signing secret (must be at least 16 characters)
-    #[arg(
-        long,
-        env = "VARMAN_JWT_SECRET",
-        default_value = "change-me-in-production"
-    )]
-    pub jwt_secret: String,
+    #[command(flatten)]
+    pub server: ServerSharedOpts,
 
-    /// Default admin email for initial seeding
-    #[arg(
-        long,
-        env = "VARMAN_ADMIN_EMAIL",
-        default_value = "admin@varman.local"
-    )]
-    pub admin_email: String,
-
-    /// Default admin password for initial seeding
-    #[arg(long, env = "VARMAN_ADMIN_PASSWORD", default_value = "varman123")]
-    pub admin_password: String,
-
-    /// Whether to serve the embedded frontend (SPA)
-    #[arg(
-        long,
-        env = "VARMAN_SERVE_FRONTEND",
-        default_value = "true",
-        num_args = 0..=1,
-        default_missing_value = "true",
-        action = clap::ArgAction::Set
-    )]
-    pub serve_frontend: bool,
-
-    // ── Agent ─────────────────────────────────────────────────────────
-    /// API key for agent authentication (empty = auto-register via loopback)
-    #[arg(long, env = "VARMAN_API_KEY", default_value = "")]
-    pub api_key: String,
-
-    /// Local rule cache directory
-    #[arg(long, env = "VARMAN_CACHE_DIR", default_value = "./data/cache")]
-    pub cache_dir: String,
-
-    /// Fallback policy when disconnected with no synced rules for a host;
-    /// per-site failover policies and the control-plane default win when
-    /// they have been synced
-    #[arg(
-        long,
-        env = "VARMAN_FAIL_OPEN",
-        default_value = "true",
-        num_args = 0..=1,
-        default_missing_value = "true",
-        action = clap::ArgAction::Set
-    )]
-    pub fail_open: bool,
-
-    /// Heartbeat interval in seconds
-    #[arg(long, env = "VARMAN_HEARTBEAT_INTERVAL", default_value = "30")]
-    pub heartbeat_interval_secs: u64,
-
-    /// Maximum log batch size before flush
-    #[arg(long, default_value = "100")]
-    pub log_batch_size: usize,
-
-    /// Log flush interval in seconds
-    #[arg(long, default_value = "5")]
-    pub log_flush_interval_secs: u64,
-
-    /// Maximum request body size to log (bytes)
-    #[arg(long, default_value = "8192")]
-    pub max_body_log_size: usize,
-
-    /// Metrics shipping interval in seconds (0 disables metric shipping)
-    #[arg(long, env = "VARMAN_METRICS_SHIP_INTERVAL", default_value = "30")]
-    pub metrics_ship_interval_secs: u64,
+    #[command(flatten)]
+    pub agent: AgentSharedOpts,
 }
 
 /// Database connection options of the maintenance commands.
@@ -766,7 +712,7 @@ mod tests {
         let VarmanCommand::Agent(opts) = parse(&["varman", "agent"]) else {
             panic!("expected the agent mode");
         };
-        assert!(opts.fail_open);
+        assert!(opts.agent.fail_open);
         assert!(opts.config.is_none());
 
         let VarmanCommand::Agent(opts) =
@@ -774,14 +720,14 @@ mod tests {
         else {
             panic!("expected the agent mode");
         };
-        assert!(opts.fail_open);
+        assert!(opts.agent.fail_open);
 
         let VarmanCommand::Agent(opts) =
             parse(&["varman", "agent", "--fail-open=false"])
         else {
             panic!("expected the agent mode");
         };
-        assert!(!opts.fail_open);
+        assert!(!opts.agent.fail_open);
     }
 
     #[test]
@@ -797,7 +743,7 @@ mod tests {
         ]) else {
             panic!("expected the server mode");
         };
-        assert_eq!(opts.jwt_secret, "from-cli-16-chars");
+        assert_eq!(opts.server.jwt_secret, "from-cli-16-chars");
         assert_eq!(opts.config.as_deref(), Some("/etc/varman/varman.toml"));
 
         let VarmanCommand::AllInOne(opts) = parse(&[
@@ -808,7 +754,49 @@ mod tests {
         ]) else {
             panic!("expected the all-in-one mode");
         };
-        assert!(opts.serve_frontend);
+        assert!(opts.server.serve_frontend);
+    }
+
+    #[test]
+    fn shared_server_and_agent_flags_parse_in_every_mode_that_declares_them() {
+        // The flags live in `ServerSharedOpts` / `AgentSharedOpts`; every
+        // mode that flattens them must still accept the same spellings.
+        let VarmanCommand::AllInOne(opts) = parse(&[
+            "varman",
+            "all-in-one",
+            "--jwt-secret=shared-secret-16",
+            "--admin-email=ops@example.com",
+            "--serve-frontend=false",
+            "--api-key=shared-key",
+            "--cache-dir=/var/cache/varman",
+            "--heartbeat-interval-secs=5",
+        ]) else {
+            panic!("expected the all-in-one mode");
+        };
+        assert_eq!("shared-secret-16", opts.server.jwt_secret);
+        assert_eq!("ops@example.com", opts.server.admin_email);
+        assert!(!opts.server.serve_frontend);
+        assert_eq!("shared-key", opts.agent.api_key);
+        assert_eq!("/var/cache/varman", opts.agent.cache_dir);
+        assert_eq!(5, opts.agent.heartbeat_interval_secs);
+
+        let VarmanCommand::Server(opts) = parse(&[
+            "varman",
+            "server",
+            "--jwt-secret=shared-secret-16",
+            "--admin-email=ops@example.com",
+        ]) else {
+            panic!("expected the server mode");
+        };
+        assert_eq!("shared-secret-16", opts.server.jwt_secret);
+        assert_eq!("ops@example.com", opts.server.admin_email);
+
+        let VarmanCommand::Agent(opts) =
+            parse(&["varman", "agent", "--api-key=shared-key"])
+        else {
+            panic!("expected the agent mode");
+        };
+        assert_eq!("shared-key", opts.agent.api_key);
     }
 
     /// One minimal command line per [`VarmanCommand`] variant. The names are

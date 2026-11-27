@@ -57,11 +57,13 @@ static LOG_TARGET: &str = "main::config_apply";
 #[derive(Clone, Copy, Debug)]
 pub struct ApplyOptions {
     /// Whether a change no provider can apply in place (`basic`, server
-    /// `addr`/`threads`, ...) is reported as [`ApplyOutcome::RestartRequired`].
+    /// `addr`/`threads`, ...) is applied hot and *not* reported as
+    /// [`ApplyOutcome::RestartRequired`].
     ///
-    /// The daemon sets this so its watcher restarts; the agent-hosted plane
-    /// never restarts, so a control-plane rule push must not ask for one.
-    pub restart_on_non_hot_change: bool,
+    /// The agent-hosted plane sets this: it never restarts, so a
+    /// control-plane rule push must not ask for one. The daemon clears it so
+    /// its watcher restarts on such a change.
+    pub hot_reload_only: bool,
     /// Build upstreams with the process webhook sender and run the health
     /// check of every new or changed upstream before it takes traffic.
     ///
@@ -104,9 +106,9 @@ pub struct ApplyOptions {
 
 impl ApplyOptions {
     /// The file-configured daemon's policy.
-    pub fn daemon(restart_on_non_hot_change: bool) -> Self {
+    pub fn daemon(hot_reload_only: bool) -> Self {
         Self {
-            restart_on_non_hot_change,
+            hot_reload_only,
             update_health_checks: true,
             rebuild_unchanged: false,
             notify: true,
@@ -118,7 +120,7 @@ impl ApplyOptions {
     /// The agent-hosted data plane's policy.
     pub fn agent_data_plane() -> Self {
         Self {
-            restart_on_non_hot_change: false,
+            hot_reload_only: true,
             update_health_checks: false,
             rebuild_unchanged: true,
             notify: false,
@@ -232,7 +234,7 @@ pub async fn apply_config(
         diff,
         config: projection,
     };
-    if options.restart_on_non_hot_change {
+    if !options.hot_reload_only {
         let (_, reason) = report.config.diff(next);
         debug!(
             target: LOG_TARGET,
@@ -286,7 +288,7 @@ async fn apply_categories(
 
     if categories.upstreams {
         let result = if options.update_health_checks {
-            try_update_upstreams(&next.upstreams, get_webhook_sender())
+            try_update_upstreams(&next.upstreams, Some(get_webhook_sender()))
                 .await
                 .map(StepReport::Named)
                 .map_err(|e| e.to_string())
@@ -771,10 +773,10 @@ mod tests {
 
         // Act
         let restarting =
-            apply_config(&previous, &next, &ApplyOptions::daemon(true), None)
+            apply_config(&previous, &next, &ApplyOptions::daemon(false), None)
                 .await;
         let hot_only =
-            apply_config(&previous, &next, &ApplyOptions::daemon(false), None)
+            apply_config(&previous, &next, &ApplyOptions::daemon(true), None)
                 .await;
 
         // Assert: the log level is not a hot-reloadable component.

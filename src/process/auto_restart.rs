@@ -152,7 +152,7 @@ async fn apply_config(
     let outcome = config_apply::apply_config(
         &current_config,
         new_config,
-        &ApplyOptions::daemon(!hot_reload_only),
+        &ApplyOptions::daemon(hot_reload_only),
         admin_plugin.as_ref(),
     )
     .await;
@@ -235,13 +235,13 @@ async fn apply_config(
 ///
 /// The service alternates between hot reloads and full restarts based on:
 /// - restart_unit: Determines frequency of full restarts vs hot reloads
-/// - only_hot_reload: Forces hot reload only mode
+/// - hot_reload_only: Forces hot reload only mode
 /// - count: Tracks intervals to coordinate restart timing
 struct AutoRestart {
     /// How many intervals to wait before allowing a full restart (vs hot reload)
     restart_unit: u32,
     /// If true, only perform hot reloads and never restart
-    only_hot_reload: bool,
+    hot_reload_only: bool,
     /// Tracks if currently performing a hot reload
     running_hot_reload: AtomicBool,
     config_manager: Arc<ConfigManager>,
@@ -259,7 +259,7 @@ pub fn new_auto_restart_service(
     config_manager: Arc<ConfigManager>,
     log_reload_handle: LoggerReloadHandle,
     interval: Duration,
-    only_hot_reload: bool,
+    hot_reload_only: bool,
     admin_plugin: Option<AdminPlugin>,
 ) -> BackgroundTaskService {
     let mut restart_unit = 1_u32;
@@ -279,7 +279,7 @@ pub fn new_auto_restart_service(
         log_reload_handle,
         config_manager,
         running_hot_reload: AtomicBool::new(false),
-        only_hot_reload,
+        hot_reload_only,
         restart_unit,
         current_log_level: ArcSwap::from_pointee(current_log_level),
         admin_plugin,
@@ -308,7 +308,7 @@ pub struct ConfigObserverService {
     /// How often to check for changes
     interval: Duration,
     /// If true, only perform hot reloads when changes detected
-    only_hot_reload: bool,
+    hot_reload_only: bool,
     /// Re-registered with every plugin rebuild, like the polling service.
     admin_plugin: Option<AdminPlugin>,
     delay: AtomicU32,
@@ -323,7 +323,7 @@ pub fn new_observer_service(
     config_manager: Arc<ConfigManager>,
     log_reload_handle: LoggerReloadHandle,
     interval: Duration,
-    only_hot_reload: bool,
+    hot_reload_only: bool,
     admin_plugin: Option<AdminPlugin>,
 ) -> ConfigObserverService {
     let current_log_level = config_manager
@@ -337,7 +337,7 @@ pub fn new_observer_service(
         config_manager,
         log_reload_handle,
         interval,
-        only_hot_reload,
+        hot_reload_only,
         current_log_level: ArcSwap::from_pointee(current_log_level),
         admin_plugin,
         delay: AtomicU32::new(MIN_DELAY),
@@ -386,7 +386,7 @@ impl BackgroundService for ConfigObserverService {
                     if let Some(new_config) = run_diff_and_update_config(
                         self.config_manager.clone(),
                         &self.last_seen,
-                        self.only_hot_reload,
+                        self.hot_reload_only,
                         self.admin_plugin.clone(),
                     ).await {
                         reload_log_level(
@@ -474,7 +474,7 @@ impl BackgroundTask for AutoRestart {
         // changes (server addr, threads, …) would never take effect.
         //
         // count=0 is always hot-reload-only so the first pass is gentle.
-        let hot_reload_only = self.only_hot_reload
+        let hot_reload_only = self.hot_reload_only
             || count == 0
             || !count.is_multiple_of(self.restart_unit);
         self.running_hot_reload
@@ -543,7 +543,7 @@ mod tests {
             tracing_subscriber::reload::Layer::new(new_env_filter("INFO"));
         AutoRestart {
             restart_unit: 1,
-            only_hot_reload: false,
+            hot_reload_only: false,
             running_hot_reload: AtomicBool::new(false),
             config_manager,
             log_reload_handle,
