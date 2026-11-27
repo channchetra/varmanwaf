@@ -46,7 +46,6 @@ services:
       # shadow: compare both engines per request; varman: enforce the pipeline
       # verdict escalated with the legacy verdict (custom rules stay effective).
       - VARMAN_WAF_ENGINE=${WAF_ENGINE:-shadow}
-      - VARMAN_WAF_SHADOW=${WAF_SHADOW:-0}
       # External processor (Phase 9). Set WAF_PROCESSOR_ENDPOINT together with
       # the `processor` profile below: tcp:varman-processor:9100 or
       # unix:/run/varman/proc.sock. Empty disables the feature.

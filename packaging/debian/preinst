@@ -1,0 +1,21 @@
+#!/bin/sh
+# Creates the service account and directories the varman.service unit uses.
+#
+# Idempotent: an upgrade keeps the existing account and its data. The account
+# is a system user with no shell and no home directory creation, matching the
+# manual-install instructions in docs/quick-start.md.
+set -e
+
+if ! getent group varman >/dev/null; then
+    groupadd --system varman
+fi
+if ! getent passwd varman >/dev/null; then
+    useradd --system --gid varman --home-dir /var/lib/varman \
+        --shell /usr/sbin/nologin varman
+fi
+
+install -d -o varman -g varman /var/lib/varman
+install -d -o varman -g varman /var/lib/varman/cache
+install -d -o root -g root /etc/varman
+
+exit 0

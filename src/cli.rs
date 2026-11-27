@@ -505,6 +505,75 @@ pub enum OnOff {
     Off,
 }
 
+/// Whether `program` (argv[0]) is an installed binary called `name`.
+///
+/// The file stem is compared, so a path (`/usr/local/bin/varman`) and a
+/// versioned file name behave the same, while a test harness
+/// (`varman-<hash>`) deliberately does not match.
+pub(crate) fn invoked_as(program: &str, name: &str) -> bool {
+    std::path::Path::new(program)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem == name)
+}
+
+/// Legacy pingap options that never take a value. A subcommand may follow one
+/// of these (`pingap -d server`); any other option ends the scan, because its
+/// value cannot be told apart from a positional.
+const LEGACY_BOOLEAN_FLAGS: [&str; 17] = [
+    "-d",
+    "--daemon",
+    "-u",
+    "--upgrade",
+    "-t",
+    "--test",
+    "-a",
+    "--autorestart",
+    "--autoreload",
+    "--cp",
+    "--template",
+    "--to-hcl",
+    "--to-kdl",
+    "-h",
+    "--help",
+    "-V",
+    "--version",
+];
+
+/// Index of the first token that is neither an option nor an option's value.
+///
+/// The flat proxy invocation (`varman -c varman.toml`) has no positional at
+/// all; `varman all-in-one` has one at index 1. Only the value-free legacy
+/// options are skipped: anything else could be a value (a path named `server`,
+/// for instance), so the scan gives up instead of guessing.
+fn first_positional_index(argv: &[String]) -> Option<usize> {
+    let mut after_terminator = false;
+    for (index, arg) in argv.iter().enumerate().skip(1) {
+        if after_terminator {
+            return Some(index);
+        }
+        if arg == "--" {
+            after_terminator = true;
+            continue;
+        }
+        if arg.starts_with('-') {
+            if LEGACY_BOOLEAN_FLAGS.contains(&arg.as_str()) {
+                continue;
+            }
+            return None;
+        }
+        return Some(index);
+    }
+    None
+}
+
+/// The first positional token, when it names a VarmanWAF subcommand.
+fn mode_token(argv: &[String]) -> Option<(usize, &str)> {
+    let index = first_positional_index(argv)?;
+    let value = argv[index].as_str();
+    is_mode(value).then_some((index, value))
+}
+
 /// Whether `value` names a VarmanWAF subcommand.
 ///
 /// The names come from the clap definition derived from [`VarmanCommand`],
@@ -529,24 +598,41 @@ fn mode_from_env() -> Option<String> {
 
 /// Whether an invocation selects VarmanWAF mode.
 ///
-/// The first argument is matched as typed — it is the token clap would parse
-/// — while the environment value is trimmed and lower-cased.
+/// A subcommand anywhere in the positional position wins, whatever the binary
+/// is called. Without one, the `varman` binary is VarmanWAF when the command
+/// line is empty or asks only for help or the template (the flat proxy and the
+/// maintenance flags stay on the legacy parser), and `VARMAN_MODE` selects it
+/// for either binary. The first argument is matched as typed; the environment
+/// value is trimmed and lower-cased.
 fn selects_varman_mode(
-    first_arg: Option<&str>,
+    program: &str,
+    argv: &[String],
     env_mode: Option<&str>,
 ) -> bool {
-    let from_argv = first_arg.is_some_and(is_mode);
+    let from_argv = mode_token(argv).is_some();
     let from_env = env_mode.and_then(normalise_mode).is_some();
-    from_argv || from_env
+    let varman_own_cli = invoked_as(program, "varman")
+        && argv
+            .iter()
+            .skip(1)
+            .all(|arg| matches!(arg.as_str(), "-h" | "--help" | "--template"));
+    from_argv || from_env || varman_own_cli
 }
 
-/// Check whether the command line invokes a VarmanWAF subcommand.
+/// Check whether the command line invokes the VarmanWAF CLI.
 ///
-/// Returns `true` if the first non-binary argument is one of the VarmanWAF
-/// subcommand names, or if `VARMAN_MODE` environment variable is set.
+/// Returns `true` when the first positional argument names a VarmanWAF
+/// subcommand, when the executable is `varman` and the command line is empty,
+/// help or the template, or when `VARMAN_MODE` names a mode.
 pub fn is_varman_mode() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    let program = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| env!("CARGO_BIN_NAME").to_string());
     selects_varman_mode(
-        std::env::args().nth(1).as_deref(),
+        &program,
+        &args,
         std::env::var("VARMAN_MODE").ok().as_deref(),
     )
 }
@@ -577,34 +663,77 @@ fn wants_version(args: &[String]) -> bool {
         .any(|arg| arg == "--version" || arg == "-V")
 }
 
+/// Whether the arguments ask for the starter configuration.
+fn wants_template(args: &[String]) -> bool {
+    args.iter().skip(1).any(|arg| arg == "--template")
+}
+
+/// Print the starter configuration and exit.
+///
+/// The schema and sample values are the legacy template, rebranded for the
+/// binary that printed it: `varman --template` must not hand a new operator a
+/// `pingap`-named file. `TEMPLATE_CONFIG` stays at the crate root so the flat
+/// `pingap --template` output is unchanged.
+fn print_template() -> ! {
+    print!("{}", crate::TEMPLATE_CONFIG.replace("pingap", "varman"));
+    std::process::exit(0);
+}
+
+/// Print the VarmanWAF help and exit successfully.
+fn print_help() -> ! {
+    let mut command = VarmanCli::command();
+    if command.print_help().is_err() {
+        std::process::exit(1);
+    }
+    println!();
+    std::process::exit(0);
+}
+
 /// Parse the VarmanWAF CLI from command line arguments.
 ///
 /// If `VARMAN_MODE` is set but no subcommand is given on the command line,
-/// injects the mode as a subcommand so that env-only invocation works. The
-/// settings of a `--config` file are added last, underneath the command line.
+/// injects the mode as a subcommand so that env-only invocation works. A
+/// subcommand found after a flag is moved into clap's position. The settings
+/// of a `--config` file are added last, underneath the command line.
 pub fn parse_varman_cli() -> VarmanCli {
     let args: Vec<String> = std::env::args().collect();
 
     if wants_version(&args) {
         print_version(&args);
     }
+    if wants_template(&args) {
+        print_template();
+    }
 
-    let mode = args
-        .get(1)
-        .filter(|arg| is_mode(arg))
-        .cloned()
-        .or_else(mode_from_env);
-    let Some(mode) = mode else {
-        eprintln!("error: no VarmanWAF subcommand or VARMAN_MODE specified");
-        std::process::exit(1);
-    };
-
-    let mut argv = if args.get(1).map(String::as_str) == Some(mode.as_str()) {
-        args.clone()
-    } else {
-        let mut injected = args.clone();
-        injected.insert(1, mode.clone());
-        injected
+    let mut argv = args.clone();
+    let mode = match mode_token(&args) {
+        Some((1, value)) => value.to_string(),
+        Some((index, value)) => {
+            // A legacy flag preceded the subcommand: move the mode into
+            // clap's position and let it report the stray option.
+            argv.remove(index);
+            argv.insert(1, value.to_string());
+            value.to_string()
+        },
+        None => match mode_from_env() {
+            Some(mode) => {
+                argv.insert(1, mode.clone());
+                mode
+            },
+            None if args
+                .iter()
+                .skip(1)
+                .all(|arg| arg == "-h" || arg == "--help") =>
+            {
+                print_help();
+            },
+            None => {
+                eprintln!(
+                    "error: no VarmanWAF subcommand or VARMAN_MODE specified"
+                );
+                std::process::exit(1);
+            },
+        },
     };
 
     // The file's arguments go next to the subcommand so that the command line,
@@ -835,20 +964,168 @@ mod tests {
         assert!(!is_mode(""));
     }
 
+    /// `argv` with `program` at index 0, the shape `std::env::args` produces.
+    fn argv(program: &str, args: &[&str]) -> Vec<String> {
+        std::iter::once(program.to_string())
+            .chain(args.iter().map(|arg| arg.to_string()))
+            .collect()
+    }
+
     #[test]
-    fn the_first_argument_and_env_var_select_the_expected_mode() {
-        // First argument: matched as typed, the same token clap parses.
-        assert!(selects_varman_mode(Some("server"), None));
-        assert!(selects_varman_mode(Some("config"), None));
-        assert!(!selects_varman_mode(Some("--version"), None));
-        assert!(!selects_varman_mode(Some("SERVER"), None));
+    fn the_first_positional_and_env_var_select_the_expected_mode() {
+        // A subcommand in the first positional selects VarmanWAF whichever
+        // binary runs it.
+        assert!(selects_varman_mode(
+            "varman",
+            &argv("varman", &["server"]),
+            None
+        ));
+        assert!(selects_varman_mode(
+            "pingap",
+            &argv("pingap", &["config"]),
+            None
+        ));
+        assert!(selects_varman_mode(
+            "pingap",
+            &argv("pingap", &["-d", "server"]),
+            None
+        ));
+        // The value of a legacy option is not a positional.
+        assert!(!selects_varman_mode(
+            "varman",
+            &argv("varman", &["-c", "server"]),
+            None
+        ));
+        assert!(!selects_varman_mode(
+            "pingap",
+            &argv("pingap", &["--conf=server"]),
+            None
+        ));
+        // Names are matched as typed, the token clap would parse.
+        assert!(!selects_varman_mode(
+            "varman",
+            &argv("varman", &["SERVER"]),
+            None
+        ));
+        assert!(!selects_varman_mode(
+            "varman",
+            &argv("varman", &["--version"]),
+            None
+        ));
+
+        // Bare and help-only invocations of the varman binary show the
+        // VarmanWAF parser; pingap keeps the legacy one. A legacy flag keeps
+        // the flat proxy on the legacy parser.
+        assert!(selects_varman_mode("varman", &argv("varman", &[]), None));
+        assert!(selects_varman_mode(
+            "varman",
+            &argv("varman", &["--help"]),
+            None
+        ));
+        assert!(selects_varman_mode(
+            "varman",
+            &argv("varman", &["-h"]),
+            None
+        ));
+        assert!(selects_varman_mode(
+            "varman",
+            &argv("varman", &["--template"]),
+            None
+        ));
+        // A legacy proxy flag keeps the template on the legacy parser too.
+        assert!(!selects_varman_mode(
+            "varman",
+            &argv("varman", &["--template", "-c", "x"]),
+            None
+        ));
+        assert!(!selects_varman_mode(
+            "pingap",
+            &argv("pingap", &["--template"]),
+            None
+        ));
+        assert!(!selects_varman_mode("pingap", &argv("pingap", &[]), None));
+        assert!(!selects_varman_mode(
+            "pingap",
+            &argv("pingap", &["--help"]),
+            None
+        ));
+        assert!(!selects_varman_mode(
+            "varman",
+            &argv("varman", &["-c", "varman.toml"]),
+            None
+        ));
 
         // Environment: trimmed and lower-cased.
-        assert!(selects_varman_mode(None, Some("SERVER")));
-        assert!(selects_varman_mode(None, Some(" mode ")));
-        assert!(!selects_varman_mode(None, Some("reset-password")));
+        assert!(selects_varman_mode(
+            "pingap",
+            &argv("pingap", &[]),
+            Some("SERVER")
+        ));
+        assert!(selects_varman_mode(
+            "pingap",
+            &argv("pingap", &[]),
+            Some(" mode ")
+        ));
+        assert!(!selects_varman_mode(
+            "pingap",
+            &argv("pingap", &[]),
+            Some("reset-password")
+        ));
 
-        assert!(!selects_varman_mode(None, None));
+        assert!(!selects_varman_mode(
+            "pingap",
+            &argv("pingap", &["--version"]),
+            None
+        ));
+    }
+
+    #[test]
+    fn the_first_positional_skips_values_it_cannot_classify() {
+        // A value-taking option ends the scan: the next token may be its value
+        // (a config path named `server`), not a subcommand.
+        assert_eq!(
+            None,
+            first_positional_index(&argv(
+                "varman",
+                &["-c", "varman.toml", "-d"]
+            ))
+        );
+        assert_eq!(
+            None,
+            first_positional_index(&argv(
+                "varman",
+                &["--log", "/tmp/access.log", "server"]
+            ))
+        );
+        // Value-free legacy options can precede the subcommand.
+        assert_eq!(
+            Some(2),
+            first_positional_index(&argv("pingap", &["-d", "server"]))
+        );
+        // After `--` even a dashed token is positional.
+        assert_eq!(
+            Some(2),
+            first_positional_index(&argv("varman", &["--", "server"]))
+        );
+        assert_eq!(
+            Some(1),
+            first_positional_index(&argv("varman", &["server"]))
+        );
+    }
+
+    #[test]
+    fn the_binary_identity_ignores_paths_and_test_harnesses() {
+        assert!(invoked_as("/usr/local/bin/varman", "varman"));
+        assert!(invoked_as("./varman", "varman"));
+        assert!(!invoked_as("/usr/local/bin/varman-debug", "varman"));
+        assert!(!invoked_as("/usr/local/bin/pingap", "varman"));
+    }
+
+    #[test]
+    fn the_template_flag_is_recognised() {
+        assert!(wants_template(&argv("varman", &["--template"])));
+        assert!(wants_template(&argv("varman", &["server", "--template"])));
+        assert!(!wants_template(&argv("varman", &["server"])));
     }
 
     #[test]

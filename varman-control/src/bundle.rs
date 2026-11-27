@@ -702,8 +702,9 @@ fn pools_to_proto(
         configs.push(UpstreamConfig {
             name: pool.name.clone(),
             peers,
-            // LB_ROUND_ROBIN — the legacy enum, superseded by `algo`.
-            algorithm: 0,
+            // The deprecated enum, superseded by `algo`; still populated so
+            // older agents do not treat every pool as round-robin.
+            algorithm: load_balance_algorithm(&pool.lb_algorithm),
             health_check,
             connection_timeout_ms: 0,
             read_timeout_ms: 0,
@@ -716,6 +717,23 @@ fn pools_to_proto(
         });
     }
     configs
+}
+
+/// Maps pingap's LB spec to the deprecated protocol enum.
+///
+/// `algo` is authoritative; this is only for agents that still read the
+/// legacy field. Unknown specs keep the historical round-robin default.
+fn load_balance_algorithm(algo: &str) -> i32 {
+    let algo = algo.trim().to_ascii_lowercase();
+    if algo.starts_with("hash") {
+        1
+    } else if algo == "least_connections" {
+        2
+    } else if algo == "random" {
+        3
+    } else {
+        0
+    }
 }
 
 /// Turns stored routes into their protocol representation, dropping routes
@@ -2599,6 +2617,15 @@ mod tests {
             health_status: "unknown".into(),
             created_at: Utc::now(),
         }
+    }
+
+    #[test]
+    fn legacy_algorithm_matches_the_pool_spec() {
+        assert_eq!(0, load_balance_algorithm("round_robin"));
+        assert_eq!(1, load_balance_algorithm("hash:ip"));
+        assert_eq!(2, load_balance_algorithm("least_connections"));
+        assert_eq!(3, load_balance_algorithm("random"));
+        assert_eq!(0, load_balance_algorithm("  "));
     }
 
     #[test]

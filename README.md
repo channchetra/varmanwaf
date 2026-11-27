@@ -141,7 +141,7 @@ To build from source instead, uncomment the `build:` block in
 
 Useful environment variables (see [`varman.toml`](./varman.toml) for the full
 set): `VARMAN_DB_URL`, `VARMAN_JWT_SECRET`, `VARMAN_ADMIN_EMAIL`,
-`VARMAN_ADMIN_PASSWORD`, `VARMAN_TLS_ENABLED`, `VARMAN_WAF_SHADOW`.
+`VARMAN_ADMIN_PASSWORD`, `VARMAN_TLS_ENABLED`, `VARMAN_WAF_ENGINE`.
 
 ## Build from source
 
@@ -177,11 +177,12 @@ cargo fmt --all -- --check
   `pingap-*` path dependencies only; external crates that happen to share the
   version string must stay untouched. Known traps: `tor-geoip` sits at
   `0.46.0`, `sqlparser` at `0.63.0`.
-- **Shadow mode:** run the data plane with `VARMAN_WAF_SHADOW=1` (or a site
-  with `engine_mode = shadow`) to execute the Varman pipeline beside the
+- **Shadow mode:** run the data plane with `VARMAN_WAF_ENGINE=shadow` (or a
+  site with `engine_mode = shadow`) to execute the Varman pipeline beside the
   legacy engine and record how the two verdicts compare (agree / pipeline
   stricter / pipeline weaker). Comparisons are logged and counted;
-  enforcement never changes.
+  enforcement never changes. `VARMAN_WAF_SHADOW=1` is a deprecated alias for
+  `VARMAN_WAF_ENGINE=shadow`.
 - **Dashboard assets:** `web/dist` is embedded into the binary at compile
   time. Run `npm run build` inside `web/` **before** rebuilding the Rust
   binary - never in parallel - or the binary embeds the previous bundle.

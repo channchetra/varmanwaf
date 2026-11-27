@@ -1,4 +1,4 @@
-import { Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { FunnelSimple, GlobeHemisphereWest, Key, Shield } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/PageHeader'
@@ -78,17 +78,6 @@ export function AccessControlPage() {
       {tab === 'geo' && <GeoPanel />}
       {tab === 'basic-auth' && <BasicAuthPanel />}
     </div>
-  )
-}
-
-/** Forwards a pre-merge route to the matching module here, query intact. */
-export function LegacySecurityRedirect({ tab }: { tab: AccessTab }) {
-  const { siteId = '' } = useParams<{ siteId: string }>()
-  const location = useLocation()
-  const params = new URLSearchParams(location.search)
-  params.set('tab', tab)
-  return (
-    <Navigate to={`/sites/${siteId}/security/access?${params.toString()}`} replace />
   )
 }
 

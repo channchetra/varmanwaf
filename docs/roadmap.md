@@ -174,7 +174,7 @@ a working VarmanWAF with unchanged behaviour.
 - [x] `shadow::compare` — agree / stricter / **weaker** classification against
       the legacy `WafVerdict` (downgrades are the alertable class).
 - [x] Wire shadow execution into `pingap-plugin/src/waf.rs`: opt-in with
-      `VARMAN_WAF_SHADOW=1`, counters + debug logs, no enforcement change.
+      `VARMAN_WAF_ENGINE=shadow`, counters + debug logs, no enforcement change.
       Verified end-to-end (2026-10-06): the stack was recreated with the flag
       and raw/encoded traversal probes produced `[shadow]` comparisons
       (`legacy=monitor`, `pipeline=log`, `PipelineWeaker`, `score_delta=1`,
@@ -187,8 +187,8 @@ a working VarmanWAF with unchanged behaviour.
       is the next step, together with the desired/active/last-good version
       handshake.
 - [x] **Engine switch (shadow→enforce)**: `VARMAN_WAF_ENGINE=legacy|shadow|varman`
-      (`VARMAN_WAF_SHADOW=1` still selects shadow; unknown values error-log and
-      fall back to legacy). In `varman` mode the pipeline verdict escalates
+      (`VARMAN_WAF_SHADOW=1` is a deprecated alias for `shadow`; unknown values
+      error-log and fall back to legacy). In `varman` mode the pipeline verdict escalates
       with the legacy verdict — the stronger action wins, ties keep the legacy
       verdict — so dashboard-configured custom rules stay effective and the
       new engine can only add protection. `PipelineVerdict::to_waf_verdict`

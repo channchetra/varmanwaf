@@ -1,0 +1,48 @@
+# VarmanWAF systemd unit installed by the Debian package.
+# ─────────────────────────────────────────────────────────────────────────────
+# Installed to: /lib/systemd/system/varman.service
+# Enable:       sudo systemctl enable --now varman
+# Status:       sudo systemctl status varman
+# Logs:         sudo journalctl -u varman -f
+#
+# This unit uses the package layout (/usr/sbin/varman, /etc/varman) and is
+# separate from the repository-root varman.service, which targets the manual
+# /usr/local/bin install documented in docs/quick-start.md.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=VarmanWAF - High Performance Web Application Firewall
+Documentation=https://github.com/channchetra/varmanwaf
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=varman
+Group=varman
+WorkingDirectory=/var/lib/varman
+# The package installs the reference configuration here. Environment variables
+# still override the file, and a command-line flag overrides both.
+Environment=VARMAN_CONFIG=/etc/varman/varman.toml
+Environment=RUST_LOG=info,sqlx=warn
+ExecStart=/usr/sbin/varman all-in-one
+# There is no reload signal: edit the configuration file (or the environment
+# below) and restart the unit.
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/varman /etc/varman
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

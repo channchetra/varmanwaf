@@ -279,7 +279,7 @@ desired/active/last-good version tracking.
   (protobuf, cmake, clang, openssl, nasm; dependency warm-up layer; `--features
   full`) → debian:trixie-slim runtime, non-root `pingwaf` user, binary
   `/usr/local/bin/pingwaf`, config `/etc/pingwaf/pingwaf.toml`.
-- `entrypoint.sh`: legacy arg dispatcher (prepends `pingap` for flag-style args).
+- `entrypoint.sh`: removed; the package unit invokes `varman` directly.
 
 ### 7.2 Build commands
 

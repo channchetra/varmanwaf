@@ -5,8 +5,8 @@
 //! * `legacy` — the pipeline does not run; the legacy engine is authoritative.
 //! * `shadow` — every inspected request is canonicalized and run through the
 //!   Varman pipeline; the result is compared against the legacy verdict and
-//!   recorded. **Enforcement never changes.** Also enabled by the older
-//!   `VARMAN_WAF_SHADOW=1`.
+//!   recorded. **Enforcement never changes.** The older `VARMAN_WAF_SHADOW=1`
+//!   is still accepted as a deprecated alias for `VARMAN_WAF_ENGINE=shadow`.
 //! * `varman` — the pipeline's verdict is enforced: it escalates with the
 //!   legacy verdict (the stronger action wins), so dashboard-configured
 //!   custom rules stay effective and the new engine can only add protection.
@@ -26,12 +26,13 @@ use varman_waf::pipeline::SecurityPipeline;
 use varman_waf::pipeline::shadow::{self, Agreement, ShadowComparison};
 use varman_waf::{RequestData, WafAction, WafVerdict};
 
-/// Environment variable that turns shadow execution on.
-pub const SHADOW_ENV: &str = "VARMAN_WAF_SHADOW";
-
 /// Environment variable that selects how the pipeline participates in
 /// enforcement (`legacy` | `shadow` | `varman`).
 pub const ENGINE_ENV: &str = "VARMAN_WAF_ENGINE";
+
+/// Retired switch kept as an alias for `VARMAN_WAF_ENGINE=shadow`. It only
+/// takes effect when `VARMAN_WAF_ENGINE` is unset.
+pub const SHADOW_ENV: &str = "VARMAN_WAF_SHADOW";
 
 /// How the Varman pipeline participates in request handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,9 +131,17 @@ static SHADOW: LazyLock<ShadowRuntime> = LazyLock::new(|| ShadowRuntime {
 });
 
 fn shadow_enabled_from_env() -> bool {
-    std::env::var(SHADOW_ENV)
+    let enabled = std::env::var(SHADOW_ENV)
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
+        .unwrap_or(false);
+    // One-time: the value is read once, while the shared runtime is built.
+    if enabled && std::env::var_os(ENGINE_ENV).is_none() {
+        tracing::warn!(
+            "{SHADOW_ENV} is deprecated and only an alias for \
+             {ENGINE_ENV}=shadow; set {ENGINE_ENV} instead"
+        );
+    }
+    enabled
 }
 
 /// `true` when the pipeline runs (shadow or enforce mode).

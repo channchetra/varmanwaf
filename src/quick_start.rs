@@ -16,8 +16,13 @@
 //! reverse proxy can be started without writing a config file:
 //!
 //! ```sh
-//! pingap --domain=pingap.io --upstream=192.168.1.1:3000 --cert=/etc/ssl/pingap.io
+//! varman --domain=waf.example.com --upstream=192.168.1.1:3000 --cert=/etc/ssl/waf.example.com
 //! ```
+//!
+//! The generated config carries the identity of the binary that ran it: the
+//! `varman` binary names it `varman` and keeps ACME state under
+//! `~/.varman/acme`, while an installed `pingap` binary keeps the historical
+//! `pingap` name and `~/.pingap/acme` path.
 //!
 //! The generated config is handed to the memory config storage, which means it
 //! goes through exactly the same validation and bootstrap path as a config read
@@ -37,14 +42,31 @@ type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 /// Name shared by the generated server, location, upstream and certificate.
 /// Only one of each is created, so a fixed name keeps the generated config
 /// readable when it is dumped with `--to-hcl` / `--to-kdl`.
-const NAME: &str = "pingap";
+///
+/// An installed `pingap` binary keeps its historical identity; every other
+/// invocation (the `varman` binary) is branded VarmanWAF.
+fn name() -> &'static str {
+    let program = std::env::args().next().unwrap_or_default();
+    if crate::cli::invoked_as(&program, "pingap") {
+        "pingap"
+    } else {
+        "varman"
+    }
+}
 
 /// Value of `certificates.*.acme` that selects let's encrypt.
 const ACME_LETS_ENCRYPT: &str = "lets_encrypt";
 
 /// Directory the acme state is kept in, relative to the user's home. It holds
 /// the private key of the issued certificate, so it is created owner-only.
-const ACME_DIR: &str = "~/.pingap/acme";
+/// The legacy `pingap` identity keeps its historical path.
+fn acme_dir() -> &'static str {
+    if name() == "pingap" {
+        "~/.pingap/acme"
+    } else {
+        "~/.varman/acme"
+    }
+}
 
 /// Certificate file names looked up inside a `--cert` directory, in priority
 /// order. Covers certbot/lego (`fullchain.pem`), the plain `cert.pem` layout
@@ -184,7 +206,7 @@ pub fn build_config(params: &QuickStartParams) -> Result<PingapConfig> {
         let (tls_cert, tls_key) =
             resolve_tls_files(cert, params.key.as_deref())?;
         certificates.insert(
-            NAME.to_string(),
+            name().to_string(),
             CertificateConf {
                 // When no domain is given the certificate serves the names in
                 // its own SAN list, which is what the operator already meant.
@@ -202,7 +224,7 @@ pub fn build_config(params: &QuickStartParams) -> Result<PingapConfig> {
         // issue one over http-01. The challenge listener on :80 is added by the
         // caller, the same way it is for a configured acme certificate.
         certificates.insert(
-            NAME.to_string(),
+            name().to_string(),
             CertificateConf {
                 domains: Some(domains.clone()),
                 acme: Some(ACME_LETS_ENCRYPT.to_string()),
@@ -223,32 +245,32 @@ pub fn build_config(params: &QuickStartParams) -> Result<PingapConfig> {
 
     Ok(PingapConfig {
         basic: BasicConf {
-            name: Some(NAME.to_string()),
+            name: Some(name().to_string()),
             log_level: Some("INFO".to_string()),
             ..Default::default()
         },
         upstreams: HashMap::from([(
-            NAME.to_string(),
+            name().to_string(),
             UpstreamConf {
                 addrs,
                 ..Default::default()
             },
         )]),
         locations: HashMap::from([(
-            NAME.to_string(),
+            name().to_string(),
             LocationConf {
                 path: Some("/".to_string()),
                 host: domains,
-                upstream: Some(NAME.to_string()),
+                upstream: Some(name().to_string()),
                 ..Default::default()
             },
         )]),
         servers: HashMap::from([(
-            NAME.to_string(),
+            name().to_string(),
             ServerConf {
                 addr,
                 access_log: Some("combined".to_string()),
-                locations: Some(vec![NAME.to_string()]),
+                locations: Some(vec![name().to_string()]),
                 global_certificates: tls.then_some(true),
                 // h2 is only negotiated over tls here, there is no reason to
                 // accept h2c on a plain listener nobody asked for.
@@ -265,7 +287,7 @@ pub fn build_config(params: &QuickStartParams) -> Result<PingapConfig> {
 /// config does not use acme. The file name is derived from the served domains
 /// so two command line proxies never share a certificate file.
 pub fn acme_state_path(config: &PingapConfig) -> Option<PathBuf> {
-    let certificate = config.certificates.get(NAME)?;
+    let certificate = config.certificates.get(name())?;
     if certificate.acme.as_deref().unwrap_or_default().is_empty() {
         return None;
     }
@@ -282,7 +304,7 @@ pub fn acme_state_path(config: &PingapConfig) -> Option<PathBuf> {
             }
         })
         .collect();
-    Some(PathBuf::from(resolve_path(ACME_DIR)).join(format!("{name}.toml")))
+    Some(PathBuf::from(resolve_path(acme_dir())).join(format!("{name}.toml")))
 }
 
 /// Copies the certificate a previous run obtained from let's encrypt into the
@@ -302,7 +324,7 @@ pub fn restore_acme_certificate(
     let saved = toml::from_str::<pingap_config::PingapTomlConfig>(&data)
         .ok()
         .and_then(|saved| saved.to_pingap_config(false).ok())
-        .and_then(|saved| saved.certificates.get(NAME).cloned());
+        .and_then(|saved| saved.certificates.get(name()).cloned());
     let Some(saved) = saved else {
         return false;
     };
@@ -313,7 +335,7 @@ pub fn restore_acme_certificate(
     if tls_cert.is_empty() || tls_key.is_empty() {
         return false;
     }
-    let Some(certificate) = config.certificates.get_mut(NAME) else {
+    let Some(certificate) = config.certificates.get_mut(name()) else {
         return false;
     };
     certificate.tls_cert = Some(tls_cert);
@@ -335,23 +357,23 @@ mod tests {
         })
         .unwrap();
 
-        let server = config.servers.get(NAME).unwrap();
+        let server = config.servers.get(name()).unwrap();
         assert_eq!("0.0.0.0:80", server.addr);
         assert_eq!(None, server.global_certificates);
         assert_eq!(None, server.enabled_h2);
-        assert_eq!(vec![NAME.to_string()], server.locations.clone().unwrap());
+        assert_eq!(vec![name().to_string()], server.locations.clone().unwrap());
 
-        let location = config.locations.get(NAME).unwrap();
+        let location = config.locations.get(name()).unwrap();
         assert_eq!(Some("/".to_string()), location.path);
         assert_eq!(None, location.host);
-        assert_eq!(Some(NAME.to_string()), location.upstream);
+        assert_eq!(Some(name().to_string()), location.upstream);
 
         assert_eq!(
             vec![
                 "192.168.1.1:3000".to_string(),
                 "192.168.1.2:3000".to_string()
             ],
-            config.upstreams.get(NAME).unwrap().addrs
+            config.upstreams.get(name()).unwrap().addrs
         );
         // no domain to prove ownership of, so no acme either
         assert!(config.certificates.is_empty());
@@ -370,7 +392,7 @@ mod tests {
         .unwrap();
 
         // a domain and no certificate means let's encrypt over http-01
-        let certificate = config.certificates.get(NAME).unwrap();
+        let certificate = config.certificates.get(name()).unwrap();
         assert_eq!(Some(ACME_LETS_ENCRYPT.to_string()), certificate.acme);
         assert_eq!(
             Some("pingap.io,www.pingap.io".to_string()),
@@ -381,7 +403,7 @@ mod tests {
         assert_eq!(None, certificate.dns_challenge);
 
         // and the server has to terminate tls for it to be of any use
-        let server = config.servers.get(NAME).unwrap();
+        let server = config.servers.get(name()).unwrap();
         assert_eq!("0.0.0.0:443", server.addr);
         assert_eq!(Some(true), server.global_certificates);
 
@@ -390,7 +412,7 @@ mod tests {
         assert!(
             acme_state_path(&config)
                 .unwrap()
-                .ends_with(".pingap/acme/pingap.io_www.pingap.io.toml")
+                .ends_with(".varman/acme/pingap.io_www.pingap.io.toml")
         );
     }
 
@@ -407,11 +429,11 @@ mod tests {
 
         // nothing issued yet
         assert!(!restore_acme_certificate(&mut config, &path));
-        assert_eq!(None, config.certificates[NAME].tls_cert);
+        assert_eq!(None, config.certificates[name()].tls_cert);
 
         // the acme task writes the whole config back through the storage
         let mut issued = config.clone();
-        let certificate = issued.certificates.get_mut(NAME).unwrap();
+        let certificate = issued.certificates.get_mut(name()).unwrap();
         certificate.tls_cert = Some("--pem--".to_string());
         certificate.tls_key = Some("--key--".to_string());
         fs::write(&path, toml::to_string_pretty(&issued).unwrap()).unwrap();
@@ -419,16 +441,16 @@ mod tests {
         assert!(restore_acme_certificate(&mut config, &path));
         assert_eq!(
             Some("--pem--".to_string()),
-            config.certificates[NAME].tls_cert
+            config.certificates[name()].tls_cert
         );
         assert_eq!(
             Some("--key--".to_string()),
-            config.certificates[NAME].tls_key
+            config.certificates[name()].tls_key
         );
         // the rest still comes from the command line
         assert_eq!(
             Some(ACME_LETS_ENCRYPT.to_string()),
-            config.certificates[NAME].acme
+            config.certificates[name()].acme
         );
     }
 
@@ -448,17 +470,17 @@ mod tests {
         })
         .unwrap();
 
-        let server = config.servers.get(NAME).unwrap();
+        let server = config.servers.get(name()).unwrap();
         assert_eq!("0.0.0.0:443", server.addr);
         assert_eq!(Some(true), server.global_certificates);
         assert_eq!(Some(true), server.enabled_h2);
 
         assert_eq!(
             Some("pingap.io,www.pingap.io".to_string()),
-            config.locations.get(NAME).unwrap().host
+            config.locations.get(name()).unwrap().host
         );
 
-        let certificate = config.certificates.get(NAME).unwrap();
+        let certificate = config.certificates.get(name()).unwrap();
         assert_eq!(
             Some("pingap.io,www.pingap.io".to_string()),
             certificate.domains
@@ -483,16 +505,16 @@ mod tests {
         .to_pingap_config(true)
         .unwrap();
         assert_eq!(1, loaded.certificates.len());
-        assert_eq!(certificate.tls_cert, loaded.certificates[NAME].tls_cert);
-        assert_eq!(certificate.tls_key, loaded.certificates[NAME].tls_key);
-        assert_eq!(Some(true), loaded.servers[NAME].global_certificates);
+        assert_eq!(certificate.tls_cert, loaded.certificates[name()].tls_cert);
+        assert_eq!(certificate.tls_key, loaded.certificates[name()].tls_key);
+        assert_eq!(Some(true), loaded.servers[name()].global_certificates);
         assert_eq!(
             Some("pingap.io,www.pingap.io".to_string()),
-            loaded.locations[NAME].host
+            loaded.locations[name()].host
         );
         assert_eq!(
             vec!["192.168.1.1:3000".to_string()],
-            loaded.upstreams[NAME].addrs
+            loaded.upstreams[name()].addrs
         );
     }
 
@@ -504,7 +526,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        assert_eq!("127.0.0.1:8080", config.servers.get(NAME).unwrap().addr);
+        assert_eq!("127.0.0.1:8080", config.servers.get(name()).unwrap().addr);
 
         assert_eq!(
             "--upstream should not be empty",

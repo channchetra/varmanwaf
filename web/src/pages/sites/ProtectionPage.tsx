@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Cloud, ShieldCheck, Sliders, Stack, Warning } from '@phosphor-icons/react'
@@ -239,17 +239,6 @@ export function ProtectionPage() {
         loading={setUnderAttack.isPending}
       />
     </div>
-  )
-}
-
-/** Forwards a pre-merge route (`/security/waf`, `/security/cc`) here, query intact. */
-export function LegacyProtectionRedirect({ tab }: { tab: ProtectionTab }) {
-  const { siteId = '' } = useParams<{ siteId: string }>()
-  const location = useLocation()
-  const params = new URLSearchParams(location.search)
-  params.set('tab', tab)
-  return (
-    <Navigate to={`/sites/${siteId}/security/protection?${params.toString()}`} replace />
   )
 }
 
