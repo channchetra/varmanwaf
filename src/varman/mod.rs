@@ -20,7 +20,8 @@
 use std::sync::Arc;
 
 use crate::cli::{
-    AgentOpts, AllInOneOpts, CommonOpts, ServerOpts, VarmanCli, VarmanCommand,
+    AgentOpts, AgentSharedOpts, AllInOneOpts, CommonOpts, ServerOpts,
+    ServerSharedOpts, VarmanCli, VarmanCommand,
 };
 use tracing::{error, info};
 use varman_agent::config::AgentConfig;
@@ -38,16 +39,24 @@ pub enum RunMode {
 
 /// Convert CLI server options into a `ServerConfig`.
 fn server_config_from_opts(opts: &ServerOpts) -> ServerConfig {
+    server_config_from_shared(&opts.common, &opts.server)
+}
+
+/// Builds the server config from the options every run mode shares.
+fn server_config_from_shared(
+    common: &CommonOpts,
+    server: &ServerSharedOpts,
+) -> ServerConfig {
     let mut config = ServerConfig::from_env();
     apply_cli_server_overrides(
         &mut config,
-        &opts.common,
-        opts.server.jwt_secret.as_str(),
-        &opts.server.admin_email,
-        &opts.server.admin_password,
-        opts.server.serve_frontend,
+        common,
+        server.jwt_secret.as_str(),
+        &server.admin_email,
+        &server.admin_password,
+        server.serve_frontend,
     );
-    apply_tls_opts(&mut config, &opts.common);
+    apply_tls_opts(&mut config, common);
     config
 }
 
@@ -100,17 +109,7 @@ fn apply_cli_server_overrides(
 
 /// Convert CLI all-in-one options into a `ServerConfig`.
 fn server_config_from_all_in_one(opts: &AllInOneOpts) -> ServerConfig {
-    let mut config = ServerConfig::from_env();
-    apply_cli_server_overrides(
-        &mut config,
-        &opts.common,
-        opts.server.jwt_secret.as_str(),
-        &opts.server.admin_email,
-        &opts.server.admin_password,
-        opts.server.serve_frontend,
-    );
-    apply_tls_opts(&mut config, &opts.common);
-    config
+    server_config_from_shared(&opts.common, &opts.server)
 }
 
 /// Layers the shared TLS options onto a server config.
@@ -131,24 +130,38 @@ fn apply_tls_opts(config: &mut ServerConfig, opts: &CommonOpts) {
 
 /// Convert CLI agent options into an `AgentConfig`.
 fn agent_config_from_opts(opts: &AgentOpts) -> AgentConfig {
+    agent_config_from_shared(
+        opts.server_url.clone(),
+        opts.server_ca_cert.clone(),
+        &opts.agent,
+    )
+}
+
+/// Builds an agent config from the shared agent options plus the connection
+/// fields that differ between standalone and all-in-one mode.
+fn agent_config_from_shared(
+    server_url: String,
+    server_ca_cert: Option<String>,
+    opts: &AgentSharedOpts,
+) -> AgentConfig {
     AgentConfig {
-        server_url: opts.server_url.clone(),
-        api_key: opts.agent.api_key.clone(),
+        server_url,
+        api_key: opts.api_key.clone(),
         agent_id: String::new(),
-        server_ca_cert: opts.server_ca_cert.clone(),
+        server_ca_cert,
         server_ca_pem: None,
         server_tls_name: None,
-        heartbeat_interval_secs: opts.agent.heartbeat_interval_secs,
-        cache_dir: opts.agent.cache_dir.clone(),
-        log_batch_size: opts.agent.log_batch_size,
-        log_flush_interval_secs: opts.agent.log_flush_interval_secs,
-        max_body_log_size: opts.agent.max_body_log_size,
+        heartbeat_interval_secs: opts.heartbeat_interval_secs,
+        cache_dir: opts.cache_dir.clone(),
+        log_batch_size: opts.log_batch_size,
+        log_flush_interval_secs: opts.log_flush_interval_secs,
+        max_body_log_size: opts.max_body_log_size,
         reconnect_initial_delay_ms: 1000,
         reconnect_max_delay_ms: 60000,
-        fail_open: opts.agent.fail_open,
+        fail_open: opts.fail_open,
         probe_interval_secs: varman_agent::probe::DEFAULT_INTERVAL_SECS,
         probe_disk_path: "/".to_string(),
-        metrics_ship_interval_secs: opts.agent.metrics_ship_interval_secs,
+        metrics_ship_interval_secs: opts.metrics_ship_interval_secs,
     }
 }
 
@@ -176,25 +189,7 @@ fn agent_config_from_all_in_one(opts: &AllInOneOpts) -> AgentConfig {
                 },
             },
         };
-    AgentConfig {
-        server_url,
-        api_key: opts.agent.api_key.clone(),
-        agent_id: String::new(),
-        server_ca_cert,
-        server_ca_pem: None,
-        server_tls_name: None,
-        heartbeat_interval_secs: opts.agent.heartbeat_interval_secs,
-        cache_dir: opts.agent.cache_dir.clone(),
-        log_batch_size: opts.agent.log_batch_size,
-        log_flush_interval_secs: opts.agent.log_flush_interval_secs,
-        max_body_log_size: opts.agent.max_body_log_size,
-        reconnect_initial_delay_ms: 1000,
-        reconnect_max_delay_ms: 60000,
-        fail_open: opts.agent.fail_open,
-        probe_interval_secs: varman_agent::probe::DEFAULT_INTERVAL_SECS,
-        probe_disk_path: "/".to_string(),
-        metrics_ship_interval_secs: opts.agent.metrics_ship_interval_secs,
-    }
+    agent_config_from_shared(server_url, server_ca_cert, &opts.agent)
 }
 
 /// Extract port from an address string like "0.0.0.0:9090".

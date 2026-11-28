@@ -766,7 +766,7 @@ impl TryFrom<&PluginConf> for WafPlugin {
         } else {
             StackSet::from_names(stack_names.iter().map(String::as_str))
         };
-        let paranoia_level = (params.paranoia_level as u8).clamp(1, 4);
+        let paranoia_level = (params.paranoia_level.clamp(1, 4)) as u8;
         let anomaly_threshold = params.anomaly_threshold as u32;
         let detections = params.detections;
         let mut monitor_categories =

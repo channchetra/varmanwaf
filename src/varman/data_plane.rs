@@ -2,9 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use pingap_acme::new_lets_encrypt_service;
 use pingap_certificate::CertificateProvider;
-use pingap_config::PingapTomlConfig;
+use pingap_config::{ConfigManager, PingapConfig, PingapTomlConfig};
 use pingap_proxy::{Server as ProxyServer, parse_from_conf};
 use pingap_upstream::new_upstream_health_check_task;
 use pingora::services::background::background_service;
@@ -30,7 +29,92 @@ use super::bundle_config::build_pingap_config;
 pub(super) async fn start_data_plane(
     rule_cache: Arc<RuleCache>,
 ) -> anyhow::Result<()> {
-    // Wait for the agent to receive initial config from the control plane
+    let config = wait_for_config(&rule_cache).await;
+    log_start(&config);
+    let (config_manager, config) = config_manager_for(&rule_cache, config)?;
+
+    // Assemble the shared data plane: providers, pingora server, the four
+    // common background loops. `background_tasks` stays here because this root
+    // adds ACME to it and registers it before its listeners.
+    let mut assembled = assemble(
+        &config,
+        config_manager.clone(),
+        DataPlaneOptions::data_plane(
+            false,
+            false,
+            None,
+            None,
+            "data_plane_background_tasks",
+        ),
+    )?;
+
+    // Activate the WAF plugin: without it the data plane forwards traffic
+    // uninspected and no access/security events are ever emitted.
+    let cert_provider = assembled.providers.certificates.clone();
+    crate::data_plane::report_provider_updates(
+        &assembled.plugins,
+        &assembled.certificates,
+    );
+    install_certificate_status_snapshot(cert_provider.clone());
+
+    let acme_enabled = crate::acme_enabled();
+    let mut background_tasks = assembled
+        .background_tasks
+        .take()
+        .expect("assemble builds the background tasks for a data plane");
+    // A stalled ACME cycle is mirrored onto the `pingap::acme` target, which
+    // the agent's certificate-event capture ships to the control plane — so
+    // an issuance that hangs shows up in the panel's certificate log instead
+    // of only in the data plane's own log file.
+    background_tasks.set_on_stalled(Some(Box::new(|name, tasks, elapsed| {
+        warn!(
+            target: "pingap::acme",
+            name,
+            tasks,
+            elapsed,
+            "background tasks still running past the interval"
+        );
+    })));
+    if acme_enabled {
+        crate::data_plane::add_acme_task(
+            &mut background_tasks,
+            config_manager.clone(),
+            cert_provider,
+            Some(crate::webhook::get_webhook_sender()),
+        );
+        info!("data plane: ACME certificate management enabled");
+    }
+    register_background_tasks(&mut assembled, background_tasks);
+
+    start_proxy_servers(&mut assembled, &config, acme_enabled)?;
+    start_upstream_health_check(&mut assembled);
+
+    let my_server = assembled.server;
+    // Run Pingora in a dedicated OS thread. Do NOT join it here —
+    // joining would block the tokio worker thread permanently and starve
+    // the control-plane REST/gRPC servers (especially on small machines).
+    // The thread exits when the process shuts down.
+    std::thread::spawn(move || {
+        my_server.run_forever();
+    });
+
+    spawn_pending_access_sweeper();
+    spawn_rule_reload_watcher(
+        rule_cache,
+        config_manager.clone(),
+        assembled.providers.clone(),
+    );
+    spawn_management_certificate_publisher(config_manager);
+
+    // Keep the async task alive until the tokio runtime shuts down.
+    // The caller (run()) aborts this task on shutdown signal.
+    std::future::pending::<()>().await;
+    Ok(())
+}
+
+/// Waits for the first control-plane rules, then keeps waiting until they
+/// produce a usable proxy config.
+async fn wait_for_config(rule_cache: &Arc<RuleCache>) -> PingapConfig {
     for i in 0..30 {
         let cached = rule_cache.all_sites();
         if !cached.sites.is_empty() {
@@ -42,20 +126,21 @@ pub(super) async fn start_data_plane(
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
-    let config = match build_pingap_config(&rule_cache) {
+    match build_pingap_config(rule_cache) {
         Some(config) => config,
         None => {
             warn!("data plane: no sites configured, proxy not started");
-            // Keep waiting — the agent may receive config later
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                if let Some(config) = build_pingap_config(&rule_cache) {
+                if let Some(config) = build_pingap_config(rule_cache) {
                     break config;
                 }
             }
         },
-    };
+    }
+}
 
+fn log_start(config: &PingapConfig) {
     let location_count = config
         .servers
         .values()
@@ -68,15 +153,18 @@ pub(super) async fn start_data_plane(
         "data plane: starting reverse proxy with {} location(s)",
         location_count,
     );
+}
 
-    // Serialize to TOML and create a memory-backed config manager. The
-    // freshly converted config is merged with the ACME state left by the
-    // previous run first, so already-issued certificates are served (and
-    // not reordered) from the first request on.
+/// Serializes the freshly converted config, merges the ACME state left by the
+/// previous run, and builds the memory-backed manager.
+fn config_manager_for(
+    rule_cache: &Arc<RuleCache>,
+    config: PingapConfig,
+) -> anyhow::Result<(Arc<ConfigManager>, PingapConfig)> {
     let toml_str = toml::to_string_pretty(&config).map_err(|e| {
         anyhow::anyhow!("failed to serialize proxy config: {}", e)
     })?;
-    let acme_state = acme_state_path(&rule_cache);
+    let acme_state = acme_state_path(rule_cache);
     let toml_str = merge_config_state(
         &toml_str,
         &std::fs::read_to_string(&acme_state).unwrap_or_default(),
@@ -103,150 +191,80 @@ pub(super) async fn start_data_plane(
     };
     config_manager.set_current_config(config.clone());
     publish_management_certificate(&config);
+    Ok((config_manager, config))
+}
 
-    // Assemble the shared data plane: providers, pingora server, the four
-    // common background loops. `background_tasks` stays here because this root
-    // adds ACME to it and registers it before its listeners.
-    let mut assembled = assemble(
-        &config,
-        config_manager.clone(),
-        DataPlaneOptions {
-            daemon: false,
-            upgrade: false,
-            threads: None,
-            admin_plugin: None,
-            background_task_service_name: Some("data_plane_background_tasks"),
-            admin_only: false,
-        },
-    )?;
-
-    // Activate the WAF plugin: without it the data plane forwards traffic
-    // uninspected and no access/security events are ever emitted.
-    if !assembled.plugins.updated.is_empty() {
-        info!(
-            plugins = assembled.plugins.updated.join(","),
-            "data plane: plugins initialized"
-        );
-    }
-    if !assembled.plugins.errors.is_empty() {
-        error!(
-            error = assembled.plugins.errors.as_str(),
-            "data plane: plugin init errors"
-        );
-    }
-
-    // Initialize certificates
-    let cert_provider = assembled.providers.certificates.clone();
-    if !config.certificates.is_empty() {
-        if !assembled.certificates.updated.is_empty() {
-            info!(
-                certs = assembled.certificates.updated.join(","),
-                "data plane: certificates loaded"
-            );
+/// Builds the site → certificate status map from the provider's current
+/// entries. Certificates generated from site config are named
+/// `{site_id}_cert`, which is how a status is attributed back to its site.
+fn certificate_statuses(
+    provider: &dyn CertificateProvider,
+    now: i64,
+) -> HashMap<String, varman_agent::cert_status::CertStatus> {
+    let mut statuses = HashMap::new();
+    for cert in provider.list().values() {
+        let Some(site_id) = cert
+            .name
+            .as_deref()
+            .and_then(|name| name.strip_suffix("_cert"))
+        else {
+            continue;
+        };
+        let Some(info) = cert.info.as_ref() else {
+            continue;
+        };
+        if info.not_after == 0 {
+            continue;
         }
-        if !assembled.certificates.errors.is_empty() {
-            error!(
-                error = assembled.certificates.errors.as_str(),
-                "data plane: certificate parse errors"
-            );
-        }
-    }
-
-    // Let the agent report certificate state: the ACME task writes issued PEMs
-    // into the provider below, and without this the control plane keeps showing
-    // the certificate as pending forever. Certificates generated from site
-    // config are named `{site_id}_cert`, which is how a status is attributed
-    // back to its site.
-    {
-        let provider = cert_provider.clone();
-        varman_agent::cert_status::set_snapshot(Some(Arc::new(move || {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_secs() as i64)
-                .unwrap_or_default();
-            let mut statuses = HashMap::new();
-            for cert in provider.list().values() {
-                let Some(site_id) = cert
-                    .name
-                    .as_deref()
-                    .and_then(|name| name.strip_suffix("_cert"))
-                else {
-                    continue;
-                };
-                let Some(info) = cert.info.as_ref() else {
-                    continue;
-                };
-                if info.not_after == 0 {
-                    continue;
-                }
-                let remaining = info.not_after - now;
-                let status = if remaining <= 0 {
-                    "expired"
-                } else if remaining <= 2 * 24 * 3600 {
-                    "expiring_soon"
-                } else {
-                    "valid"
-                };
-                // One certificate is listed under every domain it serves; the
-                // entries agree, so the first one wins.
-                statuses.entry(site_id.to_string()).or_insert(
-                    varman_agent::cert_status::CertStatus {
-                        status,
-                        expires_at: info.not_after,
-                    },
-                );
-            }
-            statuses
-        })));
-    }
-
-    // ACME (Let's Encrypt): issue and renew certificates for sites whose
-    // The ACME task must exist even when no certificate is configured at
-    // start-up: certificates are created at runtime (the console, the API)
-    // and the task re-reads the live config every cycle, so a task that was
-    // never registered leaves runtime-created orders unprocessed - the row
-    // sits `pending` and the stale sweeper eventually fails it with a
-    // generic reason. With no ACME certificates the task is a cheap no-op.
-    // VARMAN_DISABLE_ACME (or the legacy PINGAP_DISABLE_ACME) opts out
-    // entirely.
-    let acme_enabled = crate::acme_enabled();
-    let mut background_tasks = assembled
-        .background_tasks
-        .take()
-        .expect("assemble builds the background tasks for a data plane");
-    // A stalled ACME cycle is mirrored onto the `pingap::acme` target, which
-    // the agent's certificate-event capture ships to the control plane — so
-    // an issuance that hangs shows up in the panel's certificate log instead
-    // of only in the data plane's own log file.
-    background_tasks.set_on_stalled(Some(Box::new(|name, tasks, elapsed| {
-        warn!(
-            target: "pingap::acme",
-            name,
-            tasks,
-            elapsed,
-            "background tasks still running past the interval"
+        let remaining = info.not_after - now;
+        let status = if remaining <= 0 {
+            "expired"
+        } else if remaining <= 2 * 24 * 3600 {
+            "expiring_soon"
+        } else {
+            "valid"
+        };
+        // One certificate is listed under every domain it serves; the entries
+        // agree, so the first one wins.
+        statuses.entry(site_id.to_string()).or_insert(
+            varman_agent::cert_status::CertStatus {
+                status,
+                expires_at: info.not_after,
+            },
         );
+    }
+    statuses
+}
+
+/// Lets the agent report certificate state: the ACME task writes issued PEMs
+/// into the provider, and without this the control plane keeps showing the
+/// certificate as pending forever.
+fn install_certificate_status_snapshot(provider: Arc<dyn CertificateProvider>) {
+    varman_agent::cert_status::set_snapshot(Some(Arc::new(move || {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs() as i64)
+            .unwrap_or_default();
+        certificate_statuses(provider.as_ref(), now)
     })));
-    if acme_enabled {
-        background_tasks.add_task(
-            "lets_encrypt",
-            new_lets_encrypt_service(
-                config_manager.clone(),
-                cert_provider.clone(),
-                Some(crate::webhook::get_webhook_sender()),
-            ),
-        );
-        info!("data plane: ACME certificate management enabled");
-    }
-    let background_tasks_name = background_tasks.name().to_string();
-    assembled.server.add_service(background_service(
-        &background_tasks_name,
-        background_tasks,
-    ));
+}
 
-    // Parse server configs and start proxy servers
+fn register_background_tasks(
+    assembled: &mut crate::data_plane::AssembledPlane,
+    background_tasks: pingap_core::BackgroundTaskService,
+) {
+    let name = background_tasks.name().to_string();
+    assembled
+        .server
+        .add_service(background_service(&name, background_tasks));
+}
+
+fn start_proxy_servers(
+    assembled: &mut crate::data_plane::AssembledPlane,
+    config: &PingapConfig,
+    acme_enabled: bool,
+) -> anyhow::Result<()> {
     let server_conf_list = parse_from_conf(config.clone());
-
     for server_conf in server_conf_list {
         let mut ps =
             ProxyServer::new(&server_conf, assembled.app_context(None))?;
@@ -277,38 +295,33 @@ pub(super) async fn start_data_plane(
             .join(", "),
         "data plane: proxy server is running"
     );
+    Ok(())
+}
 
-    // Start the upstream health check background task.
-    // This also drives periodic DNS discovery updates — without it,
-    // DNS-based backends are never resolved and requests get 503.
-    let upstream_health_check_task = new_upstream_health_check_task(
+fn start_upstream_health_check(
+    assembled: &mut crate::data_plane::AssembledPlane,
+) {
+    // This also drives periodic DNS discovery updates — without it, DNS-based
+    // backends are never resolved and requests get 503.
+    let task = new_upstream_health_check_task(
         assembled.providers.upstreams.clone(),
         Duration::from_secs(10),
         None,
     );
-    let hc_name = upstream_health_check_task.name().to_string();
+    let name = task.name().to_string();
     info!(
-        service_name = %hc_name,
+        service_name = %name,
         "data plane: registering upstream health check background service"
     );
     assembled
         .server
-        .add_service(background_service(&hc_name, upstream_health_check_task));
+        .add_service(background_service(&name, task));
+}
 
-    let my_server = assembled.server;
-    // Run Pingora in a dedicated OS thread. Do NOT join it here —
-    // joining would block the tokio worker thread permanently and starve
-    // the control-plane REST/gRPC servers (especially on small machines).
-    // The thread exits when the process shuts down.
-    std::thread::spawn(move || {
-        my_server.run_forever();
-    });
-
-    // Access log entries are held until the response body completes so the
-    // log can carry the response payload. A client that disconnects mid-body
-    // never fires the end-of-stream callback, so stale entries are swept
-    // periodically: they are still emitted (flagged truncated) so the request
-    // never vanishes from the log, and the map cannot grow without bound.
+/// Access log entries are held until the response body completes so the log
+/// can carry the response payload. A client that disconnects mid-body never
+/// fires the end-of-stream callback, so stale entries are swept periodically.
+fn spawn_pending_access_sweeper() {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
@@ -323,19 +336,19 @@ pub(super) async fn start_data_plane(
             }
         }
     });
+}
 
-    // Hot-reload watcher: poll the rule cache config hash and re-init the
-    // ArcSwap providers when the control plane pushes new rules. The proxy
-    // reads these providers per request, so no restart is needed. The config
-    // manager itself is updated in place: on every reload the freshly
-    // converted config is merged with the previous document (preserving
-    // issued PEMs and ACME state such as challenge tokens and the account
-    // key) and set as current, so the ACME renewal task keeps working.
-    let watcher_cache = Arc::clone(&rule_cache);
-    let watcher_config_manager = Arc::clone(&config_manager);
-    // The reload writes into the same registries the listeners and background
-    // tasks read, never into a process global.
-    let watcher_providers = assembled.providers.clone();
+/// Polls the rule cache config hash and re-inits the ArcSwap providers when
+/// the control plane pushes new rules. The proxy reads these providers per
+/// request, so no restart is needed.
+fn spawn_rule_reload_watcher(
+    rule_cache: Arc<RuleCache>,
+    config_manager: Arc<ConfigManager>,
+    providers: crate::data_plane::ProviderSet,
+) {
+    let watcher_cache = rule_cache;
+    let watcher_config_manager = config_manager;
+    let watcher_providers = providers;
     let mut last_hash = watcher_cache.data_plane_hash();
     let mut last_management = varman_control::management_cert::revision();
     tokio::spawn(async move {
@@ -420,23 +433,98 @@ pub(super) async fn start_data_plane(
             last_management = management;
         }
     });
+}
 
-    // The ACME task fills the `__management` entry in place, without changing
-    // the config hash, so the reload hooks above never see the issued material.
-    // Publish it on a timer instead: the installer compares fingerprints, so
-    // repeating the same certificate is a no-op.
-    let management_config = Arc::clone(&config_manager);
+/// The ACME task fills the `__management` entry in place, without changing
+/// the config hash, so the reload hooks never see the issued material.
+/// Publish it on a timer instead; the installer compares fingerprints, so
+/// repeating the same certificate is a no-op.
+fn spawn_management_certificate_publisher(config_manager: Arc<ConfigManager>) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(15)).await;
             publish_management_certificate(
-                &management_config.get_current_config(),
+                &config_manager.get_current_config(),
             );
         }
     });
+}
 
-    // Keep the async task alive until the tokio runtime shuts down.
-    // The caller (run()) aborts this task on shutdown signal.
-    std::future::pending::<()>().await;
-    Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pingap_certificate::{Certificate, TlsCertificate};
+
+    fn site_certificate(site: &str, not_after: i64) -> TlsCertificate {
+        TlsCertificate {
+            name: Some(format!("{site}_cert")),
+            info: Some(Certificate {
+                not_after,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn certificate_status_uses_the_protocol_vocabulary() {
+        let provider = crate::certificates::Provider::new();
+        let now = 1_700_000_000;
+        let mut certs: pingap_certificate::DynamicCertificates =
+            ahash::AHashMap::new();
+        certs.insert(
+            "valid_cert".to_string(),
+            Arc::new(site_certificate("valid", now + 30 * 24 * 3600)),
+        );
+        certs.insert(
+            "soon_cert".to_string(),
+            Arc::new(site_certificate("soon", now + 3600)),
+        );
+        certs.insert(
+            "expired_cert".to_string(),
+            Arc::new(site_certificate("expired", now - 1)),
+        );
+        // Not named `{site}_cert`: it is a management or uploaded
+        // certificate, not a per-site certificate the heartbeat reports.
+        certs.insert(
+            "panel".to_string(),
+            Arc::new(TlsCertificate {
+                name: Some("panel".to_string()),
+                info: Some(Certificate {
+                    not_after: now + 3600,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        );
+        provider.store(certs);
+
+        let statuses = certificate_statuses(&provider, now);
+        assert_eq!(3, statuses.len());
+        assert_eq!("valid", statuses["valid"].status);
+        assert_eq!("expiring_soon", statuses["soon"].status);
+        assert_eq!("expired", statuses["expired"].status);
+        assert_eq!(now + 3600, statuses["soon"].expires_at);
+    }
+
+    #[test]
+    fn certificate_status_skips_entries_without_expiry_or_info() {
+        let provider = crate::certificates::Provider::new();
+        let mut certs: pingap_certificate::DynamicCertificates =
+            ahash::AHashMap::new();
+        certs.insert(
+            "unknown_cert".to_string(),
+            Arc::new(TlsCertificate {
+                name: Some("unknown_cert".to_string()),
+                ..Default::default()
+            }),
+        );
+        certs.insert(
+            "zero_cert".to_string(),
+            Arc::new(site_certificate("zero", 0)),
+        );
+        provider.store(certs);
+
+        assert!(certificate_statuses(&provider, 1_700_000_000).is_empty());
+    }
 }

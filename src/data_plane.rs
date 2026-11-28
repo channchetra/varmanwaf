@@ -34,16 +34,18 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::warn;
+use tracing::{error, info, warn};
 
 use bytes::BytesMut;
+use pingap_acme::new_lets_encrypt_service;
 use pingap_cache::new_storage_clear_service;
+use pingap_certificate::CertificateProvider;
 use pingap_certificate::{
     new_certificate_validity_service,
     new_self_signed_certificate_validity_service,
 };
 use pingap_config::{ConfigManager, PingapConfig, PluginConf};
-use pingap_core::BackgroundTaskService;
+use pingap_core::{BackgroundTaskService, NotificationSender};
 use pingap_performance::new_performance_metrics_log_service;
 use pingap_proxy::AppContext;
 use pingora::server;
@@ -63,6 +65,44 @@ const DEFAULT_UPGRADE_SOCK: &str = "/tmp/pingap_upgrade.sock";
 
 /// pingora's upgrade socket for this deployment: `basic.upgrade_sock`, or the
 /// path pingap has always defaulted to.
+/// Logs the outcome both data-plane roots used to print themselves.
+pub(crate) fn report_provider_updates(
+    plugins: &ProviderUpdate,
+    certificates: &ProviderUpdate,
+) {
+    if !plugins.updated.is_empty() {
+        info!(plugins = plugins.updated.join(","), "plugins initialized");
+    }
+    if !plugins.errors.is_empty() {
+        error!(error = plugins.errors.as_str(), "plugin init errors");
+    }
+    if !certificates.updated.is_empty() {
+        info!(
+            certs = certificates.updated.join(","),
+            "certificates loaded"
+        );
+    }
+    if !certificates.errors.is_empty() {
+        error!(
+            error = certificates.errors.as_str(),
+            "certificate parse errors"
+        );
+    }
+}
+
+/// Registers the shared ACME task on the plane's background service.
+pub(crate) fn add_acme_task(
+    tasks: &mut BackgroundTaskService,
+    config_manager: Arc<ConfigManager>,
+    provider: Arc<dyn CertificateProvider>,
+    sender: Option<Arc<NotificationSender>>,
+) {
+    tasks.add_task(
+        "lets_encrypt",
+        new_lets_encrypt_service(config_manager, provider, sender),
+    );
+}
+
 pub(crate) fn upgrade_sock_path(
     basic_conf: &pingap_config::BasicConf,
 ) -> String {
@@ -154,26 +194,63 @@ pub(crate) fn new_server_config_from(
 /// background loops - is fixed by [`assemble`].
 pub struct DataPlaneOptions {
     /// `-d`: run pingora in the background.
-    pub daemon: bool,
+    daemon: bool,
     /// `-u`: hot upgrade from a running instance. Only the file-configured
     /// daemon asks for it.
-    pub upgrade: bool,
+    upgrade: bool,
     /// `--threads`, overriding `basic.threads` for every runtime.
-    pub threads: Option<usize>,
+    threads: Option<usize>,
     /// Plugins built in addition to `config.plugins`. The `--cp` node and
     /// the file-configured daemon pass the admin listener parsed from
     /// `--admin` here; the agent-hosted plane has none.
-    pub admin_plugin: Option<(String, PluginConf)>,
+    admin_plugin: Option<(String, PluginConf)>,
     /// Name of the shared background-task service. The file-configured daemon
     /// and the agent-hosted plane have always reported different names and
     /// both are kept. `None` for the `--cp` admin node, which runs no
     /// data-plane loop.
-    pub background_task_service_name: Option<&'static str>,
+    background_task_service_name: Option<&'static str>,
     /// The `--cp` control-panel node: it serves the admin plugin only and
     /// loads no configuration, so it keeps pingora's built-in server
     /// configuration (its own pid file and upgrade socket) instead of one
     /// derived from `basic`.
-    pub admin_only: bool,
+    admin_only: bool,
+}
+
+impl DataPlaneOptions {
+    /// The normal proxy plane: listeners, providers and the background
+    /// loops.
+    pub fn data_plane(
+        daemon: bool,
+        upgrade: bool,
+        threads: Option<usize>,
+        admin_plugin: Option<crate::plugin::AdminPluginEntry>,
+        background_task_service_name: &'static str,
+    ) -> Self {
+        Self {
+            daemon,
+            upgrade,
+            threads,
+            admin_plugin,
+            background_task_service_name: Some(background_task_service_name),
+            admin_only: false,
+        }
+    }
+
+    /// The `--cp` control-panel node: the admin plugin only, no data-plane
+    /// loops, and pingora's built-in server configuration.
+    pub fn admin_only(
+        daemon: bool,
+        admin_plugin: Option<crate::plugin::AdminPluginEntry>,
+    ) -> Self {
+        Self {
+            daemon,
+            upgrade: false,
+            threads: None,
+            admin_plugin,
+            background_task_service_name: None,
+            admin_only: true,
+        }
+    }
 }
 
 /// The assembled plane, plus the pieces each root still has to place itself.
@@ -441,14 +518,13 @@ mod tests {
         let assembled = assemble(
             &PingapConfig::default(),
             config_manager.clone(),
-            DataPlaneOptions {
-                daemon: true,
-                upgrade: false,
-                threads: Some(3),
-                admin_plugin: None,
-                background_task_service_name: Some("test_background_service"),
-                admin_only: false,
-            },
+            DataPlaneOptions::data_plane(
+                true,
+                false,
+                Some(3),
+                None,
+                "test_background_service",
+            ),
         )
         .expect("assembly must succeed on the default config");
 
@@ -472,14 +548,7 @@ mod tests {
         let assembled = assemble(
             &PingapConfig::default(),
             config_manager,
-            DataPlaneOptions {
-                daemon: false,
-                upgrade: false,
-                threads: None,
-                admin_plugin: None,
-                background_task_service_name: None,
-                admin_only: true,
-            },
+            DataPlaneOptions::admin_only(false, None),
         )
         .expect("assembly must succeed on the default config");
 

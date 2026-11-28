@@ -485,6 +485,15 @@ async fn run_diff_and_update_config(
     }
 }
 
+/// Whether a tick is hot-reload-only.
+///
+/// `count == 0` is the first pass after start-up: apply it gently. Later
+/// ticks that are not a full interval (`restart_unit`) are hot-only too, so a
+/// full restart is offered on the original cadence rather than every 10s.
+fn hot_reload_only_at(configured: bool, restart_unit: u32, count: u32) -> bool {
+    configured || count == 0 || !count.is_multiple_of(restart_unit)
+}
+
 #[async_trait]
 impl BackgroundTask for AutoRestart {
     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
@@ -499,9 +508,8 @@ impl BackgroundTask for AutoRestart {
         // changes (server addr, threads, …) would never take effect.
         //
         // count=0 is always hot-reload-only so the first pass is gentle.
-        let hot_reload_only = self.hot_reload_only
-            || count == 0
-            || !count.is_multiple_of(self.restart_unit);
+        let hot_reload_only =
+            hot_reload_only_at(self.hot_reload_only, self.restart_unit, count);
         if let Some(new_config) = run_diff_and_update_config(
             self.config_manager.clone(),
             &self.last_seen,
@@ -552,7 +560,9 @@ fn reload_log_level(
 
 #[cfg(test)]
 mod tests {
-    use super::{AutoRestart, LastSeen, LastSeenCell, should_skip};
+    use super::{
+        AutoRestart, LastSeen, LastSeenCell, hot_reload_only_at, should_skip,
+    };
     use crate::data_plane::ProviderSet;
     use arc_swap::ArcSwap;
     use pingap_config::ConfigManager;
@@ -623,5 +633,21 @@ mod tests {
         };
         assert_eq!(true, should_skip(Some(&settled), 1, true));
         assert_eq!(true, should_skip(Some(&settled), 1, false));
+    }
+
+    #[test]
+    fn the_daemon_restart_cadence_is_explicit() {
+        // The configured hot-only mode always wins.
+        assert!(hot_reload_only_at(true, 1, 5));
+        // The first pass never restarts.
+        assert!(hot_reload_only_at(false, 1, 0));
+        // With the default interval every later tick may restart.
+        assert!(!hot_reload_only_at(false, 1, 1));
+        assert!(!hot_reload_only_at(false, 1, 5));
+        // A 30s interval maps to every third 10s tick.
+        assert!(hot_reload_only_at(false, 3, 1));
+        assert!(hot_reload_only_at(false, 3, 2));
+        assert!(!hot_reload_only_at(false, 3, 3));
+        assert!(!hot_reload_only_at(false, 3, 6));
     }
 }

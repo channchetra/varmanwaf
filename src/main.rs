@@ -27,7 +27,6 @@ use crate::config_manager::{
 use bytes::BytesMut;
 use clap::Parser;
 use crossbeam_channel::Receiver;
-use pingap_acme::new_lets_encrypt_service;
 use pingap_certificate::{
     install_default_crypto_provider, validate_servers_tls_for_backend,
 };
@@ -304,8 +303,9 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     tokio::runtime::Runtime::new()?
         .block_on(migrate_config_layout(&config_manager));
 
+    let admin_addr = args.admin.clone().unwrap_or_default();
     let (admin_server_conf, admin_name, admin_plugin_conf) =
-        plugin::parse_admin_plugin(&args.admin.unwrap_or_default())?;
+        plugin::parse_admin_plugin(&admin_addr)?;
     // No config is loaded in this mode: the plane is assembled from the
     // defaults, with the admin plugin as its only extra. `background_tasks`
     // is `None` because the control-panel node serves no data plane and has
@@ -313,15 +313,41 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     let mut assembled = data_plane::assemble(
         &PingapConfig::default(),
         config_manager,
-        data_plane::DataPlaneOptions {
-            daemon: args.daemon,
-            upgrade: false,
-            threads: None,
-            admin_plugin: Some((admin_name, admin_plugin_conf)),
-            background_task_service_name: None,
-            admin_only: true,
-        },
+        data_plane::DataPlaneOptions::admin_only(
+            args.daemon,
+            Some((admin_name, admin_plugin_conf)),
+        ),
     )?;
+    // `POST /restart` is part of the admin API in every mode. The control-panel
+    // node must install the same command the data-plane root does, or the
+    // endpoint always answers "Command not found".
+    if let Ok(exec_path) = std::env::current_exe() {
+        let mut cmd = process::RestartProcessCommand {
+            exec_path,
+            log_level: std::env::var("RUST_LOG")
+                .unwrap_or_else(|_| args.log.clone().unwrap_or_default()),
+            ..Default::default()
+        };
+        cmd.args = vec![
+            "-d".to_string(),
+            "-u".to_string(),
+            "--cp".to_string(),
+            format!("--admin={admin_addr}"),
+        ];
+        if let Some(conf) = &args.conf {
+            cmd.args.push(format!("-c={conf}"));
+        }
+        if let Some(log) = &args.log {
+            cmd.args.push(format!("--log={log}"));
+        }
+        cmd.ready_sock = std::path::PathBuf::from(format!(
+            "{}.ready",
+            assembled.server.configuration.upgrade_sock
+        ));
+        cmd.ready_timeout = process::DEFAULT_RESTART_READY_TIMEOUT;
+        cmd.pid_file = assembled.server.configuration.pid_file.clone();
+        process::set_restart_process_command(cmd);
+    }
     let error = assembled.plugins.errors.as_str();
     if !error.is_empty() {
         error!(error, "init plugins fail",);
@@ -717,14 +743,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut assembled = data_plane::assemble(
         &config,
         config_manager.clone(),
-        data_plane::DataPlaneOptions {
-            daemon: args.daemon,
-            upgrade: args.upgrade,
-            threads: args.threads,
-            admin_plugin: admin_plugin.clone(),
-            background_task_service_name: Some("simple_background_service"),
-            admin_only: false,
-        },
+        data_plane::DataPlaneOptions::data_plane(
+            args.daemon,
+            args.upgrade,
+            args.threads,
+            admin_plugin.clone(),
+            "simple_background_service",
+        ),
     )?;
     // Wire upstreams into Prometheus scrapes for per-backend gauges. Only this
     // entry point has ever done it: the setter is a process-wide `OnceLock`,
@@ -853,31 +878,18 @@ fn run() -> Result<(), Box<dyn Error>> {
         });
 
     if acme_enabled() {
-        simple_background_service.add_task(
-            "lets_encrypt",
-            new_lets_encrypt_service(
-                config_manager.clone(),
-                certificate_provider.clone(),
-                Some(webhook::get_webhook_sender()),
-            ),
+        data_plane::add_acme_task(
+            &mut simple_background_service,
+            config_manager.clone(),
+            certificate_provider.clone(),
+            Some(webhook::get_webhook_sender()),
         );
     }
 
-    let certificate_update = &assembled.certificates;
-    if !certificate_update.updated.is_empty() {
-        info!(
-            target: LOG_TARGET,
-            updated_certificates = certificate_update.updated.join(","),
-            "init certificates success"
-        );
-    }
-    if !certificate_update.errors.is_empty() {
-        error!(
-            target: LOG_TARGET,
-            error = certificate_update.errors.as_str(),
-            "parse certificate fail"
-        );
-    }
+    data_plane::report_provider_updates(
+        &assembled.plugins,
+        &assembled.certificates,
+    );
 
     // no server listen 80 and lets encrypt domains is not empty
     if !exists_80_server && enabled_http_challenge {

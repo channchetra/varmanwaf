@@ -78,84 +78,74 @@ impl ProviderUpdate {
     }
 }
 
+/// The two production policies an apply pass follows.
+#[derive(Clone, Copy, Debug)]
+enum ApplyPolicy {
+    /// The file-configured daemon's watcher.
+    Daemon { hot_reload_only: bool },
+    /// The agent-hosted data plane, which never restarts.
+    Agent,
+}
+
 /// The policy an apply pass follows.
 ///
-/// Every field exists because the two roots really do behave differently;
-/// [`ApplyOptions::daemon`] and [`ApplyOptions::agent_data_plane`] are the two
-/// policies in production.
+/// The six behaviours are derived from one of the two policies above, so a
+/// caller cannot assemble a combination neither root uses.
 #[derive(Clone, Copy, Debug)]
 pub struct ApplyOptions {
-    /// Whether a change no provider can apply in place (`basic`, server
-    /// `addr`/`threads`, ...) is applied hot and *not* reported as
-    /// [`ApplyOutcome::RestartRequired`].
-    ///
-    /// The agent-hosted plane sets this: it never restarts, so a
-    /// control-plane rule push must not ask for one. The daemon clears it so
-    /// its watcher restarts on such a change.
-    pub hot_reload_only: bool,
-    /// Build upstreams with the process webhook sender and run the health
-    /// check of every new or changed upstream before it takes traffic.
-    ///
-    /// The daemon sets this. The agent-hosted plane does neither: its
-    /// periodic `HealthCheckTask` owns checking and it passes no notification
-    /// sender (its upstream builder has always used `None`).
-    pub update_health_checks: bool,
-    /// Rebuild every provider from `next` even when its category is unchanged.
-    ///
-    /// The agent-hosted plane has always reloaded all five from the whole
-    /// document - entries are content-keyed, so unchanged ones are reused,
-    /// but the calls still publish a fresh provider map and bump the plugin
-    /// provider version. The daemon only touches the categories its diff
-    /// reports, because the same diff decides between hot reload and restart.
-    pub rebuild_unchanged: bool,
-    /// Send the `reload_config` notifications for rebuilt categories, the
-    /// webhook change and the certificate parse failure.
-    ///
-    /// The daemon sets this. The agent-hosted plane never emitted reload
-    /// notifications; its webhook is configured by the control plane.
-    pub notify: bool,
-    /// Reload the webhook settings from `next.basic` before the other
-    /// categories and carry them in the projection.
-    ///
-    /// The daemon sets this. The agent-hosted plane's rule document carries
-    /// no webhook settings, so taking them from it would clear the process
-    /// webhook.
-    pub reload_webhook: bool,
-    /// Leave certificates out of the in-place apply when any certificate in
-    /// `next` still has to be issued by the lets-encrypt task: neither the
-    /// projection nor the certificate provider is touched.
-    ///
-    /// The daemon sets this: an `acme` entry is created at runtime, so it must
-    /// not be committed as a loaded certificate nor rebuilt by either side.
-    /// The agent-hosted plane builds its provider from the whole certificate
-    /// map (an unissued entry keeps serving the previous certificate), so it
-    /// does not.
-    pub skip_acme_certificates: bool,
+    policy: ApplyPolicy,
 }
 
 impl ApplyOptions {
     /// The file-configured daemon's policy.
     pub fn daemon(hot_reload_only: bool) -> Self {
         Self {
-            hot_reload_only,
-            update_health_checks: true,
-            rebuild_unchanged: false,
-            notify: true,
-            reload_webhook: true,
-            skip_acme_certificates: true,
+            policy: ApplyPolicy::Daemon { hot_reload_only },
         }
     }
 
     /// The agent-hosted data plane's policy.
     pub fn agent_data_plane() -> Self {
         Self {
-            hot_reload_only: true,
-            update_health_checks: false,
-            rebuild_unchanged: true,
-            notify: false,
-            reload_webhook: false,
-            skip_acme_certificates: false,
+            policy: ApplyPolicy::Agent,
         }
+    }
+
+    /// A non-hot-reloadable change is applied hot instead of asking for a
+    /// restart.
+    fn hot_reload_only(&self) -> bool {
+        matches!(
+            self.policy,
+            ApplyPolicy::Agent
+                | ApplyPolicy::Daemon {
+                    hot_reload_only: true
+                }
+        )
+    }
+
+    /// New or changed upstreams are health-checked before they take traffic.
+    fn update_health_checks(&self) -> bool {
+        matches!(self.policy, ApplyPolicy::Daemon { .. })
+    }
+
+    /// Rebuild every provider even when its category did not change.
+    fn rebuild_unchanged(&self) -> bool {
+        matches!(self.policy, ApplyPolicy::Agent)
+    }
+
+    /// Emit the reload notifications.
+    fn notify(&self) -> bool {
+        matches!(self.policy, ApplyPolicy::Daemon { .. })
+    }
+
+    /// Reload the process webhook from the document.
+    fn reload_webhook(&self) -> bool {
+        matches!(self.policy, ApplyPolicy::Daemon { .. })
+    }
+
+    /// Leave unissued ACME certificates out of the in-place apply.
+    fn skip_acme_certificates(&self) -> bool {
+        matches!(self.policy, ApplyPolicy::Daemon { .. })
     }
 }
 
@@ -253,7 +243,7 @@ pub async fn apply_config(
     );
     // A hot-reload-only pass may leave a change behind that only a restart
     // applies, but there is nothing to do when the document itself is equal.
-    if diff.is_empty() && !options.rebuild_unchanged {
+    if diff.is_empty() && !options.rebuild_unchanged() {
         return ApplyOutcome::Unchanged;
     }
 
@@ -276,7 +266,7 @@ pub async fn apply_config(
         diff,
         config: projection,
     };
-    if !options.hot_reload_only {
+    if !options.hot_reload_only() {
         let (_, reason) = report.config.diff(next);
         debug!(
             target: LOG_TARGET,
@@ -301,7 +291,7 @@ fn dispatch(
     changed: &[String],
     options: &ApplyOptions,
 ) -> Categories {
-    if options.rebuild_unchanged {
+    if options.rebuild_unchanged() {
         return Categories::all();
     }
     let changed = |category: &str| changed.iter().any(|item| item == category);
@@ -311,7 +301,8 @@ fn dispatch(
         locations,
         plugins: changed(CATEGORY_PLUGIN),
         certificates: changed(CATEGORY_CERTIFICATE)
-            && !(options.skip_acme_certificates && has_acme_certificate(next)),
+            && !(options.skip_acme_certificates()
+                && has_acme_certificate(next)),
         // The server->location index owns host/path/weight ordering. A
         // location edit must rebuild it even when no server's name list
         // changed, or the new routing never applies.
@@ -331,7 +322,7 @@ async fn apply_categories(
     let mut failures = vec![];
 
     if categories.upstreams {
-        let result = if options.update_health_checks {
+        let result = if options.update_health_checks() {
             as_step(
                 providers
                     .upstreams
@@ -410,14 +401,14 @@ async fn hot_projection(
 
     // The webhook goes first, so the notifications for everything else this
     // change reloads already go out with the new settings.
-    if options.reload_webhook
+    if options.reload_webhook()
         && reload_webhook_notification_sender(
             &mut projection.basic,
             &next.basic,
         )
     {
         info!(target: LOG_TARGET, "reload webhook success");
-        if options.notify {
+        if options.notify() {
             send_notification(NotificationData {
                 category: "reload_config".to_string(),
                 level: NotificationLevel::Info,
@@ -444,7 +435,7 @@ async fn hot_projection(
 
     // An `acme` certificate is created by the lets-encrypt service, so it
     // cannot be reloaded as a loaded certificate; the service owns it.
-    if !(options.skip_acme_certificates && has_acme_certificate(next)) {
+    if !(options.skip_acme_certificates() && has_acme_certificate(next)) {
         projection.certificates = next.certificates.clone();
     }
 
@@ -555,7 +546,7 @@ async fn run_step(
         Ok(StepReport::Named(update)) => {
             if step.always_report || !update.is_empty() {
                 info!(target: LOG_TARGET, "{}", step.success);
-                if options.notify {
+                if options.notify() {
                     send_notification(NotificationData {
                         category: "reload_config".to_string(),
                         level: NotificationLevel::Info,
@@ -570,7 +561,7 @@ async fn run_step(
         Ok(StepReport::Silent) => None,
         Err(error) => {
             error!(target: LOG_TARGET, error, "{}", step.failure);
-            if options.notify
+            if options.notify()
                 && let Some(category) = step.error_notification
             {
                 send_notification(NotificationData {
@@ -622,6 +613,7 @@ mod tests {
     use pingap_config::{
         CertificateConf, LocationConf, PluginConf, ServerConf, UpstreamConf,
     };
+    use pingap_upstream::UpstreamProvider;
     use pretty_assertions::assert_eq;
 
     /// A local manager for the plugin rebuild. The admin plugin reads and
@@ -983,5 +975,37 @@ mod tests {
             current_diff.is_empty(),
             "the previous config must stay current: {current_diff:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_successful_apply_installs_the_rebuilt_providers() {
+        // Arrange: a document with one upstream the empty plane does not have.
+        let previous = PingapConfig::default();
+        let next = config_with_upstream("apply-engine-new");
+        let providers = ProviderSet::new();
+
+        // Act
+        let outcome = apply_config(
+            &previous,
+            &next,
+            &ApplyOptions::daemon(false),
+            None,
+            &new_config_manager(),
+            &providers,
+        )
+        .await;
+
+        // Assert: the pass reports success and the rebuilt upstream is in the
+        // plane's registry, not in a discarded intermediate map.
+        let ApplyOutcome::Applied(report) = outcome else {
+            panic!("a valid upstream addition must apply");
+        };
+        assert!(
+            report
+                .diff
+                .iter()
+                .any(|line| line.contains("apply-engine-new"))
+        );
+        assert!(providers.upstreams.get("apply-engine-new").is_some());
     }
 }

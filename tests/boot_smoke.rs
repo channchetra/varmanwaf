@@ -5,8 +5,10 @@
 //! listener is started: `--template` and `--version` return before the server
 //! is assembled, and `-t` exits right after validation.
 
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 /// A minimal HTTP-only configuration: one upstream, one location and one
@@ -254,4 +256,95 @@ fn environment_overrides_reach_the_binary() {
         startup.contains("\"auto_reload\":true"),
         "the startup line must record the environment flag: {logs}"
     );
+}
+
+/// The assembled proxy actually listens and answers, not only validates.
+///
+/// The earlier cases stop before `Server::run`; this one starts the binary on
+/// a real port, sends a request through the listener and then kills it.
+#[test]
+fn the_assembled_proxy_answers_on_its_listener() {
+    // Arrange: reserve a port, then release it for the child.
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let config = format!(
+        r#"
+[basic]
+name = "boot-smoke-listener"
+
+[upstreams.backend]
+addrs = ["127.0.0.1:9"]
+
+[locations.root]
+path = "/"
+upstream = "backend"
+
+[servers.http]
+addr = "127.0.0.1:{port}"
+locations = ["root"]
+"#
+    );
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = write_config(&dir, "listener.toml", &config);
+    let stderr_path = dir.path().join("stderr.log");
+    let stderr_file = std::fs::File::create(&stderr_path).unwrap();
+
+    let mut child = pingap()
+        .args(["-c", path.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(stderr_file)
+        .spawn()
+        .expect("the binary must start");
+
+    // Act: wait for the listener, then send one request.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut stream = loop {
+        match TcpStream::connect_timeout(
+            &format!("127.0.0.1:{port}").parse().unwrap(),
+            Duration::from_millis(200),
+        ) {
+            Ok(stream) => break stream,
+            Err(_) if Instant::now() < deadline => {
+                assert!(
+                    child.try_wait().unwrap().is_none(),
+                    "the binary exited before it listened: {}",
+                    std::fs::read_to_string(&stderr_path).unwrap_or_default()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            },
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!(
+                    "the listener never answered: {error}; stderr: {}",
+                    std::fs::read_to_string(&stderr_path).unwrap_or_default()
+                );
+            },
+        }
+    };
+    stream
+        .write_all(
+            b"GET / HTTP/1.1\r\nHost: boot-smoke\r\nConnection: close\r\n\r\n",
+        )
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+
+    // Assert: the proxy answered (the dead upstream yields a 5xx, which is
+    // fine - the point is that the assembled listener served the request).
+    assert!(
+        response.starts_with("HTTP/1.1 "),
+        "unexpected response: {response:?}"
+    );
+    assert!(
+        response.contains("502") || response.contains("503"),
+        "the dead upstream must produce an error response: {response:?}"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
 }

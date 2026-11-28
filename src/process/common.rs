@@ -205,12 +205,26 @@ pub async fn restart_now() -> io::Result<()> {
     })
     .await;
 
+    let target = nix::unistd::Pid::from_raw(std::process::id() as i32);
+    let result = restart_with(cmd, target).await;
+    if result.is_err() {
+        PROCESS_RESTARTING.store(false, Ordering::Relaxed);
+    }
+    result
+}
+
+/// The spawn/readiness/signal half of a restart, with the signal target
+/// injected so the hand-over can be tested without quitting the test process.
+#[cfg(unix)]
+async fn restart_with(
+    cmd: RestartProcessCommand,
+    signal_target: nix::unistd::Pid,
+) -> io::Result<()> {
     // Bind the readiness socket before spawning, so the replacement can never
     // report to nobody ...
     let listener = match ReadyListener::bind(&cmd.ready_sock) {
         Ok(listener) => listener,
         Err(e) => {
-            PROCESS_RESTARTING.store(false, Ordering::Relaxed);
             error!(
                 target: LOG_TARGET,
                 path = %cmd.ready_sock.display(), error = %e,
@@ -221,13 +235,7 @@ pub async fn restart_now() -> io::Result<()> {
     };
     // ... then start it, so it can bind the upgrade socket and wait to receive
     // the listening fds ...
-    let child = match cmd.exec() {
-        Ok(child) => child,
-        Err(e) => {
-            PROCESS_RESTARTING.store(false, Ordering::Relaxed);
-            return Err(e);
-        },
-    };
+    let child = cmd.exec()?;
     let new_pid = child.id();
     info!(
         target: LOG_TARGET,
@@ -237,7 +245,7 @@ pub async fn restart_now() -> io::Result<()> {
 
     // A successful spawn only means `execve` worked. The signal below is a
     // point of no return: pingora stops accepting once its close timeout
-    // elapses and exits when the grace period does, so signalling ourselves
+    // elapses and exits when the grace period does, so signalling a process
     // next to a replacement that already died takes the whole service down -
     // several minutes later, which makes it look unrelated to the restart.
     if let Err(e) = wait_for_ready(
@@ -249,7 +257,6 @@ pub async fn restart_now() -> io::Result<()> {
     )
     .await
     {
-        PROCESS_RESTARTING.store(false, Ordering::Relaxed);
         error!(
             target: LOG_TARGET,
             new_pid, error = %e,
@@ -258,11 +265,8 @@ pub async fn restart_now() -> io::Result<()> {
         return Err(e);
     }
 
-    // ... then signal the current process to transfer its sockets and exit.
-    nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(std::process::id() as i32),
-        nix::sys::signal::SIGQUIT,
-    )?;
+    // ... then signal the target to transfer its sockets and exit.
+    nix::sys::signal::kill(signal_target, nix::sys::signal::SIGQUIT)?;
     Ok(())
 }
 
@@ -583,6 +587,58 @@ mod tests {
             "/tmp/pingap-ready-{}-{tag}.sock",
             std::process::id()
         ))
+    }
+
+    #[tokio::test]
+    async fn restart_with_reports_then_signals_the_target() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::process::ExitStatusExt;
+
+        let ready = sock_path("handover");
+        let script = sock_path("replacement.sh");
+        std::fs::write(&script, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(
+            &script,
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+
+        // The process that will receive SIGQUIT instead of the test harness.
+        let mut target = Command::new("sleep").arg("30").spawn().unwrap();
+        let target_pid = target.id();
+
+        let reporter = {
+            let path = ready.clone();
+            tokio::spawn(async move {
+                for _ in 0..100 {
+                    if notify_ready(&path).await.is_ok() {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                panic!("the replacement never reported readiness");
+            })
+        };
+
+        let cmd = RestartProcessCommand {
+            exec_path: script.clone(),
+            ready_sock: ready.clone(),
+            ready_timeout: Duration::from_secs(5),
+            pid_file: sock_path("handover.pid").to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        restart_with(cmd, nix::unistd::Pid::from_raw(target_pid as i32))
+            .await
+            .expect("the readiness report must let the hand-over proceed");
+        reporter.await.unwrap();
+
+        let status = target.wait().unwrap();
+        assert_eq!(
+            Some(nix::sys::signal::SIGQUIT as i32),
+            status.signal(),
+            "the target must receive SIGQUIT"
+        );
+        let _ = std::fs::remove_file(&script);
     }
 
     #[tokio::test]

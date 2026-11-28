@@ -756,56 +756,67 @@ mod db_write_tests {
         found.pop()
     }
 
+    /// Starts a disposable cluster, or returns `None` when this machine has
+    /// no PostgreSQL binaries at all. Once `initdb` exists, every later
+    /// failure is a test failure: silently skipping a broken setup would let
+    /// the maintenance write tests report success without running.
     async fn start_cluster() -> Option<TestCluster> {
         let initdb = pg_bin("initdb")?;
-        let pg_ctl = pg_bin("pg_ctl")?;
-        let dir = tempfile::tempdir().ok()?;
+        let pg_ctl = pg_bin("pg_ctl").expect("pg_ctl must ship with initdb");
+        let dir = tempfile::tempdir().expect("cluster tempdir");
         let port = {
-            let listener = TcpListener::bind("127.0.0.1:0").ok()?;
-            listener.local_addr().ok()?.port()
+            let listener =
+                TcpListener::bind("127.0.0.1:0").expect("a free port");
+            listener.local_addr().expect("the bound address").port()
         };
-        let status = Command::new(&initdb)
+        let output = Command::new(&initdb)
             .args([
                 "-D",
-                dir.path().to_str()?,
+                dir.path().to_str().unwrap(),
                 "-U",
                 "postgres",
                 "--auth=trust",
             ])
-            .status()
-            .ok()?;
-        if !status.success() {
-            eprintln!("skipping database test: initdb failed");
-            return None;
-        }
-        let status = Command::new(&pg_ctl)
+            .output()
+            .expect("run initdb");
+        assert!(
+            output.status.success(),
+            "initdb failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = Command::new(&pg_ctl)
             .args([
                 "-D",
-                dir.path().to_str()?,
+                dir.path().to_str().unwrap(),
                 "-o",
-                &format!("-p {port} -k {} -h 127.0.0.1", dir.path().to_str()?),
+                &format!("-p {port} -k {} -h 127.0.0.1", dir.path().display()),
                 "-l",
-                dir.path().join("postgres.log").to_str()?,
+                dir.path().join("postgres.log").to_str().unwrap(),
                 "start",
             ])
-            .status()
-            .ok()?;
-        if !status.success() {
-            eprintln!("skipping database test: pg_ctl start failed");
-            return None;
-        }
+            .output()
+            .expect("start the cluster");
+        assert!(
+            output.status.success(),
+            "pg_ctl start failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let admin_url =
             format!("postgres://postgres@127.0.0.1:{port}/postgres");
-        let db = Database::connect(&admin_url).await.ok()?;
+        let db = Database::connect(&admin_url)
+            .await
+            .expect("connect to the admin database");
         db.execute(Statement::from_string(
             DatabaseBackend::Postgres,
             "CREATE DATABASE varman".to_string(),
         ))
         .await
-        .ok()?;
+        .expect("create the test database");
         let url = format!("postgres://postgres@127.0.0.1:{port}/varman");
-        let db = Database::connect(&url).await.ok()?;
-        Migrator::up(&db, None).await.ok()?;
+        let db = Database::connect(&url)
+            .await
+            .expect("connect to the test database");
+        Migrator::up(&db, None).await.expect("run migrations");
         Some(TestCluster { dir, url })
     }
 
