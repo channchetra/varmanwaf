@@ -68,7 +68,7 @@ Run everything in one process with `all-in-one`, or split the control plane
 
 ## 📦 Crate documentation
 
-VarmanWAF adds six WAF-specific crates on top of the `pingap` proxy foundation.
+VarmanWAF adds seven platform crates on top of the `pingap` proxy foundation.
 
 **WAF crates:**
 
@@ -79,6 +79,7 @@ VarmanWAF adds six WAF-specific crates on top of the `pingap` proxy foundation.
 | [varman-agent](../varman-agent) | Data-plane agent: connects to the control plane, caches rules with disk persistence, ships logs/metrics, receives commands |
 | [varman-waf](../varman-waf) | Detection engine: normalize → signatures → expression → anomaly score |
 | [varman-challenge](../varman-challenge) | Dynamic challenges: JS 5-second shield, interactive challenge, PoW, fingerprinting, HMAC clearance cookies |
+| [varman-plugin](../varman-plugin) | VarmanWAF plugins: WAF (engine, stream, shadow, processor, custom layers, ATO), challenge, cache, rewrite, error pages |
 | [varman-pprof](../varman-pprof) | Built-in profiling: `go tool pprof` CPU profiles, SVG flame graphs, memory snapshots (CPU sampling is Linux-only) |
 
 **Proxy foundation (`pingap-*`) — each crate has its own README** describing what

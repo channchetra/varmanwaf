@@ -31,7 +31,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::data_plane::ProviderSet;
 use crate::provider::{AdminPluginEntry, ProviderUpdate};
@@ -68,9 +68,15 @@ struct AdminPluginQuery {
 /// # Errors
 /// Returns Error::Invalid if URL parsing, the username's percent-encoding or
 /// the query string fails to parse
-pub fn parse_admin_plugin(
-    addr: &str,
-) -> Result<(ServerConf, String, PluginConf)> {
+#[derive(Debug)]
+pub struct ParsedAdminPlugin {
+    /// The pingora listener the admin plugin serves.
+    pub server: ServerConf,
+    /// The named plugin entry registered with the provider.
+    pub plugin: AdminPluginEntry,
+}
+
+pub fn parse_admin_plugin(addr: &str) -> Result<ParsedAdminPlugin> {
     let info = url::Url::from_str(&format!("http://{addr}")).map_err(|e| {
         Error::Invalid {
             category: "url".to_string(),
@@ -137,16 +143,15 @@ pub fn parse_admin_plugin(
         "remark".to_string(),
         toml::Value::String("Admin serve".to_string()),
     );
-    Ok((
-        ServerConf {
+    Ok(ParsedAdminPlugin {
+        server: ServerConf {
             name: "pingap:admin".to_string(),
             admin: true,
             addr,
             ..Default::default()
         },
-        ADMIN_SERVER_PLUGIN.to_string(),
-        plugin_conf,
-    ))
+        plugin: (ADMIN_SERVER_PLUGIN.to_string(), plugin_conf),
+    })
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -326,6 +331,7 @@ pub fn parse_plugins(
 /// crate is linked. Naming it here is that link edge, and the call makes the
 /// registration explicit instead of relying on an unused import in `main`.
 pub fn register_builtin_plugins() {
+    stats::register();
     pingap_plugin::register_builtins();
     #[cfg(feature = "imageoptim")]
     pingap_imageoptim::register();
@@ -360,11 +366,18 @@ impl Provider {
             .collect();
 
         let mut errors = vec![];
-        // A configuration entry named like the admin plugin wins, exactly as it
-        // did when the plugin was injected from the process-global address.
-        if let Some((name, conf)) = admin
-            && !plugins.contains_key(&name)
-        {
+        // The explicit `--admin` listener owns the admin plugin. A document
+        // entry with the same name is dropped, not allowed to replace the
+        // credentials the operator passed on the command line.
+        if let Some((name, conf)) = admin {
+            if plugins.contains_key(&name) {
+                warn!(
+                    target: LOG_TARGET,
+                    name,
+                    "document admin plugin ignored; the --admin listener owns it"
+                );
+            }
+            plugin_configs.retain(|(existing, _)| existing != &name);
             plugin_configs.push((name, conf));
         }
 
@@ -470,20 +483,24 @@ mod tests {
 
     #[test]
     fn a_valid_admin_address_is_parsed() {
-        let (server, name, conf) =
+        let parsed =
             parse_admin_plugin("admin:secret@127.0.0.1:3018/?max_age=1d")
                 .expect("a valid admin address must parse");
 
-        assert_eq!("127.0.0.1:3018", server.addr);
-        assert!(server.admin);
-        assert_eq!(ADMIN_SERVER_PLUGIN, name);
+        assert_eq!("127.0.0.1:3018", parsed.server.addr);
+        assert!(parsed.server.admin);
+        assert_eq!(ADMIN_SERVER_PLUGIN, parsed.plugin.0);
         assert_eq!(
             Some("1d"),
-            conf.get("max_age").and_then(|value| value.as_str())
+            parsed
+                .plugin
+                .1
+                .get("max_age")
+                .and_then(|value| value.as_str())
         );
         assert_eq!(
             Some("/"),
-            conf.get("path").and_then(|value| value.as_str())
+            parsed.plugin.1.get("path").and_then(|value| value.as_str())
         );
     }
 
@@ -493,9 +510,12 @@ mod tests {
     #[test]
     fn a_percent_encoded_admin_credential_is_decoded() {
         let authorization = |addr: &str| {
-            let (_, _, conf) = parse_admin_plugin(addr)
+            let parsed = parse_admin_plugin(addr)
                 .expect("a percent-encoded credential must parse");
-            conf.get("authorizations")
+            parsed
+                .plugin
+                .1
+                .get("authorizations")
                 .and_then(|value| value.as_array())
                 .and_then(|items| items.first())
                 .and_then(|value| value.as_str())
@@ -561,7 +581,7 @@ mod tests {
     /// the caller passed, exactly like the `--admin` listener.
     #[test]
     fn a_document_admin_plugin_is_built_with_the_given_manager() {
-        pingap_plugin::register_builtins();
+        register_builtin_plugins();
         let manager = Arc::new(pingap_config::new_memory_config_manager(
             "[basic]\n",
             None,

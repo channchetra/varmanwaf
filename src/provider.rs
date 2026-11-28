@@ -34,7 +34,11 @@ impl ProviderUpdate {
     }
 }
 
-/// The one wording for a provider construction failure.
-pub(crate) fn invalid_error(error: impl std::fmt::Display) -> String {
-    format!("Invalid error {error}")
+/// The one wording for a provider construction failure, naming the rebuild
+/// that failed.
+pub(crate) fn provider_error(
+    operation: &str,
+    error: impl std::fmt::Display,
+) -> String {
+    format!("{operation}: {error}")
 }

@@ -28,8 +28,8 @@ use pingap_certificate::{
 use pingap_config::hcl::convert_toml_to_hcl;
 use pingap_config::kdl::convert_toml_to_kdl;
 use pingap_config::{
-    BasicConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE, Category,
-    CertificateConf, ConfigManager, LocationConf, PingapTomlConfig,
+    BasicConf, CATEGORY_BASIC, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
+    Category, CertificateConf, ConfigManager, LocationConf, PingapTomlConfig,
     PluginCategory, PluginConf, ServerConf, StorageConf, UpstreamConf,
     Validate, format_category,
 };
@@ -286,7 +286,15 @@ impl AdminServe {
             return None;
         };
         let now = pingap_core::now_sec() as i64;
-        let parsed_ts = ts.parse::<i64>().unwrap_or_default();
+        let Ok(parsed_ts) = ts.parse::<i64>() else {
+            error!(
+                target: LOG_TARGET,
+                path,
+                ts,
+                "auth validate fail: timestamp is not an integer"
+            );
+            return None;
+        };
         let offset = now - parsed_ts;
         let max_age = self.max_age.as_secs() as i64;
         if offset.abs() > max_age {
@@ -368,6 +376,7 @@ impl AdminServe {
             });
         }
         let resp = match category {
+            CATEGORY_BASIC => HttpResponse::try_from_json(&conf.basic)?,
             CATEGORY_UPSTREAM => HttpResponse::try_from_json(&conf.upstreams)?,
             CATEGORY_LOCATION => HttpResponse::try_from_json(&conf.locations)?,
             CATEGORY_SERVER => HttpResponse::try_from_json(&conf.servers)?,
@@ -375,6 +384,7 @@ impl AdminServe {
             CATEGORY_CERTIFICATE => {
                 HttpResponse::try_from_json(&conf.certificates)?
             },
+            CATEGORY_STORAGE => HttpResponse::try_from_json(&conf.storages)?,
             _ => HttpResponse::try_from_json(&conf)?,
         };
         Ok(resp)
@@ -541,8 +551,8 @@ impl AdminServe {
     }
 
     /// `GET|POST|DELETE /configs[/{category}[/{name}]]` — read the running
-    /// configuration or write a single category entry. Failures are reported
-    /// as a 500 with the error message, matching the old inline dispatcher.
+    /// configuration or write a single category entry. A client error keeps
+    /// its 4xx status; a storage/serialisation failure is a 500.
     async fn handle_configs(
         &self,
         session: &mut Session,
@@ -551,19 +561,16 @@ impl AdminServe {
         params: &[String],
         actor: &str,
     ) -> HttpResponse {
-        const CATEGORIES: [&str; 8] = [
-            "",
-            "full",
-            "basic",
-            "server",
-            "location",
-            "upstream",
-            "plugin",
-            "certificate",
-        ];
-        if !CATEGORIES.contains(&category)
-            && !(method == Method::POST && category == "import")
-        {
+        let known = Category::from_str(category).is_ok();
+        let category_ok = match method {
+            // Reads may also ask for the whole document.
+            Method::GET => category.is_empty() || category == "full" || known,
+            // Writes accept one category, or the wholesale import route.
+            Method::POST => known || category == "import",
+            Method::DELETE => known,
+            _ => false,
+        };
+        if !category_ok {
             return json_response_with_status(
                 &ErrorResponse {
                     message: format!("unknown config category: '{category}'"),
@@ -594,8 +601,8 @@ impl AdminServe {
         result.unwrap_or_else(|err| error_response(&err))
     }
 
-    /// `GET /config-history/{category}[/{name}]` — stored revisions of a
-    /// category, or of one entry inside it.
+    /// `GET /config-history/{category}/{name}` — stored revisions of one
+    /// entry. The name is required; a category-only request is rejected.
     async fn handle_config_history(
         &self,
         category: &str,
@@ -763,6 +770,7 @@ impl AdminServe {
 /// disable settings the running binary cannot honour. The TLS backend is named
 /// (`openssl` or `rustls`) alongside the enabled cargo features.
 fn feature_flags() -> Vec<String> {
+    #[allow(unused_mut)]
     let mut features = vec![
         "default".to_string(),
         pingap_certificate::TLS_BACKEND.to_string(),
@@ -866,6 +874,7 @@ fn internal_error(
     pingap_core::new_internal_error(500, err)
 }
 
+/// Maps a profiling failure onto its HTTP status and a JSON error body.
 fn pprof_error_response(err: varman_pprof::ProfileError) -> HttpResponse {
     error!(target: LOG_TARGET, error = %err, "pprof request fail");
     let status = match err {
@@ -998,15 +1007,24 @@ async fn handle_request_admin(
     // parses that as an authority with an empty path, so the bare single-segment
     // routes (`/basic`, `/configs`, ...) would fall through to 404. Restore the
     // leading slash before rewriting the request URI.
-    if !new_path.is_empty() && !new_path.starts_with('/') {
+    if new_path.is_empty() {
+        new_path = "/".to_string();
+    } else if !new_path.starts_with('/') {
         new_path = format!("/{new_path}");
     }
     if let Some(query) = header.uri.query() {
         new_path = format!("{new_path}?{query}");
     }
-    // ignore parse error
-    if let Ok(uri) = new_path.parse::<http::Uri>() {
-        header.set_uri(uri);
+    match new_path.parse::<http::Uri>() {
+        Ok(uri) => header.set_uri(uri),
+        Err(e) => {
+            return Ok(Some(json_response_with_status(
+                &ErrorResponse {
+                    message: format!("invalid admin request path: {e}"),
+                },
+                StatusCode::BAD_REQUEST,
+            )));
+        },
     }
     let Some(actor) = plugin.auth_validate(header) else {
         plugin.ip_fail_limit.inc(ip);

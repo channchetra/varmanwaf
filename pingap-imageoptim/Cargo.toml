@@ -18,7 +18,6 @@ path = "src/lib.rs"
 async-trait = { workspace = true }
 bytemuck = { workspace = true }
 bytes = { workspace = true }
-ctor = { workspace = true }
 http = { workspace = true }
 # Only the four formats this crate actually handles. `image`'s defaults enable
 # sixteen, and the unused `exr` decoder was dragging in pulp -> paste

@@ -17,10 +17,15 @@
 //! Handles the three operating modes: Server (control plane only),
 //! Agent (data plane only), and AllInOne (both in a single process).
 
+mod acme;
+mod bundle_config;
+mod data_plane;
+
+use data_plane::start_data_plane;
 use std::sync::Arc;
 
 use crate::cli::{
-    AgentOpts, AgentSharedOpts, AllInOneOpts, CommonOpts, ServerOpts,
+    AgentOpts, AgentSharedOpts, AllInOneOpts, ControlPlaneOpts, ServerOpts,
     ServerSharedOpts, VarmanCli, VarmanCommand,
 };
 use tracing::{error, info};
@@ -44,7 +49,7 @@ fn server_config_from_opts(opts: &ServerOpts) -> ServerConfig {
 
 /// Builds the server config from the options every run mode shares.
 fn server_config_from_shared(
-    common: &CommonOpts,
+    common: &ControlPlaneOpts,
     server: &ServerSharedOpts,
 ) -> ServerConfig {
     let mut config = ServerConfig::from_env();
@@ -68,7 +73,7 @@ fn server_config_from_shared(
 /// variable was absent.
 fn apply_cli_server_overrides(
     config: &mut ServerConfig,
-    common: &CommonOpts,
+    common: &ControlPlaneOpts,
     jwt_secret: &str,
     admin_email: &str,
     admin_password: &str,
@@ -116,7 +121,7 @@ fn server_config_from_all_in_one(opts: &AllInOneOpts) -> ServerConfig {
 ///
 /// The SAN list is only replaced when the operator actually spelled one out,
 /// so the built-in defaults survive an invocation without `--tls-sans`.
-fn apply_tls_opts(config: &mut ServerConfig, opts: &CommonOpts) {
+fn apply_tls_opts(config: &mut ServerConfig, opts: &ControlPlaneOpts) {
     if !opts.tls_enabled {
         config.tls_enabled = false;
     }
@@ -200,10 +205,10 @@ fn extract_port(addr: &str) -> &str {
 /// Build the `RunMode` from the parsed CLI.
 ///
 /// The maintenance commands never reach this: [`main`] routes them to
-/// [`crate::maintenance::run`] before a run mode is built, and a panic here means
-/// that routing was broken.
-pub fn build_run_mode(cli: VarmanCli) -> RunMode {
-    match cli.command {
+/// [`crate::maintenance::run`] first. Returning an error instead of panicking
+/// keeps a future routing mistake from taking the process down.
+pub fn build_run_mode(cli: VarmanCli) -> anyhow::Result<RunMode> {
+    Ok(match cli.command {
         VarmanCommand::Server(ref opts) => {
             RunMode::Server(Box::new(server_config_from_opts(opts)))
         },
@@ -219,15 +224,12 @@ pub fn build_run_mode(cli: VarmanCli) -> RunMode {
         | VarmanCommand::Mode { .. }
         | VarmanCommand::Security { .. }
         | VarmanCommand::Config { .. } => {
-            unreachable!("maintenance commands do not build a run mode")
+            anyhow::bail!(
+                "maintenance command must be routed to maintenance::run, not build_run_mode"
+            )
         },
-    }
+    })
 }
-
-mod acme;
-mod bundle_config;
-mod data_plane;
-use data_plane::start_data_plane;
 
 /// Run VarmanWAF in the specified mode.
 ///
@@ -408,12 +410,15 @@ pub fn main() {
     let result = if cli.command.is_maintenance() {
         rt.block_on(crate::maintenance::run(cli))
     } else {
-        rt.block_on(run(build_run_mode(cli)))
+        match build_run_mode(cli) {
+            Ok(mode) => rt.block_on(run(mode)),
+            Err(e) => Err(e),
+        }
     };
 
     if let Err(e) = result {
         error!(error = %e, "VarmanWAF exited with error");
-        eprintln!("VarmanWAF error: {e}");
+        eprintln!("VarmanWAF error: {e:#}");
         std::process::exit(1);
     }
 }

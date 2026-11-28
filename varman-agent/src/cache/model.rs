@@ -1228,11 +1228,17 @@ impl RuleCache {
             key_pem: s.key_pem.clone(),
             acme_enabled: s.acme_enabled,
             acme_email: s.acme_email.clone(),
-            acme_challenge_type: format!(
-                "{:?}",
-                proto::AcmeChallengeType::try_from(s.acme_challenge_type)
-                    .unwrap_or(proto::AcmeChallengeType::AcmeHttp01)
-            ),
+            // The cache stores the protocol spelling the data plane compares
+            // against; deriving it from Debug made a rename of the generated
+            // enum silently switch DNS-01 back to HTTP-01.
+            acme_challenge_type: match proto::AcmeChallengeType::try_from(
+                s.acme_challenge_type,
+            ) {
+                Ok(proto::AcmeChallengeType::AcmeDns01) => {
+                    "AcmeDns01".to_string()
+                },
+                _ => "AcmeHttp01".to_string(),
+            },
             acme_dns_provider: s.acme_dns_provider.clone(),
             acme_dns_config: s.acme_dns_config.clone(),
             min_tls_version: s.min_tls_version.clone(),

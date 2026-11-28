@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::restart;
+use super::common::restart_after_debounce;
 use crate::config_apply::{self, ApplyOptions, ApplyOutcome};
 use crate::data_plane::ProviderSet;
 use crate::provider::AdminPluginEntry;
@@ -163,7 +163,7 @@ async fn apply_daemon_config(
     )
     .await;
 
-    let (report, restart_reason) = match outcome {
+    let (report, restart_reason) = match &outcome {
         ApplyOutcome::Unchanged => return Ok(false),
         ApplyOutcome::Failed(message) => {
             // A partial apply must not become the current config: the next
@@ -193,7 +193,7 @@ async fn apply_daemon_config(
         },
         ApplyOutcome::Applied(report) => (report, None),
         ApplyOutcome::RestartRequired { report, reason } => {
-            (report, Some(reason))
+            (report, Some(reason.clone()))
         },
     };
 
@@ -209,7 +209,13 @@ async fn apply_daemon_config(
         if original_diff_result.is_empty() {
             return Ok(false);
         }
-        config_manager.set_current_config(report.config);
+        if !config_apply::commit_if_applied(
+            &config_manager,
+            report.config.clone(),
+            &outcome,
+        ) {
+            return Ok(false);
+        }
         send_notification(NotificationData {
             category: "diff_config".to_string(),
             message: original_diff_result.join("\n").trim().to_string(),
@@ -218,7 +224,13 @@ async fn apply_daemon_config(
         .await;
         return Ok(false);
     }
-    config_manager.set_current_config(report.config);
+    if !config_apply::commit_if_applied(
+        &config_manager,
+        report.config.clone(),
+        &outcome,
+    ) {
+        return Ok(false);
+    }
 
     let should_restart = restart_reason.is_some();
     send_notification(NotificationData {
@@ -228,7 +240,7 @@ async fn apply_daemon_config(
     })
     .await;
     if should_restart {
-        let _ = restart().await;
+        let _ = restart_after_debounce().await;
     }
     Ok(should_restart)
 }
@@ -236,12 +248,12 @@ async fn apply_daemon_config(
 /// AutoRestart service manages configuration updates on a schedule
 ///
 /// The service alternates between hot reloads and full restarts based on:
-/// - restart_unit: Determines frequency of full restarts vs hot reloads
+/// - ticks_per_restart: Determines frequency of full restarts vs hot reloads
 /// - hot_reload_only: Forces hot reload only mode
 /// - count: Tracks intervals to coordinate restart timing
 struct AutoRestart {
     /// How many intervals to wait before allowing a full restart (vs hot reload)
-    restart_unit: u32,
+    ticks_per_restart: u32,
     /// If true, only perform hot reloads and never restart
     hot_reload_only: bool,
     config_manager: Arc<ConfigManager>,
@@ -262,7 +274,7 @@ struct AutoRestart {
 /// periodically.
 ///
 /// The service ticks at most every 10 seconds (and at `interval` when that is
-/// shorter); `restart_unit` keeps a full-restart opportunity on the original
+/// shorter); `ticks_per_restart` keeps a full-restart opportunity on the original
 /// cadence even then.
 pub fn new_auto_restart_service(
     config_manager: Arc<ConfigManager>,
@@ -272,10 +284,10 @@ pub fn new_auto_restart_service(
     admin_plugin: Option<AdminPluginEntry>,
     providers: ProviderSet,
 ) -> BackgroundTaskService {
-    let mut restart_unit = 1_u32;
+    let mut ticks_per_restart = 1_u32;
     let unit = Duration::from_secs(10);
     if interval > unit {
-        restart_unit = (interval.as_secs() / unit.as_secs()) as u32;
+        ticks_per_restart = (interval.as_secs() / unit.as_secs()) as u32;
     }
 
     let current_log_level = config_manager
@@ -289,7 +301,7 @@ pub fn new_auto_restart_service(
         log_reload_handle,
         config_manager,
         hot_reload_only,
-        restart_unit,
+        ticks_per_restart,
         current_log_level: ArcSwap::from_pointee(current_log_level),
         admin_plugin,
         providers,
@@ -425,13 +437,19 @@ impl BackgroundService for ConfigObserverService {
                                 continue;
                             }
                             // only hot reload for observe updated
-                            run_diff_and_update_config(
+                            if let Some(new_config) = run_diff_and_update_config(
                                 self.config_manager.clone(),
                                 &self.last_seen,
                                 true,
                                 self.admin_plugin.clone(),
                                 &self.providers,
-                            ).await;
+                            ).await {
+                                reload_log_level(
+                                    &self.log_reload_handle,
+                                    &self.current_log_level,
+                                    &new_config,
+                                );
+                            }
                         },
                         Err(e) => {
                             error!(
@@ -484,10 +502,14 @@ async fn run_diff_and_update_config(
 /// Whether a tick is hot-reload-only.
 ///
 /// `count == 0` is the first pass after start-up: apply it gently. Later
-/// ticks that are not a full interval (`restart_unit`) are hot-only too, so a
+/// ticks that are not a full interval (`ticks_per_restart`) are hot-only too, so a
 /// full restart is offered on the original cadence rather than every 10s.
-fn hot_reload_only_at(configured: bool, restart_unit: u32, count: u32) -> bool {
-    configured || count == 0 || !count.is_multiple_of(restart_unit)
+fn tick_is_hot_reload_only(
+    configured: bool,
+    ticks_per_restart: u32,
+    count: u32,
+) -> bool {
+    configured || count == 0 || !count.is_multiple_of(ticks_per_restart)
 }
 
 #[async_trait]
@@ -495,17 +517,20 @@ impl BackgroundTask for AutoRestart {
     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
         // Calculate if this iteration should be hot reload only.
         //
-        // `restart_unit` is how many check ticks make one full config interval
+        // `ticks_per_restart` is how many check ticks make one full config interval
         // (the service itself runs every min(interval, 10s)). Full restart is
-        // offered when `count` is a multiple of `restart_unit`.
+        // offered when `count` is a multiple of `ticks_per_restart`.
         //
-        // When interval ≤ 10s, `restart_unit == 1`, so every tick after the
+        // When interval ≤ 10s, `ticks_per_restart == 1`, so every tick after the
         // first is a full-restart opportunity — otherwise non-hot-reloadable
         // changes (server addr, threads, …) would never take effect.
         //
         // count=0 is always hot-reload-only so the first pass is gentle.
-        let hot_reload_only =
-            hot_reload_only_at(self.hot_reload_only, self.restart_unit, count);
+        let hot_reload_only = tick_is_hot_reload_only(
+            self.hot_reload_only,
+            self.ticks_per_restart,
+            count,
+        );
         if let Some(new_config) = run_diff_and_update_config(
             self.config_manager.clone(),
             &self.last_seen,
@@ -557,7 +582,8 @@ fn reload_log_level(
 #[cfg(test)]
 mod tests {
     use super::{
-        AutoRestart, LastSeen, LastSeenCell, hot_reload_only_at, should_skip,
+        AutoRestart, LastSeen, LastSeenCell, should_skip,
+        tick_is_hot_reload_only,
     };
     use crate::data_plane::ProviderSet;
     use arc_swap::ArcSwap;
@@ -572,7 +598,7 @@ mod tests {
         let (_layer, log_reload_handle): (_, LoggerReloadHandle) =
             tracing_subscriber::reload::Layer::new(new_env_filter("INFO"));
         AutoRestart {
-            restart_unit: 1,
+            ticks_per_restart: 1,
             hot_reload_only: false,
             config_manager,
             log_reload_handle,
@@ -634,16 +660,16 @@ mod tests {
     #[test]
     fn the_daemon_restart_cadence_is_explicit() {
         // The configured hot-only mode always wins.
-        assert!(hot_reload_only_at(true, 1, 5));
+        assert!(tick_is_hot_reload_only(true, 1, 5));
         // The first pass never restarts.
-        assert!(hot_reload_only_at(false, 1, 0));
+        assert!(tick_is_hot_reload_only(false, 1, 0));
         // With the default interval every later tick may restart.
-        assert!(!hot_reload_only_at(false, 1, 1));
-        assert!(!hot_reload_only_at(false, 1, 5));
+        assert!(!tick_is_hot_reload_only(false, 1, 1));
+        assert!(!tick_is_hot_reload_only(false, 1, 5));
         // A 30s interval maps to every third 10s tick.
-        assert!(hot_reload_only_at(false, 3, 1));
-        assert!(hot_reload_only_at(false, 3, 2));
-        assert!(!hot_reload_only_at(false, 3, 3));
-        assert!(!hot_reload_only_at(false, 3, 6));
+        assert!(tick_is_hot_reload_only(false, 3, 1));
+        assert!(tick_is_hot_reload_only(false, 3, 2));
+        assert!(!tick_is_hot_reload_only(false, 3, 3));
+        assert!(!tick_is_hot_reload_only(false, 3, 6));
     }
 }

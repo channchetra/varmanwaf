@@ -17,7 +17,6 @@ use crate::optimizer::{
 };
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use ctor::ctor;
 use pingap_config::PluginConf;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
 use pingap_core::{
@@ -287,11 +286,6 @@ pub fn register() {
     get_plugin_factory().register("image_optim", |params| {
         Ok(Arc::new(ImageOptim::new(params)?))
     });
-}
-
-#[ctor(unsafe)]
-fn init() {
-    register();
 }
 
 #[cfg(test)]

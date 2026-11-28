@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::provider::{ProviderUpdate, invalid_error};
+use crate::provider::{ProviderUpdate, provider_error};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_config::{Hashable, LocationConf};
@@ -56,7 +56,8 @@ impl Provider {
             }
             // A location that cannot be built aborts the rebuild: storing the
             // partial map would drop the entries that failed.
-            let lo = Location::new(name, conf).map_err(invalid_error)?;
+            let lo = Location::new(name, conf)
+                .map_err(|e| provider_error("build location", e))?;
             updated_locations.push(name.clone());
             locations.insert(name.to_string(), Arc::new(lo));
         }
@@ -129,6 +130,6 @@ mod tests {
             .expect_err("an invalid path pattern must fail the rebuild");
 
         // Assert: the failure is the `Err`, not a per-entry error.
-        assert!(error.contains("Invalid error"), "{error}");
+        assert!(error.contains("build location"), "{error}");
     }
 }

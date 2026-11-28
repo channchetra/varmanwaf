@@ -44,7 +44,6 @@ clap = { version = "4.6.6", features = [
     "usage",
     "env",
 ], default-features = false }
-ctor = { workspace = true }
 crossbeam-channel = "0.5.17"
 glob = { workspace = true }
 hex = { workspace = true }
@@ -185,10 +184,6 @@ incremental = false
 debug = false
 
 
-[[bench]]
-name = "bench"
-harness = false
-
 [package.metadata.cargo-machete]
 # `pingap-imageoptim` registers its plugin from a `#[ctor]`; `src/main.rs`
 # imports it as a link anchor, which cargo-machete cannot see as a use.
@@ -299,7 +294,6 @@ chrono-tz = { version = "0.10.4", default-features = false, features = [
 ] }
 cookie = "0.18.2"
 crc32fast = "1.5.1"
-ctor = "1.0.13"
 derive_more = { version = "2.1.1", default-features = false, features = [
     "debug",
 ] }
@@ -387,8 +381,10 @@ reqwest = { version = "0.13.5", default-features = false, features = [
     "json",
     "default-tls",
 ] }
-# The workspace uses ring everywhere; rustls' default aws-lc-rs provider is
-# deliberately disabled so one crypto provider is linked.
+# Ring is the installed rustls provider everywhere; rustls' default
+# aws-lc-rs provider is deliberately disabled. Other dependencies (the ACME
+# client, rcgen, jsonwebtoken) still link aws-lc-rs, but it is never installed
+# as the process-wide rustls provider.
 rustls = { version = "0.23.40", default-features = false, features = [
     "ring",
     "logging",
@@ -489,7 +485,7 @@ tokio-stream = { version = "0.1", features = ["net"] }
 # kept on the same version as `tonic` so the generated stubs match the runtime.
 tonic-prost-build = "0.14"
 tower = "0.5"
-tower-http = { version = "0.7", features = ["cors", "compression-gzip", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "compression-gzip", "trace"] }
 
 # Shared by benches / tests across pingap-* crates.
 bytemuck = "1.25.2"

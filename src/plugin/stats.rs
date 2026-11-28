@@ -16,7 +16,6 @@ use super::{Plugin, get_hash_key, get_step_conf_in, get_str_conf};
 use crate::process::get_start_time;
 use async_trait::async_trait;
 use bytes::Bytes;
-use ctor::ctor;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HttpResponse, PluginStep, RequestPluginResult, get_hostname,
@@ -153,8 +152,8 @@ impl Plugin for Stats {
     /// # Returns
     ///
     /// `Skipped` when the step or path does not match, `Respond` with the
-    /// JSON stats payload when it does, and `Err` if that payload cannot be
-    /// serialised.
+    /// JSON stats payload when it does. A serialisation failure is returned
+    /// as a 500 response, not as `Err`.
     #[inline]
     async fn handle_request(
         &self,
@@ -203,8 +202,8 @@ impl Plugin for Stats {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
+/// Registers the stats plugin; called by the binary's start-up registration.
+pub(crate) fn register() {
     get_plugin_factory()
         .register("stats", |params| Ok(Arc::new(Stats::new(params)?)));
 }

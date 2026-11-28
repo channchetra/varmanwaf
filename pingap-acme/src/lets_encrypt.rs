@@ -390,7 +390,7 @@ async fn handle_successful_renewal(
     } else {
         // update certificate success
         // so set the current config
-        config_manager.set_current_config(config);
+        config_manager.activate_config(config);
     }
     Ok(())
 }

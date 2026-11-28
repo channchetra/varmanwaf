@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pingap_certificate::CertificateProvider;
 use pingap_config::{ConfigManager, PingapConfig, PingapTomlConfig};
+#[cfg(feature = "tracing")]
 use pingap_performance::set_metrics_upstream_provider;
 use pingap_proxy::{Server as ProxyServer, parse_from_conf};
 use pingap_upstream::new_upstream_health_check_task;
@@ -30,6 +31,10 @@ use super::bundle_config::build_pingap_config;
 pub(super) async fn start_data_plane(
     rule_cache: Arc<RuleCache>,
 ) -> anyhow::Result<()> {
+    // Baseline before reading the rules: a push that lands while the first
+    // config is being built then differs from this hash and is reloaded
+    // instead of being mistaken for the state we already built.
+    let initial_hash = rule_cache.data_plane_hash();
     let config = wait_for_config(&rule_cache).await;
     log_start(&config);
     let (config_manager, config) = config_manager_for(&rule_cache, config)?;
@@ -57,8 +62,8 @@ pub(super) async fn start_data_plane(
     // uninspected and no access/security events are ever emitted.
     let cert_provider = assembled.providers.certificates.clone();
     crate::data_plane::report_provider_updates(
-        &assembled.plugins,
-        &assembled.certificates,
+        &assembled.plugin_update,
+        &assembled.certificate_update,
     );
     install_certificate_status_snapshot(cert_provider.clone());
 
@@ -106,6 +111,7 @@ pub(super) async fn start_data_plane(
     spawn_pending_access_sweeper();
     spawn_rule_reload_watcher(
         rule_cache,
+        initial_hash,
         config_manager.clone(),
         assembled.providers.clone(),
     );
@@ -219,7 +225,7 @@ fn config_manager_for(
             config
         },
     };
-    config_manager.set_current_config(config.clone());
+    config_manager.activate_config(config.clone());
     publish_management_certificate(&config);
     Ok((config_manager, config))
 }
@@ -310,10 +316,7 @@ fn start_proxy_servers(
             ps.enable_lets_encrypt();
         }
         let services = ps.run(assembled.server.configuration.clone())?;
-        assembled
-            .server
-            .add_service(services.lb)
-            .add_dependency(&assembled.bootstrap);
+        assembled.add_listener(services);
     }
 
     info!(
@@ -373,13 +376,14 @@ fn spawn_pending_access_sweeper() {
 /// request, so no restart is needed.
 fn spawn_rule_reload_watcher(
     rule_cache: Arc<RuleCache>,
+    initial_hash: Arc<str>,
     config_manager: Arc<ConfigManager>,
     providers: crate::data_plane::ProviderSet,
 ) {
     let watcher_cache = rule_cache;
     let watcher_config_manager = config_manager;
     let watcher_providers = providers;
-    let mut last_hash = watcher_cache.data_plane_hash();
+    let mut last_hash = initial_hash;
     let mut last_management = varman_control::management_cert::revision();
     tokio::spawn(async move {
         loop {
@@ -396,16 +400,14 @@ fn spawn_rule_reload_watcher(
             );
             let Some(converted) = build_pingap_config(&watcher_cache) else {
                 report_missing_config(&watcher_cache);
-                last_hash = hash;
-                last_management = management;
+                // Do not advance the memo: the same document is retried on
+                // the next tick, in case the rules arrive in two pushes.
                 continue;
             };
             let Ok(new_toml) = toml::to_string_pretty(&converted) else {
                 error!(
-                    "data plane: reload config serialization failed, keeping current"
+                    "data plane: reload config serialization failed, keeping current and retrying"
                 );
-                last_hash = hash;
-                last_management = management;
                 continue;
             };
             // Fetch-merge-save must be atomic with respect to ACME's own

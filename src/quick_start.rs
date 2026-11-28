@@ -34,10 +34,9 @@ use pingap_config::{
 };
 use pingap_util::resolve_path;
 use std::collections::HashMap;
-use std::error::Error;
 use std::path::{Path, PathBuf};
 
-type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
+type Result<T> = anyhow::Result<T>;
 
 /// Name shared by the generated server, location, upstream and certificate.
 /// Only one of each is created, so a fixed name keeps the generated config
@@ -46,7 +45,9 @@ type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 /// An installed `pingap` binary keeps its historical identity; every other
 /// invocation (the `varman` binary) is branded VarmanWAF.
 fn generated_name() -> &'static str {
-    match crate::cli::identity() {
+    static IDENTITY: std::sync::OnceLock<crate::cli::Identity> =
+        std::sync::OnceLock::new();
+    match *IDENTITY.get_or_init(crate::cli::identity) {
         crate::cli::Identity::Varman => "varman",
         crate::cli::Identity::Pingap => "pingap",
     }
@@ -136,7 +137,7 @@ fn resolve_tls_files(
     let (cert_file, dir) = if cert_path.is_dir() {
         let file =
             find_file(&cert_path, &CERT_FILE_NAMES).ok_or_else(|| {
-                format!(
+                anyhow::anyhow!(
                     "no certificate found in {}, expected one of: {}",
                     cert_path.display(),
                     CERT_FILE_NAMES.join(", ")
@@ -150,26 +151,24 @@ fn resolve_tls_files(
             .to_path_buf();
         (cert_path, dir)
     } else {
-        return Err(format!(
+        return Err(anyhow::anyhow!(
             "certificate {} does not exist",
             cert_path.display()
-        )
-        .into());
+        ));
     };
 
     let key_file = if let Some(key) = key {
         let key_path = PathBuf::from(resolve_path(key));
         if !key_path.is_file() {
-            return Err(format!(
+            return Err(anyhow::anyhow!(
                 "private key {} does not exist",
                 key_path.display()
-            )
-            .into());
+            ));
         }
         key_path
     } else {
         find_file(&dir, &KEY_FILE_NAMES).ok_or_else(|| {
-            format!(
+            anyhow::anyhow!(
                 "no private key found in {}, expected one of: {}, use --key to set it",
                 dir.display(),
                 KEY_FILE_NAMES.join(", ")
@@ -188,7 +187,7 @@ fn resolve_tls_files(
 pub fn build_config(params: &QuickStartParams) -> Result<PingapConfig> {
     let addrs = split_list(&params.upstreams);
     if addrs.is_empty() {
-        return Err("--upstream should not be empty".into());
+        return Err(anyhow::anyhow!("--upstream should not be empty"));
     }
     let domains = {
         let list = split_list(params.domains.as_deref().unwrap_or_default());
@@ -216,7 +215,7 @@ pub fn build_config(params: &QuickStartParams) -> Result<PingapConfig> {
             },
         );
     } else if params.key.is_some() {
-        return Err("--key should be used with --cert".into());
+        return Err(anyhow::anyhow!("--key should be used with --cert"));
     } else if let Some(domains) = &domains {
         // No certificate but a domain to prove ownership of: let's encrypt can
         // issue one over http-01. The challenge listener on :80 is added by the
@@ -312,34 +311,60 @@ pub fn acme_state_path(config: &PingapConfig) -> Option<PathBuf> {
 /// or `--addr` takes effect immediately while the certificate — which is rate
 /// limited and slow to replace — is reused. A missing or unreadable file just
 /// means no certificate yet; the acme task requests one on the first run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcmeRestore {
+    /// The saved leaf and key were copied into the configured certificate.
+    Restored,
+    /// No state file exists yet (the first start).
+    NoStateFile,
+    /// The state file exists but cannot be read.
+    Unreadable,
+    /// The state file is not a valid config.
+    InvalidState,
+    /// The state file has no certificate for this invocation.
+    NoCertificate,
+    /// The saved certificate has no usable PEM/key pair.
+    NoMaterial,
+    /// The generated config has no certificate entry to fill.
+    NoEntry,
+}
+
+/// Restores the certificate the ACME task persisted on a previous run.
 pub fn restore_acme_certificate(
     config: &mut PingapConfig,
     path: &Path,
-) -> bool {
-    let Ok(data) = std::fs::read_to_string(path) else {
-        return false;
+) -> AcmeRestore {
+    let data = match std::fs::read_to_string(path) {
+        Ok(data) => data,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return AcmeRestore::NoStateFile;
+        },
+        Err(_) => return AcmeRestore::Unreadable,
     };
-    let saved = toml::from_str::<pingap_config::PingapTomlConfig>(&data)
-        .ok()
-        .and_then(|saved| saved.to_pingap_config(false).ok())
-        .and_then(|saved| saved.certificates.get(generated_name()).cloned());
-    let Some(saved) = saved else {
-        return false;
+    let saved = match toml::from_str::<pingap_config::PingapTomlConfig>(&data) {
+        Ok(saved) => match saved.to_pingap_config(false) {
+            Ok(saved) => saved,
+            Err(_) => return AcmeRestore::InvalidState,
+        },
+        Err(_) => return AcmeRestore::InvalidState,
+    };
+    let Some(saved) = saved.certificates.get(generated_name()).cloned() else {
+        return AcmeRestore::NoCertificate;
     };
     let (Some(tls_cert), Some(tls_key)) = (saved.tls_cert, saved.tls_key)
     else {
-        return false;
+        return AcmeRestore::NoMaterial;
     };
     if tls_cert.is_empty() || tls_key.is_empty() {
-        return false;
+        return AcmeRestore::NoMaterial;
     }
     let Some(certificate) = config.certificates.get_mut(generated_name())
     else {
-        return false;
+        return AcmeRestore::NoEntry;
     };
     certificate.tls_cert = Some(tls_cert);
     certificate.tls_key = Some(tls_key);
-    true
+    AcmeRestore::Restored
 }
 
 #[cfg(test)]
@@ -430,7 +455,10 @@ mod tests {
         .unwrap();
 
         // nothing issued yet
-        assert!(!restore_acme_certificate(&mut config, &path));
+        assert_eq!(
+            AcmeRestore::NoStateFile,
+            restore_acme_certificate(&mut config, &path)
+        );
         assert_eq!(None, config.certificates[generated_name()].tls_cert);
 
         // the acme task writes the whole config back through the storage
@@ -441,7 +469,10 @@ mod tests {
         certificate.tls_key = Some("--key--".to_string());
         fs::write(&path, toml::to_string_pretty(&issued).unwrap()).unwrap();
 
-        assert!(restore_acme_certificate(&mut config, &path));
+        assert_eq!(
+            AcmeRestore::Restored,
+            restore_acme_certificate(&mut config, &path)
+        );
         assert_eq!(
             Some("--pem--".to_string()),
             config.certificates[generated_name()].tls_cert

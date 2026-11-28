@@ -94,7 +94,7 @@ impl VarmanCommand {
 
 /// Options shared by all VarmanWAF modes.
 #[derive(Parser, Debug, Clone)]
-pub struct CommonOpts {
+pub struct ControlPlaneOpts {
     /// PostgreSQL connection string
     #[arg(
         long,
@@ -237,7 +237,7 @@ pub struct AgentSharedOpts {
 #[command(args_override_self = true)]
 pub struct ServerOpts {
     #[command(flatten)]
-    pub common: CommonOpts,
+    pub common: ControlPlaneOpts,
 
     /// TOML configuration file; its `[server]` and `[agent]` tables hold
     /// these same settings. Precedence is this file, then the `VARMAN_*`
@@ -281,7 +281,7 @@ pub struct AgentOpts {
 #[command(args_override_self = true)]
 pub struct AllInOneOpts {
     #[command(flatten)]
-    pub common: CommonOpts,
+    pub common: ControlPlaneOpts,
 
     /// TOML configuration file; its `[server]` and `[agent]` tables hold
     /// these same settings. Precedence is this file, then the `VARMAN_*`
@@ -300,8 +300,8 @@ pub struct AllInOneOpts {
 ///
 /// Those commands talk straight to PostgreSQL instead of the REST API, so
 /// they keep working when the control plane is down or its IP allowlist has
-/// locked the operator out. A running control plane notices their writes
-/// within a few seconds.
+/// locked the operator out. A running control plane reads the database on its
+/// next request or reload; a config rollback can restore an earlier revision.
 #[derive(clap::Args, Debug, Clone)]
 pub struct DbOpts {
     /// PostgreSQL connection string

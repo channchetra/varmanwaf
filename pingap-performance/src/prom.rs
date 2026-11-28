@@ -43,7 +43,11 @@ static METRICS_UPSTREAM_PROVIDER: OnceLock<Arc<dyn UpstreamProvider>> =
 /// Registers the process-wide upstream provider so Prometheus scrapes can
 /// export per-backend failure rate and circuit-breaker state.
 pub fn set_metrics_upstream_provider(provider: Arc<dyn UpstreamProvider>) {
-    let _ = METRICS_UPSTREAM_PROVIDER.set(provider);
+    if METRICS_UPSTREAM_PROVIDER.set(provider).is_err() {
+        warn!(
+            "metrics upstream provider is already registered; a second plane's gauges are not exported"
+        );
+    }
 }
 
 /// Tag used to dynamically replace with actual hostname in prometheus push URLs.

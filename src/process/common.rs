@@ -70,6 +70,28 @@ pub struct RestartProcessCommand {
 }
 
 impl RestartProcessCommand {
+    /// Builds the restart command, owning the protocol details both roots
+    /// used to repeat: the `-d -u` prefix and the readiness socket next to
+    /// the upgrade socket.
+    pub fn new(
+        exec_path: PathBuf,
+        args: Vec<String>,
+        upgrade_sock: &str,
+        pid_file: String,
+        ready_timeout: Duration,
+    ) -> Self {
+        let mut full_args = vec!["-d".to_string(), "-u".to_string()];
+        full_args.extend(args);
+        Self {
+            exec_path,
+            log_level: String::new(),
+            args: full_args,
+            ready_sock: PathBuf::from(format!("{upgrade_sock}.ready")),
+            ready_timeout,
+            pid_file,
+        }
+    }
+
     /// Spawns the replacement process **without waiting** for it to exit.
     ///
     /// The new process is started with `-d` (daemon) and `-u` (upgrade), so it
@@ -85,7 +107,7 @@ impl RestartProcessCommand {
     /// here therefore threw away every diagnostic the new process produced
     /// before its own logger was up - which is exactly the window where a
     /// failed hot upgrade dies.
-    fn exec(&self) -> io::Result<process::Child> {
+    fn spawn_replacement(&self) -> io::Result<process::Child> {
         Command::new(&self.exec_path)
             .env("RUST_LOG", &self.log_level)
             .env(READY_SOCK_ENV, &self.ready_sock)
@@ -235,7 +257,7 @@ async fn restart_with(
     };
     // ... then start it, so it can bind the upgrade socket and wait to receive
     // the listening fds ...
-    let child = cmd.exec()?;
+    let child = cmd.spawn_replacement()?;
     let new_pid = child.id();
     info!(
         target: LOG_TARGET,
@@ -508,7 +530,7 @@ pub async fn restart_now() -> io::Result<()> {
 /// Only the last request in the window restarts, so a burst of configuration
 /// changes produces one hand-over. A failed restart is logged, notified and
 /// returned so the caller can record it; it is never silently discarded.
-pub async fn restart() -> io::Result<()> {
+pub async fn restart_after_debounce() -> io::Result<()> {
     let count = PROCESS_RESTART_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     tokio::time::sleep(Duration::from_secs(60)).await;
     if count == PROCESS_RESTART_COUNT.load(Ordering::Relaxed)

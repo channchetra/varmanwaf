@@ -34,7 +34,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use bytes::BytesMut;
 use pingap_acme::new_lets_encrypt_service;
@@ -103,6 +103,7 @@ pub(crate) fn add_acme_task(
     );
 }
 
+/// The upgrade socket for a plane, defaulting to the historical path.
 pub(crate) fn upgrade_sock_path(
     basic_conf: &pingap_config::BasicConf,
 ) -> String {
@@ -240,12 +241,13 @@ impl DataPlaneOptions {
     /// loops, and pingora's built-in server configuration.
     pub fn admin_only(
         daemon: bool,
+        threads: Option<usize>,
         admin_plugin: Option<crate::provider::AdminPluginEntry>,
     ) -> Self {
         Self {
             daemon,
             upgrade: false,
-            threads: None,
+            threads,
             admin_plugin,
             background_task_service_name: None,
             admin_only: true,
@@ -303,12 +305,26 @@ pub struct AssembledPlane {
     /// and registers the service at its historical point in start-up.
     pub background_tasks: Option<BackgroundTaskService>,
     /// Plugin rebuild results, for the caller to log in its own words.
-    pub plugins: ProviderUpdate,
+    pub plugin_update: ProviderUpdate,
     /// Certificate load results, for the caller to log in its own words.
-    pub certificates: ProviderUpdate,
+    pub certificate_update: ProviderUpdate,
 }
 
 impl AssembledPlane {
+    /// Adds one listener and makes it wait for the bootstrap service.
+    ///
+    /// Every listener must depend on bootstrap: without it a restarted
+    /// process binds fresh sockets instead of building them from the
+    /// inherited fds, and the zero-downtime hand-over fails.
+    pub(crate) fn add_listener(
+        &mut self,
+        services: pingap_proxy::ServerServices,
+    ) {
+        self.server
+            .add_service(services.lb)
+            .add_dependency(&self.bootstrap);
+    }
+
     /// Builds the per-listener [`AppContext`] on the shared providers.
     ///
     /// `logger` is the listener's access logger; only the file-configured
@@ -440,22 +456,14 @@ pub fn assemble(
         tasks
     });
 
-    if !plugins.is_ok() || !certificates.is_ok() {
-        warn!(
-            plugin_errors = %plugins.errors,
-            certificate_errors = %certificates.errors,
-            "data plane assembled with deferred provider errors"
-        );
-    }
-
     Ok(AssembledPlane {
         server,
         bootstrap,
         config_manager,
         providers,
         background_tasks,
-        plugins,
-        certificates,
+        plugin_update: plugins,
+        certificate_update: certificates,
     })
 }
 
@@ -548,7 +556,7 @@ mod tests {
         let assembled = assemble(
             &PingapConfig::default(),
             config_manager,
-            DataPlaneOptions::admin_only(false, None),
+            DataPlaneOptions::admin_only(false, None, None),
         )
         .expect("assembly must succeed on the default config");
 

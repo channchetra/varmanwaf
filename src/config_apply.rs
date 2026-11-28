@@ -160,7 +160,7 @@ pub fn commit_if_applied(
     if let ApplyOutcome::Failed(_) = outcome {
         return false;
     }
-    config_manager.set_current_config(config);
+    config_manager.activate_config(config);
     true
 }
 
@@ -546,6 +546,7 @@ async fn run_step(
     }
 }
 
+/// Formats the notification message for a changed entry list.
 fn format_message(name: &str, list: Vec<String>) -> String {
     if list.is_empty() {
         return format!("{name} is removed",);

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::provider::{ProviderUpdate, invalid_error};
+use crate::provider::{ProviderUpdate, provider_error};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_config::UpstreamConf;
@@ -60,7 +60,7 @@ impl Provider {
     ) -> Result<ProviderUpdate> {
         let (upstreams, updated) =
             new_ahash_upstreams(upstream_configs, self.clone(), sender)
-                .map_err(invalid_error)?;
+                .map_err(|e| provider_error("build upstream", e))?;
 
         self.store(upstreams);
         Ok(ProviderUpdate {
@@ -77,7 +77,7 @@ impl Provider {
     ) -> Result<ProviderUpdate> {
         let (upstreams, updated_upstreams) =
             new_ahash_upstreams(upstream_configs, self.clone(), sender)
-                .map_err(invalid_error)?;
+                .map_err(|e| provider_error("build upstream", e))?;
         for (name, up) in upstreams.iter() {
             // no need to run health check if not new upstream
             if !updated_upstreams.contains(name) {

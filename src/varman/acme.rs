@@ -88,15 +88,18 @@ fn acme_dns_service_url(
         Some(v) if v.contains("://") => v.clone(),
         Some(v) => format!("https://{v}"),
         None => {
-            if let Some(region) = config.get("region").filter(|r| !r.is_empty())
-            {
-                format!("https://dns.{region}.myhuaweicloud.com")
-            } else if provider == "huawei" {
-                warn!(
-                    "acme dns-01: huawei needs a region or endpoint, \
-                     issuance will need manual DNS"
-                );
-                return None;
+            if provider == "huawei" {
+                if let Some(region) =
+                    config.get("region").filter(|r| !r.is_empty())
+                {
+                    format!("https://dns.{region}.myhuaweicloud.com")
+                } else {
+                    warn!(
+                        "acme dns-01: huawei needs a region or endpoint, \
+                         issuance will need manual DNS"
+                    );
+                    return None;
+                }
             } else {
                 // Providers accepted by acme_certificate_conf all have a
                 // documented host; the tasks error out on an empty URL.
