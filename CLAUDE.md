@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-> **Current release:** [v1.4.5](docs/releases/v1.4.5.md). [HANDOFF.md](HANDOFF.md)
+> **Current release:** [v1.5.0](docs/releases/v1.5.0.md). [HANDOFF.md](HANDOFF.md)
 > is historical (v1.1.9); start from `docs/README.md`.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -16,7 +16,7 @@ crates (`pingap-*`). MSRV is `1.96.0`; the workspace package defaults to edition
 
 ### Versioning
 
-Most crates inherit the workspace version `1.4.5` with `version.workspace = true`. Three internally published crates are the exception: `varman-waf`, `varman-challenge` and `varman-pprof` declare `version = "0.1.0"`, and `varman-pprof` is pinned at `0.1.0` in `[workspace.dependencies]`. A version bump must update those manifests and the `varman-pprof` requirement as well as `[workspace.package]` and the `pingap-*` dependency entries.
+Most crates inherit the workspace version `1.5.0` with `version.workspace = true`. Three internally published crates are the exception: `varman-waf`, `varman-challenge` and `varman-pprof` declare `version = "0.1.0"`, and `varman-pprof` is pinned at `0.1.0` in `[workspace.dependencies]`. A version bump must update those manifests and the `varman-pprof` requirement as well as `[workspace.package]` and the `pingap-*` dependency entries.
 
 Editions are mixed by design: the workspace default is 2024, but `varman-agent`, `varman-protocol`, `varman-control` and most `pingap-*` foundation crates still declare 2021. MSRV is 1.96.0 for both. The internal `pingap-*` dependencies live in `[workspace.dependencies]`, so a member depends on a sibling with `{ workspace = true }`.
 

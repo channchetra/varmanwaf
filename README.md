@@ -9,14 +9,15 @@ Central control plane · Lightweight edge agents · Pingora data plane · Postgr
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
 [![Docker](https://img.shields.io/badge/docker-compose%20ready-2496ED?logo=docker&logoColor=white)](./docker-compose.yml)
-[![Release](https://img.shields.io/badge/release-v1.4.5-brightgreen.svg)](./docs/releases/v1.4.5.md)
+[![Release](https://img.shields.io/badge/release-v1.5.0-brightgreen.svg)](./docs/releases/v1.5.0.md)
 
-**v1.4.5 - the current release.** The native Varman engine, the full operator
+**v1.5.0 - the current release.** The native Varman engine, the full operator
 console (policy tuning, access control, API assets, exclusion packages,
 alerts, reports, fleet) and the Pingora data plane are in production use.
-The 1.4.x line adds certificate rotation without restarts, a renewal watchdog,
-NUL-safe telemetry ingest and the stream-inspection fixes. See
-[release notes](./docs/releases/v1.4.5.md).
+The 1.5.0 line enforces the forced-password gate on every mutation, closes the
+admin-plugin auth/credential gaps, scopes MCP tools per tenant, and unifies the
+data-plane assembly and reload paths. See
+[release notes](./docs/releases/v1.5.0.md).
 
 </div>
 
