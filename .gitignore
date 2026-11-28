@@ -91,3 +91,6 @@ review-*
 # desloppify local state
 .desloppify/
 scorecard.png
+
+# Public Let's Encrypt chain certificates required by include_bytes!.
+!pingap-certificate/assets/*.pem
