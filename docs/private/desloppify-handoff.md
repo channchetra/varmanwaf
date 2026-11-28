@@ -5,7 +5,9 @@
 ## Current score
 
 Strict **84.9 / 85.0** (plan start 22.1, +62.8). Queue **112**.
-Branch `desloppify/code-health`. **Nothing pushed or deployed.** Production **1.4.5**.
+The branch was merged to `main` and released as **1.5.0** on 2026-11-28;
+production `proxy-1` is verified on 1.5.0. The remaining architecture work is
+planned in [`next-release-1.6-plan.md`](./next-release-1.6-plan.md).
 
 The remaining gap is concentrated in three dimensions:
 
@@ -54,9 +56,10 @@ and admin `/configs` auth/prefix tests.
   replaceable restart command, memory budget set once in `main`, pprof flake
   retried.
 
-## Recommended next step
+## Next: 1.6.0
 
-The only way past 84.9 is the foundation inversion. Do it as a new crate
+The detailed plan is in [`next-release-1.6-plan.md`](./next-release-1.6-plan.md).
+The short version is the foundation inversion as a new crate
 (`varman-plugin`/`varman-edge`) in two stages:
 
 1. Move the WAF modules (`waf/`, `waf_custom`, `waf_processor`, `waf_shadow`,
@@ -77,7 +80,8 @@ findings only after the code change.
 - Do **not** order or renew certificates before **2026-12-04 03:53 UTC** (rate-limit
   window). The current certificate expires **2026-12-03 20:58 UTC**; the 12-01
   renewal is the fifth and must succeed.
-- No restart or deploy of production from this branch; it is local-only.
+- 1.5.0 is deployed and verified; the certificate row count/fingerprint is
+  unchanged. Future restarts must keep that invariant.
 
 ## Useful commands
 
