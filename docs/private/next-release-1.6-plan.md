@@ -1,9 +1,25 @@
 # 1.6.0 plan — finish the code-health architecture work
 
 > Internal. Written after the 1.5.0 production release (2026-11-28).
-> Current strict score: 84.9/85. The three below-target dimensions are
-> cross-module architecture (78), initialization coupling (80) and test
-> strategy (80).
+> Current strict score: 84.9/85. Cross-module architecture rose to 82 after
+> the plugin extraction; the remaining below-target dimensions are test
+> strategy (78-80), abstraction fitness (82) and cross-module (82).
+
+## Progress (2026-11-28)
+
+- **Phase 1 complete**: `varman-plugin` owns the WAF surface (waf/, waf_ato,
+  waf_custom, waf_processor, waf_shadow, waf_stream) and registers explicitly.
+  Commit `ea041da`.
+- **Phase 2 complete**: challenge, cache, rewrite and error_page moved;
+  `pingap-plugin` has **no** `varman-*` dependencies and the module graph no
+  longer shows the foundation -> platform edges. Commit `a28f548`.
+- **Phase 3 partial**: `AssembledPlane` now captures all five providers and
+  `app_context` uses them; `try_init_plugins` returns `ProviderUpdate`.
+  Commit `6705a42`. The five `LazyLock` registries are still the source those
+  providers wrap, so full injection remains.
+- Branch `refactor/varman-plugin`, pushed to origin; not merged to `main`.
+- 148 `varman-plugin` tests + 69 `pingap-plugin` tests; full suite, clippy,
+  fmt, machete green.
 
 ## Goal
 
@@ -11,7 +27,7 @@ Move the Varman-specific plugins out of the Pingap foundation, make the five
 provider registries injectable, and add the missing database-backed tests —
 without changing runtime behavior. Target: strict **85.0**, then 1.6.0.
 
-## Phase 1 — create `varman-plugin`, move the WAF surface
+## Phase 1 — create `varman-plugin`, move the WAF surface  ✅
 
 1. Branch from `main` (1.5.0) as `refactor/varman-plugin`.
 2. Create `varman-plugin/Cargo.toml`:
@@ -33,7 +49,7 @@ without changing runtime behavior. Target: strict **85.0**, then 1.6.0.
 6. Gate: `cargo test -p varman-plugin`, `-p pingap-plugin`, full workspace,
    clippy, fmt, container e2e (WAF still blocks).
 
-## Phase 2 — move the remaining Varman plugins
+## Phase 2 — move the remaining Varman plugins  ✅
 
 Move `challenge.rs`, `cache.rs`, `rewrite.rs`, `error_page.rs` into
 `varman-plugin`; drop `varman-waf`, `varman-agent` and `varman-challenge`
@@ -45,7 +61,7 @@ Residual `varman_agent::cache` model types used by the moved plugins should
 move to `varman-waf`/`varman-protocol` (or a small `varman-edge-model` crate)
 so `pingap-plugin` no longer imports the agent at all.
 
-## Phase 3 — inject the provider registries
+## Phase 3 — inject the provider registries  (capture done, injection pending)
 
 Replace the five `LazyLock<Arc<Provider>>` statics with a `ProviderSet` owned
 by the composition root:
