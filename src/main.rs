@@ -72,6 +72,8 @@ mod plugin;
 mod process;
 mod quick_start;
 mod server_locations;
+#[cfg(test)]
+mod test_support;
 mod upstreams;
 mod varman;
 mod webhook;

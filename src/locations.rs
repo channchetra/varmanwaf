@@ -130,6 +130,7 @@ pub fn try_init_locations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::lock_providers;
 
     fn config(path: Option<&str>) -> HashMap<String, LocationConf> {
         HashMap::from([(
@@ -143,6 +144,7 @@ mod tests {
 
     #[test]
     fn a_new_location_is_reported_as_updated() {
+        let _guard = lock_providers();
         // Act
         let update =
             try_init_locations(&config(Some("/api"))).expect("a valid path");
@@ -157,6 +159,7 @@ mod tests {
 
     #[test]
     fn an_unparseable_location_is_a_fatal_error() {
+        let _guard = lock_providers();
         // Act: a broken regex path cannot be built.
         let error = try_init_locations(&config(Some("~(")))
             .expect_err("an invalid path pattern must fail the rebuild");

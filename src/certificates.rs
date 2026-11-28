@@ -175,11 +175,10 @@ mod tests {
     use pingap_config::CertificateConf;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use std::sync::Mutex;
 
     /// The provider is process-wide and every test here replaces its whole
     /// map, so they must not interleave.
-    static PROVIDER_LOCK: Mutex<()> = Mutex::new(());
+    use crate::test_support::lock_providers;
 
     fn seed_provider(domain: &str, name: &str, hash: &str) {
         let mut map = ahash::AHashMap::new();
@@ -213,7 +212,7 @@ mod tests {
     /// table: TLS would reject every handshake until the next issuance.
     #[test]
     fn test_entries_without_pem_keep_serving_the_previous_certificate() {
-        let _guard = PROVIDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = lock_providers();
         seed_provider("carry-a.example.com", "old", "old-hash");
         let mut configs = HashMap::new();
         configs.insert(
@@ -237,7 +236,7 @@ mod tests {
     /// entry even for the same domains.
     #[test]
     fn test_fresh_certificate_wins_over_the_carried_over_one() {
-        let _guard = PROVIDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = lock_providers();
         let certified_key = rcgen::generate_simple_self_signed(vec![
             "carry-b.example.com".to_string(),
         ])
@@ -270,7 +269,7 @@ mod tests {
     /// the previous map instead of dropping the failed entry's domains.
     #[test]
     fn test_a_partial_update_reports_the_failed_entry() {
-        let _guard = PROVIDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = lock_providers();
         let certified_key = rcgen::generate_simple_self_signed(vec![
             "carry-c.example.com".to_string(),
         ])
