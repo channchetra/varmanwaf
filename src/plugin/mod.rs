@@ -35,6 +35,8 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info};
 
+use crate::config_apply::ProviderUpdate;
+
 mod admin;
 mod stats;
 
@@ -365,7 +367,7 @@ pub fn try_init_plugins(
     plugins: &HashMap<String, PluginConf>,
     admin: Option<AdminPlugin>,
     config_manager: Arc<ConfigManager>,
-) -> (Vec<String>, String) {
+) -> ProviderUpdate {
     let mut plugin_configs: Vec<(String, PluginConf)> = plugins
         .iter()
         .map(|(name, value)| (name.to_string(), value.clone()))
@@ -453,7 +455,10 @@ pub fn try_init_plugins(
         error
     };
 
-    (updated_plugins, error)
+    ProviderUpdate {
+        updated: updated_plugins,
+        errors: error,
+    }
 }
 
 #[cfg(test)]
@@ -577,13 +582,16 @@ allow_unauthenticated = true
             .unwrap(),
         )]);
 
-        let (updated, error) =
-            try_init_plugins(&plugins, None, manager.clone());
+        let update = try_init_plugins(&plugins, None, manager.clone());
 
-        assert!(error.is_empty(), "{error}");
+        assert!(update.errors.is_empty(), "{}", update.errors);
         assert!(
-            updated.iter().any(|name| name == "test:documentAdmin"),
-            "the document admin plugin must be created: {updated:?}"
+            update
+                .updated
+                .iter()
+                .any(|name| name == "test:documentAdmin"),
+            "the document admin plugin must be created: {:?}",
+            update.updated
         );
 
         // A bad admin config is reported against its name instead of being
@@ -592,10 +600,14 @@ allow_unauthenticated = true
             "test:badAdmin".to_string(),
             toml::from_str::<PluginConf>(r#"category = "admin""#).unwrap(),
         )]);
-        let (_, error) = try_init_plugins(&plugins, None, manager);
+        let update = try_init_plugins(&plugins, None, manager);
 
-        assert!(error.contains("test:badAdmin"), "{error}");
-        assert!(error.contains("authorizations is empty"), "{error}");
+        assert!(update.errors.contains("test:badAdmin"), "{}", update.errors);
+        assert!(
+            update.errors.contains("authorizations is empty"),
+            "{}",
+            update.errors
+        );
     }
 }
 
@@ -636,10 +648,10 @@ remove_headers = [
             .unwrap(),
         ),
     ]);
-    let (_, error) = try_init_plugins(
+    let update = try_init_plugins(
         &plugins,
         None,
         Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None)),
     );
-    assert!(error.is_empty());
+    assert!(update.errors.is_empty());
 }

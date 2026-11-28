@@ -136,7 +136,7 @@ pub(super) async fn start_data_plane(
     }
 
     // Initialize certificates
-    let cert_provider = assembled.certificate_provider.clone();
+    let cert_provider = assembled.providers.certificates.clone();
     if !config.certificates.is_empty() {
         if !assembled.certificates.updated.is_empty() {
             info!(

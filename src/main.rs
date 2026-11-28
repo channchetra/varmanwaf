@@ -828,7 +828,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ));
         }
     }
-    let certificate_provider = assembled.certificate_provider.clone();
+    let certificate_provider = assembled.providers.certificates.clone();
     let mut simple_background_service = assembled
         .background_tasks
         .take()

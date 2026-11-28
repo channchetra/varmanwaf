@@ -349,14 +349,11 @@ async fn apply_categories(
         }
     }
     if categories.plugins {
-        let (updated, errors) = try_init_plugins(
+        let result = as_step(Ok(try_init_plugins(
             &next.plugins,
             admin_plugin.cloned(),
             config_manager.clone(),
-        );
-        // `try_init_plugins` still reports the old tuple; a non-empty error
-        // means it kept the previous map.
-        let result = as_step(Ok(ProviderUpdate { updated, errors }));
+        )));
         if let Some(failure) = run_step(&PLUGIN_STEP, options, result).await {
             failures.push(failure);
         }

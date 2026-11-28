@@ -43,9 +43,11 @@ use pingap_certificate::{
     new_self_signed_certificate_validity_service,
 };
 use pingap_config::{ConfigManager, PingapConfig, PluginConf};
-use pingap_core::BackgroundTaskService;
+use pingap_core::{BackgroundTaskService, PluginProvider};
+use pingap_location::LocationProvider;
 use pingap_performance::new_performance_metrics_log_service;
-use pingap_proxy::AppContext;
+use pingap_proxy::{AppContext, ServerLocationsProvider};
+use pingap_upstream::UpstreamProvider;
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::ServiceHandle;
@@ -184,6 +186,16 @@ pub struct DataPlaneOptions {
 }
 
 /// The assembled plane, plus the pieces each root still has to place itself.
+/// The five providers the assembler initialised, captured once so every
+/// listener context uses the same registries instead of re-resolving globals.
+pub struct ProviderSet {
+    pub upstreams: Arc<dyn UpstreamProvider>,
+    pub locations: Arc<dyn LocationProvider>,
+    pub server_locations: Arc<dyn ServerLocationsProvider>,
+    pub plugins: Arc<dyn PluginProvider>,
+    pub certificates: Arc<dyn CertificateProvider>,
+}
+
 pub struct AssembledPlane {
     /// pingora's server. The caller owns its lifetime: `run` + webhook flush,
     /// `run_forever`, or a dedicated thread for the agent-hosted plane.
@@ -194,9 +206,8 @@ pub struct AssembledPlane {
     pub bootstrap: ServiceHandle,
     /// The caller's config manager, the instance [`assemble`] was handed.
     pub config_manager: Arc<ConfigManager>,
-    /// The process-wide certificate provider the listeners resolve SNI
-    /// against.
-    pub certificate_provider: Arc<dyn CertificateProvider>,
+    /// The providers this assembly initialised.
+    pub providers: ProviderSet,
     /// The four common loops, when the caller runs a data plane: certificate
     /// validity, self-signed rotation, performance metrics and storage clear.
     /// The caller adds its own tasks (ACME, Prometheus push, log handling)
@@ -215,11 +226,11 @@ impl AssembledPlane {
     /// daemon builds one, from the listener's `access_log` directive.
     pub fn app_context(&self, logger: Option<Sender<BytesMut>>) -> AppContext {
         AppContext {
-            server_locations_provider: new_server_locations_provider(),
-            location_provider: new_location_provider(),
-            upstream_provider: new_upstream_provider(),
-            plugin_provider: new_plugin_provider(),
-            certificate_provider: self.certificate_provider.clone(),
+            server_locations_provider: self.providers.server_locations.clone(),
+            location_provider: self.providers.locations.clone(),
+            upstream_provider: self.providers.upstreams.clone(),
+            plugin_provider: self.providers.plugins.clone(),
+            certificate_provider: self.providers.certificates.clone(),
             config_manager: self.config_manager.clone(),
             logger,
         }
@@ -252,14 +263,11 @@ pub fn assemble(
     try_init_server_locations(&config.servers, &config.locations)
         .map_err(|e| anyhow::anyhow!("failed to init server locations: {e}"))?;
 
-    let (updated, errors) = try_init_plugins(
+    let plugins = try_init_plugins(
         &config.plugins,
         options.admin_plugin,
         config_manager.clone(),
     );
-    // `try_init_plugins` still reports the old tuple; `ProviderUpdate` treats
-    // the same non-empty error the same way (nothing was applied).
-    let plugins = ProviderUpdate { updated, errors };
 
     let certificate_provider = new_certificate_provider();
     // Nothing configured (the `--cp` node) leaves the provider untouched
@@ -269,6 +277,14 @@ pub fn assemble(
     } else {
         try_update_certificates(&config.certificates)
             .map_err(|e| anyhow::anyhow!("failed to init certificates: {e}"))?
+    };
+
+    let providers = ProviderSet {
+        upstreams: new_upstream_provider(),
+        locations: new_location_provider(),
+        server_locations: new_server_locations_provider(),
+        plugins: new_plugin_provider(),
+        certificates: certificate_provider.clone(),
     };
 
     let opt = Opt {
@@ -310,8 +326,8 @@ pub fn assemble(
                 (
                     "performance_metrics".to_string(),
                     new_performance_metrics_log_service(
-                        new_location_provider(),
-                        new_upstream_provider(),
+                        providers.locations.clone(),
+                        providers.upstreams.clone(),
                     ),
                 ),
             ],
@@ -336,7 +352,7 @@ pub fn assemble(
         server,
         bootstrap,
         config_manager,
-        certificate_provider,
+        providers,
         background_tasks,
         plugins,
         certificates,
