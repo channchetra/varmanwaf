@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Applies a new [`PingapConfig`] to the process-wide providers in place.
+//! Applies a new [`PingapConfig`] to the plane's provider set in place.
 //!
 //! Two roots reload configuration at runtime: the file-configured daemon's
 //! watcher (`src/process/auto_restart.rs`) and the agent-hosted data plane
@@ -32,11 +32,8 @@
 //! [`apply_config`] only rebuilds providers and reports whether the caller
 //! may commit.
 
-use crate::certificates::try_update_certificates;
-use crate::locations::try_init_locations;
-use crate::plugin::{AdminPlugin, try_init_plugins};
-use crate::server_locations::try_init_server_locations;
-use crate::upstreams::{try_init_upstreams, try_update_upstreams};
+use crate::data_plane::ProviderSet;
+use crate::plugin::AdminPlugin;
 use crate::webhook::{
     get_webhook_sender, reload_webhook_notification_sender, send_notification,
 };
@@ -232,13 +229,15 @@ impl Categories {
 /// rebuild, or the admin listener would lose its plugin after a reload.
 /// `config_manager` is the manager every admin plugin reads and writes the
 /// configuration through; it is forwarded to the plugin rebuild instead of
-/// being looked up from a process global.
+/// being looked up from a process global. `providers` is the plane's own
+/// provider set; a pass touches only those instances, never a process global.
 pub async fn apply_config(
     previous: &PingapConfig,
     next: &PingapConfig,
     options: &ApplyOptions,
     admin_plugin: Option<&AdminPlugin>,
     config_manager: &Arc<ConfigManager>,
+    providers: &ProviderSet,
 ) -> ApplyOutcome {
     let (changed, diff) = previous.diff(next);
     debug!(
@@ -261,6 +260,7 @@ pub async fn apply_config(
         options,
         admin_plugin,
         config_manager,
+        providers,
     )
     .await;
     if !failures.is_empty() {
@@ -321,45 +321,56 @@ async fn apply_categories(
     options: &ApplyOptions,
     admin_plugin: Option<&AdminPlugin>,
     config_manager: &Arc<ConfigManager>,
+    providers: &ProviderSet,
 ) -> Vec<String> {
     let mut failures = vec![];
 
     if categories.upstreams {
         let result = if options.update_health_checks {
             as_step(
-                try_update_upstreams(
-                    &next.upstreams,
-                    Some(get_webhook_sender()),
-                )
-                .await,
+                providers
+                    .upstreams
+                    .update_upstreams(
+                        &next.upstreams,
+                        Some(get_webhook_sender()),
+                    )
+                    .await,
             )
         } else {
             // The agent-hosted plane's rebuild reports no names; it must not
             // gain the daemon's success log line.
-            as_silent_step(try_init_upstreams(&next.upstreams, None))
+            as_silent_step(
+                providers.upstreams.init_upstreams(&next.upstreams, None),
+            )
         };
         if let Some(failure) = run_step(&UPSTREAM_STEP, options, result).await {
             failures.push(failure);
         }
     }
     if categories.locations {
-        let result = as_step(try_init_locations(&next.locations));
+        let result =
+            as_step(providers.locations.init_locations(&next.locations));
         if let Some(failure) = run_step(&LOCATION_STEP, options, result).await {
             failures.push(failure);
         }
     }
     if categories.plugins {
-        let result = as_step(Ok(try_init_plugins(
+        let result = as_step(Ok(providers.plugins.init_plugins(
             &next.plugins,
             admin_plugin.cloned(),
             config_manager.clone(),
+            providers,
         )));
         if let Some(failure) = run_step(&PLUGIN_STEP, options, result).await {
             failures.push(failure);
         }
     }
     if categories.certificates {
-        let result = as_step(try_update_certificates(&next.certificates));
+        let result = as_step(
+            providers
+                .certificates
+                .update_certificates(&next.certificates),
+        );
         if let Some(failure) =
             run_step(&CERTIFICATE_STEP, options, result).await
         {
@@ -367,8 +378,11 @@ async fn apply_categories(
         }
     }
     if categories.server_locations {
-        let result =
-            as_step(try_init_server_locations(&next.servers, &next.locations));
+        let result = as_step(providers.server_locations.init_server_locations(
+            providers.locations.as_ref(),
+            &next.servers,
+            &next.locations,
+        ));
         if let Some(failure) =
             run_step(&SERVER_LOCATION_STEP, options, result).await
         {
@@ -857,6 +871,7 @@ mod tests {
     async fn an_equal_document_is_unchanged() {
         // Arrange
         let config = config_with_upstream("apply-engine-equal");
+        let providers = ProviderSet::new();
 
         // Act
         let outcome = apply_config(
@@ -865,6 +880,7 @@ mod tests {
             &ApplyOptions::daemon(false),
             None,
             &new_config_manager(),
+            &providers,
         )
         .await;
 
@@ -878,6 +894,7 @@ mod tests {
         let previous = PingapConfig::default();
         let mut next = PingapConfig::default();
         next.basic.log_level = Some("debug".to_string());
+        let providers = ProviderSet::new();
 
         // Act
         let restarting = apply_config(
@@ -886,6 +903,7 @@ mod tests {
             &ApplyOptions::daemon(false),
             None,
             &new_config_manager(),
+            &providers,
         )
         .await;
         let hot_only = apply_config(
@@ -894,6 +912,7 @@ mod tests {
             &ApplyOptions::daemon(true),
             None,
             &new_config_manager(),
+            &providers,
         )
         .await;
 
@@ -925,6 +944,7 @@ mod tests {
         let config_manager = try_init_memory_config_manager("[basic]\n", None)
             .expect("in-memory config manager");
         config_manager.set_current_config(previous.clone());
+        let providers = ProviderSet::new();
 
         // Act
         let outcome = apply_config(
@@ -933,6 +953,7 @@ mod tests {
             &ApplyOptions::daemon(false),
             None,
             &new_config_manager(),
+            &providers,
         )
         .await;
         let committed =

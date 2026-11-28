@@ -14,6 +14,7 @@
 
 use super::restart;
 use crate::config_apply::{self, ApplyOptions, ApplyOutcome};
+use crate::data_plane::ProviderSet;
 use crate::plugin::AdminPlugin;
 use crate::webhook::send_notification;
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -97,6 +98,7 @@ async fn diff_and_update_config(
     last_seen: &LastSeenCell,
     hot_reload_only: bool,
     admin_plugin: Option<AdminPlugin>,
+    providers: &ProviderSet,
 ) -> Result<Option<PingapConfig>, Box<dyn std::error::Error>> {
     let raw = config_manager.load_all_raw().await?;
     let hash = raw_hash(&raw);
@@ -111,6 +113,7 @@ async fn diff_and_update_config(
         &new_config,
         hot_reload_only,
         admin_plugin,
+        providers,
     )
     .await?;
     // Recorded only after a pass that finished. An error - the document
@@ -144,6 +147,7 @@ async fn apply_config(
     new_config: &PingapConfig,
     hot_reload_only: bool,
     admin_plugin: Option<AdminPlugin>,
+    providers: &ProviderSet,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     new_config.validate()?;
     validate_servers_tls_for_backend(&new_config.servers)?;
@@ -155,6 +159,7 @@ async fn apply_config(
         &ApplyOptions::daemon(hot_reload_only),
         admin_plugin.as_ref(),
         &config_manager,
+        providers,
     )
     .await;
 
@@ -252,6 +257,9 @@ struct AutoRestart {
     /// lose its plugin after the first reload. The rebuild gets this
     /// watcher's `config_manager` for it.
     admin_plugin: Option<AdminPlugin>,
+    /// The registries this watcher reloads. Owned, so a second plane or a
+    /// test never shares them.
+    providers: ProviderSet,
     /// The document this watcher last handled. Per instance, never shared.
     last_seen: LastSeenCell,
 }
@@ -263,6 +271,7 @@ pub fn new_auto_restart_service(
     interval: Duration,
     hot_reload_only: bool,
     admin_plugin: Option<AdminPlugin>,
+    providers: ProviderSet,
 ) -> BackgroundTaskService {
     let mut restart_unit = 1_u32;
     let unit = Duration::from_secs(10);
@@ -285,6 +294,7 @@ pub fn new_auto_restart_service(
         restart_unit,
         current_log_level: ArcSwap::from_pointee(current_log_level),
         admin_plugin,
+        providers,
         last_seen: LastSeenCell::default(),
     });
     let name = "auto_restart";
@@ -313,6 +323,8 @@ pub struct ConfigObserverService {
     hot_reload_only: bool,
     /// Re-registered with every plugin rebuild, like the polling service.
     admin_plugin: Option<AdminPlugin>,
+    /// The registries this watcher reloads. Owned, never shared.
+    providers: ProviderSet,
     delay: AtomicU32,
     /// The document this watcher last handled. Per instance, never shared.
     last_seen: LastSeenCell,
@@ -327,6 +339,7 @@ pub fn new_observer_service(
     interval: Duration,
     hot_reload_only: bool,
     admin_plugin: Option<AdminPlugin>,
+    providers: ProviderSet,
 ) -> ConfigObserverService {
     let current_log_level = config_manager
         .get_current_config()
@@ -342,6 +355,7 @@ pub fn new_observer_service(
         hot_reload_only,
         current_log_level: ArcSwap::from_pointee(current_log_level),
         admin_plugin,
+        providers,
         delay: AtomicU32::new(MIN_DELAY),
         last_seen: LastSeenCell::default(),
     }
@@ -390,6 +404,7 @@ impl BackgroundService for ConfigObserverService {
                         &self.last_seen,
                         self.hot_reload_only,
                         self.admin_plugin.clone(),
+                        &self.providers,
                     ).await {
                         reload_log_level(
                             &self.log_reload_handle,
@@ -414,6 +429,7 @@ impl BackgroundService for ConfigObserverService {
                                 &self.last_seen,
                                 true,
                                 self.admin_plugin.clone(),
+                                &self.providers,
                             ).await;
                         },
                         Err(e) => {
@@ -441,12 +457,14 @@ async fn run_diff_and_update_config(
     last_seen: &LastSeenCell,
     hot_reload_only: bool,
     admin_plugin: Option<AdminPlugin>,
+    providers: &ProviderSet,
 ) -> Option<PingapConfig> {
     match diff_and_update_config(
         config_manager,
         last_seen,
         hot_reload_only,
         admin_plugin,
+        providers,
     )
     .await
     {
@@ -486,6 +504,7 @@ impl BackgroundTask for AutoRestart {
             &self.last_seen,
             hot_reload_only,
             self.admin_plugin.clone(),
+            &self.providers,
         )
         .await
         {
@@ -531,6 +550,7 @@ fn reload_log_level(
 #[cfg(test)]
 mod tests {
     use super::{AutoRestart, LastSeen, LastSeenCell, should_skip};
+    use crate::data_plane::ProviderSet;
     use arc_swap::ArcSwap;
     use pingap_config::ConfigManager;
     use pingap_logger::{LoggerReloadHandle, new_env_filter};
@@ -551,6 +571,7 @@ mod tests {
             log_reload_handle,
             current_log_level: ArcSwap::from_pointee(String::new()),
             admin_plugin: None,
+            providers: ProviderSet::new(),
             last_seen: LastSeenCell::default(),
         }
     }

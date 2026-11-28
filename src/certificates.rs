@@ -17,15 +17,100 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_certificate::{
     CertificateProvider, DEFAULT_SERVER_NAME, DynamicCertificates,
-    update_certificates,
+    update_certificates as update_certificate_set,
 };
 use pingap_config::CertificateConf;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
-struct Provider {
+/// One owner's certificate registry. Constructed per data plane, never shared.
+pub struct Provider {
     certificates: ArcSwap<DynamicCertificates>,
+}
+
+impl Provider {
+    /// A registry with no certificates.
+    pub fn new() -> Self {
+        Self {
+            certificates: ArcSwap::from_pointee(AHashMap::new()),
+        }
+    }
+
+    /// Updates the certificate store with new configurations
+    ///
+    /// # Arguments
+    /// * `certificate_configs` - HashMap of certificate names to their configurations
+    ///
+    /// # Returns
+    /// The certificate names whose certificate was (re)loaded, and the
+    /// semicolon-separated list of parsing errors. A non-empty error list means
+    /// the provider kept its previous map and the update did not apply; the call
+    /// itself cannot fail.
+    ///
+    /// Updates certificates atomically using ArcSwap, detecting changes by comparing hash_keys.
+    /// Supports multiple domains per certificate and wildcard certificates.
+    pub fn update_certificates(
+        &self,
+        certificate_configs: &HashMap<String, CertificateConf>,
+    ) -> Result<ProviderUpdate, String> {
+        // Certificates whose configuration did not change are carried over
+        // as they are, not parsed and loaded again.
+        let previous = self.list();
+        let (mut new_certs, errors, updated_certificates) =
+            update_certificate_set(certificate_configs, &previous);
+
+        // A configuration entry without a PEM (an ACME certificate still being
+        // issued, or one whose PEM a lost race failed to persist) is skipped by
+        // the update above - and because the provider is replaced wholesale, it
+        // used to take the previously served certificate for its domains out of
+        // the SNI table, rejecting every TLS handshake until the next issuance.
+        // Carry the old entries over by domain so TLS keeps serving; they are
+        // replaced as soon as the PEM for that entry shows up.
+        for conf in certificate_configs.values() {
+            if conf.tls_cert.is_some() && conf.tls_key.is_some() {
+                continue;
+            }
+            let Some(domains) = &conf.domains else {
+                continue;
+            };
+            for domain in domains
+                .split(',')
+                .map(str::trim)
+                .filter(|domain| !domain.is_empty())
+            {
+                // A domain also served by an entry that does have a PEM wins -
+                // never overwrite a freshly loaded certificate with the old one.
+                if !new_certs.contains_key(domain)
+                    && let Some(cert) = previous.get(domain)
+                {
+                    new_certs.insert(domain.to_string(), Arc::clone(cert));
+                }
+            }
+        }
+
+        let failed = !errors.is_empty();
+        let error_messages: Vec<String> = errors
+            .into_iter()
+            .map(|(name, msg)| format!("{}({})", msg, name))
+            .collect();
+
+        // A partial map would take the failed entry's domains out of the SNI
+        // table. Keep the previous provider until every changed entry parses.
+        if !failed {
+            self.store(new_certs);
+        }
+        Ok(ProviderUpdate {
+            updated: updated_certificates,
+            errors: error_messages.join(";"),
+        })
+    }
+}
+
+impl Default for Provider {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CertificateProvider for Provider {
@@ -55,82 +140,31 @@ impl CertificateProvider for Provider {
     }
 }
 
+// Compatibility layer for the pre-provider-set callers and the test suite.
+// Production assembly and reload use the owned `Provider`, so these are dead
+// in a non-test build by design.
+#[allow(dead_code)]
 static CERTIFICATE_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
     Arc::new(Provider {
         certificates: ArcSwap::from_pointee(AHashMap::new()),
     })
 });
 
+#[allow(dead_code)]
 pub fn new_certificate_provider() -> Arc<dyn CertificateProvider> {
     CERTIFICATE_PROVIDER.clone()
 }
 
-/// Updates the global certificate store with new configurations
+/// Compatibility wrapper over the process-wide registry.
 ///
-/// # Arguments
-/// * `certificate_configs` - HashMap of certificate names to their configurations
-///
-/// # Returns
-/// The certificate names whose certificate was (re)loaded, and the
-/// semicolon-separated list of parsing errors. A non-empty error list means
-/// the provider kept its previous map and the update did not apply; the call
-/// itself cannot fail.
-///
-/// Updates certificates atomically using ArcSwap, detecting changes by comparing hash_keys.
-/// Supports multiple domains per certificate and wildcard certificates.
+/// Production assembly and reload go through the [`Provider`] owned by their
+/// provider set; this is kept for the legacy paths and tests that have not
+/// been converted.
+#[allow(dead_code)]
 pub fn try_update_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
 ) -> Result<ProviderUpdate, String> {
-    // Certificates whose configuration did not change are carried over
-    // as they are, not parsed and loaded again.
-    let previous = CERTIFICATE_PROVIDER.list();
-    let (mut new_certs, errors, updated_certificates) =
-        update_certificates(certificate_configs, &previous);
-
-    // A configuration entry without a PEM (an ACME certificate still being
-    // issued, or one whose PEM a lost race failed to persist) is skipped by
-    // the update above - and because the provider is replaced wholesale, it
-    // used to take the previously served certificate for its domains out of
-    // the SNI table, rejecting every TLS handshake until the next issuance.
-    // Carry the old entries over by domain so TLS keeps serving; they are
-    // replaced as soon as the PEM for that entry shows up.
-    for conf in certificate_configs.values() {
-        if conf.tls_cert.is_some() && conf.tls_key.is_some() {
-            continue;
-        }
-        let Some(domains) = &conf.domains else {
-            continue;
-        };
-        for domain in domains
-            .split(',')
-            .map(str::trim)
-            .filter(|domain| !domain.is_empty())
-        {
-            // A domain also served by an entry that does have a PEM wins -
-            // never overwrite a freshly loaded certificate with the old one.
-            if !new_certs.contains_key(domain)
-                && let Some(cert) = previous.get(domain)
-            {
-                new_certs.insert(domain.to_string(), Arc::clone(cert));
-            }
-        }
-    }
-
-    let failed = !errors.is_empty();
-    let error_messages: Vec<String> = errors
-        .into_iter()
-        .map(|(name, msg)| format!("{}({})", msg, name))
-        .collect();
-
-    // A partial map would take the failed entry's domains out of the SNI
-    // table. Keep the previous provider until every changed entry parses.
-    if !failed {
-        CERTIFICATE_PROVIDER.store(new_certs);
-    }
-    Ok(ProviderUpdate {
-        updated: updated_certificates,
-        errors: error_messages.join(";"),
-    })
+    CERTIFICATE_PROVIDER.update_certificates(certificate_configs)
 }
 
 #[cfg(test)]

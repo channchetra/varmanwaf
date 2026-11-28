@@ -33,13 +33,55 @@ fn invalid_error(error: impl std::fmt::Display) -> String {
     .to_string()
 }
 
-struct Provider {
+/// One owner's location registry. Constructed per data plane, never shared.
+pub struct Provider {
     locations: ArcSwap<Locations>,
 }
 
 impl Provider {
+    /// A registry with no locations.
+    pub fn new() -> Self {
+        Self {
+            locations: ArcSwap::from_pointee(AHashMap::new()),
+        }
+    }
+
     fn store(&self, data: Locations) {
         self.locations.store(Arc::new(data));
+    }
+
+    /// Initializes or updates the locations of this provider.
+    /// Returns the names of the locations that were updated
+    pub fn init_locations(
+        &self,
+        location_configs: &HashMap<String, LocationConf>,
+    ) -> Result<ProviderUpdate> {
+        let mut locations = AHashMap::new();
+        let mut updated_locations = vec![];
+        for (name, conf) in location_configs.iter() {
+            if let Some(found) = self.get(name)
+                && found.key == conf.hash_key()
+            {
+                locations.insert(name.to_string(), found);
+                continue;
+            }
+            // A location that cannot be built aborts the rebuild: storing the
+            // partial map would drop the entries that failed.
+            let lo = Location::new(name, conf).map_err(invalid_error)?;
+            updated_locations.push(name.clone());
+            locations.insert(name.to_string(), Arc::new(lo));
+        }
+        self.store(locations);
+        Ok(ProviderUpdate {
+            updated: updated_locations,
+            errors: String::new(),
+        })
+    }
+}
+
+impl Default for Provider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -59,40 +101,30 @@ impl LocationProvider for Provider {
     }
 }
 
+// Compatibility layer for the pre-provider-set callers and the test suite.
+// Production assembly and reload use the owned `Provider`, so these are dead
+// in a non-test build by design.
+#[allow(dead_code)]
 static LOCATION_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
     Arc::new(Provider {
         locations: ArcSwap::from_pointee(AHashMap::new()),
     })
 });
+#[allow(dead_code)]
 pub fn new_location_provider() -> Arc<dyn LocationProvider> {
     LOCATION_PROVIDER.clone()
 }
 
-/// Initializes or updates the global location configurations
-/// Returns the names of the locations that were updated
+/// Compatibility wrapper over the process-wide registry.
+///
+/// Production assembly and reload go through the [`Provider`] owned by their
+/// provider set; this is kept for the legacy paths and tests that have not
+/// been converted.
+#[allow(dead_code)]
 pub fn try_init_locations(
     location_configs: &HashMap<String, LocationConf>,
 ) -> Result<ProviderUpdate> {
-    let mut locations = AHashMap::new();
-    let mut updated_locations = vec![];
-    for (name, conf) in location_configs.iter() {
-        if let Some(found) = LOCATION_PROVIDER.get(name)
-            && found.key == conf.hash_key()
-        {
-            locations.insert(name.to_string(), found);
-            continue;
-        }
-        // A location that cannot be built aborts the rebuild: storing the
-        // partial map would drop the entries that failed.
-        let lo = Location::new(name, conf).map_err(invalid_error)?;
-        updated_locations.push(name.clone());
-        locations.insert(name.to_string(), Arc::new(lo));
-    }
-    LOCATION_PROVIDER.store(locations);
-    Ok(ProviderUpdate {
-        updated: updated_locations,
-        errors: String::new(),
-    })
+    LOCATION_PROVIDER.init_locations(location_configs)
 }
 
 #[cfg(test)]

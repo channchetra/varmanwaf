@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pingap_acme::new_lets_encrypt_service;
+use pingap_certificate::CertificateProvider;
 use pingap_config::PingapTomlConfig;
 use pingap_proxy::{Server as ProxyServer, parse_from_conf};
 use pingap_upstream::new_upstream_health_check_task;
@@ -15,7 +16,6 @@ use crate::config_apply::{
 };
 use crate::config_manager::try_init_memory_config_manager;
 use crate::data_plane::{DataPlaneOptions, assemble};
-use crate::upstreams::new_upstream_provider;
 
 use super::acme::{
     acme_state_path, merge_config_state, publish_management_certificate,
@@ -283,7 +283,7 @@ pub(super) async fn start_data_plane(
     // This also drives periodic DNS discovery updates — without it,
     // DNS-based backends are never resolved and requests get 503.
     let upstream_health_check_task = new_upstream_health_check_task(
-        new_upstream_provider(),
+        assembled.providers.upstreams.clone(),
         Duration::from_secs(10),
         None,
     );
@@ -334,6 +334,9 @@ pub(super) async fn start_data_plane(
     // key) and set as current, so the ACME renewal task keeps working.
     let watcher_cache = Arc::clone(&rule_cache);
     let watcher_config_manager = Arc::clone(&config_manager);
+    // The reload writes into the same registries the listeners and background
+    // tasks read, never into a process global.
+    let watcher_providers = assembled.providers.clone();
     let mut last_hash = watcher_cache.data_plane_hash();
     let mut last_management = varman_control::management_cert::revision();
     tokio::spawn(async move {
@@ -397,6 +400,7 @@ pub(super) async fn start_data_plane(
                 &ApplyOptions::agent_data_plane(),
                 None,
                 &watcher_config_manager,
+                &watcher_providers,
             )
             .await;
             if let ApplyOutcome::Failed(message) = &outcome {

@@ -13,9 +13,8 @@
 // limitations under the License.
 
 use super::{get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf};
-use crate::certificates::new_certificate_provider;
+use crate::data_plane::ProviderSet;
 use crate::process::{get_start_time, restart_now};
-use crate::upstreams::new_upstream_provider;
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
@@ -23,7 +22,9 @@ use hex::ToHex;
 use http::Method;
 use http::{HeaderValue, StatusCode, header};
 use humantime::parse_duration;
-use pingap_certificate::validate_servers_tls_for_backend;
+use pingap_certificate::{
+    CertificateProvider, validate_servers_tls_for_backend,
+};
 use pingap_config::hcl::convert_toml_to_hcl;
 use pingap_config::kdl::convert_toml_to_kdl;
 use pingap_config::{
@@ -42,7 +43,7 @@ use pingap_core::{
 use pingap_performance::get_process_system_info;
 use pingap_performance::get_processing_accepted;
 use pingap_plugin::{Error, get_plugin_factory, redacted_params};
-use pingap_upstream::UpstreamHealthyStatus;
+use pingap_upstream::{UpstreamHealthyStatus, UpstreamProvider};
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
@@ -67,6 +68,10 @@ pub struct AdminServe {
     pub authorizations: Vec<(String, String)>,
     pub plugin_step: PluginStep,
     config_manager: Arc<ConfigManager>,
+    /// The plane's upstream registry, for `/basic`'s health snapshot.
+    upstream_provider: Arc<dyn UpstreamProvider>,
+    /// The plane's certificate registry, for `/certificates`.
+    certificate_provider: Arc<dyn CertificateProvider>,
     max_age: Duration,
     hash_value: String,
     ip_fail_limit: TtlLruLimit,
@@ -119,7 +124,8 @@ struct FullConfigJson {
 
 impl AdminServe {
     /// Creates the admin API plugin, reading and writing the configuration
-    /// through `config_manager`.
+    /// through `config_manager` and reading the introspection providers from
+    /// `providers` (the plane's own set, never a process global).
     ///
     /// The manager is a parameter rather than a process-global lookup: the
     /// assembly and reload paths already own one, so construction carries no
@@ -127,6 +133,7 @@ impl AdminServe {
     pub fn new(
         value: &PluginConf,
         config_manager: Arc<ConfigManager>,
+        providers: &ProviderSet,
     ) -> Result<Self> {
         debug!(target: LOG_TARGET, params = redacted_params(value), "new admin server plugin");
         let hash_value = get_hash_key(value);
@@ -216,6 +223,8 @@ impl AdminServe {
                 ip_fail_limit as usize,
             ),
             config_manager,
+            upstream_provider: providers.upstreams.clone(),
+            certificate_provider: providers.certificates.clone(),
             authorizations,
             allow_unauthenticated,
         };
@@ -663,7 +672,7 @@ impl AdminServe {
             tcp_count: info.tcp_count,
             tcp6_count: info.tcp6_count,
             supported_plugins: get_plugin_factory().supported_plugins(),
-            upstream_healthy_status: new_upstream_provider().healthy_status(),
+            upstream_healthy_status: self.upstream_provider.healthy_status(),
             support_history: self.config_manager.support_history(),
             git_hash: crate::git_hash().to_string(),
             now: pingap_core::now_sec(),
@@ -704,7 +713,7 @@ impl AdminServe {
     /// `GET /certificates` — certificate metadata known to this process.
     fn handle_certificates(&self) -> HttpResponse {
         let mut infos = HashMap::new();
-        for (name, cert) in new_certificate_provider().list().iter() {
+        for (name, cert) in self.certificate_provider.list().iter() {
             if let Some(info) = &cert.info {
                 let key = if let Some(value) = &cert.name {
                     value.clone()
@@ -1005,13 +1014,18 @@ impl Plugin for AdminServe {
 #[cfg(test)]
 mod tests {
     use super::{AdminServe, handle_request_admin, validate_import};
+    use crate::data_plane::ProviderSet;
     use hex::ToHex;
     use http::Method;
-    use pingap_config::{ConfigManager, PingapTomlConfig, PluginConf};
+    use pingap_config::{
+        CertificateConf, ConfigManager, PingapTomlConfig, PluginConf,
+        UpstreamConf,
+    };
     use pingap_core::{Ctx, HttpResponse};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use sha2::{Digest, Sha256};
+    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio_test::io::Builder;
 
@@ -1059,9 +1073,27 @@ mod tests {
             )
             .unwrap(),
             manager.clone(),
+            &ProviderSet::new(),
         )
         .unwrap();
         (admin, manager)
+    }
+
+    /// A plugin over `providers`, unauthenticated so the introspection
+    /// handlers can be called directly.
+    fn admin_with_providers(providers: &ProviderSet) -> AdminServe {
+        AdminServe::new(
+            &toml::from_str::<PluginConf>(
+                r#"
+category = "admin"
+allow_unauthenticated = true
+"#,
+            )
+            .unwrap(),
+            new_config_manager(),
+            providers,
+        )
+        .unwrap()
     }
 
     /// Drives the admin router with a request body, which is how the mutation
@@ -1096,6 +1128,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1123,6 +1156,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         );
 
         assert_eq!(
@@ -1144,6 +1178,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1237,6 +1272,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1276,6 +1312,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1307,6 +1344,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1362,6 +1400,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1384,6 +1423,7 @@ mod tests {
             AdminServe::new(
                 &toml::from_str::<PluginConf>(conf).unwrap(),
                 new_config_manager(),
+                &ProviderSet::new(),
             )
         };
 
@@ -1500,6 +1540,7 @@ allow_unauthenticated = true
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
 
@@ -1538,6 +1579,7 @@ allow_unauthenticated = true
                     &format!("[basic]\nlog_level = \"{log_level}\"\n"),
                     None,
                 )),
+                &ProviderSet::new(),
             )
             .unwrap()
         };
@@ -1552,6 +1594,72 @@ allow_unauthenticated = true
                 "the injected manager's document must be served: {body}"
             );
         }
+    }
+
+    /// `/basic`'s upstream health and `/certificates` must come from the
+    /// provider set the plugin was built with, never a process-global
+    /// registry: a seeded set is reported, a second empty set is not.
+    #[tokio::test]
+    async fn test_introspection_uses_the_injected_providers() {
+        let certified_key = rcgen::generate_simple_self_signed(vec![
+            "admin-injected.example.com".to_string(),
+        ])
+        .unwrap();
+        let providers = ProviderSet::new();
+        providers
+            .upstreams
+            .init_upstreams(
+                &HashMap::from([(
+                    "admin-injected-upstream".to_string(),
+                    UpstreamConf {
+                        addrs: vec!["127.0.0.1:80".to_string()],
+                        ..Default::default()
+                    },
+                )]),
+                None,
+            )
+            .expect("a valid upstream");
+        providers
+            .certificates
+            .update_certificates(&HashMap::from([(
+                "admin-injected-cert".to_string(),
+                CertificateConf {
+                    domains: Some("admin-injected.example.com".to_string()),
+                    tls_cert: Some(certified_key.cert.pem()),
+                    tls_key: Some(certified_key.signing_key.serialize_pem()),
+                    ..Default::default()
+                },
+            )]))
+            .expect("a certificate update never fails the call");
+
+        let admin = admin_with_providers(&providers);
+        let basic = admin.handle_basic().await.unwrap();
+        let basic: serde_json::Value =
+            serde_json::from_slice(&basic.body).unwrap();
+        assert!(
+            basic["upstream_healthy_status"]
+                .get("admin-injected-upstream")
+                .is_some(),
+            "{basic}"
+        );
+        let certificates = admin.handle_certificates();
+        let certificates: serde_json::Value =
+            serde_json::from_slice(&certificates.body).unwrap();
+        assert!(
+            certificates.get("admin-injected-cert").is_some(),
+            "{certificates}"
+        );
+
+        // A second, empty set reports nothing: the two share no state.
+        let empty = admin_with_providers(&ProviderSet::new());
+        let basic = empty.handle_basic().await.unwrap();
+        let basic: serde_json::Value =
+            serde_json::from_slice(&basic.body).unwrap();
+        assert_eq!(serde_json::json!({}), basic["upstream_healthy_status"]);
+        let certificates = empty.handle_certificates();
+        let certificates: serde_json::Value =
+            serde_json::from_slice(&certificates.body).unwrap();
+        assert_eq!(serde_json::json!({}), certificates);
     }
 
     /// A freshly signed token is accepted; ageing it past `max_age`, or
@@ -1569,6 +1677,7 @@ allow_unauthenticated = true
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on

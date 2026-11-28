@@ -39,28 +39,19 @@ use tracing::warn;
 use bytes::BytesMut;
 use pingap_cache::new_storage_clear_service;
 use pingap_certificate::{
-    CertificateProvider, new_certificate_validity_service,
+    new_certificate_validity_service,
     new_self_signed_certificate_validity_service,
 };
 use pingap_config::{ConfigManager, PingapConfig, PluginConf};
-use pingap_core::{BackgroundTaskService, PluginProvider};
-use pingap_location::LocationProvider;
+use pingap_core::BackgroundTaskService;
 use pingap_performance::new_performance_metrics_log_service;
-use pingap_proxy::{AppContext, ServerLocationsProvider};
-use pingap_upstream::UpstreamProvider;
+use pingap_proxy::AppContext;
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::ServiceHandle;
 use tokio::sync::mpsc::Sender;
 
-use crate::certificates::{new_certificate_provider, try_update_certificates};
 use crate::config_apply::ProviderUpdate;
-use crate::locations::{new_location_provider, try_init_locations};
-use crate::plugin::{new_plugin_provider, try_init_plugins};
-use crate::server_locations::{
-    new_server_locations_provider, try_init_server_locations,
-};
-use crate::upstreams::{new_upstream_provider, try_init_upstreams};
 use crate::webhook::get_webhook_sender;
 
 /// Interval of the shared background-task service.
@@ -186,14 +177,35 @@ pub struct DataPlaneOptions {
 }
 
 /// The assembled plane, plus the pieces each root still has to place itself.
-/// The five providers the assembler initialised, captured once so every
-/// listener context uses the same registries instead of re-resolving globals.
+/// The five registries one plane owns, so every listener context and every
+/// background task of this plane uses the same instances instead of
+/// re-resolving process globals.
+#[derive(Clone)]
 pub struct ProviderSet {
-    pub upstreams: Arc<dyn UpstreamProvider>,
-    pub locations: Arc<dyn LocationProvider>,
-    pub server_locations: Arc<dyn ServerLocationsProvider>,
-    pub plugins: Arc<dyn PluginProvider>,
-    pub certificates: Arc<dyn CertificateProvider>,
+    pub upstreams: Arc<crate::upstreams::Provider>,
+    pub locations: Arc<crate::locations::Provider>,
+    pub server_locations: Arc<crate::server_locations::Provider>,
+    pub plugins: Arc<crate::plugin::Provider>,
+    pub certificates: Arc<crate::certificates::Provider>,
+}
+
+impl ProviderSet {
+    /// Five empty registries that share no state with any other set.
+    pub fn new() -> Self {
+        Self {
+            upstreams: Arc::new(crate::upstreams::Provider::new()),
+            locations: Arc::new(crate::locations::Provider::new()),
+            server_locations: Arc::new(crate::server_locations::Provider::new()),
+            plugins: Arc::new(crate::plugin::Provider::new()),
+            certificates: Arc::new(crate::certificates::Provider::new()),
+        }
+    }
+}
+
+impl Default for ProviderSet {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub struct AssembledPlane {
@@ -256,35 +268,46 @@ pub fn assemble(
     config_manager: Arc<ConfigManager>,
     options: DataPlaneOptions,
 ) -> anyhow::Result<AssembledPlane> {
-    try_init_upstreams(&config.upstreams, Some(get_webhook_sender()))
+    // The plane owns its registries: this set is the only place they live, so
+    // two assemblies (or a test) never share upstream, location, plugin or
+    // certificate state. The order is the one every entry point has always
+    // used: upstreams (locations resolve them by name), locations, the server
+    // index built from those locations, then the plugins they reference and
+    // the certificates.
+    let providers = ProviderSet::new();
+    providers
+        .upstreams
+        .init_upstreams(&config.upstreams, Some(get_webhook_sender()))
         .map_err(|e| anyhow::anyhow!("failed to init upstreams: {e}"))?;
-    try_init_locations(&config.locations)
+    providers
+        .locations
+        .init_locations(&config.locations)
         .map_err(|e| anyhow::anyhow!("failed to init locations: {e}"))?;
-    try_init_server_locations(&config.servers, &config.locations)
+    providers
+        .server_locations
+        .init_server_locations(
+            providers.locations.as_ref(),
+            &config.servers,
+            &config.locations,
+        )
         .map_err(|e| anyhow::anyhow!("failed to init server locations: {e}"))?;
 
-    let plugins = try_init_plugins(
+    let plugins = providers.plugins.init_plugins(
         &config.plugins,
         options.admin_plugin,
         config_manager.clone(),
+        &providers,
     );
 
-    let certificate_provider = new_certificate_provider();
     // Nothing configured (the `--cp` node) leaves the provider untouched
     // instead of replacing it with an empty one.
     let certificates = if config.certificates.is_empty() {
         ProviderUpdate::default()
     } else {
-        try_update_certificates(&config.certificates)
+        providers
+            .certificates
+            .update_certificates(&config.certificates)
             .map_err(|e| anyhow::anyhow!("failed to init certificates: {e}"))?
-    };
-
-    let providers = ProviderSet {
-        upstreams: new_upstream_provider(),
-        locations: new_location_provider(),
-        server_locations: new_server_locations_provider(),
-        plugins: new_plugin_provider(),
-        certificates: certificate_provider.clone(),
     };
 
     let opt = Opt {
@@ -315,7 +338,7 @@ pub fn assemble(
                 (
                     "validity_checker".to_string(),
                     new_certificate_validity_service(
-                        certificate_provider.clone(),
+                        providers.certificates.clone(),
                         Some(get_webhook_sender()),
                     ),
                 ),
@@ -380,6 +403,34 @@ mod tests {
             ..Default::default()
         };
         assert_eq!("/run/custom.sock", upgrade_sock_path(&basic));
+    }
+
+    /// Two independently constructed sets must not share a registry: the
+    /// provider state is per-plane now, never process-wide.
+    #[test]
+    fn independently_constructed_provider_sets_do_not_share_state() {
+        use pingap_config::LocationConf;
+        use pingap_location::LocationProvider;
+        use std::collections::HashMap;
+
+        let first = ProviderSet::new();
+        let second = ProviderSet::new();
+        first
+            .locations
+            .init_locations(&HashMap::from([(
+                "provider-set-local".to_string(),
+                LocationConf {
+                    path: Some("/local".to_string()),
+                    ..Default::default()
+                },
+            )]))
+            .expect("a valid location path");
+
+        assert!(first.locations.get("provider-set-local").is_some());
+        assert!(
+            second.locations.get("provider-set-local").is_none(),
+            "the second set must not see the first set's locations"
+        );
     }
 
     /// The daemon and thread overrides have to reach pingora's configuration,

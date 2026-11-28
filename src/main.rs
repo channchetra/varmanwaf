@@ -24,7 +24,6 @@ compile_error!(
 use crate::config_manager::{
     try_init_config_manager, try_init_memory_config_manager,
 };
-use crate::upstreams::new_upstream_provider;
 use bytes::BytesMut;
 use clap::Parser;
 use crossbeam_channel::Receiver;
@@ -436,13 +435,16 @@ fn validate_plugins(
     config_manager: &Arc<ConfigManager>,
 ) -> Result<(), Box<dyn Error>> {
     let factory = pingap_plugin::get_plugin_factory();
+    // A local set: plugin validation is a dry run and must not touch (or
+    // depend on) a process-global registry.
+    let providers = data_plane::ProviderSet::new();
     for (name, conf) in config.plugins.iter() {
         let category = conf
             .get("category")
             .and_then(|value| value.as_str())
             .unwrap_or_default();
         if category == "admin" {
-            plugin::AdminServe::new(conf, config_manager.clone())
+            plugin::AdminServe::new(conf, config_manager.clone(), &providers)
                 .map_err(|e| format!("plugin \"{name}\" is invalid: {e}"))?;
             continue;
         }
@@ -720,7 +722,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     // entry point has ever done it: the setter is a process-wide `OnceLock`,
     // and the agent-hosted plane leaves the gauges unwired.
     #[cfg(feature = "tracing")]
-    set_metrics_upstream_provider(new_upstream_provider());
+    set_metrics_upstream_provider(assembled.providers.upstreams.clone());
 
     {
         let server_conf = assembled.server.configuration.as_ref();
@@ -955,6 +957,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     auto_restart_check_interval,
                     hot_reload_only,
                     admin_plugin,
+                    assembled.providers.clone(),
                 ),
             ));
         } else {
@@ -964,6 +967,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 auto_restart_check_interval,
                 hot_reload_only,
                 admin_plugin,
+                assembled.providers.clone(),
             );
             let name = auto_restart_task.name().to_string();
             assembled
@@ -979,7 +983,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_service(background_service(&name, simple_background_service));
 
     let upstream_health_check_task = new_upstream_health_check_task(
-        new_upstream_provider(),
+        assembled.providers.upstreams.clone(),
         Duration::from_secs(10),
         Some(webhook::get_webhook_sender()),
     );

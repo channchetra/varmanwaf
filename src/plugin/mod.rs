@@ -36,6 +36,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info};
 
 use crate::config_apply::ProviderUpdate;
+use crate::data_plane::ProviderSet;
 
 mod admin;
 mod stats;
@@ -245,7 +246,8 @@ remark = "Adjust the accept encoding order and choose one encoding"
     ]
 }
 
-struct Provider {
+/// One owner's plugin registry. Constructed per data plane, never shared.
+pub struct Provider {
     plugins: ArcSwap<Plugins>,
     /// Bumped on every `store`, so locations drop the plugin lists they
     /// resolved against the previous set.
@@ -253,12 +255,30 @@ struct Provider {
 }
 
 impl Provider {
+    /// A registry with no plugins.
+    pub fn new() -> Self {
+        Self {
+            plugins: ArcSwap::from_pointee(AHashMap::new()),
+            version: AtomicU64::new(0),
+        }
+    }
+
     fn store(&self, data: Plugins) {
         self.plugins.store(Arc::new(data));
         self.version.fetch_add(1, Ordering::Release);
     }
 }
 
+impl Default for Provider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Compatibility layer for the pre-provider-set callers and the test suite.
+// Production assembly and reload use the owned `Provider`, so these are dead
+// in a non-test build by design.
+#[allow(dead_code)]
 static PLUGIN_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
     Arc::new(Provider {
         plugins: ArcSwap::from_pointee(AHashMap::new()),
@@ -276,7 +296,8 @@ impl PluginProvider for Provider {
     }
 }
 
-pub fn new_plugin_provider() -> Arc<dyn PluginProvider> {
+#[allow(dead_code)]
+pub fn new_plugin_provider() -> Arc<Provider> {
     PLUGIN_PROVIDER.clone()
 }
 
@@ -346,118 +367,139 @@ pub fn register_builtin_plugins() {
     varman_plugin::register();
 }
 
-/// Initializes or updates plugins based on configuration.
+/// Compatibility wrapper over the process-wide registry.
 ///
-/// # Arguments
-/// * `plugins` - HashMap of plugin names to configurations
-/// * `admin` - The admin listener plugin parsed by the root, if it serves one.
-///   It is passed explicitly because it is not part of the loaded document and
-///   must not depend on start-up order.
-/// * `config_manager` - The manager every admin plugin (the injected listener
-///   and any `category = "admin"` entry in the document) reads and writes the
-///   configuration through. The generic factory has none to give it, so those
-///   plugins are constructed here instead.
-///
-/// # Returns
-/// Vector of plugin names that were created or updated
-///
-/// # Errors
-/// Returns Error if plugin initialization fails
+/// Production assembly and reload go through the [`Provider`] owned by their
+/// provider set; this is kept for the legacy paths and tests that have not
+/// been converted.
+#[allow(dead_code)]
 pub fn try_init_plugins(
     plugins: &HashMap<String, PluginConf>,
     admin: Option<AdminPlugin>,
     config_manager: Arc<ConfigManager>,
+    providers: &ProviderSet,
 ) -> ProviderUpdate {
-    let mut plugin_configs: Vec<(String, PluginConf)> = plugins
-        .iter()
-        .map(|(name, value)| (name.to_string(), value.clone()))
-        .collect();
+    new_plugin_provider().init_plugins(
+        plugins,
+        admin,
+        config_manager,
+        providers,
+    )
+}
 
-    let mut errors = vec![];
-    // A configuration entry named like the admin plugin wins, exactly as it
-    // did when the plugin was injected from the process-global address.
-    if let Some((name, conf)) = admin
-        && !plugins.contains_key(&name)
-    {
-        plugin_configs.push((name, conf));
-    }
-
-    plugin_configs.extend(get_builtin_proxy_plugins());
-
-    let mut updated_plugins = vec![];
-    let mut plugins = AHashMap::new();
-    let mut pending_configs = Vec::with_capacity(plugin_configs.len());
-    let mut pending_admins: Vec<(String, PluginConf)> = vec![];
-    for (name, conf) in plugin_configs {
-        let conf_hash_key = get_hash_key(&conf);
-        let current = PLUGIN_PROVIDER.get(&name);
-        // already current -> reuse the running instance unchanged
-        if let Some(plugin) = current.as_ref()
-            && plugin.config_key() == conf_hash_key
-        {
-            plugins.insert(name, plugin.clone());
-            continue;
-        }
-        // changed (or new) -> rebuild from the configuration
-        // This only labels the build log: the category's own constructor
-        // validates `step` and rejects one it does not implement.
-        let step = conf
-            .get("step")
-            .and_then(|value| value.as_str())
-            .unwrap_or("request");
-        let category = conf
-            .get("category")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string();
-        if current.is_some() {
-            info!(target: LOG_TARGET, name, step, category, "plugin will be reloaded");
-        } else {
-            info!(target: LOG_TARGET, name, step, category, "plugin will be created");
-        }
-        updated_plugins.push(name.clone());
-        // Built below with the manager this call was handed: the factory has
-        // none to give it. Covers the `--admin` listener and any
-        // `category = "admin"` entry in the document alike.
-        if category == "admin" {
-            pending_admins.push((name, conf));
-            continue;
-        }
-        pending_configs.push((name, conf));
-    }
-    let (mut new_plugins, new_errors) = parse_plugins(pending_configs);
-    errors.extend(new_errors);
-    for (name, conf) in pending_admins {
-        match AdminServe::new(&conf, config_manager.clone()) {
-            Ok(plugin) => {
-                new_plugins.insert(name, Arc::new(plugin));
-            },
-            Err(e) => errors.push(Error::Invalid {
-                category: "admin".to_string(),
-                message: format!("create plugin {name} failed, {e}"),
-            }),
-        }
-    }
-    plugins.extend(new_plugins);
-    // Swap the registry only when every plugin built. Storing the partial map
-    // would drop the plugins that failed to rebuild, so the running config
-    // would reference plugins that no longer exist.
-    let error = if errors.is_empty() {
-        PLUGIN_PROVIDER.store(plugins);
-        String::new()
-    } else {
-        let error = errors
+impl Provider {
+    /// Initializes or updates the plugins of this registry.
+    ///
+    /// # Arguments
+    /// * `plugins` - HashMap of plugin names to configurations
+    /// * `admin` - The admin listener plugin parsed by the root, if it serves
+    ///   one. It is passed explicitly because it is not part of the loaded
+    ///   document and must not depend on start-up order.
+    /// * `config_manager` - The manager every admin plugin reads and writes
+    ///   the configuration through.
+    /// * `providers` - The plane's provider set, handed to the admin plugin so
+    ///   its introspection endpoints read the same registries as the plane.
+    ///
+    /// # Returns
+    /// Vector of plugin names that were created or updated
+    pub fn init_plugins(
+        &self,
+        plugins: &HashMap<String, PluginConf>,
+        admin: Option<AdminPlugin>,
+        config_manager: Arc<ConfigManager>,
+        providers: &ProviderSet,
+    ) -> ProviderUpdate {
+        let mut plugin_configs: Vec<(String, PluginConf)> = plugins
             .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join(";");
-        error!(target: LOG_TARGET, error, "parse plugins failed");
-        error
-    };
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect();
 
-    ProviderUpdate {
-        updated: updated_plugins,
-        errors: error,
+        let mut errors = vec![];
+        // A configuration entry named like the admin plugin wins, exactly as it
+        // did when the plugin was injected from the process-global address.
+        if let Some((name, conf)) = admin
+            && !plugins.contains_key(&name)
+        {
+            plugin_configs.push((name, conf));
+        }
+
+        plugin_configs.extend(get_builtin_proxy_plugins());
+
+        let mut updated_plugins = vec![];
+        let mut plugins = AHashMap::new();
+        let mut pending_configs = Vec::with_capacity(plugin_configs.len());
+        let mut pending_admins: Vec<(String, PluginConf)> = vec![];
+        for (name, conf) in plugin_configs {
+            let conf_hash_key = get_hash_key(&conf);
+            let current = self.get(&name);
+            // already current -> reuse the running instance unchanged
+            if let Some(plugin) = current.as_ref()
+                && plugin.config_key() == conf_hash_key
+            {
+                plugins.insert(name, plugin.clone());
+                continue;
+            }
+            // changed (or new) -> rebuild from the configuration
+            // This only labels the build log: the category's own constructor
+            // validates `step` and rejects one it does not implement.
+            let step = conf
+                .get("step")
+                .and_then(|value| value.as_str())
+                .unwrap_or("request");
+            let category = conf
+                .get("category")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if current.is_some() {
+                info!(target: LOG_TARGET, name, step, category, "plugin will be reloaded");
+            } else {
+                info!(target: LOG_TARGET, name, step, category, "plugin will be created");
+            }
+            updated_plugins.push(name.clone());
+            // Built below with the manager this call was handed: the factory has
+            // none to give it. Covers the `--admin` listener and any
+            // `category = "admin"` entry in the document alike.
+            if category == "admin" {
+                pending_admins.push((name, conf));
+                continue;
+            }
+            pending_configs.push((name, conf));
+        }
+        let (mut new_plugins, new_errors) = parse_plugins(pending_configs);
+        errors.extend(new_errors);
+        for (name, conf) in pending_admins {
+            match AdminServe::new(&conf, config_manager.clone(), providers) {
+                Ok(plugin) => {
+                    new_plugins.insert(name, Arc::new(plugin));
+                },
+                Err(e) => errors.push(Error::Invalid {
+                    category: "admin".to_string(),
+                    message: format!("create plugin {name} failed, {e}"),
+                }),
+            }
+        }
+        plugins.extend(new_plugins);
+        // Swap the registry only when every plugin built. Storing the partial map
+        // would drop the plugins that failed to rebuild, so the running config
+        // would reference plugins that no longer exist.
+        let error = if errors.is_empty() {
+            self.store(plugins);
+            String::new()
+        } else {
+            let error = errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(";");
+            error!(target: LOG_TARGET, error, "parse plugins failed");
+            error
+        };
+
+        ProviderUpdate {
+            updated: updated_plugins,
+            errors: error,
+        }
     }
 }
 
@@ -582,7 +624,12 @@ allow_unauthenticated = true
             .unwrap(),
         )]);
 
-        let update = try_init_plugins(&plugins, None, manager.clone());
+        let update = try_init_plugins(
+            &plugins,
+            None,
+            manager.clone(),
+            &ProviderSet::new(),
+        );
 
         assert!(update.errors.is_empty(), "{}", update.errors);
         assert!(
@@ -600,7 +647,8 @@ allow_unauthenticated = true
             "test:badAdmin".to_string(),
             toml::from_str::<PluginConf>(r#"category = "admin""#).unwrap(),
         )]);
-        let update = try_init_plugins(&plugins, None, manager);
+        let update =
+            try_init_plugins(&plugins, None, manager, &ProviderSet::new());
 
         assert!(update.errors.contains("test:badAdmin"), "{}", update.errors);
         assert!(
@@ -652,6 +700,7 @@ remove_headers = [
         &plugins,
         None,
         Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None)),
+        &ProviderSet::new(),
     );
     assert!(update.errors.is_empty());
 }
