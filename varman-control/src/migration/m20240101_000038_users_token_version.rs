@@ -2,7 +2,7 @@
 //!
 //! Bumped whenever a credential-sensitive change happens (password change,
 //! role change, disable). Access and refresh tokens embed the version they
-//! were minted with, so the next request with a stale token is refused ΓÇö
+//! were minted with, so the next request with a stale token is refused —
 //! without waiting for its expiry.
 
 use sea_orm_migration::prelude::*;

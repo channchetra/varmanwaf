@@ -14,15 +14,15 @@ mod test_support;
 mod waf;
 
 /// Failed-authentication streak tracker (ATO defense).
-pub mod waf_ato;
+mod waf_ato;
 /// Per-site custom layers: SecLang virtual patches + OpenAPI validation.
-pub mod waf_custom;
+mod waf_custom;
 /// External-processor transport.
-pub mod waf_processor;
+mod waf_processor;
 /// Shadow execution of the Varman pipeline beside the legacy engine.
-pub mod waf_shadow;
+mod waf_shadow;
 /// Stream inspection: body tails and WebSocket frames.
-pub mod waf_stream;
+mod waf_stream;
 
 pub use waf::{PENDING_ACCESS_SWEEP_TTL, sweep_stale_access};
 

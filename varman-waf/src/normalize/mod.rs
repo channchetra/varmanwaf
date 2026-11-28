@@ -17,7 +17,7 @@ pub mod url;
 
 use std::borrow::Cow;
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 use crate::normalize::html::decode_entities;
 use crate::normalize::path::normalize as normalize_path;
@@ -830,8 +830,8 @@ fn expand_b64_substrings(decoded_values: &mut Vec<DecodedValue>, strict: bool) {
 /// hiding the whole transport layer. The charset and printability gates
 /// around the decode are the quality filter; trailing-bit leniency only
 /// widens what reaches them.
-static B64_ENGINE: Lazy<base64::engine::general_purpose::GeneralPurpose> =
-    Lazy::new(|| {
+static B64_ENGINE: LazyLock<base64::engine::general_purpose::GeneralPurpose> =
+    LazyLock::new(|| {
         use base64::engine::GeneralPurposeConfig as Cfg;
         base64::engine::general_purpose::GeneralPurpose::new(
             &base64::alphabet::STANDARD,

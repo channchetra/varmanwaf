@@ -14,7 +14,7 @@ pub(crate) enum BotAction {
 }
 
 /// Bot protection compiled from the site bundle: verified-bot user agent
-/// substrings normalised for case-insensitive matching plus the action for
+/// substrings normalized for case-insensitive matching plus the action for
 /// everything that does not look like a browser.
 pub(crate) struct BotPolicy {
     pub(crate) whitelist: Vec<String>,

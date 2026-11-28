@@ -54,6 +54,7 @@ use varman_challenge::{
     ChallengeConfig, ChallengeDecision, ChallengeEngine, ChallengeRequest,
     ChallengeSubmission, ClearanceLevel, VerifyResult, generate_request_id,
 };
+use varman_waf::html::escape_html;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -217,24 +218,6 @@ fn mitigated_header(
         header::HeaderName::from_static("x-varmanwaf-mitigated"),
         HeaderValue::from_static(mitigation.value()),
     )
-}
-
-/// Minimal HTML escaping for values embedded in brand pages. Reasons come
-/// from rule descriptions today, but any future user-influenced text keeps
-/// the page inert this way.
-fn escape_html(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(ch),
-        }
-    }
-    out
 }
 
 /// Wraps short-circuit page content in the shared VarmanWAF page style (the

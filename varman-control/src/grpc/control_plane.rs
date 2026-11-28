@@ -336,16 +336,15 @@ impl ControlPlaneTrait for ControlPlaneService {
                 "agent_id does not match the presented token",
             ));
         }
-        if agent::Entity::find_by_id(agent_id)
+        let Some(agent_row) = agent::Entity::find_by_id(agent_id)
             .one(&self.db)
             .await
             .map_err(db_status)?
-            .is_none()
-        {
+        else {
             return Err(Status::unauthenticated(
                 "agent is no longer registered",
             ));
-        }
+        };
 
         let (sender, receiver) =
             mpsc::channel::<ServerCommand>(COMMAND_CHANNEL_CAPACITY);
@@ -356,6 +355,14 @@ impl ControlPlaneTrait for ControlPlaneService {
         }
 
         let db = self.db.clone();
+        let visible: std::sync::Arc<std::collections::HashSet<Uuid>> =
+            std::sync::Arc::new(
+                crate::grpc::agent_visible_site_ids(&self.db, &agent_row)
+                    .await
+                    .map_err(db_status)?
+                    .into_iter()
+                    .collect(),
+            );
         let registry = self.agents.clone();
         let cache_status = self.cache_status.clone();
         // The opening message already carries metrics; recording it means a
@@ -366,7 +373,8 @@ impl ControlPlaneTrait for ControlPlaneService {
         tokio::spawn(async move {
             persist_heartbeat(&db, agent_id, &first).await;
             persist_host_samples(&db, agent_id, &first.host_samples).await;
-            persist_blocked_ips(&db, agent_id, &first.blocked_ips).await;
+            persist_blocked_ips(&db, agent_id, &first.blocked_ips, &visible)
+                .await;
             while let Some(message) = match inbound.message().await {
                 Ok(Some(message)) => Some(message),
                 Ok(None) => None,
@@ -381,7 +389,13 @@ impl ControlPlaneTrait for ControlPlaneService {
                 persist_heartbeat(&db, agent_id, &message).await;
                 persist_host_samples(&db, agent_id, &message.host_samples)
                     .await;
-                persist_blocked_ips(&db, agent_id, &message.blocked_ips).await;
+                persist_blocked_ips(
+                    &db,
+                    agent_id,
+                    &message.blocked_ips,
+                    &visible,
+                )
+                .await;
             }
             mark_offline(&db, agent_id).await;
             registry.disconnect(&agent_id).await;
@@ -498,6 +512,12 @@ impl ControlPlaneTrait for ControlPlaneService {
     ) -> Result<Response<LogAck>, Status> {
         let agent = self.authorize(&Self::metadata_token(&request)).await?;
         let authenticated_id = agent.id;
+        let visible: std::collections::HashSet<Uuid> =
+            crate::grpc::agent_visible_site_ids(&self.db, &agent)
+                .await
+                .map_err(db_status)?
+                .into_iter()
+                .collect();
         let mut inbound = request.into_inner();
         let batch_size = self.config.log_batch_size.max(1);
 
@@ -535,6 +555,16 @@ impl ControlPlaneTrait for ControlPlaneService {
             received += 1;
 
             let site_id = parse_optional_uuid(&message.site_id);
+            if let Some(id) = site_id {
+                if !visible.contains(&id) {
+                    tracing::warn!(
+                        %id,
+                        agent_id = %authenticated_id,
+                        "log entry names a site this agent cannot see"
+                    );
+                    continue;
+                }
+            }
             let agent_id = parse_optional_uuid(&message.agent_id);
             let timestamp = from_timestamp(message.timestamp.as_ref());
             let waf_event = is_waf_event(&message);
@@ -591,6 +621,12 @@ impl ControlPlaneTrait for ControlPlaneService {
     ) -> Result<Response<CertEventAck>, Status> {
         let agent = self.authorize(&Self::metadata_token(&request)).await?;
         let authenticated_id = agent.id;
+        let visible: std::collections::HashSet<Uuid> =
+            crate::grpc::agent_visible_site_ids(&self.db, &agent)
+                .await
+                .map_err(db_status)?
+                .into_iter()
+                .collect();
         let mut inbound = request.into_inner();
         let batch_size = self.config.log_batch_size.max(1);
         let mut received: u64 = 0;
@@ -623,6 +659,17 @@ impl ControlPlaneTrait for ControlPlaneService {
                     "certificate event stamped with a foreign agent_id"
                 );
                 continue;
+            }
+            let event_site = parse_optional_uuid(&message.site_id);
+            if let Some(id) = event_site {
+                if !visible.contains(&id) {
+                    tracing::warn!(
+                        %id,
+                        agent_id = %authenticated_id,
+                        "certificate event names a site this agent cannot see"
+                    );
+                    continue;
+                }
             }
             received += 1;
             // ACME failures surface as raw ERROR-level events: raise an
@@ -659,7 +706,7 @@ impl ControlPlaneTrait for ControlPlaneService {
                 certificate_id: Set(parse_optional_uuid(
                     &message.certificate_id,
                 )),
-                site_id: Set(parse_optional_uuid(&message.site_id)),
+                site_id: Set(event_site),
                 event_type: Set(if message.event_type.is_empty() {
                     "acme_raw".to_string()
                 } else {
@@ -1292,6 +1339,7 @@ async fn persist_blocked_ips(
     db: &DatabaseConnection,
     agent_id: Uuid,
     blocked_ips: &[BlockedIp],
+    visible: &std::collections::HashSet<Uuid>,
 ) {
     use std::collections::HashSet;
 
@@ -1303,6 +1351,7 @@ async fn persist_blocked_ips(
             continue;
         };
         if site_id.is_nil()
+            || !visible.contains(&site_id)
             || entry.ip.trim().is_empty()
             || !reported.insert((site_id, entry.ip.clone()))
         {

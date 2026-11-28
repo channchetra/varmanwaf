@@ -167,7 +167,7 @@ async fn login(
     headers: axum::http::HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
-    let email = normalise_email(&payload.email)?;
+    let email = normalize_email(&payload.email)?;
     if payload.password.is_empty() {
         return Err(ApiError::BadRequest("password is required".to_string()));
     }
@@ -230,7 +230,7 @@ async fn register(
     State(state): State<AppState>,
     Json(payload): Json<RegisterRequest>,
 ) -> Result<Response, ApiError> {
-    let email = normalise_email(&payload.email)?;
+    let email = normalize_email(&payload.email)?;
     validate_password(&payload.password)
         .map_err(|err| ApiError::BadRequest(err.to_string()))?;
 
@@ -393,7 +393,7 @@ async fn update_profile(
         });
     }
     if let Some(raw) = payload.email {
-        let email = normalise_email(&raw)?;
+        let email = normalize_email(&raw)?;
         if email != old_email {
             // Changing the login name is a sensitive identity change: the
             // current password keeps a hijacked session from locking the
@@ -460,7 +460,7 @@ async fn change_password(
     State(state): State<AppState>,
     current: AuthUser,
     Json(payload): Json<ChangePasswordRequest>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let account = user::Entity::find_by_id(current.id)
         .one(&state.db)
         .await?
@@ -485,7 +485,7 @@ async fn change_password(
     active.update(&state.db).await?;
 
     tracing::info!(user_id = %current.id, "password changed");
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 const INVALID_CREDENTIALS: &str = "invalid e-mail or password";
@@ -499,8 +499,8 @@ const DUMMY_HASH: &str =
 ///
 /// The rule itself lives in [`crate::email`] so the maintenance CLI accepts
 /// exactly the addresses this API does; here its rejection becomes a 400.
-pub(crate) fn normalise_email(raw: &str) -> Result<String, ApiError> {
-    crate::email::normalise_email(raw)
+pub(crate) fn normalize_email(raw: &str) -> Result<String, ApiError> {
+    crate::email::normalize_email(raw)
         .map_err(|err| ApiError::BadRequest(err.to_string()))
 }
 
@@ -598,19 +598,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn emails_are_normalised() {
+    fn emails_are_normalized() {
         assert_eq!(
-            normalise_email("  Ops@Example.COM ").unwrap(),
+            normalize_email("  Ops@Example.COM ").unwrap(),
             "ops@example.com"
         );
-        assert!(normalise_email("no-at-sign").is_err());
-        assert!(normalise_email("@example.com").is_err());
-        assert!(normalise_email("ops@example").is_err());
-        assert!(normalise_email("ops@.example.com").is_err());
+        assert!(normalize_email("no-at-sign").is_err());
+        assert!(normalize_email("@example.com").is_err());
+        assert!(normalize_email("ops@example").is_err());
+        assert!(normalize_email("ops@.example.com").is_err());
 
         // The shared rule's rejection surfaces as a 400, including the
         // local-part cap the maintenance CLI exercises too.
-        let err = normalise_email(&format!("{}@example.com", "a".repeat(65)))
+        let err = normalize_email(&format!("{}@example.com", "a".repeat(65)))
             .unwrap_err();
         assert_eq!(err.status(), StatusCode::BAD_REQUEST);
     }

@@ -12,6 +12,7 @@ pub mod analytics;
 pub mod api_assets;
 pub mod api_protection;
 pub mod auth;
+pub mod auth_rate_limit;
 pub mod blocked_ips;
 pub mod bot;
 pub mod cache;
@@ -43,7 +44,6 @@ pub mod mtls;
 pub mod notifications;
 pub mod passkeys;
 pub mod policies;
-pub mod rate_limit;
 pub mod rate_limiting;
 pub mod reports;
 pub mod rewrite;
@@ -140,7 +140,7 @@ pub fn build_router(state: AppState) -> Router {
         // The limiter covers the whole API surface but only ever matches the
         // credential endpoints (see `bucket_for`), which is also what keeps
         // passkey logins — registered by a different module — covered.
-        .layer(middleware::from_fn(rate_limit::auth_rate_limit));
+        .layer(middleware::from_fn(auth_rate_limit::auth_rate_limit));
 
     let mut root = Router::new()
         .nest(API_PREFIX, api)

@@ -112,12 +112,12 @@ async fn update_challenge(
         active.rate_threshold = Set(threshold);
     }
     if let Some(paths) = payload.exempt_paths {
-        let normalised: Vec<String> = paths
+        let normalized: Vec<String> = paths
             .iter()
             .map(|p| p.trim().to_string())
             .filter(|p| !p.is_empty())
             .collect();
-        active.exempt_paths = Set(normalised);
+        active.exempt_paths = Set(normalized);
     }
     if let Some(bic) = payload.browser_integrity_check {
         active.browser_integrity_check = Set(bic);

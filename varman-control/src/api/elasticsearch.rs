@@ -96,7 +96,7 @@ async fn update(
     require_write(&current)?;
     let actor = current.id;
 
-    submitted.normalise();
+    submitted.normalize();
 
     // A config that is not enabled may be stored incomplete (an operator saving
     // a draft), so only validate the full shape when it is meant to run.
@@ -146,7 +146,7 @@ async fn test(
     // config. Redacted stored configs cannot be re-probed (secrets masked), so
     // fall back to the live client in that case.
     if let Some(Json(mut submitted)) = body {
-        submitted.normalise();
+        submitted.normalize();
         if submitted.enabled {
             submitted
                 .validate()
@@ -183,7 +183,7 @@ async fn test(
 
 /// Builds an ephemeral client, checks health and installs the template.
 async fn run_probe(mut config: EsConfig) -> EsTestResult {
-    config.normalise();
+    config.normalize();
     let client = match ElasticsearchClient::new(config).await {
         Ok(client) => client,
         Err(err) => {

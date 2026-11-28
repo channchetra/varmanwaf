@@ -459,7 +459,10 @@ pub(crate) struct WafPlugin {
 impl WafPlugin {
     /// Create a new plugin from configuration.
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new waf plugin");
+        debug!(
+            params = pingap_plugin::redacted_params(params),
+            "new waf plugin"
+        );
         // Load the embedded GeoIP database here rather than on the first
         // request: the lookup is on the request path and its parse is not.
         pingap_plugin::geo::warm_geoip();

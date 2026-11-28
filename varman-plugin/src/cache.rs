@@ -17,7 +17,6 @@ use bstr::ByteSlice;
 use bytes::Bytes;
 use bytesize::ByteSize;
 use dashmap::DashMap;
-use fancy_regex::Regex;
 use http::{Method, StatusCode, header};
 use humantime::parse_duration;
 use pingap_cache::{HttpCache, new_cache_backend};
@@ -36,6 +35,7 @@ use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
+use regex::Regex;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -558,9 +558,9 @@ impl TryFrom<&PluginConf> for Cache {
         let skip = if skip_value.is_empty() {
             None
         } else {
-            Some(Regex::new(&skip_value).map_err(|e| Error::Regex {
+            Some(Regex::new(&skip_value).map_err(|e| Error::Invalid {
                 category: "cache".to_string(),
-                source: Box::new(e),
+                message: format!("invalid skip regex '{skip_value}': {e}"),
             })?)
         };
 
@@ -638,7 +638,10 @@ impl Cache {
     }
 
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new http cache plugin");
+        debug!(
+            params = pingap_plugin::redacted_params(params),
+            "new http cache plugin"
+        );
         Self::try_from(params)
     }
 }
@@ -697,7 +700,7 @@ impl Plugin for Cache {
         // Check if request matches skip pattern (if configured)
         if let Some(skip) = &self.skip
             && let Some(value) = req_header.uri.path_and_query()
-            && skip.is_match(value.as_str()).unwrap_or_default()
+            && skip.is_match(value.as_str())
         {
             return Ok(RequestPluginResult::Skipped);
         }

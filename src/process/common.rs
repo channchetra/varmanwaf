@@ -130,7 +130,7 @@ fn restart_command() -> Option<RestartProcessCommand> {
     CMD.read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
-static PROCESS_RESTAR_COUNT: LazyLock<AtomicU8> =
+static PROCESS_RESTART_COUNT: LazyLock<AtomicU8> =
     LazyLock::new(|| AtomicU8::new(0));
 static PROCESS_RESTARTING: LazyLock<AtomicBool> =
     LazyLock::new(|| AtomicBool::new(false));
@@ -505,9 +505,9 @@ pub async fn restart_now() -> io::Result<()> {
 /// changes produces one hand-over. A failed restart is logged, notified and
 /// returned so the caller can record it; it is never silently discarded.
 pub async fn restart() -> io::Result<()> {
-    let count = PROCESS_RESTAR_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    let count = PROCESS_RESTART_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     tokio::time::sleep(Duration::from_secs(60)).await;
-    if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed)
+    if count == PROCESS_RESTART_COUNT.load(Ordering::Relaxed)
         && let Err(e) = restart_now().await
     {
         error!(

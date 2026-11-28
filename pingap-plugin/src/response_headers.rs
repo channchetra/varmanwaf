@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::{Error, get_hash_key, parse_params};
+use super::{Error, get_hash_key, parse_params, redacted_params};
 use async_trait::async_trait;
 use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf};
@@ -200,7 +200,7 @@ impl ResponseHeaders {
     /// * `Ok(ResponseHeaders)` - Successfully created plugin instance
     /// * `Err(Error)` - If configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new stats plugin");
+        debug!(params = redacted_params(params), "new stats plugin");
         Self::try_from(params)
     }
 

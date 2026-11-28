@@ -2507,18 +2507,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hmac-sha256"
-version = "1.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ad320b3b96fb2a455a0726d16efe0a5afdbd34b71dea5bc53b05ea057714d4e"
-
-[[package]]
-name = "hmac-sha512"
-version = "1.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66de62217b456dfbbba2bed965a134a4df57c48f0eac4c772018aee528e72244"
-
-[[package]]
 name = "home"
 version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4980,8 +4968,6 @@ dependencies = [
  "glob",
  "hex",
  "hickory-resolver",
- "hmac-sha256",
- "hmac-sha512",
  "http",
  "humantime",
  "jsonwebtoken",
@@ -5001,7 +4987,6 @@ dependencies = [
  "sha2 0.11.0",
  "smallvec",
  "snafu",
- "substring",
  "tempfile",
  "tokio",
  "tokio-test",
@@ -5055,7 +5040,6 @@ dependencies = [
  "pingora",
  "pyroscope",
  "snafu",
- "substring",
  "tracing",
  "url",
 ]
@@ -7668,15 +7652,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "substring"
-version = "1.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42ee6433ecef213b2e72f587ef64a2f5943e7cd16fbd82dbe8bc07486c534c86"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8667,7 +8642,6 @@ dependencies = [
  "serde_qs",
  "sha2 0.11.0",
  "snafu",
- "substring",
  "sysinfo",
  "tempfile",
  "tokio",
@@ -8791,7 +8765,6 @@ dependencies = [
  "bytesize",
  "chrono",
  "dashmap 6.2.1",
- "fancy-regex",
  "http",
  "humantime",
  "ipnet",
@@ -8852,7 +8825,6 @@ dependencies = [
  "arc-swap",
  "base64 0.23.1",
  "ipnet",
- "once_cell",
  "regex",
  "serde",
  "serde_json",

@@ -295,7 +295,7 @@ async fn geo_analysis(
     let mut country_ranges = Vec::new();
     let mut missing_keys = Vec::new();
     for key in &geo.countries {
-        match ipverse::normalise_key(KIND_COUNTRY, key)
+        match ipverse::normalize_key(KIND_COUNTRY, key)
             .ok()
             .and_then(|key| country_map.get(&key))
         {
@@ -307,16 +307,16 @@ async fn geo_analysis(
     let mut asn_ranges = Vec::new();
     let mut asn_matches = Vec::new();
     for key in &geo.blocked_asns {
-        match ipverse::normalise_key(KIND_ASN, key)
+        match ipverse::normalize_key(KIND_ASN, key)
             .ok()
             .and_then(|key| asn_map.get(&key))
         {
             Some(dataset) => {
                 let ranges = dataset.all();
-                let normalised = ipverse::normalise_key(KIND_ASN, key)
+                let normalized = ipverse::normalize_key(KIND_ASN, key)
                     .unwrap_or_else(|_| key.clone());
                 if ranges.iter().any(|range| range_contains(range, ip)) {
-                    asn_matches.push(format!("AS{normalised}"));
+                    asn_matches.push(format!("AS{normalized}"));
                 }
                 asn_ranges.extend(ranges);
             },

@@ -49,7 +49,7 @@ impl Provider {
     ///
     /// Updates certificates atomically using ArcSwap, detecting changes by comparing hash_keys.
     /// Supports multiple domains per certificate and wildcard certificates.
-    pub fn update_certificates(
+    pub fn replace_certificates(
         &self,
         certificate_configs: &HashMap<String, CertificateConf>,
     ) -> Result<ProviderUpdate, String> {
@@ -100,7 +100,13 @@ impl Provider {
             self.store(new_certs);
         }
         Ok(ProviderUpdate {
-            updated: updated_certificates,
+            // A failed update keeps the previous map, so no certificate was
+            // (re)loaded and no name may be reported as updated.
+            updated: if failed {
+                Vec::new()
+            } else {
+                updated_certificates
+            },
             errors: error_messages.join(";"),
         })
     }
@@ -148,10 +154,6 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    /// The provider is process-wide and every test here replaces its whole
-    /// map, so they must not interleave.
-    use crate::test_support::lock_providers;
-
     fn seed_provider(
         provider: &Provider,
         domain: &str,
@@ -189,7 +191,6 @@ mod tests {
     /// table: TLS would reject every handshake until the next issuance.
     #[test]
     fn test_entries_without_pem_keep_serving_the_previous_certificate() {
-        let _guard = lock_providers();
         let provider = Provider::new();
         seed_provider(&provider, "carry-a.example.com", "old", "old-hash");
         let mut configs = HashMap::new();
@@ -199,7 +200,7 @@ mod tests {
         );
 
         let update = provider
-            .update_certificates(&configs)
+            .replace_certificates(&configs)
             .expect("a certificate update never fails the call");
         assert!(update.is_ok(), "{}", update.errors);
 
@@ -215,7 +216,6 @@ mod tests {
     /// entry even for the same domains.
     #[test]
     fn test_fresh_certificate_wins_over_the_carried_over_one() {
-        let _guard = lock_providers();
         let provider = Provider::new();
         let certified_key = rcgen::generate_simple_self_signed(vec![
             "carry-b.example.com".to_string(),
@@ -232,7 +232,7 @@ mod tests {
         );
 
         let update = provider
-            .update_certificates(&configs)
+            .replace_certificates(&configs)
             .expect("a certificate update never fails the call");
         assert!(update.is_ok(), "{}", update.errors);
         assert_eq!(&["upload".to_string()], update.updated.as_slice());
@@ -250,7 +250,6 @@ mod tests {
     /// the previous map instead of dropping the failed entry's domains.
     #[test]
     fn test_a_partial_update_reports_the_failed_entry() {
-        let _guard = lock_providers();
         let provider = Provider::new();
         let certified_key = rcgen::generate_simple_self_signed(vec![
             "carry-c.example.com".to_string(),
@@ -276,13 +275,17 @@ mod tests {
 
         // Act
         let update = provider
-            .update_certificates(&configs)
+            .replace_certificates(&configs)
             .expect("a certificate update never fails the call");
 
         // Assert: the partial update did not apply, and the previous
         // certificate still serves its domain.
         assert!(!update.is_ok(), "the failed entry must be reported");
-        assert_eq!(&["good".to_string()], update.updated.as_slice());
+        assert!(
+            update.updated.is_empty(),
+            "a skipped swap must not report updated names: {:?}",
+            update.updated
+        );
         assert!(update.errors.contains("bad"), "{}", update.errors);
         let certs = provider.list();
         let cert = certs

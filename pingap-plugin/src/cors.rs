@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key};
+use super::{Error, get_hash_key, redacted_params};
 use async_trait::async_trait;
 use http::{HeaderValue, header};
 use humantime::parse_duration;
@@ -195,7 +195,7 @@ impl Cors {
     /// # Returns
     /// * `Result<Self>` - Configured CORS plugin or error
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new cors plugin");
+        debug!(params = redacted_params(params), "new cors plugin");
         Self::try_from(params)
     }
 

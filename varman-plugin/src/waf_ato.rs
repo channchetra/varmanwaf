@@ -61,6 +61,7 @@ impl FailedAuthTracker {
         self.threshold > 0
     }
 
+    #[cfg(test)]
     pub fn threshold(&self) -> u32 {
         self.threshold
     }

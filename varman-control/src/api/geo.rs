@@ -217,22 +217,22 @@ async fn update_geo(
         active.mode = Set(mode);
     }
     if let Some(countries) = payload.countries {
-        let normalised: Vec<String> = countries
+        let normalized: Vec<String> = countries
             .iter()
             .map(|c| c.trim().to_uppercase())
             .filter(|c| {
                 c.len() == 2 && c.chars().all(|ch| ch.is_ascii_alphabetic())
             })
             .collect();
-        active.countries = Set(normalised);
+        active.countries = Set(normalized);
     }
     if let Some(asns) = payload.blocked_asns {
-        let normalised: Vec<String> = asns
+        let normalized: Vec<String> = asns
             .iter()
             .map(|a| a.trim().to_uppercase())
             .filter(|a| !a.is_empty())
             .collect();
-        active.blocked_asns = Set(normalised);
+        active.blocked_asns = Set(normalized);
     }
     if let Some(block_unknown) = payload.block_unknown {
         active.block_unknown = Set(block_unknown);

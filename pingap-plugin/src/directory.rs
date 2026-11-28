@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_step_conf_in, parse_params};
+use super::{
+    Error, get_hash_key, get_step_conf_in, parse_params, redacted_params,
+};
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use glob::glob;
@@ -458,7 +460,10 @@ impl Directory {
     /// - Sets default values for optional parameters
     /// - Resolves relative paths to absolute
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new serve static file plugin");
+        debug!(
+            params = redacted_params(params),
+            "new serve static file plugin"
+        );
         Self::try_from(params)
     }
 

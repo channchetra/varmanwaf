@@ -16,7 +16,7 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_config::{ConfigManager, PluginConf};
 use pingap_core::{Plugin, PluginProvider, Plugins};
-use pingap_plugin::get_plugin_factory;
+use pingap_plugin::{Error, get_plugin_factory};
 // Reuse the canonical plugin-config helpers instead of keeping a second copy.
 // `get_hash_key` in particular MUST stay byte-identical to the one plugins use
 // to compute their config key, otherwise hot-reload change detection breaks.
@@ -27,7 +27,6 @@ pub(crate) use pingap_plugin::{
 use pingap_proxy::ServerConf;
 use pingap_util::base64_encode;
 use serde::{Deserialize, Serialize};
-use snafu::Snafu;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -46,14 +45,17 @@ pub(crate) use self::admin::AdminServe;
 pub static ADMIN_SERVER_PLUGIN: &str = "pingap:admin";
 
 /// Name and configuration of a plugin the root constructs itself and hands to
-/// [`Provider::init_plugins`], instead of the registry deriving it from a
+/// [`Provider::replace_plugins`], instead of the registry deriving it from a
 /// process-global set during boot.
-pub type AdminPlugin = (String, PluginConf);
+/// A named admin plugin configuration: the listener name and its plugin
+/// table. Distinct from [`AdminServe`] (the built plugin) and
+/// `AdminPluginQuery` (the URL query of `--admin`).
+pub type AdminPluginEntry = (String, PluginConf);
 
 static LOG_TARGET: &str = "main::plugin";
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
-struct AdminPluginParams {
+struct AdminPluginQuery {
     max_age: Option<String>,
 }
 
@@ -113,7 +115,7 @@ pub fn parse_admin_plugin(
     if path.is_empty() {
         path = "/".to_string();
     }
-    let params: AdminPluginParams =
+    let params: AdminPluginQuery =
         serde_qs::from_str(info.query().unwrap_or_default()).map_err(|e| {
             Error::Invalid {
                 category: "admin".to_string(),
@@ -152,12 +154,6 @@ pub fn parse_admin_plugin(
     ))
 }
 
-/// Error types for plugin operations
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Plugin {category} invalid, message: {message}"))]
-    Invalid { category: String, message: String },
-}
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Returns a list of built-in plugins with their default configurations.
@@ -326,16 +322,6 @@ pub fn parse_plugins(
         }
     }
 
-    // let plugin =
-    //     get_plugin_factory()
-    //         .create(conf)
-    //         .map_err(|e| Error::Invalid {
-    //             category,
-    //             message: format!("create plugin {name} failed, {}", e),
-    //         })?;
-    // plugins.insert(name.clone(), plugin.clone());
-    // }
-
     (plugins, errors)
 }
 
@@ -365,10 +351,10 @@ impl Provider {
     ///
     /// # Returns
     /// Vector of plugin names that were created or updated
-    pub fn init_plugins(
+    pub fn replace_plugins(
         &self,
         plugins: &HashMap<String, PluginConf>,
-        admin: Option<AdminPlugin>,
+        admin: Option<AdminPluginEntry>,
         config_manager: Arc<ConfigManager>,
         providers: &ProviderSet,
     ) -> ProviderUpdate {
@@ -450,6 +436,10 @@ impl Provider {
             self.store(plugins);
             String::new()
         } else {
+            // The registry was not swapped, so none of the rebuilt plugins was
+            // installed: reporting their names would claim a change that did
+            // not happen.
+            updated_plugins.clear();
             let error = errors
                 .iter()
                 .map(|e| e.to_string())
@@ -475,7 +465,9 @@ mod tests {
     fn admin_error(addr: &str) -> String {
         let error = parse_admin_plugin(addr)
             .expect_err("the admin address must be rejected");
-        let Error::Invalid { category, message } = error;
+        let Error::Invalid { category, message } = error else {
+            panic!("expected an Invalid error, got {error}");
+        };
         assert_eq!("admin", category);
         message
     }
@@ -562,7 +554,9 @@ mod tests {
     fn an_out_of_range_port_is_rejected() {
         let error = parse_admin_plugin("127.0.0.1:99999")
             .expect_err("an out-of-range port must be rejected");
-        let Error::Invalid { category, .. } = error;
+        let Error::Invalid { category, .. } = error else {
+            panic!("expected an Invalid error, got {error}");
+        };
         assert_eq!("url", category);
     }
 
@@ -587,7 +581,7 @@ allow_unauthenticated = true
             .unwrap(),
         )]);
 
-        let update = Provider::new().init_plugins(
+        let update = Provider::new().replace_plugins(
             &plugins,
             None,
             manager.clone(),
@@ -610,7 +604,7 @@ allow_unauthenticated = true
             "test:badAdmin".to_string(),
             toml::from_str::<PluginConf>(r#"category = "admin""#).unwrap(),
         )]);
-        let update = Provider::new().init_plugins(
+        let update = Provider::new().replace_plugins(
             &plugins,
             None,
             manager,
@@ -622,6 +616,11 @@ allow_unauthenticated = true
             update.errors.contains("authorizations is empty"),
             "{}",
             update.errors
+        );
+        assert!(
+            update.updated.is_empty(),
+            "a skipped swap must not report updated plugins: {:?}",
+            update.updated
         );
     }
 }

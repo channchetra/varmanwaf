@@ -1,4 +1,4 @@
-//! `config_versions` ΓÇö snapshot history of the WAF configuration.
+//! `config_versions` — snapshot history of the WAF configuration.
 //!
 //! Each row is a complete, restorable snapshot of one configuration scope:
 //! `site_id = NULL` covers the deployment-wide settings (defense mode,

@@ -9,7 +9,7 @@ can size the impact of a rule before enforcing it.
 - **Requires the `geo` cargo feature** (not part of `full`)
 
 ```bash
-cargo build --features=geo
+cargo build --features=geo-restriction
 ```
 
 `geo` is deliberately kept out of `full` because it embeds a GeoIP database in

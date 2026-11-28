@@ -37,7 +37,7 @@ pub const DEFAULT_REFRESH_MINUTES: i32 = 24 * 60;
 
 /// Normalises a dataset key: two-letter country codes become upper-case
 /// (the URL uses the lower-case form), ASNs become bare digits.
-pub fn normalise_key(kind: &str, key: &str) -> Result<String, String> {
+pub fn normalize_key(kind: &str, key: &str) -> Result<String, String> {
     let trimmed = key.trim();
     match kind {
         KIND_COUNTRY => {
@@ -64,7 +64,7 @@ pub fn normalise_key(kind: &str, key: &str) -> Result<String, String> {
     }
 }
 
-/// The ipverse URLs for a normalised key: IPv4 first, then IPv6.
+/// The ipverse URLs for a normalized key: IPv4 first, then IPv6.
 pub fn source_urls(kind: &str, key: &str) -> Result<(String, String), String> {
     match kind {
         KIND_COUNTRY => {
@@ -107,7 +107,7 @@ pub async fn sync_dataset(
     kind: &str,
     key: &str,
 ) -> Result<ip_datasets::Model, String> {
-    let key = normalise_key(kind, key)?;
+    let key = normalize_key(kind, key)?;
     let (ipv4_url, ipv6_url) = source_urls(kind, &key)?;
     let client = subscription_client();
 
@@ -130,7 +130,7 @@ pub async fn sync_dataset(
     upsert(db, kind, &key, ipv4, ipv6, &ipv4_url).await
 }
 
-/// Loads the synced datasets for a set of keys, keyed by the normalised key.
+/// Loads the synced datasets for a set of keys, keyed by the normalized key.
 pub async fn load_map(
     db: &DatabaseConnection,
     kind: &str,
@@ -139,13 +139,13 @@ pub async fn load_map(
     if keys.is_empty() {
         return Ok(HashMap::new());
     }
-    let normalised: Vec<String> = keys
+    let normalized: Vec<String> = keys
         .iter()
-        .filter_map(|key| normalise_key(kind, key).ok())
+        .filter_map(|key| normalize_key(kind, key).ok())
         .collect();
     let rows = ip_datasets::Entity::find()
         .filter(ip_datasets::Column::Kind.eq(kind))
-        .filter(ip_datasets::Column::DatasetKey.is_in(normalised))
+        .filter(ip_datasets::Column::DatasetKey.is_in(normalized))
         .all(db)
         .await?;
     Ok(rows
@@ -297,16 +297,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keys_normalise_per_kind() {
-        assert_eq!(normalise_key(KIND_COUNTRY, "us").unwrap(), "US");
-        assert_eq!(normalise_key(KIND_COUNTRY, " US ").unwrap(), "US");
-        assert!(normalise_key(KIND_COUNTRY, "USA").is_err());
-        assert!(normalise_key(KIND_COUNTRY, "1").is_err());
-        assert_eq!(normalise_key(KIND_ASN, "AS13335").unwrap(), "13335");
-        assert_eq!(normalise_key(KIND_ASN, "as13335").unwrap(), "13335");
-        assert_eq!(normalise_key(KIND_ASN, "13335").unwrap(), "13335");
-        assert!(normalise_key(KIND_ASN, "cloudflare").is_err());
-        assert!(normalise_key("planet", "earth").is_err());
+    fn keys_normalize_per_kind() {
+        assert_eq!(normalize_key(KIND_COUNTRY, "us").unwrap(), "US");
+        assert_eq!(normalize_key(KIND_COUNTRY, " US ").unwrap(), "US");
+        assert!(normalize_key(KIND_COUNTRY, "USA").is_err());
+        assert!(normalize_key(KIND_COUNTRY, "1").is_err());
+        assert_eq!(normalize_key(KIND_ASN, "AS13335").unwrap(), "13335");
+        assert_eq!(normalize_key(KIND_ASN, "as13335").unwrap(), "13335");
+        assert_eq!(normalize_key(KIND_ASN, "13335").unwrap(), "13335");
+        assert!(normalize_key(KIND_ASN, "cloudflare").is_err());
+        assert!(normalize_key("planet", "earth").is_err());
     }
 
     #[test]

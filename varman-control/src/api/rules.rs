@@ -177,8 +177,8 @@ async fn seed_defaults(
     })))
 }
 
-/// Validates and normalises a tag list.
-fn normalise_tags(tags: &[String]) -> Result<Vec<String>, ApiError> {
+/// Validates and normalizes a tag list.
+fn normalize_tags(tags: &[String]) -> Result<Vec<String>, ApiError> {
     if tags.len() > MAX_TAGS {
         return Err(ApiError::BadRequest(format!(
             "a rule may carry at most {MAX_TAGS} tags"
@@ -260,7 +260,7 @@ async fn list_groups(
 ) -> Result<Json<Page<rule_groups::Model>>, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     load_site_read(&state.db, id, &current).await?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let paginator = rule_groups::Entity::find()
         .filter(rule_groups::Column::SiteId.eq(id))
@@ -350,7 +350,7 @@ async fn delete_group(
     State(state): State<AppState>,
     current: AuthUser,
     Path((site_id, group_id)): Path<(String, String)>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     let target = parse_uuid(&group_id, "group id")?;
     load_site_write(&state.db, id, &current).await?;
@@ -365,7 +365,7 @@ async fn delete_group(
     touch_site(&state, id).await?;
     notify_config_changed(&state, id, Some(&current.email)).await;
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `GET /api/v1/sites/{site_id}/rules`
@@ -377,7 +377,7 @@ async fn list_rules(
 ) -> Result<Json<Page<rule::Model>>, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     load_site_read(&state.db, id, &current).await?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let mut condition = Condition::all().add(rule::Column::SiteId.eq(id));
     if let Some(group) = non_empty(&query.group_id) {
@@ -424,7 +424,7 @@ async fn create_rule(
         &payload.mode,
         payload.severity,
     )?;
-    let tags = normalise_tags(&payload.tags)?;
+    let tags = normalize_tags(&payload.tags)?;
     let group_id = match non_empty(&payload.group_id) {
         Some(raw) => {
             let parsed = parse_uuid(&raw, "group id")?;
@@ -518,7 +518,7 @@ async fn update_rule(
         active.severity = Set(severity);
     }
     if let Some(tags) = payload.tags {
-        active.tags = Set(normalise_tags(&tags)?);
+        active.tags = Set(normalize_tags(&tags)?);
     }
     if let Some(enabled) = payload.enabled {
         active.enabled = Set(enabled);
@@ -556,7 +556,7 @@ async fn delete_rule(
     State(state): State<AppState>,
     current: AuthUser,
     Path((site_id, rule_id)): Path<(String, String)>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     let target = parse_uuid(&rule_id, "rule id")?;
     load_site_write(&state.db, id, &current).await?;
@@ -568,7 +568,7 @@ async fn delete_rule(
     touch_site(&state, id).await?;
     notify_config_changed(&state, id, Some(&current.email)).await;
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Loads a rule group scoped to a site.
@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn tags_are_trimmed_and_deduplicated() {
-        let tags = normalise_tags(&[
+        let tags = normalize_tags(&[
             " sqli ".into(),
             "sqli".into(),
             "".into(),
@@ -613,7 +613,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(tags, vec!["sqli".to_string(), "owasp".to_string()]);
-        assert!(normalise_tags(&vec!["x".to_string(); MAX_TAGS + 1]).is_err());
+        assert!(normalize_tags(&vec!["x".to_string(); MAX_TAGS + 1]).is_err());
     }
 
     #[test]

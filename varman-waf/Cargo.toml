@@ -19,7 +19,6 @@ ahash = { workspace = true }
 aho-corasick = "1"
 base64 = { workspace = true }
 ipnet = { workspace = true }
-once_cell = "1"
 # Dialect-aware SQL parsing for the SQL AST detector tier.
 sqlparser = { workspace = true }
 

@@ -21,8 +21,8 @@
 //! Public keys, test-mode provider keys (`sk_test_…`) and credential-free
 //! connection strings stay clean.
 
-use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::LazyLock;
 
 use super::super::{
     Action, AttackCategory, Confidence, Detector, DetectorId, DetectorResult,
@@ -35,17 +35,18 @@ use crate::canonical::CanonicalRequest;
 pub const DEFAULT_MAX_VALUE_LEN: usize = 8 * 1024;
 
 /// PEM private-key markers (`RSA`/`EC`/`OPENSSH`/`ENCRYPTED`/`PGP … BLOCK`).
-static PRIVATE_KEY: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)-----BEGIN [A-Z0-9 ]*PRIVATE KEY").unwrap());
+static PRIVATE_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)-----BEGIN [A-Z0-9 ]*PRIVATE KEY").unwrap()
+});
 
 /// `scheme://user:pass@host` — credentials embedded in a URL.
-static CREDENTIALED_URL: Lazy<Regex> = Lazy::new(|| {
+static CREDENTIALED_URL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b[a-z][a-z0-9+.-]{1,15}://[^/\s:@]{1,64}:[^/\s:@]{1,64}@")
         .unwrap()
 });
 
 /// Provider tokens that are leaked when they appear in a payload.
-static PROVIDER_TOKENS: Lazy<Regex> = Lazy::new(|| {
+static PROVIDER_TOKENS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?x)
         \bgh[pousr]_[A-Za-z0-9]{36,}\b          # GitHub

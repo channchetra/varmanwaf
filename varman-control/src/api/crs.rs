@@ -316,7 +316,7 @@ async fn get_ruleset(
         find = find.filter(crs_rule::Column::Kind.eq(kind));
     }
 
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
     let paginator = find.paginate(&state.db, pagination.limit());
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(pagination.index()).await?;

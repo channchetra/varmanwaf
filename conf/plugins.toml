@@ -514,7 +514,7 @@ add_headers = ["X-Request-Id:123"]
 # Plugin GeoRestriction Config
 ###
 # GeoRestriction plugin for filtering requests based on country code
-# Requires building with --features geo
+# Requires building with --features geo-restriction
 [plugins.geoRestriction]
 # Plugin type
 category = "geo_restriction"

@@ -159,7 +159,7 @@ async fn update_waf_settings(
         active.waf_enabled = Set(waf_enabled);
     }
     if let Some(mode) = payload.mode {
-        let mode = normalise_mode(&mode)?;
+        let mode = normalize_mode(&mode)?;
         active.mode = Set(mode);
     }
     if let Some(paranoia_level) = payload.paranoia_level {
@@ -192,7 +192,7 @@ async fn update_waf_settings(
         active.openapi_spec = Set(openapi_spec);
     }
     if let Some(categories) = payload.monitor_categories {
-        active.monitor_categories = Set(normalise_list(
+        active.monitor_categories = Set(normalize_list(
             &categories,
             &CATEGORIES,
             "monitor_categories",
@@ -200,11 +200,11 @@ async fn update_waf_settings(
     }
     if let Some(stacks) = payload.monitor_stacks {
         active.monitor_stacks =
-            Set(normalise_list(&stacks, &STACKS, "monitor_stacks")?);
+            Set(normalize_list(&stacks, &STACKS, "monitor_stacks")?);
     }
     if let Some(rules) = payload.monitor_managed_rules {
         active.monitor_managed_rules =
-            Set(normalise_rule_ids(&rules, "monitor_managed_rules")?);
+            Set(normalize_rule_ids(&rules, "monitor_managed_rules")?);
     }
     // An update whose every field stays unchanged is silently dropped by
     // SeaORM; touching updated_at guarantees the row round-trips.
@@ -376,7 +376,7 @@ async fn get_waf_posture(
 }
 
 /// Trims and lowercase-validates the site enforcement mode.
-fn normalise_mode(raw: &str) -> Result<String, ApiError> {
+fn normalize_mode(raw: &str) -> Result<String, ApiError> {
     use crate::models::mode;
     let value = raw.trim().to_ascii_lowercase();
     if !mode::is_valid(&value) {
@@ -429,7 +429,7 @@ fn validate_openapi_spec(source: &str) -> Result<(), ApiError> {
     Ok(())
 }
 /// Trims, lowercases, de-duplicates and whitelist-checks a monitor list.
-fn normalise_list(
+fn normalize_list(
     raw: &[String],
     allowed: &[&str],
     field: &str,
@@ -455,7 +455,7 @@ fn normalise_list(
 
 /// Trims, de-duplicates and whitelist-checks a managed-rule id list. Unlike
 /// category/stack names, ids keep their case (`VARMAN-1010`).
-fn normalise_rule_ids(
+fn normalize_rule_ids(
     raw: &[String],
     field: &str,
 ) -> Result<Vec<String>, ApiError> {
@@ -547,8 +547,8 @@ mod tests {
     use crate::api::error::ApiError;
 
     #[test]
-    fn normalise_list_trims_lowercases_and_deduplicates() {
-        let out = normalise_list(
+    fn normalize_list_trims_lowercases_and_deduplicates() {
+        let out = normalize_list(
             &[" SQLI ".into(), "sqli".into(), "SSTI".into(), "".into()],
             &CATEGORIES,
             "monitor_categories",
@@ -558,15 +558,15 @@ mod tests {
     }
 
     #[test]
-    fn normalise_rule_ids_keeps_case_and_validates() {
-        let out = normalise_rule_ids(
+    fn normalize_rule_ids_keeps_case_and_validates() {
+        let out = normalize_rule_ids(
             &[" VARMAN-1010 ".into(), "VARMAN-1010".into()],
             "monitor_managed_rules",
         )
         .unwrap();
         assert_eq!(out, vec!["VARMAN-1010"]);
 
-        let err = normalise_rule_ids(
+        let err = normalize_rule_ids(
             &["VARMAN-9999".into()],
             "monitor_managed_rules",
         )
@@ -576,8 +576,8 @@ mod tests {
     }
 
     #[test]
-    fn normalise_list_rejects_unknown_values() {
-        let err = normalise_list(
+    fn normalize_list_rejects_unknown_values() {
+        let err = normalize_list(
             &["sqli".into(), "bogus".into()],
             &CATEGORIES,
             "monitor_categories",
@@ -588,11 +588,11 @@ mod tests {
     }
 
     #[test]
-    fn normalise_mode_trims_and_validates() {
-        assert_eq!(normalise_mode(" Block ").unwrap(), "block");
-        assert_eq!(normalise_mode("MONITOR").unwrap(), "monitor");
+    fn normalize_mode_trims_and_validates() {
+        assert_eq!(normalize_mode(" Block ").unwrap(), "block");
+        assert_eq!(normalize_mode("MONITOR").unwrap(), "monitor");
 
-        let err = normalise_mode("bogus").unwrap_err();
+        let err = normalize_mode("bogus").unwrap_err();
         assert!(matches!(err, ApiError::BadRequest(_)));
         assert!(err.to_string().contains("bogus"));
     }

@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_step_conf_in, parse_params};
+use super::{
+    Error, get_hash_key, get_step_conf_in, parse_params, redacted_params,
+};
 use async_trait::async_trait;
 use http::StatusCode;
 use humantime::parse_duration;
@@ -93,7 +95,7 @@ impl MockResponse {
     /// # Returns
     /// Result<MockResponse> - Configured mock handler or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new mock plugin");
+        debug!(params = redacted_params(params), "new mock plugin");
 
         // Generate unique hash for this configuration
         let hash_value = get_hash_key(params);

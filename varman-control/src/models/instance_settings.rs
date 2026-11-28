@@ -7,7 +7,7 @@
 
 use sea_orm::entity::prelude::*;
 
-/// `instance_settings` ΓÇö one row per key.
+/// `instance_settings` — one row per key.
 pub mod instance_settings {
     use super::*;
 

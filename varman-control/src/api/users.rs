@@ -19,7 +19,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::api::auth::{
-    create_user, normalise_email, user_write_error, UserResponse,
+    create_user, normalize_email, user_write_error, UserResponse,
 };
 use crate::api::common::{parse_uuid, require_write, Page, Pagination};
 use crate::api::error::ApiError;
@@ -74,7 +74,7 @@ async fn list(
     _admin: AdminUser,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Page<UserResponse>>, ApiError> {
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
     let paginator = user::Entity::find()
         .order_by_asc(user::Column::CreatedAt)
         .paginate(&state.db, pagination.limit());
@@ -124,7 +124,7 @@ async fn create(
     Json(payload): Json<CreateUserRequest>,
 ) -> Result<Response, ApiError> {
     require_write(&admin)?;
-    let email = normalise_email(&payload.email)?;
+    let email = normalize_email(&payload.email)?;
     validate_password(&payload.password)
         .map_err(|err| ApiError::BadRequest(err.to_string()))?;
     let assigned_role = payload.role.as_deref().unwrap_or(role::VIEWER);
@@ -205,7 +205,7 @@ async fn update(
     };
     let new_email = match payload.email.as_deref() {
         Some(raw) => {
-            let email = normalise_email(raw)?;
+            let email = normalize_email(raw)?;
             (email != account.email).then_some(email)
         },
         None => None,

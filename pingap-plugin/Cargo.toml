@@ -15,7 +15,9 @@ name = "pingap_plugin"
 path = "src/lib.rs"
 
 [features]
-geo = []
+geo-restriction = []
+# Backwards-compatible alias for the old name.
+geo = ["geo-restriction"]
 
 [dependencies]
 # 0.46's MSRV is 1.91; pingap's floor is 1.96 so this is fine.
@@ -38,8 +40,6 @@ hex = { workspace = true }
 hickory-resolver = { workspace = true }
 http = { workspace = true }
 jsonwebtoken = { workspace = true }
-hmac-sha256 = { workspace = true }
-hmac-sha512 = { workspace = true, default-features = false }
 humantime = { workspace = true }
 mime_guess = { workspace = true }
 nanoid = { workspace = true }
@@ -52,7 +52,6 @@ rand = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
-substring = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 smallvec = { workspace = true }

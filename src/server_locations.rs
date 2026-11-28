@@ -41,7 +41,7 @@ impl Provider {
 
     /// Rebuilds the index from `servers`, resolving each location name
     /// through `location_provider`.
-    pub fn init_server_locations(
+    pub fn replace_server_locations(
         &self,
         location_provider: &dyn LocationProvider,
         servers: &HashMap<String, pingap_config::ServerConf>,
@@ -133,7 +133,6 @@ fn changed_server_locations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::lock_providers;
     use pingap_config::{LocationConf, ServerConf};
     use pretty_assertions::assert_eq;
 
@@ -157,7 +156,6 @@ mod tests {
 
     #[test]
     fn higher_weight_is_ordered_first() {
-        let _guard = lock_providers();
         // Arrange
         let weights = weights(&[("api", 10), ("static", 200), ("root", 50)]);
 
@@ -171,7 +169,6 @@ mod tests {
 
     #[test]
     fn equal_weight_keeps_the_configured_order() {
-        let _guard = lock_providers();
         // Arrange
         let weights = weights(&[("first", 10), ("second", 10)]);
 
@@ -184,7 +181,6 @@ mod tests {
 
     #[test]
     fn a_location_without_a_weight_sorts_last() {
-        let _guard = lock_providers();
         // Arrange
         let weights = weights(&[("weighted", 1)]);
 
@@ -198,7 +194,6 @@ mod tests {
 
     #[test]
     fn only_servers_with_a_location_list_get_an_order() {
-        let _guard = lock_providers();
         // Arrange
         let servers = HashMap::from([
             ("web".to_string(), server(&["low", "high"])),
@@ -218,7 +213,6 @@ mod tests {
 
     #[test]
     fn an_unchanged_order_reports_no_change() {
-        let _guard = lock_providers();
         // Arrange: the published route is already in weight order, even
         // though the config lists the names in the opposite order.
         let ordered =
@@ -242,7 +236,6 @@ mod tests {
 
     #[test]
     fn a_reordered_route_reports_the_server_as_changed() {
-        let _guard = lock_providers();
         // Arrange: the published route predates the config's weight change.
         let ordered =
             HashMap::from([("web".to_string(), names(&["high", "low"]))]);
@@ -265,7 +258,6 @@ mod tests {
 
     #[test]
     fn a_server_without_a_published_route_reports_as_changed() {
-        let _guard = lock_providers();
         // Arrange
         let ordered = HashMap::from([("web".to_string(), names(&["high"]))]);
 
@@ -278,7 +270,6 @@ mod tests {
 
     #[test]
     fn initializing_the_same_config_twice_reports_no_change() {
-        let _guard = lock_providers();
         // Arrange: weights come from `LocationConf::get_weight`, the way the
         // callers' real configs do. The server name is unique to this test so
         // the shared provider cannot be confused with another test's entries.
@@ -306,18 +297,18 @@ mod tests {
         // Act
         let location_provider = crate::locations::Provider::new();
         location_provider
-            .init_locations(&locations)
+            .replace_locations(&locations)
             .expect("the test locations build");
         let provider = Provider::new();
         let first = provider
-            .init_server_locations(&location_provider, &servers, &locations)
+            .replace_server_locations(&location_provider, &servers, &locations)
             .expect("a server location index never fails to build")
             .updated;
         let published = provider
             .get("server-locations-order-test")
             .map(|route| route.ordered.as_slice().to_vec());
         let second = provider
-            .init_server_locations(&location_provider, &servers, &locations)
+            .replace_server_locations(&location_provider, &servers, &locations)
             .expect("a server location index never fails to build");
 
         // Assert

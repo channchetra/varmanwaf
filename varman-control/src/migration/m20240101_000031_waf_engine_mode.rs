@@ -2,7 +2,7 @@
 //!
 //! `inherit` (the default) uses the process-wide `VARMAN_WAF_ENGINE`;
 //! `legacy`, `shadow` and `varman` override it for this site. The value is
-//! validated by the settings API, so the column stores a normalised string.
+//! validated by the settings API, so the column stores a normalized string.
 
 use sea_orm_migration::prelude::*;
 

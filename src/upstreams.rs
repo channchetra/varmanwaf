@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config_apply::ProviderUpdate;
+use crate::config_apply::{ProviderUpdate, invalid_error};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_config::UpstreamConf;
-use pingap_core::{Error, NotificationSender};
+use pingap_core::NotificationSender;
 use pingap_upstream::{
     Upstream, UpstreamProvider, Upstreams, new_ahash_upstreams,
 };
@@ -27,15 +27,6 @@ use tracing::error;
 static LOG_TARGET: &str = "main::upstreams";
 
 type Result<T> = std::result::Result<T, String>;
-
-/// The construction failure in the wording the callers have always logged
-/// (`Error::Invalid`'s display).
-fn invalid_error(error: impl std::fmt::Display) -> String {
-    Error::Invalid {
-        message: error.to_string(),
-    }
-    .to_string()
-}
 
 /// One owner's upstream registry. Constructed per data plane, never shared.
 pub struct Provider {
@@ -62,7 +53,7 @@ impl Provider {
     ///
     /// # Returns
     /// The names of the upstreams that were built, or the construction failure.
-    pub fn init_upstreams(
+    pub fn replace_upstreams(
         self: &Arc<Self>,
         upstream_configs: &HashMap<String, UpstreamConf>,
         sender: Option<Arc<NotificationSender>>,
@@ -79,7 +70,7 @@ impl Provider {
     }
 
     /// Rebuild and health-check the changed upstreams before publishing them.
-    pub async fn update_upstreams(
+    pub async fn replace_upstreams_checked(
         self: &Arc<Self>,
         upstream_configs: &HashMap<String, UpstreamConf>,
         sender: Option<Arc<NotificationSender>>,
@@ -136,7 +127,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]
-    async fn update_upstreams_health_checks_changed_backends() {
+    async fn replace_upstreams_checked_health_checks_changed_backends() {
         let listener =
             tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -166,7 +157,7 @@ mod tests {
         )]);
 
         let update = provider
-            .update_upstreams(&configs, None)
+            .replace_upstreams_checked(&configs, None)
             .await
             .expect("the upstream must build");
         assert!(update.is_ok(), "{}", update.errors);

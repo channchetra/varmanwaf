@@ -300,7 +300,10 @@ pub struct ErrorPagePlugin {
 impl ErrorPagePlugin {
     /// Create a new plugin from configuration.
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new error_page plugin");
+        debug!(
+            params = pingap_plugin::redacted_params(params),
+            "new error_page plugin"
+        );
         Self::try_from(params)
     }
 

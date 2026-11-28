@@ -4,7 +4,7 @@
 //! IP access control, rate limiting, challenges and logs must come from a
 //! forwarded header instead of the direct TCP peer. `trusted_header` holds the
 //! lower-case header name (empty = `x-forwarded-for`); `trust_last_hop` takes
-//! the last XFF entry ΓÇö the one the nearest proxy appended ΓÇö instead of the
+//! the last XFF entry — the one the nearest proxy appended — instead of the
 //! client-supplied first entry.
 
 use sea_orm_migration::prelude::*;

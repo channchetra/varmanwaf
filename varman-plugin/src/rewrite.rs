@@ -1256,7 +1256,10 @@ pub struct RewritePlugin {
 impl RewritePlugin {
     /// Create a new plugin from configuration.
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new rewrite plugin");
+        debug!(
+            params = pingap_plugin::redacted_params(params),
+            "new rewrite plugin"
+        );
         Self::try_from(params)
     }
 

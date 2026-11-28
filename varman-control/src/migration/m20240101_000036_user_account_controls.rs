@@ -1,6 +1,6 @@
 //! Add account controls to `users`.
 //!
-//! `disabled` lets an administrator suspend an account without deleting it ΓÇö
+//! `disabled` lets an administrator suspend an account without deleting it —
 //! login and token refresh refuse disabled users. `must_change_password`
 //! forces the seeded default account (whose password is public knowledge in
 //! an open-source project) through a password change on first login.

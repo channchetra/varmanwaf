@@ -181,8 +181,10 @@ pub fn select_ranges(json: &Value, selector: &str) -> Vec<String> {
             collect_strings(node, &mut out);
         }
     }
-    out.retain(|entry| valid_range(entry).is_some());
-    out.dedup();
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|entry| {
+        valid_range(entry).is_some() && seen.insert(entry.clone())
+    });
     out
 }
 
@@ -288,15 +290,7 @@ fn text_ranges(body: &str) -> Vec<String> {
 
 /// Accepts a bare IP or a `pfx.len` CIDR (including IPv6 zone-free notation).
 fn valid_range(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let base = trimmed.split('/').next().unwrap_or(trimmed);
-    if base.parse::<std::net::IpAddr>().is_err() {
-        return None;
-    }
-    Some(trimmed.to_string())
+    crate::api::common::parse_ip_range(line)
 }
 
 /// Fixed ids for the built-in subscription groups seeded at startup.

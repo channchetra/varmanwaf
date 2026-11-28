@@ -164,7 +164,7 @@ pub fn issued() -> Option<Arc<Issued>> {
     ISSUED.load_full()
 }
 
-/// Validates and normalises a dashboard identity: a DNS name or an IP
+/// Validates and normalizes a dashboard identity: a DNS name or an IP
 /// literal. Rejects schemes, paths and anything the CA would refuse anyway,
 /// so the operator gets a clear error before an order is created.
 pub fn normalize_identity(input: &str) -> Result<String, String> {
@@ -208,25 +208,11 @@ pub fn normalize_identity(input: &str) -> Result<String, String> {
     Ok(value)
 }
 
-/// Validates an ACME contact address.
+/// Validates an ACME contact address with the same rule the account API
+/// uses, so an address accepted in one place is accepted in the other.
 pub fn normalize_email(input: &str) -> Result<String, String> {
-    let value = input.trim().to_string();
-    let Some((local, domain)) = value.split_once('@') else {
-        return Err("a valid contact email is required".to_string());
-    };
-    let valid = !local.is_empty()
-        && local.len() <= 64
-        && !domain.is_empty()
-        && domain.len() <= 253
-        && domain.contains('.')
-        && !domain.starts_with('.')
-        && !domain.ends_with('.')
-        && !value.contains(' ')
-        && value.len() <= 254;
-    if !valid {
-        return Err("a valid contact email is required".to_string());
-    }
-    Ok(value)
+    crate::email::normalize_email(input)
+        .map_err(|_| "a valid contact email is required".to_string())
 }
 
 /// Loads the settings row, creating the disabled default on first use.

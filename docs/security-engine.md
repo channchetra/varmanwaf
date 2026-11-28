@@ -189,7 +189,7 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
     and `allOf`/`anyOf`/`oneOf` - recording `api.schema_violation` (Monitor)
     with a JSON-pointer detail; a truncated capture is skipped, never
     misreported. Non-JSON bodies and remote `$ref`s are not resolved.
-- **Account-takeover defense (`pingap-plugin/src/waf_ato.rs`)** (Phase 8) -
+- **Account-takeover defense (`varman-plugin/src/waf_ato.rs`)** (Phase 8) -
   repeated upstream authentication failures (401/403) on state-changing
   requests (POST/PUT/PATCH/DELETE) from one client open a failure window;
   crossing the threshold (`ato_failed_auth_threshold`, default 20 per
@@ -305,7 +305,7 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
 During the transition both engines can process the same request:
 
 ```text
-pingap-plugin/src/waf.rs
+varman-plugin/src/waf/mod.rs
   ├─ legacy WafEngine::inspect  → legacy verdict
   └─ waf_shadow::analyze        → runs in shadow/varman modes
        ├─ Canonicalizer          (the one decoding policy)

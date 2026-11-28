@@ -20,7 +20,9 @@ use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use humantime::parse_duration;
 use jsonwebtoken::jwk::JwkSet;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+use jsonwebtoken::{
+    Algorithm, DecodingKey, EncodingKey, Validation, decode, decode_header,
+};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, ModifyResponseBody, Plugin, PluginStep, RequestPluginResult,
@@ -38,7 +40,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
-use substring::Substring;
 use tokio::time::sleep;
 use tracing::debug;
 use tracing::error;
@@ -523,7 +524,7 @@ impl Plugin for JwtAuth {
                 .unwrap_or_default();
             let bearer = "Bearer ";
             if value.starts_with(bearer) {
-                value.substring(bearer.len(), value.len())
+                value.get(bearer.len()..).unwrap_or_default()
             } else {
                 value
             }
@@ -581,30 +582,27 @@ impl Plugin for JwtAuth {
         .unwrap_or_default();
         let content = format!("{}.{}", arr[0], arr[1]);
         let secret = self.secret.as_bytes();
-        let valid = match jwt_header.alg.as_str() {
-            // An explicitly configured algorithm is pinned: a token must not
-            // downgrade HS512 to HS256 just by saying so in its own header.
-            // An unset `algorithm` keeps accepting either, since that is what
-            // existing configurations rely on.
-            alg if !self.algorithm.is_empty() && alg != self.algorithm => false,
-            "HS256" => {
-                let hash = hmac_sha256::HMAC::mac(content.as_bytes(), secret);
-                pingap_core::constant_time_eq(
-                    URL_SAFE_NO_PAD.encode(hash).as_bytes(),
-                    arr[2].as_bytes(),
-                )
-            },
-            "HS512" => {
-                let hash = hmac_sha512::HMAC::mac(content.as_bytes(), secret);
-                pingap_core::constant_time_eq(
-                    URL_SAFE_NO_PAD.encode(hash).as_bytes(),
-                    arr[2].as_bytes(),
-                )
-            },
+        // An explicitly configured algorithm is pinned: a token must not
+        // downgrade HS512 to HS256 just by saying so in its own header. An
+        // unset `algorithm` keeps accepting either, since that is what
+        // existing configurations rely on.
+        let algorithm = match jwt_header.alg.as_str() {
+            alg if !self.algorithm.is_empty() && alg != self.algorithm => None,
+            "HS256" => Some(Algorithm::HS256),
+            "HS512" => Some(Algorithm::HS512),
             // Unknown / unsupported algorithms (including "none") are rejected
             // rather than silently falling back to HS256.
-            _ => false,
+            _ => None,
         };
+        let valid = algorithm.is_some_and(|algorithm| {
+            jsonwebtoken::crypto::verify(
+                arr[2],
+                content.as_bytes(),
+                &DecodingKey::from_secret(secret),
+                algorithm,
+            )
+            .unwrap_or(false)
+        });
         if !valid {
             if let Some(d) = self.delay {
                 sleep(d).await;
@@ -732,14 +730,23 @@ impl ModifyResponseBody for Sign {
         // spellchecker:on
         let payload = URL_SAFE_NO_PAD.encode(&self.buffer);
         let content = format!("{header}.{payload}");
-        let secret = self.secret.as_bytes();
-        let sign = if is_hs512 {
-            let hash = hmac_sha512::HMAC::mac(content.as_bytes(), secret);
-            URL_SAFE_NO_PAD.encode(hash)
+        let algorithm = if is_hs512 {
+            Algorithm::HS512
         } else {
-            let hash = hmac_sha256::HMAC::mac(content.as_bytes(), secret);
-            URL_SAFE_NO_PAD.encode(hash)
+            Algorithm::HS256
         };
+        let sign = jsonwebtoken::crypto::sign(
+            content.as_bytes(),
+            &EncodingKey::from_secret(self.secret.as_bytes()),
+            algorithm,
+        )
+        .map_err(|e| {
+            pingora::Error::because(
+                pingora::ErrorType::InternalError,
+                "unable to sign the JWT response",
+                e,
+            )
+        })?;
         let token = format!("{content}.{sign}");
         *body = Some(Bytes::from(r#"{"token": "{}"}"#.replace("{}", &token)));
         Ok(())

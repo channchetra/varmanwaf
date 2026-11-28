@@ -2972,7 +2972,7 @@ fn rate_rule_build_filters_unenforceable_rules() {
         ))
         .is_none()
     );
-    // The prost debug name of ip_nat normalises to the plain IP key.
+    // The prost debug name of ip_nat normalizes to the plain IP key.
     let nat = build(rate_rule(
         "f",
         vec![proto::RateLimitCharacteristics::RateLimitCharIpNat],

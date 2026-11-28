@@ -121,12 +121,12 @@ pub struct ElasticsearchClient {
 impl ElasticsearchClient {
     /// Creates a client and starts its background worker and buffer-replay task.
     ///
-    /// The configuration is normalised and validated first; a disabled or
+    /// The configuration is normalized and validated first; a disabled or
     /// misconfigured shipper is an error so the caller can fall back to
     /// PostgreSQL-only logging.
     pub async fn new(config: EsConfig) -> anyhow::Result<Self> {
         let mut config = config;
-        config.normalise();
+        config.normalize();
         config.validate()?;
 
         let http = reqwest::Client::builder()
@@ -177,7 +177,7 @@ impl ElasticsearchClient {
         Ok(Self { inner })
     }
 
-    /// The effective configuration (already normalised).
+    /// The effective configuration (already normalized).
     pub fn config(&self) -> &EsConfig {
         &self.inner.config
     }
@@ -368,8 +368,14 @@ impl Inner {
             );
         }
         match (
-            self.config.username.as_deref(),
-            self.config.password.as_deref(),
+            self.config
+                .username
+                .as_deref()
+                .filter(|user| !user.trim().is_empty()),
+            self.config
+                .password
+                .as_deref()
+                .filter(|pass| !pass.trim().is_empty()),
         ) {
             (Some(user), Some(pass)) => req.basic_auth(user, Some(pass)),
             _ => req,

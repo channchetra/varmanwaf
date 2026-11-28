@@ -23,7 +23,8 @@ built on). This page is the map; crate-level guidance lives in `docs/` and the m
 | `pingap-proxy` | The proxy engine: lifecycle, routing, server configuration |
 | `pingap-core` | `Ctx`, `HttpResponse`, the `Plugin` trait, background services |
 | `pingap-config` | Configuration model, storage backends, TOML/HCL/KDL |
-| `pingap-plugin` | Built-in plugins, including the Varman WAF plugin (`waf.rs`), challenge, error pages, rewrite, cache, compression |
+| `pingap-plugin` | Generic Pingap plugins: compression, auth, headers, redirects, limits, bot DNS, geo restriction |
+| `varman-plugin` | VarmanWAF plugins: WAF (engine, stream, shadow, processor, custom layers, ATO), challenge, cache, rewrite, error pages |
 | `pingap-upstream` | Load balancing, circuit breaking, upstream connection options |
 | `pingap-location` | Host/path matching, rewriting, per-location limits |
 | `pingap-certificate` | SNI-based dynamic TLS certificate store |

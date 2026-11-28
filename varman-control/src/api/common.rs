@@ -12,6 +12,30 @@ use crate::models::{acme_challenge, site};
 
 pub use crate::api_util::{parse_uuid, query_all};
 
+/// Parses a bare IP address or a CIDR range and returns its canonical form.
+///
+/// The whole value is parsed, so an out-of-range prefix such as
+/// `10.0.0.0/999` is rejected instead of being accepted on the strength of
+/// its base address and then silently dropped by the data plane. CIDR host
+/// bits are masked off (`10.0.0.5/24` becomes `10.0.0.0/24`).
+pub(crate) fn parse_ip_range(raw: &str) -> Option<String> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if value.contains('/') {
+        value
+            .parse::<ipnet::IpNet>()
+            .ok()
+            .map(|net| net.trunc().to_string())
+    } else {
+        value
+            .parse::<std::net::IpAddr>()
+            .ok()
+            .map(|ip| ip.to_string())
+    }
+}
+
 /// Default number of rows returned by a list endpoint.
 pub const DEFAULT_PAGE_SIZE: u64 = 50;
 /// Upper bound accepted from clients, to keep queries predictable.
@@ -91,7 +115,7 @@ impl Default for Pagination {
 
 impl Pagination {
     /// Clamps user supplied values into the supported range.
-    pub fn normalise(&self) -> Self {
+    pub fn normalize(&self) -> Self {
         Self {
             page: self.page.max(1),
             page_size: self.page_size.clamp(1, MAX_PAGE_SIZE),
@@ -100,11 +124,11 @@ impl Pagination {
 
     /// Zero-based page index used by [`sea_orm::PaginatorTrait::fetch_page`].
     pub fn index(&self) -> u64 {
-        self.normalise().page - 1
+        self.normalize().page - 1
     }
 
     pub fn limit(&self) -> u64 {
-        self.normalise().page_size
+        self.normalize().page_size
     }
 
     pub fn offset(&self) -> u64 {
@@ -123,7 +147,7 @@ pub struct Page<T> {
 
 impl<T> Page<T> {
     pub fn new(items: Vec<T>, total: u64, pagination: Pagination) -> Self {
-        let p = pagination.normalise();
+        let p = pagination.normalize();
         Self {
             items,
             total,
@@ -296,7 +320,7 @@ pub fn trim_trailing_slash(value: &str) -> &str {
 /// A wildcard is only accepted as the whole left-most label (`*.example.com`)
 /// and its base needs at least two labels, so `*` and `*.com` are rejected:
 /// pingap's host selector would otherwise swallow every name under a TLD.
-pub fn normalise_domain(value: &str) -> Result<String, ApiError> {
+pub fn normalize_domain(value: &str) -> Result<String, ApiError> {
     let domain = value.trim().trim_start_matches('.').to_lowercase();
     let domain = trim_trailing_slash(&domain)
         .trim_end_matches('.')
@@ -341,7 +365,7 @@ fn is_domain_char(c: char) -> bool {
 /// `primary` is the site's own domain; alternates come from the caller. The
 /// first repeated hostname (against the primary or another alternate) is an
 /// error rather than something to silently swallow.
-pub fn normalise_domain_list(
+pub fn normalize_domain_list(
     primary: &str,
     alternates: &[String],
 ) -> Result<Vec<String>, ApiError> {
@@ -349,7 +373,7 @@ pub fn normalise_domain_list(
     seen.insert(primary.to_string());
     let mut result = Vec::with_capacity(alternates.len());
     for raw in alternates {
-        let domain = normalise_domain(raw)?;
+        let domain = normalize_domain(raw)?;
         if !seen.insert(domain.clone()) {
             return Err(ApiError::BadRequest(format!(
                 "domain '{domain}' appears twice: the primary domain and alternate_domains must be distinct"
@@ -466,7 +490,7 @@ mod tests {
             page: 0,
             page_size: 10_000,
         };
-        assert_eq!(huge.normalise().page, 1);
+        assert_eq!(huge.normalize().page, 1);
         assert_eq!(huge.limit(), MAX_PAGE_SIZE);
 
         let third = Pagination {
@@ -510,55 +534,55 @@ mod tests {
     }
 
     #[test]
-    fn domains_are_normalised_and_validated() {
-        assert_eq!(normalise_domain(" Example.COM ").unwrap(), "example.com");
-        assert_eq!(normalise_domain(".Example.com.").unwrap(), "example.com");
-        assert_eq!(normalise_domain("*.Example.COM").unwrap(), "*.example.com");
-        assert!(normalise_domain("").is_err());
-        assert!(normalise_domain("bad domain.com").is_err());
-        assert!(normalise_domain("a..b.com").is_err());
+    fn domains_are_normalized_and_validated() {
+        assert_eq!(normalize_domain(" Example.COM ").unwrap(), "example.com");
+        assert_eq!(normalize_domain(".Example.com.").unwrap(), "example.com");
+        assert_eq!(normalize_domain("*.Example.COM").unwrap(), "*.example.com");
+        assert!(normalize_domain("").is_err());
+        assert!(normalize_domain("bad domain.com").is_err());
+        assert!(normalize_domain("a..b.com").is_err());
     }
 
     #[test]
     fn wildcards_need_a_real_base_domain() {
         // Legitimate wildcards: base is at least two labels.
-        assert_eq!(normalise_domain("*.example.com").unwrap(), "*.example.com");
-        assert_eq!(normalise_domain("*.co.uk").unwrap(), "*.co.uk");
+        assert_eq!(normalize_domain("*.example.com").unwrap(), "*.example.com");
+        assert_eq!(normalize_domain("*.co.uk").unwrap(), "*.co.uk");
         assert_eq!(
-            normalise_domain("*.api.example.com").unwrap(),
+            normalize_domain("*.api.example.com").unwrap(),
             "*.api.example.com"
         );
 
         // `*` may only stand as the whole leading label.
-        assert!(normalise_domain("*").is_err());
-        assert!(normalise_domain("*.com").is_err());
-        assert!(normalise_domain("foo*bar.com").is_err());
-        assert!(normalise_domain("foo.*.com").is_err());
-        assert!(normalise_domain("*.*.example.com").is_err());
-        assert!(normalise_domain("**.example.com").is_err());
+        assert!(normalize_domain("*").is_err());
+        assert!(normalize_domain("*.com").is_err());
+        assert!(normalize_domain("foo*bar.com").is_err());
+        assert!(normalize_domain("foo.*.com").is_err());
+        assert!(normalize_domain("*.*.example.com").is_err());
+        assert!(normalize_domain("**.example.com").is_err());
     }
 
     #[test]
     fn domain_lists_reject_duplicates() {
         let alternates = vec!["api.example.com".to_string()];
         assert_eq!(
-            normalise_domain_list("example.com", &alternates).unwrap(),
+            normalize_domain_list("example.com", &alternates).unwrap(),
             vec!["api.example.com".to_string()]
         );
 
         // A repeat of the primary domain or of another alternate is an error,
         // even when the spelling differs in case.
         assert!(
-            normalise_domain_list("example.com", &["Example.com".into()])
+            normalize_domain_list("example.com", &["Example.com".into()])
                 .is_err()
         );
-        assert!(normalise_domain_list(
+        assert!(normalize_domain_list(
             "example.com",
             &["a.example.com".into(), "A.example.com".into()]
         )
         .is_err());
         // A wildcard inside the same site may coexist with its apex.
-        assert!(normalise_domain_list(
+        assert!(normalize_domain_list(
             "example.com",
             &["*.example.com".into()]
         )
@@ -713,5 +737,22 @@ mod tests {
         assert_eq!(non_empty(&Some("   ".into())), None);
         assert_eq!(non_empty(&Some(" x ".into())).as_deref(), Some("x"));
         assert_eq!(non_empty(&None), None);
+    }
+
+    #[test]
+    fn ip_ranges_reject_an_out_of_range_prefix() {
+        assert_eq!(
+            parse_ip_range("10.0.0.5/24").as_deref(),
+            Some("10.0.0.0/24")
+        );
+        assert_eq!(
+            parse_ip_range("2001:db8::1/64").as_deref(),
+            Some("2001:db8::/64")
+        );
+        assert_eq!(parse_ip_range("10.0.0.1").as_deref(), Some("10.0.0.1"));
+        assert_eq!(None, parse_ip_range("10.0.0.0/999"));
+        assert_eq!(None, parse_ip_range("2001:db8::/129"));
+        assert_eq!(None, parse_ip_range("not-an-ip"));
+        assert_eq!(None, parse_ip_range(""));
     }
 }

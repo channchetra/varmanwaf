@@ -202,11 +202,6 @@ fn extract_port(addr: &str) -> &str {
     addr.rsplit(':').next().unwrap_or("9090")
 }
 
-/// Whether this command runs against the database and exits.
-///
-/// Every variant that is not a run mode must be listed here: `main` routes
-/// these to [`crate::maintenance::run`], and [`build_run_mode`] treats anything
-/// else as unreachable. Omitting one (Config was) panics the CLI.
 /// Build the `RunMode` from the parsed CLI.
 ///
 /// The maintenance commands never reach this: [`main`] routes them to

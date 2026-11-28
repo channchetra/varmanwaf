@@ -173,12 +173,25 @@ impl EsConfig {
             self.request_timeout_secs > 0,
             "request_timeout_secs must be positive"
         );
-        if self.api_key.is_none() {
-            // Basic auth is all-or-nothing: a username without a password (or
-            // vice versa) is almost always a typo.
+        // A blank API key is absent, just as the client treats it. Basic auth
+        // is then all-or-nothing in both directions: either half alone is
+        // almost always a typo, and the client would silently send nothing.
+        let has_api_key = self
+            .api_key
+            .as_deref()
+            .is_some_and(|key| !key.trim().is_empty());
+        if !has_api_key {
+            let has_username = self
+                .username
+                .as_deref()
+                .is_some_and(|user| !user.trim().is_empty());
+            let has_password = self
+                .password
+                .as_deref()
+                .is_some_and(|pass| !pass.trim().is_empty());
             anyhow::ensure!(
-                self.username.is_none() || self.password.is_some(),
-                "elasticsearch username requires a password"
+                has_username == has_password,
+                "elasticsearch basic auth requires both a username and a password"
             );
         }
         Ok(())
@@ -186,7 +199,7 @@ impl EsConfig {
 
     /// Normalises user input in place: trims URLs, drops empties and strips a
     /// trailing slash so `{base}/_bulk` never collapses into `//_bulk`.
-    pub fn normalise(&mut self) {
+    pub fn normalize(&mut self) {
         self.urls = self
             .urls
             .iter()
@@ -240,10 +253,10 @@ mod tests {
     }
 
     #[test]
-    fn normalise_trims_and_strips_slash() {
+    fn normalize_trims_and_strips_slash() {
         let mut config = sample();
         config.urls.push("   ".to_string());
-        config.normalise();
+        config.normalize();
         assert_eq!(
             config.urls,
             vec!["https://es.example.com:9200".to_string()]
@@ -253,7 +266,7 @@ mod tests {
     #[test]
     fn validate_rejects_missing_urls_and_bad_auth() {
         let mut config = sample();
-        config.normalise();
+        config.normalize();
         config.validate().expect("valid");
 
         config.urls.clear();
@@ -261,6 +274,21 @@ mod tests {
 
         let mut auth = sample();
         auth.api_key = None;
+        auth.username = Some("user".to_string());
+        auth.password = None;
+        assert!(auth.validate().is_err());
+
+        auth.username = None;
+        auth.password = Some("secret".to_string());
+        assert!(auth.validate().is_err());
+
+        auth.username = Some("user".to_string());
+        auth.password = Some("secret".to_string());
+        auth.validate().expect("both halves are valid");
+
+        // A blank key is not a credential: it must not suppress the basic
+        // auth check.
+        auth.api_key = Some("   ".to_string());
         auth.username = Some("user".to_string());
         auth.password = None;
         assert!(auth.validate().is_err());

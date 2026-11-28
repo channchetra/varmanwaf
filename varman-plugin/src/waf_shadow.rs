@@ -107,15 +107,6 @@ impl ShadowCounters {
     }
 }
 
-/// Snapshot of the shadow counters (metrics / diagnostics).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ShadowStats {
-    pub checked: u64,
-    pub agree: u64,
-    pub stricter: u64,
-    pub weaker: u64,
-}
-
 struct ShadowRuntime {
     mode: EngineMode,
     pipeline: SecurityPipeline,
@@ -144,25 +135,9 @@ fn shadow_enabled_from_env() -> bool {
     enabled
 }
 
-/// `true` when the pipeline runs (shadow or enforce mode).
-pub fn is_enabled() -> bool {
-    SHADOW.mode != EngineMode::Legacy
-}
-
 /// The engine mode this process was started with.
 pub fn engine_mode() -> EngineMode {
     SHADOW.mode
-}
-
-/// Current counter values.
-pub fn stats() -> ShadowStats {
-    let counters = &SHADOW.counters;
-    ShadowStats {
-        checked: counters.checked.load(Ordering::Relaxed),
-        agree: counters.agree.load(Ordering::Relaxed),
-        stricter: counters.stricter.load(Ordering::Relaxed),
-        weaker: counters.weaker.load(Ordering::Relaxed),
-    }
 }
 
 /// Resolve the engine mode for one request: an explicit per-site value wins
@@ -216,14 +191,6 @@ pub fn analyze(
         });
     }
     Some(verdict)
-}
-
-/// Run the shadow comparison for one inspected request.
-///
-/// No-op unless the pipeline runs; never affects the returned verdict or any
-/// response.
-pub fn observe(request: &RequestData, legacy: &WafVerdict) {
-    let _ = analyze(request, legacy, engine_mode(), &[], None);
 }
 
 /// The enforcing verdict in [`EngineMode::Varman`] mode: the stronger of the

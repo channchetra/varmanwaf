@@ -297,7 +297,7 @@ mod csrf;
 mod directory;
 mod forward_auth;
 pub mod geo;
-#[cfg(feature = "geo")]
+#[cfg(feature = "geo-restriction")]
 mod geo_restriction;
 mod ip_restriction;
 mod jwt;

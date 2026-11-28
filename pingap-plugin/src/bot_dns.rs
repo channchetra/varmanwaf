@@ -24,7 +24,7 @@ use tracing::{debug, warn};
 
 /// Well-known crawler families: the user-agent token and the DNS zones the
 /// operator's crawlers reverse-resolve into. Custom whitelist entries stay
-/// out of this table ΓÇö user-agent matching remains their only signal.
+/// out of this table — user-agent matching remains their only signal.
 const KNOWN_BOT_FAMILIES: &[(&str, &[&str])] = &[
     ("googlebot", &["googlebot.com", "google.com"]),
     ("bingbot", &["search.msn.com"]),
@@ -86,7 +86,7 @@ impl DnsVerdict {
 }
 
 /// Cached verdict entry. Shared behind an `Arc` so an expired hit can be
-/// refreshed in place ΓÇö TinyUfo has no removal, and replacing the value
+/// refreshed in place — TinyUfo has no removal, and replacing the value
 /// would leave other holders with a stale verdict.
 struct CacheEntry {
     expires_at_ms: AtomicU64,

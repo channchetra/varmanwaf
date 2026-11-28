@@ -51,7 +51,7 @@ struct AsyncLoggerWriterParams {
     flush_timeout: Option<Duration>,
 }
 
-pub async fn new_async_logger(
+pub fn new_async_logger(
     path: &str,
 ) -> Result<(Sender<BytesMut>, AsyncLoggerTask)> {
     let original_path = path.to_string();
@@ -210,7 +210,6 @@ mod tests {
             "{}?flush_timeout=60s",
             path.to_string_lossy()
         ))
-        .await
         .unwrap();
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -256,7 +255,6 @@ mod tests {
             "{}?flush_timeout=soon",
             path.to_string_lossy()
         ))
-        .await
         .err()
         .expect("error")
         .to_string();

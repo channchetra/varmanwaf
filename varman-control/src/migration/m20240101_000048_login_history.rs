@@ -1,7 +1,7 @@
 //! Adds the `login_history` table.
 //!
 //! One row per successful control-plane login (password and passkey), with
-//! the resolved client IP and ΓÇö best effort ΓÇö its geolocation. The anomaly
+//! the resolved client IP and — best effort — its geolocation. The anomaly
 //! detector compares a login's country against the most recent resolved
 //! entries of the same account, and the dashboard reads the rows back for
 //! the login audit view.

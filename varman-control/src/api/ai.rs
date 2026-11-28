@@ -405,7 +405,8 @@ async fn list_conversations(
     current: AuthUser,
     Query(pagination): Query<Pagination>,
 ) -> Result<Json<Page<ConversationSummary>>, ApiError> {
-    let p = pagination.normalise();
+    current.require_admin().map_err(ApiError::from)?;
+    let p = pagination.normalize();
 
     let query = ai_conversation::Entity::find()
         .filter(ai_conversation::Column::UserId.eq(current.id))
@@ -427,6 +428,7 @@ async fn create_conversation(
     current: AuthUser,
     body: Option<Json<CreateConversationRequest>>,
 ) -> Result<(StatusCode, Json<ConversationSummary>), ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
     require_password_changed(&current)?;
     ai_rate_limit::check_user_limit("ai_create", current.id)?;
 
@@ -461,6 +463,7 @@ async fn show_conversation(
     current: AuthUser,
     Path(id): Path<String>,
 ) -> Result<Json<ConversationDetail>, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
     let conversation_id = parse_uuid(&id, "conversation id")?;
     let conversation =
         load_conversation(&state, &current, conversation_id).await?;
@@ -490,6 +493,7 @@ async fn delete_conversation(
     current: AuthUser,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
     require_password_changed(&current)?;
     let conversation_id = parse_uuid(&id, "conversation id")?;
     let conversation =
@@ -550,6 +554,7 @@ async fn send_message(
     headers: HeaderMap,
     Json(payload): Json<SendMessageRequest>,
 ) -> Result<Response, ApiError> {
+    current.require_admin().map_err(ApiError::from)?;
     require_password_changed(&current)?;
     ai_rate_limit::check_user_limit("ai_chat", current.id)?;
     let conversation_id = parse_uuid(&id, "conversation id")?;

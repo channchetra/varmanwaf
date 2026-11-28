@@ -22,6 +22,7 @@
 
 pub mod canonical;
 pub mod engine;
+pub mod html;
 pub mod normalize;
 pub mod pipeline;
 pub mod processor;

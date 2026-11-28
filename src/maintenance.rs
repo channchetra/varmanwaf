@@ -37,7 +37,7 @@ use varman_control::api::defense;
 use varman_control::api::self_protection::{self, effective_allowlist};
 use varman_control::auth::password::{MAX_PASSWORD_BYTES, validate_password};
 use varman_control::config_history::{self, VersionScope};
-use varman_control::email::normalise_email;
+use varman_control::email::normalize_email;
 use varman_control::models::{
     api_protection_setting, config_version, defense_settings, ip_groups, role,
     site, user,
@@ -164,7 +164,7 @@ async fn list_users(db: DbOpts) -> anyhow::Result<()> {
 
 async fn add_admin(opts: AddAdminOpts) -> anyhow::Result<()> {
     let db = connect(&opts.db.db_url).await?;
-    let email = normalise_email(&opts.email)?;
+    let email = normalize_email(&opts.email)?;
     let (password, generated) = resolve_password(&opts.password)?;
 
     let existing = user::Entity::find()
@@ -207,7 +207,7 @@ async fn add_admin(opts: AddAdminOpts) -> anyhow::Result<()> {
 
 async fn reset_password(opts: ResetPasswordOpts) -> anyhow::Result<()> {
     let db = connect(&opts.db.db_url).await?;
-    let email = normalise_email(&opts.email)?;
+    let email = normalize_email(&opts.email)?;
     let (password, generated) = resolve_password(&opts.password)?;
 
     let Some(row) = user::Entity::find()
@@ -645,20 +645,20 @@ mod tests {
     #[test]
     fn emails_are_lowercased_and_validated_like_the_api() {
         assert_eq!(
-            normalise_email("  Ops@Example.COM ").unwrap(),
+            normalize_email("  Ops@Example.COM ").unwrap(),
             "ops@example.com"
         );
-        assert!(normalise_email("no-at-sign").is_err());
-        assert!(normalise_email("user@nodot").is_err());
-        assert!(normalise_email("@example.com").is_err());
-        assert!(normalise_email("user@.example.com").is_err());
-        assert!(normalise_email("user@example.com.").is_err());
+        assert!(normalize_email("no-at-sign").is_err());
+        assert!(normalize_email("user@nodot").is_err());
+        assert!(normalize_email("@example.com").is_err());
+        assert!(normalize_email("user@.example.com").is_err());
+        assert!(normalize_email("user@example.com.").is_err());
         // The local-part cap the CLI used to omit.
         assert!(
-            normalise_email(&format!("{}@example.com", "a".repeat(65)))
+            normalize_email(&format!("{}@example.com", "a".repeat(65)))
                 .is_err()
         );
-        assert!(normalise_email(&format!("user@{}", "a".repeat(255))).is_err());
+        assert!(normalize_email(&format!("user@{}", "a".repeat(255))).is_err());
     }
 
     #[test]

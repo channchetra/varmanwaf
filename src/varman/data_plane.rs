@@ -14,7 +14,7 @@ use varman_agent::cache::RuleCache;
 use crate::config_apply::{
     ApplyOptions, ApplyOutcome, apply_config, commit_if_applied,
 };
-use crate::config_manager::try_init_memory_config_manager;
+use crate::config_manager::build_memory_config_manager;
 use crate::data_plane::{DataPlaneOptions, assemble};
 
 use super::acme::{
@@ -56,7 +56,7 @@ pub(super) async fn start_data_plane(
         },
     };
 
-    let site_count = config
+    let location_count = config
         .servers
         .values()
         .flat_map(|s| s.locations.as_deref().unwrap_or_default())
@@ -65,8 +65,8 @@ pub(super) async fn start_data_plane(
         upstreams = config.upstreams.len(),
         locations = config.locations.len(),
         certificates = config.certificates.len(),
-        "data plane: starting reverse proxy with {} site(s)",
-        site_count,
+        "data plane: starting reverse proxy with {} location(s)",
+        location_count,
     );
 
     // Serialize to TOML and create a memory-backed config manager. The
@@ -82,7 +82,7 @@ pub(super) async fn start_data_plane(
         &std::fs::read_to_string(&acme_state).unwrap_or_default(),
     );
     let config_manager =
-        try_init_memory_config_manager(&toml_str, Some(acme_state)).map_err(
+        build_memory_config_manager(&toml_str, Some(acme_state)).map_err(
             |e| anyhow::anyhow!("failed to init config manager: {}", e),
         )?;
 
@@ -115,7 +115,7 @@ pub(super) async fn start_data_plane(
             upgrade: false,
             threads: None,
             admin_plugin: None,
-            background_tasks: Some("data_plane_background_tasks"),
+            background_task_service_name: Some("data_plane_background_tasks"),
             admin_only: false,
         },
     )?;
@@ -207,10 +207,9 @@ pub(super) async fn start_data_plane(
     // never registered leaves runtime-created orders unprocessed - the row
     // sits `pending` and the stale sweeper eventually fails it with a
     // generic reason. With no ACME certificates the task is a cheap no-op.
-    // PINGAP_DISABLE_ACME opts out entirely.
-    let acme_enabled = std::env::var("PINGAP_DISABLE_ACME")
-        .unwrap_or_default()
-        .is_empty();
+    // VARMAN_DISABLE_ACME (or the legacy PINGAP_DISABLE_ACME) opts out
+    // entirely.
+    let acme_enabled = crate::acme_enabled();
     let mut background_tasks = assembled
         .background_tasks
         .take()

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_step_conf_in};
+use super::{Error, get_hash_key, get_step_conf_in, redacted_params};
 use async_trait::async_trait;
 use http::HeaderName;
 use nanoid::nanoid;
@@ -133,7 +133,7 @@ impl RequestId {
     /// # Returns
     /// * `Result<RequestId>` - The created plugin instance or an error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new request id plugin");
+        debug!(params = redacted_params(params), "new request id plugin");
         Self::try_from(params)
     }
 }

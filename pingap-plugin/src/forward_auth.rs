@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, parse_params};
+use super::{Error, get_hash_key, parse_params, redacted_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, StatusCode};
@@ -124,7 +124,7 @@ impl TryFrom<&PluginConf> for ForwardAuth {
 
 impl ForwardAuth {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new forward auth plugin");
+        debug!(params = redacted_params(params), "new forward auth plugin");
         Self::try_from(params)
     }
 }

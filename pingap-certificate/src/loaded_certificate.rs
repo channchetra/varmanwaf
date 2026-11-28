@@ -126,16 +126,16 @@ mod imp {
 
     /// The process-wide rustls crypto provider, installed on first use.
     ///
-    /// pingap's ACME client and JWT plugin already link aws-lc-rs, so that is
-    /// what gets installed; pingora's later attempt to install ring is then a
-    /// no-op and the whole process shares one provider.
+    /// The binary installs ring before any listener starts; this fallback
+    /// names the same provider so a library-only consumer cannot end up with
+    /// a different one.
     fn crypto_provider() -> Arc<CryptoProvider> {
         if let Some(provider) = CryptoProvider::get_default() {
             return provider.clone();
         }
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let _ = rustls::crypto::ring::default_provider().install_default();
         CryptoProvider::get_default().cloned().unwrap_or_else(|| {
-            Arc::new(rustls::crypto::aws_lc_rs::default_provider())
+            Arc::new(rustls::crypto::ring::default_provider())
         })
     }
 

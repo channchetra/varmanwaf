@@ -12,25 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config_apply::ProviderUpdate;
+use crate::config_apply::{ProviderUpdate, invalid_error};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use pingap_config::Error;
 use pingap_config::{Hashable, LocationConf};
 use pingap_location::{Location, LocationProvider, LocationStats, Locations};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, String>;
-
-/// The construction failure in the wording the callers have always logged
-/// (`Error::Invalid`'s display).
-fn invalid_error(error: impl std::fmt::Display) -> String {
-    Error::Invalid {
-        message: error.to_string(),
-    }
-    .to_string()
-}
 
 /// One owner's location registry. Constructed per data plane, never shared.
 pub struct Provider {
@@ -51,7 +41,7 @@ impl Provider {
 
     /// Initializes or updates the locations of this provider.
     /// Returns the names of the locations that were updated
-    pub fn init_locations(
+    pub fn replace_locations(
         &self,
         location_configs: &HashMap<String, LocationConf>,
     ) -> Result<ProviderUpdate> {
@@ -103,7 +93,6 @@ impl LocationProvider for Provider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::lock_providers;
 
     fn config(path: Option<&str>) -> HashMap<String, LocationConf> {
         HashMap::from([(
@@ -117,11 +106,10 @@ mod tests {
 
     #[test]
     fn a_new_location_is_reported_as_updated() {
-        let _guard = lock_providers();
         // Act
         let provider = Provider::new();
         let update = provider
-            .init_locations(&config(Some("/api")))
+            .replace_locations(&config(Some("/api")))
             .expect("a valid path");
 
         // Assert
@@ -134,11 +122,10 @@ mod tests {
 
     #[test]
     fn an_unparseable_location_is_a_fatal_error() {
-        let _guard = lock_providers();
         // Act: a broken regex path cannot be built.
         let provider = Provider::new();
         let error = provider
-            .init_locations(&config(Some("~(")))
+            .replace_locations(&config(Some("~(")))
             .expect_err("an invalid path pattern must fail the rebuild");
 
         // Assert: the failure is the `Err`, not a per-entry error.

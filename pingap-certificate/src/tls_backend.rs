@@ -18,12 +18,12 @@ use std::collections::HashMap;
 #[cfg(feature = "tls-rustls")]
 use std::sync::Once;
 
-/// Installs the process-wide rustls crypto provider (`aws-lc-rs`).
+/// Installs the process-wide rustls crypto provider (`ring`).
 ///
 /// No-op for the OpenSSL backend. Safe to call more than once; a later call
 /// is ignored if another provider already won the race. Call early in `main`
 /// before ACME or any other rustls user can install a different provider
-/// (e.g. ring).
+/// (for example aws-lc-rs, which the JWT/ACME dependencies also link).
 pub fn install_default_crypto_provider() {
     #[cfg(feature = "tls-rustls")]
     {

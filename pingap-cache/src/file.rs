@@ -382,7 +382,7 @@ impl FileCache {
     /// holds. The walk used to be repeated for every single file evicted,
     /// which on a large directory made one over-budget write cost dozens
     /// of full walks.
-    async fn ensure_disk_space(&self, need: u64) -> bool {
+    async fn ensure_disk_space(&self, need: u64, target: &Path) -> bool {
         if !self.has_budget() {
             return true;
         }
@@ -416,6 +416,12 @@ impl FileCache {
         for file in files {
             if !over(need) {
                 break;
+            }
+            // The caller is about to replace this file; its current length is
+            // already accounted for by the `track_written(old_len, new_len)`
+            // after the rename, so evicting it here would subtract it twice.
+            if file.path == target {
+                continue;
             }
             match fs::remove_file(&file.path).await {
                 Ok(()) => {
@@ -624,7 +630,7 @@ impl HttpCacheStorage for FileCache {
         // Account for overwriting an existing object so the budget stays honest.
         let old_len = self.tracked_len(&file).await;
         if !self
-            .ensure_disk_space(new_len.saturating_sub(old_len))
+            .ensure_disk_space(new_len.saturating_sub(old_len), &file)
             .await
         {
             debug!(
@@ -1274,6 +1280,41 @@ mod tests {
         };
         cache.put("small", b"", small.clone()).await.unwrap();
         assert_eq!(true, hot.get("small").is_some());
+    }
+
+    /// Overwriting a key that is itself the LRU victim must not subtract the
+    /// old object twice: the byte counter must still equal what is on disk.
+    #[tokio::test]
+    async fn overwriting_the_eviction_victim_keeps_the_budget_honest() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        let cache = FileCache::new(&format!("{path}?max_size=1600")).unwrap();
+        let object = |size: usize| CacheObject {
+            meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
+            body: Bytes::from(vec![0; size]),
+        };
+
+        // `target` is written first, so it is the least recently used when
+        // the larger rewrite needs room.
+        cache.put("target", b"", object(880)).await.unwrap();
+        cache.put("other", b"", object(480)).await.unwrap();
+        let target_len =
+            cache.tracked_len(&cache.get_file_path("target", "")).await;
+        let other_len =
+            cache.tracked_len(&cache.get_file_path("other", "")).await;
+        assert_eq!(
+            target_len + other_len,
+            cache.current_size.load(Ordering::Relaxed)
+        );
+
+        cache.put("target", b"", object(1180)).await.unwrap();
+        let new_len =
+            cache.tracked_len(&cache.get_file_path("target", "")).await;
+
+        // The old target was skipped during eviction, so the counter is the
+        // surviving file's length, not zero plus the new target.
+        assert_eq!(new_len, cache.current_size.load(Ordering::Relaxed));
+        assert_eq!(true, cache.get("target", b"").await.unwrap().is_some());
     }
 
     #[test]

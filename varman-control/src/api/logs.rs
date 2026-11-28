@@ -312,7 +312,7 @@ async fn list_security(
 ) -> Result<Json<Page<security_event::Model>>, ApiError> {
     let scope = resolve_scope(&state.db, &query.site_id, &current).await?;
     let (from, to) = resolve_window(&query.from, &query.to)?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
     let unassigned = check_unassigned(query.unassigned, &query.site_id)?;
 
     let mut condition = Condition::all()
@@ -387,7 +387,7 @@ async fn list_access(
 ) -> Result<Json<Page<access_log::Model>>, ApiError> {
     let scope = resolve_scope(&state.db, &query.site_id, &current).await?;
     let (from, to) = resolve_window(&query.from, &query.to)?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
     let unassigned = check_unassigned(query.unassigned, &query.site_id)?;
 
     let mut condition = Condition::all()

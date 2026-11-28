@@ -22,6 +22,7 @@ use pingap_core::{
     Ctx, HttpResponse, PluginStep, RequestPluginResult, get_hostname,
 };
 use pingap_performance::{get_process_system_info, get_processing_accepted};
+use pingap_plugin::redacted_params;
 use pingap_plugin::{Error, get_plugin_factory};
 use pingora::proxy::Session;
 use serde::Serialize;
@@ -128,7 +129,7 @@ impl Stats {
     ///
     /// Returns a Result containing the Stats plugin instance or an error
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(target: LOG_TARGET, params = params.to_string(), "new stats plugin");
+        debug!(target: LOG_TARGET, params = redacted_params(params), "new stats plugin");
         Self::try_from(params)
     }
 }
@@ -149,8 +150,9 @@ impl Plugin for Stats {
     ///
     /// # Returns
     ///
-    /// Returns a Result containing an optional HTTP response. Returns Some(response)
-    /// when the request matches the stats path, None otherwise.
+    /// `Skipped` when the step or path does not match, `Respond` with the
+    /// JSON stats payload when it does, and `Err` if that payload cannot be
+    /// serialised.
     #[inline]
     async fn handle_request(
         &self,

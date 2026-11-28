@@ -3,7 +3,7 @@
 //! Accounts are created and passwords reset from three places: the REST API
 //! ([`crate::api::auth`], [`crate::api::users`]), the administrator seed at
 //! boot ([`crate::seed_admin`]) and the `varman user` maintenance commands.
-//! Address normalisation, bcrypt hashing, the forced-change flag and the
+//! Address normalization, bcrypt hashing, the forced-change flag and the
 //! token-version bump live here so those callers cannot drift apart.
 
 use std::fmt;
@@ -13,7 +13,7 @@ use sea_orm::{ActiveModelTrait, ConnectionTrait, DbErr, EntityTrait, Set};
 use uuid::Uuid;
 
 use crate::auth::password::{hash_password, PasswordError};
-use crate::email::{normalise_email, InvalidEmail};
+use crate::email::{normalize_email, InvalidEmail};
 use crate::models::{role, user};
 
 /// Failure of a shared account write.
@@ -62,7 +62,7 @@ impl std::error::Error for UserWriteError {
 
 /// Creates an enabled account with a hashed password.
 ///
-/// The address is normalised with [`crate::email::normalise_email`], so the
+/// The address is normalized with [`crate::email::normalize_email`], so the
 /// caller may pass it as typed. `must_change_password` stays per caller: the
 /// administrator-created account, the seeded administrator and the maintenance
 /// CLI force a replacement at first sign-in, while self-registration passes
@@ -92,7 +92,7 @@ fn new_user(
     if !role::is_valid(role_name) {
         return Err(UserWriteError::UnknownRole(role_name.to_string()));
     }
-    let email = normalise_email(email).map_err(UserWriteError::InvalidEmail)?;
+    let email = normalize_email(email).map_err(UserWriteError::InvalidEmail)?;
     let password_hash =
         hash_password(password).map_err(UserWriteError::Password)?;
     let timestamp = Utc::now();
@@ -263,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn creation_normalises_the_address_and_hashes_the_password() {
+    fn creation_normalizes_the_address_and_hashes_the_password() {
         let active = new_user(
             "  Ops@Example.COM ",
             "correct horse battery",

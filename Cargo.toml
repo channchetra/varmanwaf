@@ -31,7 +31,6 @@ unwrap_used = "deny"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-substring = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
@@ -73,7 +72,7 @@ pingap-util = { workspace = true }
 pingap-webhook = { workspace = true }
 varman-control = { path = "varman-control" }
 varman-agent = { path = "varman-agent" }
-varman-plugin = { path = "varman-plugin" }
+varman-plugin = { workspace = true }
 varman-pprof = { workspace = true }
 anyhow = { workspace = true }
 pingora = { workspace = true }
@@ -126,7 +125,9 @@ tls-rustls = [
 ]
 pyro = ["pingap-pyroscope"]
 imageoptim = ["pingap-imageoptim"]
-geo = ["pingap-plugin/geo"]
+geo-restriction = ["pingap-plugin/geo-restriction"]
+# Backwards-compatible alias for the old name.
+geo = ["geo-restriction"]
 tracing = [
     "pingora/sentry",
     "pingap-cache/tracing",
@@ -274,7 +275,6 @@ members = [
 version = "1.5.0"
 
 [workspace.dependencies]
-substring = "1.4.5"
 aes-gcm-siv = { version = "0.12.1", default-features = false, features = [
     "aes",
     "alloc",
@@ -315,8 +315,6 @@ hex = "0.4.3"
 hickory-resolver = "0.26.3"
 http = "1.5.0"
 hmac = "0.13.0"
-hmac-sha256 = "1.1.14"
-hmac-sha512 = { version = "1.1.12", default-features = false }
 hostname = "0.4.2"
 humantime = "2.4.0"
 humantime-serde = "1.1.1"
@@ -389,8 +387,16 @@ reqwest = { version = "0.13.5", default-features = false, features = [
     "json",
     "default-tls",
 ] }
-rustls = "0.23.40"
+# The workspace uses ring everywhere; rustls' default aws-lc-rs provider is
+# deliberately disabled so one crypto provider is linked.
+rustls = { version = "0.23.40", default-features = false, features = [
+    "ring",
+    "logging",
+    "std",
+    "tls12",
+] }
 rustls-pemfile = "2"
+rust-embed = { version = "8.12.0", default-features = false }
 rustls-pki-types = "1.15.1"
 rustc_version_runtime = "0.3.0"
 scopeguard = "1.2.0"
@@ -471,7 +477,6 @@ bcrypt = "0.19"
 # `google.protobuf.Timestamp` fields would no longer be the type callers pass in.
 prost = "0.14"
 prost-types = "0.14"
-rhai = "1"
 # `sea-orm` has no `migrate` feature: the migration runner lives in the
 # separate `sea-orm-migration` crate, which re-exports the derive macros the
 # migration modules need. Both crates must stay on the same minor version so

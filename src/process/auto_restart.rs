@@ -15,7 +15,7 @@
 use super::restart;
 use crate::config_apply::{self, ApplyOptions, ApplyOutcome};
 use crate::data_plane::ProviderSet;
-use crate::plugin::AdminPlugin;
+use crate::plugin::AdminPluginEntry;
 use crate::webhook::send_notification;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_trait::async_trait;
@@ -31,7 +31,7 @@ use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{debug, error, info};
@@ -97,7 +97,7 @@ async fn diff_and_update_config(
     config_manager: Arc<ConfigManager>,
     last_seen: &LastSeenCell,
     hot_reload_only: bool,
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
     providers: &ProviderSet,
 ) -> Result<Option<PingapConfig>, Box<dyn std::error::Error>> {
     let raw = config_manager.load_all_raw().await?;
@@ -108,7 +108,7 @@ async fn diff_and_update_config(
     }
     let new_config =
         PingapTomlConfig::from_toml(&raw)?.to_pingap_config(true)?;
-    let restart_requested = apply_config(
+    let restart_requested = apply_daemon_config(
         config_manager,
         &new_config,
         hot_reload_only,
@@ -142,11 +142,11 @@ async fn diff_and_update_config(
 ///    triggers a full server restart
 ///
 /// Returns whether a restart was requested.
-async fn apply_config(
+async fn apply_daemon_config(
     config_manager: Arc<ConfigManager>,
     new_config: &PingapConfig,
     hot_reload_only: bool,
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
     providers: &ProviderSet,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     new_config.validate()?;
@@ -248,15 +248,13 @@ struct AutoRestart {
     restart_unit: u32,
     /// If true, only perform hot reloads and never restart
     hot_reload_only: bool,
-    /// Tracks if currently performing a hot reload
-    running_hot_reload: AtomicBool,
     config_manager: Arc<ConfigManager>,
     log_reload_handle: LoggerReloadHandle,
     current_log_level: ArcSwap<String>,
     /// Re-registered with every plugin rebuild, or the admin listener would
     /// lose its plugin after the first reload. The rebuild gets this
     /// watcher's `config_manager` for it.
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
     /// The registries this watcher reloads. Owned, so a second plane or a
     /// test never shares them.
     providers: ProviderSet,
@@ -264,13 +262,18 @@ struct AutoRestart {
     last_seen: LastSeenCell,
 }
 
-/// Creates a new auto-restart service that checks for config changes periodically
+/// Creates a new auto-restart service that checks for config changes
+/// periodically.
+///
+/// The service ticks at most every 10 seconds (and at `interval` when that is
+/// shorter); `restart_unit` keeps a full-restart opportunity on the original
+/// cadence even then.
 pub fn new_auto_restart_service(
     config_manager: Arc<ConfigManager>,
     log_reload_handle: LoggerReloadHandle,
     interval: Duration,
     hot_reload_only: bool,
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
     providers: ProviderSet,
 ) -> BackgroundTaskService {
     let mut restart_unit = 1_u32;
@@ -289,7 +292,6 @@ pub fn new_auto_restart_service(
     let task = Box::new(AutoRestart {
         log_reload_handle,
         config_manager,
-        running_hot_reload: AtomicBool::new(false),
         hot_reload_only,
         restart_unit,
         current_log_level: ArcSwap::from_pointee(current_log_level),
@@ -322,7 +324,7 @@ pub struct ConfigObserverService {
     /// If true, only perform hot reloads when changes detected
     hot_reload_only: bool,
     /// Re-registered with every plugin rebuild, like the polling service.
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
     /// The registries this watcher reloads. Owned, never shared.
     providers: ProviderSet,
     delay: AtomicU32,
@@ -333,12 +335,15 @@ pub struct ConfigObserverService {
 const MIN_DELAY: u32 = 500;
 const MAX_DELAY: u32 = 60 * 1000;
 
+/// Creates the push-driven watcher used by storage backends that support
+/// observation (etcd). It reacts to the backend's watch stream and has no
+/// polling cadence of its own; `interval` is only the fallback tick.
 pub fn new_observer_service(
     config_manager: Arc<ConfigManager>,
     log_reload_handle: LoggerReloadHandle,
     interval: Duration,
     hot_reload_only: bool,
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
     providers: ProviderSet,
 ) -> ConfigObserverService {
     let current_log_level = config_manager
@@ -456,7 +461,7 @@ async fn run_diff_and_update_config(
     config_manager: Arc<ConfigManager>,
     last_seen: &LastSeenCell,
     hot_reload_only: bool,
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
     providers: &ProviderSet,
 ) -> Option<PingapConfig> {
     match diff_and_update_config(
@@ -497,8 +502,6 @@ impl BackgroundTask for AutoRestart {
         let hot_reload_only = self.hot_reload_only
             || count == 0
             || !count.is_multiple_of(self.restart_unit);
-        self.running_hot_reload
-            .store(hot_reload_only, Ordering::Relaxed);
         if let Some(new_config) = run_diff_and_update_config(
             self.config_manager.clone(),
             &self.last_seen,
@@ -556,7 +559,6 @@ mod tests {
     use pingap_logger::{LoggerReloadHandle, new_env_filter};
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
 
     /// A watcher with its own memo. The reload handle is never used: the test
     /// exercises the handled-document memo, not a log-level reload.
@@ -566,7 +568,6 @@ mod tests {
         AutoRestart {
             restart_unit: 1,
             hot_reload_only: false,
-            running_hot_reload: AtomicBool::new(false),
             config_manager,
             log_reload_handle,
             current_log_level: ArcSwap::from_pointee(String::new()),

@@ -19,7 +19,6 @@ bstr = { workspace = true }
 bytesize = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
-fancy-regex = { workspace = true }
 tera = { workspace = true }
 humantime = { workspace = true }
 http = { workspace = true }

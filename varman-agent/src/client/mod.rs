@@ -128,7 +128,7 @@ pub struct ControlPlaneClient {
 impl ControlPlaneClient {
     /// Create a new control plane client.
     ///
-    /// The client does not connect immediately ΓÇö call `connect()` or `start()` to begin.
+    /// The client does not connect immediately — call `connect()` or `start()` to begin.
     pub fn new(
         config: AgentConfig,
         rule_cache: Arc<RuleCache>,
@@ -594,8 +594,8 @@ impl ControlPlaneClient {
     ) -> anyhow::Result<()> {
         let mut client = proto_client(channel);
 
-        // The control plane decides the heartbeat cadence ΓÇö its staleness
-        // thresholds are derived from the same value ΓÇö so the interval it
+        // The control plane decides the heartbeat cadence — its staleness
+        // thresholds are derived from the same value — so the interval it
         // handed down at registration wins; the local setting only applies
         // when the server did not send one.
         let heartbeat_interval = effective_heartbeat_interval(
@@ -1142,7 +1142,7 @@ impl ControlPlaneClient {
 // Helper functions for system information
 // ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
-/// Attaches the agent token as `x-agent-token` metadata ΓÇö the transport-level
+/// Attaches the agent token as `x-agent-token` metadata — the transport-level
 /// credential the control plane authenticates the shipping streams with (the
 /// ship message bodies carry no token field).
 fn attach_agent_token<T>(
@@ -1158,7 +1158,7 @@ fn attach_agent_token<T>(
 
 /// Enables TLS for `https://` server URLs.
 ///
-/// `Endpoint::from_shared` does not do this on its own ΓÇö without the explicit
+/// `Endpoint::from_shared` does not do this on its own — without the explicit
 /// config the agent would speak cleartext h2 into a TLS port. With inline CA
 /// PEM (all-in-one) or a configured CA file that material is the only trust
 /// anchor; otherwise the bundled webpki roots apply.
@@ -1199,8 +1199,8 @@ fn apply_client_tls(
 /// Doubles the current reconnect backoff, capped at the configured maximum,
 /// then shrinks it to a random point in the lower half of that value.
 ///
-/// The jitter stops a fleet of agents that lost the control plane together ΓÇö
-/// a deploy, a network blip ΓÇö from reconnecting in a lockstep burst every
+/// The jitter stops a fleet of agents that lost the control plane together —
+/// a deploy, a network blip — from reconnecting in a lockstep burst every
 /// `reconnect_max_delay_ms`.
 fn next_backoff(current_ms: u64, max_ms: u64) -> u64 {
     let capped = current_ms.saturating_mul(2).min(max_ms);
@@ -1397,7 +1397,7 @@ mod tests {
     #[test]
     fn inline_ca_pem_wins_over_the_file() {
         let endpoint = Endpoint::from_shared("https://127.0.0.1:9090").unwrap();
-        // `Certificate::from_pem` is lazy ΓÇö validity is checked at handshake ΓÇö
+        // `Certificate::from_pem` is lazy — validity is checked at handshake —
         // so an unusable inline PEM still configures successfully. The point
         // of the test: the (missing) CA file is never read, proving the inline
         // material takes precedence.
@@ -1442,7 +1442,7 @@ mod tests {
 
     #[test]
     fn backoff_doubles_is_capped_and_jittered() {
-        // Each step lands in [50%, 100%] of the doubled-and-capped value ΓÇö
+        // Each step lands in [50%, 100%] of the doubled-and-capped value —
         // still exponential, but a fleet of agents never reconnects in
         // lockstep.
         for _ in 0..100 {

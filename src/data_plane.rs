@@ -168,7 +168,7 @@ pub struct DataPlaneOptions {
     /// and the agent-hosted plane have always reported different names and
     /// both are kept. `None` for the `--cp` admin node, which runs no
     /// data-plane loop.
-    pub background_tasks: Option<&'static str>,
+    pub background_task_service_name: Option<&'static str>,
     /// The `--cp` control-panel node: it serves the admin plugin only and
     /// loads no configuration, so it keeps pingora's built-in server
     /// configuration (its own pid file and upgrade socket) instead of one
@@ -277,22 +277,22 @@ pub fn assemble(
     let providers = ProviderSet::new();
     providers
         .upstreams
-        .init_upstreams(&config.upstreams, Some(get_webhook_sender()))
+        .replace_upstreams(&config.upstreams, Some(get_webhook_sender()))
         .map_err(|e| anyhow::anyhow!("failed to init upstreams: {e}"))?;
     providers
         .locations
-        .init_locations(&config.locations)
+        .replace_locations(&config.locations)
         .map_err(|e| anyhow::anyhow!("failed to init locations: {e}"))?;
     providers
         .server_locations
-        .init_server_locations(
+        .replace_server_locations(
             providers.locations.as_ref(),
             &config.servers,
             &config.locations,
         )
         .map_err(|e| anyhow::anyhow!("failed to init server locations: {e}"))?;
 
-    let plugins = providers.plugins.init_plugins(
+    let plugins = providers.plugins.replace_plugins(
         &config.plugins,
         options.admin_plugin,
         config_manager.clone(),
@@ -306,7 +306,7 @@ pub fn assemble(
     } else {
         providers
             .certificates
-            .update_certificates(&config.certificates)
+            .replace_certificates(&config.certificates)
             .map_err(|e| anyhow::anyhow!("failed to init certificates: {e}"))?
     };
 
@@ -330,7 +330,7 @@ pub fn assemble(
         server::Server::new_with_opt_and_conf(Some(opt), server_conf);
     let bootstrap = server.bootstrap_as_a_service();
 
-    let background_tasks = options.background_tasks.map(|name| {
+    let background_tasks = options.background_task_service_name.map(|name| {
         let mut tasks = BackgroundTaskService::new(
             name,
             BACKGROUND_TASK_INTERVAL,
@@ -417,7 +417,7 @@ mod tests {
         let second = ProviderSet::new();
         first
             .locations
-            .init_locations(&HashMap::from([(
+            .replace_locations(&HashMap::from([(
                 "provider-set-local".to_string(),
                 LocationConf {
                     path: Some("/local".to_string()),
@@ -446,7 +446,7 @@ mod tests {
                 upgrade: false,
                 threads: Some(3),
                 admin_plugin: None,
-                background_tasks: Some("test_background_service"),
+                background_task_service_name: Some("test_background_service"),
                 admin_only: false,
             },
         )
@@ -477,7 +477,7 @@ mod tests {
                 upgrade: false,
                 threads: None,
                 admin_plugin: None,
-                background_tasks: None,
+                background_task_service_name: None,
                 admin_only: true,
             },
         )

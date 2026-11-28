@@ -296,7 +296,7 @@ pub mod tls_version {
     }
 
     /// Canonicalises `TLSv1.2`, `tls1.2` and `1.2` to `1.2`.
-    pub fn normalise(value: &str) -> Option<String> {
+    pub fn normalize(value: &str) -> Option<String> {
         let lower = value.trim().to_ascii_lowercase();
         let stripped = lower
             .strip_prefix("tlsv")

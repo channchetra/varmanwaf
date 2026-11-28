@@ -747,11 +747,11 @@ fn download_filename(name: &str) -> String {
 mod tests {
     use super::*;
     use crate::pki::mtls::{
-        normalise_fingerprint, CertMeta, MAX_CA_DAYS, MAX_CLIENT_CERT_DAYS,
+        normalize_fingerprint, CertMeta, MAX_CA_DAYS, MAX_CLIENT_CERT_DAYS,
     };
 
     #[test]
-    fn labels_are_normalised_and_guarded() {
+    fn labels_are_normalized_and_guarded() {
         assert_eq!(
             validate_label("  laptop  ", "name", 200).unwrap(),
             "laptop"
@@ -781,7 +781,7 @@ mod tests {
         assert!(meta.is_ca);
         assert_eq!(meta.fingerprint_sha256, material.meta.fingerprint_sha256);
         assert_eq!(
-            normalise_fingerprint(&meta.fingerprint_sha256),
+            normalize_fingerprint(&meta.fingerprint_sha256),
             meta.fingerprint_sha256
         );
     }

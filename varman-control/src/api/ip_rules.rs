@@ -132,15 +132,13 @@ fn validate_ip_ranges(ranges: &[String]) -> Result<Vec<String>, ApiError> {
         if trimmed.is_empty() {
             continue;
         }
-        // Basic validation: must look like an IP or CIDR
-        let base = trimmed.split('/').next().unwrap_or(trimmed);
-        if base.parse::<std::net::IpAddr>().is_err() {
+        let Some(range) = crate::api::common::parse_ip_range(trimmed) else {
             return Err(ApiError::BadRequest(format!(
                 "invalid IP address or CIDR: '{trimmed}'"
             )));
-        }
-        if !out.contains(&trimmed.to_string()) {
-            out.push(trimmed.to_string());
+        };
+        if !out.contains(&range) {
+            out.push(range);
         }
     }
     if out.is_empty() {
@@ -254,7 +252,7 @@ async fn list(
 ) -> Result<Json<Page<IpRuleResponse>>, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     load_site_read(&state.db, id, &current).await?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let mut condition =
         sea_orm::Condition::all().add(ip_access_rules::Column::SiteId.eq(id));
@@ -395,7 +393,7 @@ async fn remove(
     State(state): State<AppState>,
     current: AuthUser,
     Path((site_id, rule_id)): Path<(String, String)>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     let target = parse_uuid(&rule_id, "IP rule id")?;
     load_site_write(&state.db, id, &current).await?;
@@ -409,7 +407,7 @@ async fn remove(
     touch_site(&state, id).await?;
     notify_config_changed(&state, id, Some(&current.email)).await;
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /api/v1/sites/{site_id}/ip-rules/bulk`

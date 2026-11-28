@@ -164,7 +164,7 @@ async fn list(
 ) -> Result<Json<Page<cache_rules::Model>>, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     load_site_read(&state.db, id, &current).await?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let paginator = cache_rules::Entity::find()
         .filter(cache_rules::Column::SiteId.eq(id))
@@ -288,7 +288,7 @@ async fn remove(
     State(state): State<AppState>,
     current: AuthUser,
     Path((site_id, rule_id)): Path<(String, String)>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     let target = parse_uuid(&rule_id, "cache rule id")?;
     load_site_write(&state.db, id, &current).await?;
@@ -302,7 +302,7 @@ async fn remove(
     touch_site(&state, id).await?;
     notify_config_changed(&state, id, Some(&current.email)).await;
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn find(
@@ -361,7 +361,7 @@ async fn list_by_query(
         Some(raw) => Some(parse_uuid(raw, "site id")?),
         None => None,
     };
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let mut condition = Condition::all();
     // Administrator without a filter: every rule in the system, so `None`
@@ -422,7 +422,7 @@ async fn remove_by_id(
     state: State<AppState>,
     current: AuthUser,
     Path(rule_id): Path<String>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let target = parse_uuid(&rule_id, "cache rule id")?;
     let row = find_by_id(&state, target).await?;
     remove(state, current, Path((row.site_id.to_string(), rule_id))).await
@@ -811,7 +811,7 @@ pub struct PurgeResponse {
     pub queued: usize,
 }
 
-/// Validates and normalises the url list of a purge request.
+/// Validates and normalizes the url list of a purge request.
 ///
 /// An empty result means "purge everything": the agent reads a missing list the
 /// same way, so the wire format does not have to carry a separate flag.

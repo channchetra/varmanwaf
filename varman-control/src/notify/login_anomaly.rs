@@ -83,17 +83,7 @@ impl LoginSecuritySettings {
     /// Loads the settings from `instance_settings`, falling back to the
     /// defaults when the row is missing or unparsable.
     pub async fn load(db: &DatabaseConnection) -> Self {
-        use crate::models::instance_setting;
-
-        let stored = instance_setting::Entity::find_by_id(SETTINGS_KEY)
-            .one(db)
-            .await
-            .ok()
-            .flatten();
-        match stored {
-            Some(row) => serde_json::from_str(&row.value).unwrap_or_default(),
-            None => Self::default(),
-        }
+        super::load_json_setting(db, SETTINGS_KEY).await
     }
 
     /// Persists the settings; called by the settings API.
@@ -101,31 +91,7 @@ impl LoginSecuritySettings {
         &self,
         db: &DatabaseConnection,
     ) -> Result<(), sea_orm::DbErr> {
-        use crate::models::instance_setting;
-
-        let value = serde_json::to_string(self)
-            .map_err(|err| sea_orm::DbErr::Custom(err.to_string()))?;
-        let existing = instance_setting::Entity::find_by_id(SETTINGS_KEY)
-            .one(db)
-            .await?;
-        match existing {
-            Some(row) => {
-                let mut active: instance_setting::ActiveModel = row.into();
-                active.value = Set(value);
-                active.updated_at = Set(Utc::now());
-                active.update(db).await?;
-            },
-            None => {
-                instance_setting::ActiveModel {
-                    key: Set(SETTINGS_KEY.to_string()),
-                    value: Set(value),
-                    updated_at: Set(Utc::now()),
-                }
-                .insert(db)
-                .await?;
-            },
-        }
-        Ok(())
+        super::store_json_setting(db, SETTINGS_KEY, self).await
     }
 
     /// Validates operator-supplied values; returns a human-readable reason.

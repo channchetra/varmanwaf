@@ -87,7 +87,7 @@ pub fn normalize_host(host: &str) -> String {
 /// This function follows the common practice of prioritizing the host from the absolute URI
 /// (e.g., in `GET http://example.com/path HTTP/1.1`) over the `Host` header field.
 ///
-/// The returned host is normalised (lowercase, no trailing root dot); see
+/// The returned host is normalized (lowercase, no trailing root dot); see
 /// `normalize_host`.
 pub fn get_host(header: &RequestHeader) -> Option<String> {
     // First, try to get the host directly from the parsed URI.
@@ -1347,7 +1347,7 @@ mod tests {
         assert_eq!(get_host(&req_no_host), None);
 
         // Case 4: IPv6 literals keep their brackets and lose only the port.
-        // Cases 5-7: hosts are normalised — lowercased and the trailing
+        // Cases 5-7: hosts are normalized — lowercased and the trailing
         // root dot dropped — so `EXAMPLE.com.` and `example.com` hit the
         // same site-rule or failover-registry key.
         for (host, expected) in [

@@ -22,7 +22,7 @@ compile_error!(
 );
 
 use crate::config_manager::{
-    try_init_config_manager, try_init_memory_config_manager,
+    build_config_manager, build_memory_config_manager,
 };
 use bytes::BytesMut;
 use clap::Parser;
@@ -72,8 +72,6 @@ mod plugin;
 mod process;
 mod quick_start;
 mod server_locations;
-#[cfg(test)]
-mod test_support;
 mod upstreams;
 mod varman;
 mod webhook;
@@ -247,7 +245,7 @@ where
     r
 }
 
-fn get_config(
+fn load_config_in_background(
     config_manager: Arc<ConfigManager>,
 ) -> Receiver<Result<PingapConfig, pingap_config::Error>> {
     run_startup(
@@ -289,7 +287,7 @@ fn new_access_logger(
 > {
     let file = path.to_string();
     run_startup(
-        move || async move { new_async_logger(&file).await },
+        move || std::future::ready(new_async_logger(&file)),
         |message| Err(pingap_core::Error::Invalid { message }),
     )
 }
@@ -302,7 +300,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     // through `assemble`. The plugin no longer reads the process-global slot,
     // so its existence depends only on that hand-over, not on start-up order.
     let config_manager =
-        try_init_config_manager(&args.conf.clone().unwrap_or_default())?;
+        build_config_manager(&args.conf.clone().unwrap_or_default())?;
     tokio::runtime::Runtime::new()?
         .block_on(migrate_config_layout(&config_manager));
 
@@ -320,7 +318,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
             upgrade: false,
             threads: None,
             admin_plugin: Some((admin_name, admin_plugin_conf)),
-            background_tasks: None,
+            background_task_service_name: None,
             admin_only: true,
         },
     )?;
@@ -340,6 +338,21 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
 
     // TODO not process exit until pingora supports
     assembled.server.run_forever();
+}
+
+/// Whether the ACME background task should run.
+///
+/// `VARMAN_DISABLE_ACME` is the VarmanWAF spelling; `PINGAP_DISABLE_ACME`
+/// stays supported for existing deployments. Either one, set to a non-empty
+/// value, opts out.
+pub(crate) fn acme_enabled() -> bool {
+    ["VARMAN_DISABLE_ACME", "PINGAP_DISABLE_ACME"]
+        .iter()
+        .all(|key| {
+            std::env::var(key)
+                .map(|value| value.trim().is_empty())
+                .unwrap_or(true)
+        })
 }
 
 fn parse_arguments() -> Args {
@@ -406,13 +419,6 @@ fn parse_arguments() -> Args {
         args.cp = true;
     }
 
-    if args.log.is_none() {
-        let log = get_from_env("log");
-        if !log.is_empty() {
-            args.log = Some(log);
-        }
-    }
-
     if !args.autorestart && !get_from_env("autorestart").is_empty() {
         args.autorestart = true;
     }
@@ -430,7 +436,7 @@ fn parse_arguments() -> Args {
 /// runtime behaviour; any other construction error is treated as fatal.
 ///
 /// An admin plugin is not registered in the factory (it needs a
-/// `ConfigManager`), so it is dry-run the same way ``Provider::init_plugins` builds
+/// `ConfigManager`), so it is dry-run the same way ``Provider::replace_plugins` builds
 /// it, with `config_manager`.
 fn validate_plugins(
     config: &PingapConfig,
@@ -486,7 +492,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // Handle template output request
     if args.template {
-        println!("{TEMPLATE_CONFIG}");
+        println!("{}", cli::template_config());
         return Ok(());
     }
 
@@ -530,15 +536,15 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
             );
         }
-        try_init_memory_config_manager(
+        build_memory_config_manager(
             &toml::to_string_pretty(&config)?,
             acme_state_path,
         )?
     } else {
-        try_init_config_manager(&args.conf.clone().unwrap_or_default())?
+        build_config_manager(&args.conf.clone().unwrap_or_default())?
     };
 
-    let r = get_config(config_manager.clone());
+    let r = load_config_in_background(config_manager.clone());
     // A broken config is fatal on its own, but not with `--admin`: the admin
     // server has to come up so the configuration can be repaired through it.
     // Starting on an empty config is indistinguishable from a healthy server
@@ -716,7 +722,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             upgrade: args.upgrade,
             threads: args.threads,
             admin_plugin: admin_plugin.clone(),
-            background_tasks: Some("simple_background_service"),
+            background_task_service_name: Some("simple_background_service"),
             admin_only: false,
         },
     )?;
@@ -818,10 +824,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let mut exits_80_server = false;
+    let mut exists_80_server = false;
     for serve_conf in server_conf_list.iter() {
         if serve_conf.addr.ends_with(":80") {
-            exits_80_server = true;
+            exists_80_server = true;
         }
         #[cfg(feature = "full")]
         // add otlp service
@@ -846,10 +852,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             !acme.is_empty() && !domains.is_empty() && !dns_challenge
         });
 
-    if std::env::var("PINGAP_DISABLE_ACME")
-        .unwrap_or_default()
-        .is_empty()
-    {
+    if acme_enabled() {
         simple_background_service.add_task(
             "lets_encrypt",
             new_lets_encrypt_service(
@@ -877,7 +880,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     // no server listen 80 and lets encrypt domains is not empty
-    if !exits_80_server && enabled_http_challenge {
+    if !exists_80_server && enabled_http_challenge {
         server_conf_list.push(ServerConf {
             name: "lets encrypt".to_string(),
             addr: "0.0.0.0:80".to_string(),

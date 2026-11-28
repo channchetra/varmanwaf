@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, parse_params};
+use super::{Error, get_hash_key, parse_params, redacted_params};
 use async_trait::async_trait;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
@@ -113,7 +113,10 @@ impl TryFrom<&PluginConf> for TrafficSplitting {
 
 impl TrafficSplitting {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new traffic splitting plugin");
+        debug!(
+            params = redacted_params(params),
+            "new traffic splitting plugin"
+        );
         TrafficSplitting::try_from(params)
     }
     fn get_sticky_value<'a>(&self, session: &'a Session) -> Option<&'a str> {

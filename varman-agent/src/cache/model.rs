@@ -219,7 +219,7 @@ impl From<i32> for FailoverMode {
 }
 
 /// Folds the per-site policy registry of one bundle into a domain-keyed map,
-/// covering primary and alternate domains alike. Keys are normalised
+/// covering primary and alternate domains alike. Keys are normalized
 /// (lowercase) to match what `pingap_core::get_host` produces on the lookup
 /// side, so a `EXAMPLE.com` entry in the control plane still resolves.
 pub(super) fn failover_registry_from(
@@ -1256,6 +1256,17 @@ impl RuleCache {
         }
     }
 
+    /// Translates the legacy control-plane enum into a pingap `algo` value.
+    fn legacy_algo(value: proto::LoadBalanceAlgorithm) -> &'static str {
+        use proto::LoadBalanceAlgorithm;
+        match value {
+            LoadBalanceAlgorithm::LbRoundRobin => "round_robin",
+            LoadBalanceAlgorithm::LbConsistentHash => "hash:ip",
+            LoadBalanceAlgorithm::LbLeastConnections => "least_connections",
+            LoadBalanceAlgorithm::LbRandom => "random",
+        }
+    }
+
     pub(super) fn convert_upstream_config(
         u: &proto::UpstreamConfig,
     ) -> UpstreamConfig {
@@ -1271,14 +1282,16 @@ impl RuleCache {
                 })
                 .collect(),
             // `algo` carries the full pingap spec; the legacy enum is kept for
-            // caches that predate it.
+            // caches that predate it. The enum's Debug spelling
+            // (`lbconsistenthash`) is not a pingap algorithm, so it must be
+            // translated here rather than reaching the data plane as an
+            // unknown name that collapses to round-robin.
             algo: if u.algo.is_empty() {
-                format!(
-                    "{:?}",
+                Self::legacy_algo(
                     proto::LoadBalanceAlgorithm::try_from(u.algorithm)
-                        .unwrap_or(proto::LoadBalanceAlgorithm::LbRoundRobin)
+                        .unwrap_or(proto::LoadBalanceAlgorithm::LbRoundRobin),
                 )
-                .to_lowercase()
+                .to_string()
             } else {
                 u.algo.clone()
             },
@@ -1666,7 +1679,7 @@ mod tests {
             ..Default::default()
         };
         let converted = RuleCache::convert_upstream_config(&u);
-        assert_eq!(converted.algo, "lbconsistenthash");
+        assert_eq!(converted.algo, "hash:ip");
 
         u.algo = "hash:cookie:session".to_string();
         let converted = RuleCache::convert_upstream_config(&u);

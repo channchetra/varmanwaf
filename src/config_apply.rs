@@ -33,7 +33,7 @@
 //! may commit.
 
 use crate::data_plane::ProviderSet;
-use crate::plugin::AdminPlugin;
+use crate::plugin::AdminPluginEntry;
 use crate::webhook::{
     get_webhook_sender, reload_webhook_notification_sender, send_notification,
 };
@@ -46,6 +46,11 @@ use std::sync::Arc;
 use tracing::{debug, error, info};
 
 static LOG_TARGET: &str = "main::config_apply";
+
+/// The one wording for a provider construction failure.
+pub(crate) fn invalid_error(error: impl std::fmt::Display) -> String {
+    format!("Invalid error {error}")
+}
 
 /// What one provider rebuild did.
 ///
@@ -235,7 +240,7 @@ pub async fn apply_config(
     previous: &PingapConfig,
     next: &PingapConfig,
     options: &ApplyOptions,
-    admin_plugin: Option<&AdminPlugin>,
+    admin_plugin: Option<&AdminPluginEntry>,
     config_manager: &Arc<ConfigManager>,
     providers: &ProviderSet,
 ) -> ApplyOutcome {
@@ -319,7 +324,7 @@ async fn apply_categories(
     next: &PingapConfig,
     categories: Categories,
     options: &ApplyOptions,
-    admin_plugin: Option<&AdminPlugin>,
+    admin_plugin: Option<&AdminPluginEntry>,
     config_manager: &Arc<ConfigManager>,
     providers: &ProviderSet,
 ) -> Vec<String> {
@@ -330,7 +335,7 @@ async fn apply_categories(
             as_step(
                 providers
                     .upstreams
-                    .update_upstreams(
+                    .replace_upstreams_checked(
                         &next.upstreams,
                         Some(get_webhook_sender()),
                     )
@@ -340,7 +345,7 @@ async fn apply_categories(
             // The agent-hosted plane's rebuild reports no names; it must not
             // gain the daemon's success log line.
             as_silent_step(
-                providers.upstreams.init_upstreams(&next.upstreams, None),
+                providers.upstreams.replace_upstreams(&next.upstreams, None),
             )
         };
         if let Some(failure) = run_step(&UPSTREAM_STEP, options, result).await {
@@ -349,13 +354,13 @@ async fn apply_categories(
     }
     if categories.locations {
         let result =
-            as_step(providers.locations.init_locations(&next.locations));
+            as_step(providers.locations.replace_locations(&next.locations));
         if let Some(failure) = run_step(&LOCATION_STEP, options, result).await {
             failures.push(failure);
         }
     }
     if categories.plugins {
-        let result = as_step(Ok(providers.plugins.init_plugins(
+        let result = as_step(Ok(providers.plugins.replace_plugins(
             &next.plugins,
             admin_plugin.cloned(),
             config_manager.clone(),
@@ -369,7 +374,7 @@ async fn apply_categories(
         let result = as_step(
             providers
                 .certificates
-                .update_certificates(&next.certificates),
+                .replace_certificates(&next.certificates),
         );
         if let Some(failure) =
             run_step(&CERTIFICATE_STEP, options, result).await
@@ -378,11 +383,12 @@ async fn apply_categories(
         }
     }
     if categories.server_locations {
-        let result = as_step(providers.server_locations.init_server_locations(
-            providers.locations.as_ref(),
-            &next.servers,
-            &next.locations,
-        ));
+        let result =
+            as_step(providers.server_locations.replace_server_locations(
+                providers.locations.as_ref(),
+                &next.servers,
+                &next.locations,
+            ));
         if let Some(failure) =
             run_step(&SERVER_LOCATION_STEP, options, result).await
         {
@@ -612,7 +618,7 @@ fn server_location_lists_changed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config_manager::try_init_memory_config_manager;
+    use crate::config_manager::build_memory_config_manager;
     use pingap_config::{
         CertificateConf, LocationConf, PluginConf, ServerConf, UpstreamConf,
     };
@@ -941,7 +947,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let config_manager = try_init_memory_config_manager("[basic]\n", None)
+        let config_manager = build_memory_config_manager("[basic]\n", None)
             .expect("in-memory config manager");
         config_manager.set_current_config(previous.clone());
         let providers = ProviderSet::new();

@@ -1,4 +1,4 @@
-//! `login_history` ΓÇö one row per successful control-plane login.
+//! `login_history` — one row per successful control-plane login.
 //!
 //! Written by the login handlers (password and passkey) with the resolved
 //! client IP and, best effort, its geolocation. The anomaly detector
@@ -47,7 +47,7 @@ pub mod geo_source {
     pub const LOCAL: &str = "local";
     /// Resolved from the configured online geo API.
     pub const ONLINE: &str = "online";
-    /// Private/loopback address ΓÇö never looked up.
+    /// Private/loopback address — never looked up.
     pub const PRIVATE: &str = "private";
     /// Lookup attempted but failed; geo fields stay NULL and the row does
     /// not participate in the anomaly baseline.

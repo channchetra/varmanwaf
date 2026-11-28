@@ -55,8 +55,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use substring::Substring;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use urlencoding::decode;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -209,7 +208,10 @@ impl AdminServe {
         }
         let mut path = get_str_conf(value, "path");
         if path.len() > 1 && path.ends_with("/") {
-            path = path.substring(0, path.len() - 1).to_string();
+            path = path
+                .get(..path.len().saturating_sub(1))
+                .unwrap_or_default()
+                .to_string();
         }
 
         let params = AdminServe {
@@ -254,9 +256,12 @@ async fn get_request_body(session: &mut Session) -> pingora::Result<BytesMut> {
 }
 
 impl AdminServe {
-    fn auth_validate(&self, req_header: &RequestHeader) -> bool {
+    fn auth_validate<'a>(
+        &'a self,
+        req_header: &RequestHeader,
+    ) -> Option<&'a str> {
         if self.allow_unauthenticated {
-            return true;
+            return Some("anonymous");
         }
         // Construction rejects an empty list unless `allow_unauthenticated` is
         // set, so this is a belt-and-braces fail-closed default: a malformed
@@ -266,7 +271,7 @@ impl AdminServe {
                 target: LOG_TARGET,
                 "auth validate fail: no authorizations configured"
             );
-            return false;
+            return None;
         }
         let path = req_header.uri.path();
         let value =
@@ -274,11 +279,11 @@ impl AdminServe {
                 .unwrap_or_default();
         if value.is_empty() {
             error!(target: LOG_TARGET, path, "auth validate fail: missing authorization header");
-            return false;
+            return None;
         }
         let Some((token, ts)) = value.split_once(':') else {
             error!(target: LOG_TARGET, path, "auth validate fail: malformed authorization, expect token:ts");
-            return false;
+            return None;
         };
         let now = pingap_core::now_sec() as i64;
         let parsed_ts = ts.parse::<i64>().unwrap_or_default();
@@ -295,7 +300,7 @@ impl AdminServe {
                 max_age,
                 "auth validate fail: timestamp out of max_age window"
             );
-            return false;
+            return None;
         }
 
         for (user, pass) in self.authorizations.iter() {
@@ -306,7 +311,7 @@ impl AdminServe {
                 hash256.encode_hex::<String>().as_bytes(),
                 token.as_bytes(),
             ) {
-                return true;
+                return Some(user.as_str());
             }
         }
         error!(
@@ -316,7 +321,7 @@ impl AdminServe {
             authorizations = self.authorizations.len(),
             "auth validate fail: token hash mismatch"
         );
-        false
+        None
     }
     async fn load_config(
         &self,
@@ -332,7 +337,7 @@ impl AdminServe {
         })?;
         Ok(config)
     }
-    async fn get_config(
+    async fn get_config_response(
         &self,
         category: &str,
     ) -> pingora::Result<HttpResponse> {
@@ -379,13 +384,22 @@ impl AdminServe {
         &self,
         category: &str,
         name: &str,
+        actor: &str,
     ) -> pingora::Result<HttpResponse> {
         let category = Category::from_str(category)
-            .map_err(|e| pingap_core::new_internal_error(500, e))?;
-        self.config_manager.delete(category, name).await.map_err(|e| {
-            error!(target: LOG_TARGET, error = e.to_string(), "delete config fail");
-            pingap_core::new_internal_error(500, e)
-        })?;
+            .map_err(|e| pingap_core::new_internal_error(400, e))?;
+        let category_name = category.to_string();
+        self.config_manager
+            .delete(category, name)
+            .await
+            .map_err(|e| internal_error("delete config fail", e))?;
+        info!(
+            target: LOG_TARGET,
+            actor,
+            category = %category_name,
+            name,
+            "admin config deleted"
+        );
         Ok(HttpResponse::no_content())
     }
     async fn handle_update_config<T>(
@@ -397,27 +411,15 @@ impl AdminServe {
     where
         T: DeserializeOwned + Serialize + Send + Sync + Validate,
     {
-        let conf: T = serde_json::from_slice(buf).map_err(|e| {
-            error!(
-                target: LOG_TARGET,
-                error = e.to_string(),
-                "parse {} config fail",
-                category.to_string()
-            );
-            pingap_core::new_internal_error(500, e)
-        })?;
-        conf.validate().map_err(|e| {
-            error!(target: LOG_TARGET, error = e.to_string(), "validate config fail");
-            pingap_core::new_internal_error(500, e)
-        })?;
+        let conf: T = serde_json::from_slice(buf)
+            .map_err(|e| internal_error("parse config fail", e))?;
+        conf.validate()
+            .map_err(|e| internal_error("validate config fail", e))?;
 
         self.config_manager
             .update(category, name, &conf)
             .await
-            .map_err(|e| {
-                error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
-                pingap_core::new_internal_error(500, e)
-            })?;
+            .map_err(|e| internal_error("update config fail", e))?;
 
         Ok(())
     }
@@ -427,6 +429,7 @@ impl AdminServe {
         session: &mut Session,
         category: &str,
         name: &str,
+        actor: &str,
     ) -> pingora::Result<HttpResponse> {
         if name.is_empty() {
             return Err(pingap_core::new_internal_error(
@@ -495,11 +498,19 @@ impl AdminServe {
             },
         };
 
+        info!(
+            target: LOG_TARGET,
+            actor,
+            category,
+            name,
+            "admin config updated"
+        );
         Ok(HttpResponse::no_content())
     }
     async fn import_config(
         &self,
         session: &mut Session,
+        actor: &str,
     ) -> pingora::Result<HttpResponse> {
         let buf = get_request_body(session).await?;
         let config: PingapTomlConfig = match toml::from_slice(&buf) {
@@ -520,10 +531,11 @@ impl AdminServe {
             error!(target: LOG_TARGET, error = e, "import config fail");
             return Ok(HttpResponse::bad_request(e));
         }
-        self.config_manager.save_all(&config).await.map_err(|e| {
-            error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
-            pingap_core::new_internal_error(500, e)
-        })?;
+        self.config_manager
+            .save_all(&config)
+            .await
+            .map_err(|e| internal_error("import config fail", e))?;
+        info!(target: LOG_TARGET, actor, "admin config imported");
 
         Ok(HttpResponse::no_content())
     }
@@ -537,35 +549,49 @@ impl AdminServe {
         method: Method,
         category: &str,
         params: &[String],
+        actor: &str,
     ) -> HttpResponse {
+        const CATEGORIES: [&str; 8] = [
+            "",
+            "full",
+            "basic",
+            "server",
+            "location",
+            "upstream",
+            "plugin",
+            "certificate",
+        ];
+        if !CATEGORIES.contains(&category)
+            && !(method == Method::POST && category == "import")
+        {
+            return json_response_with_status(
+                &ErrorResponse {
+                    message: format!("unknown config category: '{category}'"),
+                },
+                StatusCode::BAD_REQUEST,
+            );
+        }
         let result = match method {
             Method::POST => {
                 if category == "import" {
-                    self.import_config(session).await
+                    self.import_config(session, actor).await
                 } else if params.len() < 4 {
                     Err(pingora::Error::new_str("Url is invalid(no name)"))
                 } else {
-                    self.update_config(session, category, &params[3]).await
+                    self.update_config(session, category, &params[3], actor)
+                        .await
                 }
             },
             Method::DELETE => {
                 if params.len() < 4 {
                     Err(pingora::Error::new_str("Url is invalid(no name)"))
                 } else {
-                    self.remove_config(category, &params[3]).await
+                    self.remove_config(category, &params[3], actor).await
                 }
             },
-            _ => self.get_config(category).await,
+            _ => self.get_config_response(category).await,
         };
-        result.unwrap_or_else(|err| {
-            HttpResponse::try_from_json_status(
-                &ErrorResponse {
-                    message: err.to_string(),
-                },
-                StatusCode::INTERNAL_SERVER_ERROR,
-            )
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
-        })
+        result.unwrap_or_else(|err| error_response(&err))
     }
 
     /// `GET /config-history/{category}[/{name}]` — stored revisions of a
@@ -577,7 +603,7 @@ impl AdminServe {
     ) -> pingora::Result<HttpResponse> {
         let category = Category::from_str(category).map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "get config category fail");
-            pingap_core::new_internal_error(500, e)
+            pingap_core::new_internal_error(400, e)
         })?;
         // The name segment is optional in the url but not in the code below,
         // so reject a short url instead of indexing past the end of `params`.
@@ -588,10 +614,9 @@ impl AdminServe {
             ));
         };
         let history = self.config_history_entries(&category, &name).await?;
-        Ok(HttpResponse::try_from_json(&json!({
+        Ok(json_response(&json!({
             "history": history,
-        }))
-        .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
+        })))
     }
 
     /// Loads the stored revisions of one entry and shapes them for the console,
@@ -605,18 +630,13 @@ impl AdminServe {
             .config_manager
             .history(category.clone(), name)
             .await
-            .map_err(|e| {
-                error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
-                pingap_core::new_internal_error(500, e)
-            })?
+            .map_err(|e| internal_error("get config history fail", e))?
             .unwrap_or_default();
 
         let mut history = vec![];
         for item in arr {
-            let data: toml::Table = toml::from_str(&item.data).map_err(|e| {
-                error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
-                pingap_core::new_internal_error(500, e)
-            })?;
+            let data: toml::Table = toml::from_str(&item.data)
+                .map_err(|e| internal_error("get config history fail", e))?;
             let key = format_category(category);
             let Some(data) = data.get(key).cloned() else {
                 continue;
@@ -678,17 +698,30 @@ impl AdminServe {
             now: pingap_core::now_sec(),
         };
 
-        Ok(HttpResponse::try_from_json(&basic_info)
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
+        Ok(json_response(&basic_info))
     }
 
     /// `POST /restart` — graceful restart of the data-plane process.
-    async fn handle_restart(&self) -> HttpResponse {
-        if let Err(e) = restart_now().await {
-            error!(target: LOG_TARGET, error = e.to_string(), "Restart fail");
-            HttpResponse::bad_request(e.to_string())
-        } else {
-            HttpResponse::no_content()
+    async fn handle_restart(&self, actor: &str) -> HttpResponse {
+        info!(target: LOG_TARGET, actor, "admin restart requested");
+        match restart_now().await {
+            Ok(()) => HttpResponse::no_content(),
+            Err(e) => {
+                error!(target: LOG_TARGET, error = e.to_string(), "Restart fail");
+                // "already restarting" is a conflict, not a malformed
+                // request; every other failure is ours.
+                let status = if e.kind() == std::io::ErrorKind::InvalidInput {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                };
+                json_response_with_status(
+                    &ErrorResponse {
+                        message: e.to_string(),
+                    },
+                    status,
+                )
+            },
         }
     }
 
@@ -706,8 +739,7 @@ impl AdminServe {
             pingap_util::aes_decrypt(&params.key, &params.data)
         }
         .map_err(|e| pingap_core::new_internal_error(500, e))?;
-        Ok(HttpResponse::try_from_json(&AesResp { value })
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
+        Ok(json_response(&AesResp { value }))
     }
 
     /// `GET /certificates` — certificate metadata known to this process.
@@ -723,8 +755,7 @@ impl AdminServe {
                 infos.insert(key, info.clone());
             }
         }
-        HttpResponse::try_from_json(&infos)
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
+        json_response(&infos)
     }
 }
 
@@ -736,21 +767,12 @@ fn feature_flags() -> Vec<String> {
         "default".to_string(),
         pingap_certificate::TLS_BACKEND.to_string(),
     ];
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "tracing")] {
-            features.push("tracing".to_string());
-        }
-    }
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "full")] {
-            features.push("full".to_string());
-        }
-    }
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "pyro")] {
-            features.push("pyroscope".to_string());
-        }
-    }
+    #[cfg(feature = "tracing")]
+    features.push("tracing".to_string());
+    #[cfg(feature = "full")]
+    features.push("full".to_string());
+    #[cfg(feature = "pyro")]
+    features.push("pyroscope".to_string());
     features
 }
 
@@ -799,6 +821,51 @@ fn pprof_query(session: &Session) -> PprofQuery {
 /// Renders a profiling failure like the control plane does: 409 while
 /// another capture is running, 501 where sampling cannot run at all, 500
 /// otherwise.
+/// Serialises a value for an admin response. A failure is logged with the
+/// serde error and reported as a 500 instead of the opaque "Json serde fail".
+fn json_response<T: Serialize>(value: &T) -> HttpResponse {
+    HttpResponse::try_from_json(value).unwrap_or_else(|e| {
+        error!(target: LOG_TARGET, error = %e, "serialize admin response fail");
+        HttpResponse::unknown_error(format!("Json serde fail: {e}"))
+    })
+}
+
+/// Same as [`json_response`] with an explicit status code.
+fn json_response_with_status<T: Serialize>(
+    value: &T,
+    status: StatusCode,
+) -> HttpResponse {
+    HttpResponse::try_from_json_status(value, status).unwrap_or_else(|e| {
+        error!(target: LOG_TARGET, error = %e, "serialize admin response fail");
+        HttpResponse::unknown_error(format!("Json serde fail: {e}"))
+    })
+}
+
+/// Renders an admin error with the status its `ErrorType` carries, falling
+/// back to 500. A client error keeps its 400 instead of being flattened.
+fn error_response(err: &pingora::Error) -> HttpResponse {
+    let status = match err.etype {
+        pingora::ErrorType::HTTPStatus(code) => StatusCode::from_u16(code)
+            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    json_response_with_status(
+        &ErrorResponse {
+            message: err.to_string(),
+        },
+        status,
+    )
+}
+
+/// Logs a configuration/storage failure and turns it into a 500 with context.
+fn internal_error(
+    context: &'static str,
+    err: impl std::fmt::Display,
+) -> pingora::BError {
+    error!(target: LOG_TARGET, error = %err, "{context}");
+    pingap_core::new_internal_error(500, err)
+}
+
 fn pprof_error_response(err: varman_pprof::ProfileError) -> HttpResponse {
     error!(target: LOG_TARGET, error = %err, "pprof request fail");
     let status = match err {
@@ -808,13 +875,12 @@ fn pprof_error_response(err: varman_pprof::ProfileError) -> HttpResponse {
         },
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    HttpResponse::try_from_json_status(
+    json_response_with_status(
         &ErrorResponse {
             message: err.to_string(),
         },
         status,
     )
-    .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
 }
 
 /// `GET /api/pprof/{profile,flamegraph,memory}` — built-in profiling of this
@@ -828,10 +894,9 @@ async fn handle_pprof_request(
     if method != Method::GET {
         return HttpResponse::bad_request("Only GET is supported");
     }
-    let endpoint = path.substring("/pprof/".len(), path.len());
+    let endpoint = path.get("/pprof/".len()..).unwrap_or_default();
     if endpoint == "memory" {
-        return HttpResponse::try_from_json(&varman_pprof::memory_snapshot())
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail"));
+        return json_response(&varman_pprof::memory_snapshot());
     }
     if endpoint != "profile" && endpoint != "flamegraph" {
         return HttpResponse::not_found("Unknown pprof endpoint");
@@ -917,8 +982,10 @@ async fn handle_request_admin(
 
     let header = session.req_header_mut();
     let path = header.uri.path();
-    let mut new_path =
-        path.substring(plugin.path.len(), path.len()).to_string();
+    let mut new_path = path
+        .get(plugin.path.len()..)
+        .unwrap_or_default()
+        .to_string();
     if plugin.path.len() > 1 && new_path.is_empty() {
         new_path = format!("{path}/");
         if let Some(query) = header.uri.query() {
@@ -941,36 +1008,44 @@ async fn handle_request_admin(
     if let Ok(uri) = new_path.parse::<http::Uri>() {
         header.set_uri(uri);
     }
-    if !plugin.auth_validate(header) {
+    let Some(actor) = plugin.auth_validate(header) else {
         plugin.ip_fail_limit.inc(ip);
         return Ok(Some(HttpResponse {
             status: StatusCode::UNAUTHORIZED,
             ..Default::default()
         }));
-    }
+    };
+    let actor = actor.to_string();
     let (method, mut path) = get_method_path(session);
     let api_prefix = "/api";
     if path.starts_with(api_prefix) {
-        path = path.substring(api_prefix.len(), path.len()).to_string();
+        path = path.get(api_prefix.len()..).unwrap_or_default().to_string();
     }
     let params: Vec<String> = path
         .split('/')
-        .map(|item| decode(item).unwrap_or_default().to_string())
-        .collect();
+        .map(|item| {
+            decode(item).map(|value| value.into_owned()).map_err(|e| {
+                pingap_core::new_internal_error(
+                    400,
+                    format!("invalid percent-encoding in admin path: {e}"),
+                )
+            })
+        })
+        .collect::<pingora::Result<_>>()?;
     let mut category = "";
     if params.len() >= 3 {
         category = &params[2];
     }
     let resp = if path.starts_with("/configs") {
         plugin
-            .handle_configs(session, method, category, &params)
+            .handle_configs(session, method, category, &params, &actor)
             .await
     } else if path.starts_with("/config-history") {
         plugin.handle_config_history(category, &params).await?
     } else if path == "/basic" {
         plugin.handle_basic().await?
     } else if path == "/restart" && method == Method::POST {
-        plugin.handle_restart().await
+        plugin.handle_restart(&actor).await
     } else if path == "/aes" {
         plugin.handle_aes(session).await?
     } else if path == "/certificates" {
@@ -995,7 +1070,7 @@ impl Plugin for AdminServe {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         if self.plugin_step != step {
             return Ok(RequestPluginResult::Skipped);
@@ -1003,7 +1078,7 @@ impl Plugin for AdminServe {
         if !session.req_header().uri.path().starts_with(&self.path) {
             return Ok(RequestPluginResult::Skipped);
         }
-        let resp = handle_request_admin(self, session, _ctx).await?;
+        let resp = handle_request_admin(self, session, ctx).await?;
         if let Some(resp) = resp {
             return Ok(RequestPluginResult::Respond(resp));
         }
@@ -1214,48 +1289,58 @@ allow_unauthenticated = true
             "/pingap.png",
         ] {
             assert_eq!(
-                false,
-                admin.auth_validate(&request(Method::GET, path, None)),
+                true,
+                admin
+                    .auth_validate(&request(Method::GET, path, None))
+                    .is_none(),
                 "{path} must require authentication"
             );
         }
         assert_eq!(
-            false,
-            admin.auth_validate(&request(
-                Method::POST,
-                "/configs/upstream/evil.js",
-                None
-            ))
+            true,
+            admin
+                .auth_validate(&request(
+                    Method::POST,
+                    "/configs/upstream/evil.js",
+                    None
+                ))
+                .is_none()
         );
 
         // A valid signed token still authenticates any of them.
         let token = auth_header("admin", "123123");
         assert_eq!(
             true,
-            admin.auth_validate(&request(
-                Method::GET,
-                "/configs/full",
-                Some(&token)
-            ))
+            admin
+                .auth_validate(&request(
+                    Method::GET,
+                    "/configs/full",
+                    Some(&token)
+                ))
+                .is_some()
         );
         assert_eq!(
             true,
-            admin.auth_validate(&request(
-                Method::GET,
-                "/assets/index-abc.js",
-                Some(&token)
-            ))
+            admin
+                .auth_validate(&request(
+                    Method::GET,
+                    "/assets/index-abc.js",
+                    Some(&token)
+                ))
+                .is_some()
         );
 
         // A token signed for a different password does not.
         let token = auth_header("admin", "wrong");
         assert_eq!(
-            false,
-            admin.auth_validate(&request(
-                Method::GET,
-                "/configs/full",
-                Some(&token)
-            ))
+            true,
+            admin
+                .auth_validate(&request(
+                    Method::GET,
+                    "/configs/full",
+                    Some(&token)
+                ))
+                .is_none()
         );
     }
 
@@ -1608,7 +1693,7 @@ allow_unauthenticated = true
         let providers = ProviderSet::new();
         providers
             .upstreams
-            .init_upstreams(
+            .replace_upstreams(
                 &HashMap::from([(
                     "admin-injected-upstream".to_string(),
                     UpstreamConf {
@@ -1621,7 +1706,7 @@ allow_unauthenticated = true
             .expect("a valid upstream");
         providers
             .certificates
-            .update_certificates(&HashMap::from([(
+            .replace_certificates(&HashMap::from([(
                 "admin-injected-cert".to_string(),
                 CertificateConf {
                     domains: Some("admin-injected.example.com".to_string()),
@@ -1694,9 +1779,11 @@ allow_unauthenticated = true
 
         let now = pingap_core::now_sec();
         assert!(
-            admin.auth_validate(&request(&auth_header_at(
-                "admin", "123123", now
-            ))),
+            admin
+                .auth_validate(&request(&auth_header_at(
+                    "admin", "123123", now
+                )))
+                .is_some(),
             "a fresh token must authenticate"
         );
 
@@ -1704,16 +1791,18 @@ allow_unauthenticated = true
         // refuse it is the two-day window.
         let stale = now - 3 * 24 * 3600;
         assert!(
-            !admin.auth_validate(&request(&auth_header_at(
-                "admin", "123123", stale
-            ))),
+            admin
+                .auth_validate(&request(&auth_header_at(
+                    "admin", "123123", stale
+                )))
+                .is_none(),
             "a token older than max_age must be refused"
         );
 
         assert!(
-            !admin.auth_validate(&request(&auth_header_at(
-                "admin", "wrong", now
-            ))),
+            admin
+                .auth_validate(&request(&auth_header_at("admin", "wrong", now)))
+                .is_none(),
             "a token signed for the wrong password must be refused"
         );
     }
