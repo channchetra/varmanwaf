@@ -136,6 +136,27 @@ order-risk after verifying the certificate baseline.
 - `make lint`, `make test`, `make lint-rustls`, `make test-rustls`,
   `cargo fmt --check`, `cargo machete` and `make build-web` are green.
 
+## Remaining review items (28)
+
+The strict score is 85.1; these imported findings are still open and are
+deliberately left for a follow-up rather than blocking 1.6.0:
+
+- WAF plugin reads `VarmanAgent::instance()` at 16 sites; rule vocabulary and
+  several leaf types are still duplicated across crates.
+- `run()` in `src/main.rs` is still a ~515-line boot body.
+- Provider rebuild functions use three return shapes; `replace_certificates`
+  has a `Result` whose `Err` is unreachable.
+- `apply_config` still takes six positional arguments.
+- The CLI uses default-valued `String`/`bool` fields where `Option` would
+  distinguish "unset" from "explicitly set to the default".
+- Cache/Prometheus process-global single-owner slots warn instead of
+  supporting a second plane.
+- Admin route handlers still mix two return protocols.
+- Test naming prefix drift and missing `--admin`/`--cp` binary tests.
+
+Changing these is architectural churn with low functional benefit at this
+point; they are recorded so the next cycle starts from the measured state.
+
 ## Acceptance
 
 - Strict **85.0** from a fresh blind review of the changed dimensions.
