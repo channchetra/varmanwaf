@@ -17,16 +17,19 @@
   instance init/update methods; `ProviderSet` owns the five concrete
   providers; `assemble`, `app_context`, `apply_config`, the observer/
   auto-restart services, the agent reload loop and the legacy admin
-  diagnostics all use the set. Commits `6705a42`, `161b7df`. Compatibility
-  free functions remain for tests/legacy with `allow(dead_code)`.
+  diagnostics all use the set. The five `LazyLock` registries, their
+  `new_*_provider` constructors and the compatibility `try_*` wrappers are
+  **deleted** (`1405fb8`); tests use local providers. Commits `6705a42`,
+  `161b7df`, `1405fb8`.
 - **Tests**: a disposable-PostgreSQL harness covers add-admin,
   reset-password and the allowlist switch; provider tests share a process
   lock; the unconsumed plugin fixture is gone. Commits `d90ac11`, plus the
   test-isolation commit. 127 unit + 5 boot-smoke tests pass.
-- **Score**: strict **84.9**; init coupling **86**, cross-module **82**,
-  abstraction **82**, test strategy **75**. The remaining test gaps are
-  restart orchestration, webhook exit flush/batching, upstream health-check
-  reload, and the broader handler-module matrix.
+- **Score**: strict **84.8** after the registry removal; test strategy **75**,
+  abstraction **80**, init coupling **80**, cross-module **82**. The remaining
+  findings are test breadth (restart orchestration, webhook exit flush/
+  batching, upstream health-check reload, handler matrix) and the assembly/
+  CLI abstraction seams (`ApplyOptions`, post-assembly glue).
 - Branch `refactor/varman-plugin`, pushed to origin; not merged to `main`.
 - 148 `varman-plugin` tests + 69 `pingap-plugin` tests; full suite, clippy,
   fmt, machete green.
