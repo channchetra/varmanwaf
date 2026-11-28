@@ -141,6 +141,7 @@ perf = ["pyro", "full"]
 
 
 [dev-dependencies]
+sea-orm-migration = { workspace = true }
 criterion = { workspace = true }
 pretty_assertions = { workspace = true }
 tokio-test = { workspace = true }

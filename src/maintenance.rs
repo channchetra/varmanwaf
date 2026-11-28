@@ -710,3 +710,176 @@ mod tests {
         assert!(missing.to_string().starts_with("user "));
     }
 }
+
+#[cfg(test)]
+mod db_write_tests {
+    use super::{
+        AddAdminOpts, AllowlistOpts, DbOpts, OnOff, ResetPasswordOpts,
+    };
+    use sea_orm::{
+        ColumnTrait, ConnectionTrait, Database, DatabaseBackend, EntityTrait,
+        QueryFilter, Statement,
+    };
+    use sea_orm_migration::MigratorTrait;
+    use std::net::TcpListener;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use varman_control::migration::Migrator;
+    use varman_control::models::{api_protection_setting, role, user};
+
+    struct TestCluster {
+        dir: tempfile::TempDir,
+        url: String,
+    }
+
+    impl Drop for TestCluster {
+        fn drop(&mut self) {
+            let _ = Command::new("pg_ctl")
+                .args([
+                    "-D",
+                    self.dir.path().to_str().unwrap_or("."),
+                    "stop",
+                    "-m",
+                    "immediate",
+                ])
+                .output();
+        }
+    }
+
+    fn pg_bin(name: &str) -> Option<PathBuf> {
+        let mut found: Vec<PathBuf> =
+            glob::glob(&format!("/usr/lib/postgresql/*/bin/{name}"))
+                .ok()?
+                .filter_map(|p| p.ok())
+                .collect();
+        found.sort();
+        found.pop()
+    }
+
+    async fn start_cluster() -> Option<TestCluster> {
+        let initdb = pg_bin("initdb")?;
+        let pg_ctl = pg_bin("pg_ctl")?;
+        let dir = tempfile::tempdir().ok()?;
+        let port = {
+            let listener = TcpListener::bind("127.0.0.1:0").ok()?;
+            listener.local_addr().ok()?.port()
+        };
+        let status = Command::new(&initdb)
+            .args([
+                "-D",
+                dir.path().to_str()?,
+                "-U",
+                "postgres",
+                "--auth=trust",
+            ])
+            .status()
+            .ok()?;
+        if !status.success() {
+            eprintln!("skipping database test: initdb failed");
+            return None;
+        }
+        let status = Command::new(&pg_ctl)
+            .args([
+                "-D",
+                dir.path().to_str()?,
+                "-o",
+                &format!("-p {port} -k {} -h 127.0.0.1", dir.path().to_str()?),
+                "-l",
+                dir.path().join("postgres.log").to_str()?,
+                "start",
+            ])
+            .status()
+            .ok()?;
+        if !status.success() {
+            eprintln!("skipping database test: pg_ctl start failed");
+            return None;
+        }
+        let admin_url =
+            format!("postgres://postgres@127.0.0.1:{port}/postgres");
+        let db = Database::connect(&admin_url).await.ok()?;
+        db.execute(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "CREATE DATABASE varman".to_string(),
+        ))
+        .await
+        .ok()?;
+        let url = format!("postgres://postgres@127.0.0.1:{port}/varman");
+        let db = Database::connect(&url).await.ok()?;
+        Migrator::up(&db, None).await.ok()?;
+        Some(TestCluster { dir, url })
+    }
+
+    async fn connect(url: &str) -> sea_orm::DatabaseConnection {
+        Database::connect(url).await.expect("test database")
+    }
+
+    #[tokio::test]
+    async fn maintenance_user_writes_reach_the_database() {
+        let Some(cluster) = start_cluster().await else {
+            eprintln!(
+                "skipping maintenance DB test: no local PostgreSQL binaries"
+            );
+            return;
+        };
+        let db = connect(&cluster.url).await;
+
+        // add-admin creates an administrator that must change the password.
+        super::add_admin(AddAdminOpts {
+            db: DbOpts {
+                db_url: cluster.url.clone(),
+            },
+            email: "Ops@Example.com".to_string(),
+            name: Some("Ops".to_string()),
+            password: Some("MaintenancePass123!".to_string()),
+        })
+        .await
+        .expect("add-admin");
+        let row = user::Entity::find()
+            .filter(user::Column::Email.eq("ops@example.com"))
+            .one(&db)
+            .await
+            .expect("query user")
+            .expect("created user");
+        assert_eq!(role::ADMIN, row.role);
+        assert!(row.must_change_password);
+        assert_eq!(0, row.token_version);
+
+        // reset-password revokes outstanding sessions and forces a change.
+        super::reset_password(ResetPasswordOpts {
+            db: DbOpts {
+                db_url: cluster.url.clone(),
+            },
+            email: "ops@example.com".to_string(),
+            password: Some("MaintenancePass456!".to_string()),
+        })
+        .await
+        .expect("reset-password");
+        let row = user::Entity::find()
+            .filter(user::Column::Email.eq("ops@example.com"))
+            .one(&db)
+            .await
+            .expect("query user")
+            .expect("updated user");
+        assert_eq!(1, row.token_version);
+        assert!(row.must_change_password);
+
+        // security allowlist on/force writes the control-plane setting.
+        super::set_allowlist(AllowlistOpts {
+            db: DbOpts {
+                db_url: cluster.url.clone(),
+            },
+            state: OnOff::On,
+            force: true,
+        })
+        .await
+        .expect("set allowlist");
+        let settings = api_protection_setting::Entity::find()
+            .one(&db)
+            .await
+            .expect("query protection settings")
+            .expect("settings row");
+        assert!(settings.ip_allowlist_enabled);
+
+        drop(cluster);
+    }
+}
