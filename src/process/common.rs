@@ -70,6 +70,28 @@ pub struct RestartProcessCommand {
 }
 
 impl RestartProcessCommand {
+    /// Builds the restart command, owning the protocol details both roots
+    /// used to repeat: the `-d -u` prefix and the readiness socket next to
+    /// the upgrade socket.
+    pub fn new(
+        exec_path: PathBuf,
+        args: Vec<String>,
+        upgrade_sock: &str,
+        pid_file: String,
+        ready_timeout: Duration,
+    ) -> Self {
+        let mut full_args = vec!["-d".to_string(), "-u".to_string()];
+        full_args.extend(args);
+        Self {
+            exec_path,
+            log_level: String::new(),
+            args: full_args,
+            ready_sock: PathBuf::from(format!("{upgrade_sock}.ready")),
+            ready_timeout,
+            pid_file,
+        }
+    }
+
     /// Spawns the replacement process **without waiting** for it to exit.
     ///
     /// The new process is started with `-d` (daemon) and `-u` (upgrade), so it
@@ -85,7 +107,7 @@ impl RestartProcessCommand {
     /// here therefore threw away every diagnostic the new process produced
     /// before its own logger was up - which is exactly the window where a
     /// failed hot upgrade dies.
-    fn exec(&self) -> io::Result<process::Child> {
+    fn spawn_replacement(&self) -> io::Result<process::Child> {
         Command::new(&self.exec_path)
             .env("RUST_LOG", &self.log_level)
             .env(READY_SOCK_ENV, &self.ready_sock)
@@ -130,7 +152,7 @@ fn restart_command() -> Option<RestartProcessCommand> {
     CMD.read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
-static PROCESS_RESTAR_COUNT: LazyLock<AtomicU8> =
+static PROCESS_RESTART_COUNT: LazyLock<AtomicU8> =
     LazyLock::new(|| AtomicU8::new(0));
 static PROCESS_RESTARTING: LazyLock<AtomicBool> =
     LazyLock::new(|| AtomicBool::new(false));
@@ -205,12 +227,26 @@ pub async fn restart_now() -> io::Result<()> {
     })
     .await;
 
+    let target = nix::unistd::Pid::from_raw(std::process::id() as i32);
+    let result = restart_with(cmd, target).await;
+    if result.is_err() {
+        PROCESS_RESTARTING.store(false, Ordering::Relaxed);
+    }
+    result
+}
+
+/// The spawn/readiness/signal half of a restart, with the signal target
+/// injected so the hand-over can be tested without quitting the test process.
+#[cfg(unix)]
+async fn restart_with(
+    cmd: RestartProcessCommand,
+    signal_target: nix::unistd::Pid,
+) -> io::Result<()> {
     // Bind the readiness socket before spawning, so the replacement can never
     // report to nobody ...
     let listener = match ReadyListener::bind(&cmd.ready_sock) {
         Ok(listener) => listener,
         Err(e) => {
-            PROCESS_RESTARTING.store(false, Ordering::Relaxed);
             error!(
                 target: LOG_TARGET,
                 path = %cmd.ready_sock.display(), error = %e,
@@ -221,13 +257,7 @@ pub async fn restart_now() -> io::Result<()> {
     };
     // ... then start it, so it can bind the upgrade socket and wait to receive
     // the listening fds ...
-    let child = match cmd.exec() {
-        Ok(child) => child,
-        Err(e) => {
-            PROCESS_RESTARTING.store(false, Ordering::Relaxed);
-            return Err(e);
-        },
-    };
+    let child = cmd.spawn_replacement()?;
     let new_pid = child.id();
     info!(
         target: LOG_TARGET,
@@ -237,7 +267,7 @@ pub async fn restart_now() -> io::Result<()> {
 
     // A successful spawn only means `execve` worked. The signal below is a
     // point of no return: pingora stops accepting once its close timeout
-    // elapses and exits when the grace period does, so signalling ourselves
+    // elapses and exits when the grace period does, so signalling a process
     // next to a replacement that already died takes the whole service down -
     // several minutes later, which makes it look unrelated to the restart.
     if let Err(e) = wait_for_ready(
@@ -249,7 +279,6 @@ pub async fn restart_now() -> io::Result<()> {
     )
     .await
     {
-        PROCESS_RESTARTING.store(false, Ordering::Relaxed);
         error!(
             target: LOG_TARGET,
             new_pid, error = %e,
@@ -258,11 +287,8 @@ pub async fn restart_now() -> io::Result<()> {
         return Err(e);
     }
 
-    // ... then signal the current process to transfer its sockets and exit.
-    nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(std::process::id() as i32),
-        nix::sys::signal::SIGQUIT,
-    )?;
+    // ... then signal the target to transfer its sockets and exit.
+    nix::sys::signal::kill(signal_target, nix::sys::signal::SIGQUIT)?;
     Ok(())
 }
 
@@ -504,10 +530,10 @@ pub async fn restart_now() -> io::Result<()> {
 /// Only the last request in the window restarts, so a burst of configuration
 /// changes produces one hand-over. A failed restart is logged, notified and
 /// returned so the caller can record it; it is never silently discarded.
-pub async fn restart() -> io::Result<()> {
-    let count = PROCESS_RESTAR_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+pub async fn restart_after_debounce() -> io::Result<()> {
+    let count = PROCESS_RESTART_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     tokio::time::sleep(Duration::from_secs(60)).await;
-    if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed)
+    if count == PROCESS_RESTART_COUNT.load(Ordering::Relaxed)
         && let Err(e) = restart_now().await
     {
         error!(
@@ -586,6 +612,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restart_with_reports_then_signals_the_target() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::process::ExitStatusExt;
+
+        let ready = sock_path("handover");
+        let script = sock_path("replacement.sh");
+        std::fs::write(&script, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(
+            &script,
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+
+        // The process that will receive SIGQUIT instead of the test harness.
+        let mut target = Command::new("sleep").arg("30").spawn().unwrap();
+        let target_pid = target.id();
+
+        let reporter = {
+            let path = ready.clone();
+            tokio::spawn(async move {
+                for _ in 0..100 {
+                    if notify_ready(&path).await.is_ok() {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                panic!("the replacement never reported readiness");
+            })
+        };
+
+        let cmd = RestartProcessCommand {
+            exec_path: script.clone(),
+            ready_sock: ready.clone(),
+            ready_timeout: Duration::from_secs(5),
+            pid_file: sock_path("handover.pid").to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        restart_with(cmd, nix::unistd::Pid::from_raw(target_pid as i32))
+            .await
+            .expect("the readiness report must let the hand-over proceed");
+        reporter.await.unwrap();
+
+        let status = target.wait().unwrap();
+        assert_eq!(
+            Some(nix::sys::signal::SIGQUIT as i32),
+            status.signal(),
+            "the target must receive SIGQUIT"
+        );
+        let _ = std::fs::remove_file(&script);
+    }
+
+    #[tokio::test]
     async fn test_ready_channel_round_trip() {
         let path = sock_path("ok");
         let listener = ReadyListener::bind(&path).unwrap();
@@ -649,6 +727,59 @@ mod tests {
         .expect_err("must time out");
         assert_eq!(io::ErrorKind::TimedOut, err.kind());
         assert_eq!(false, path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_ready_wait_notices_a_daemon_that_died() {
+        let path = sock_path("daemon");
+        let listener = ReadyListener::bind(&path).unwrap();
+        // The spawned process exits successfully, as `-d` does after forking.
+        let child = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+        let new_pid = child.id();
+        // A pid that is certainly gone: start a process and reap it.
+        let mut gone =
+            Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+        let gone_pid = gone.id();
+        gone.wait().unwrap();
+        let pid_file = sock_path("daemon.pid");
+        std::fs::write(&pid_file, gone_pid.to_string()).unwrap();
+
+        let err = wait_for_ready(
+            listener,
+            child,
+            new_pid,
+            Duration::from_secs(5),
+            pid_file.to_str().unwrap(),
+        )
+        .await
+        .expect_err("a dead daemon must fail the wait");
+        let _ = std::fs::remove_file(&pid_file);
+
+        assert_eq!(
+            true,
+            err.to_string()
+                .contains(&format!("new daemon({gone_pid}) exited")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_daemon_pid_from_ignores_this_process() {
+        let pid_file = sock_path("own.pid");
+        std::fs::write(&pid_file, std::process::id().to_string()).unwrap();
+        assert_eq!(None, daemon_pid_from(pid_file.to_str().unwrap()));
+        std::fs::write(&pid_file, "424242").unwrap();
+        assert_eq!(Some(424242), daemon_pid_from(pid_file.to_str().unwrap()));
+        let _ = std::fs::remove_file(&pid_file);
+        assert_eq!(None, daemon_pid_from("/nonexistent/pingap-test.pid"));
+    }
+
+    #[tokio::test]
+    async fn notify_ready_fails_without_a_listener() {
+        let err = notify_ready(&sock_path("absent"))
+            .await
+            .expect_err("no listener must be an error");
+        assert_eq!(io::ErrorKind::NotFound, err.kind(), "{err}");
     }
 
     #[cfg(unix)]

@@ -23,7 +23,7 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-use tracing::info;
+use tracing::{info, warn};
 
 mod file;
 mod fs_util;
@@ -173,6 +173,12 @@ fn try_init_memory_backend(
     params: MemoryCacheParams,
     cache_mode: CacheMode,
 ) -> &'static HttpCache {
+    if MEMORY_BACKEND.get().is_some() {
+        warn!(
+            "memory cache backend is already initialized; later cache settings are ignored"
+        );
+        return MEMORY_BACKEND.get().expect("checked above");
+    }
     MEMORY_BACKEND.get_or_init(|| {
         let available_memory =
             AVAILABLE_MEMORY.load(Ordering::Relaxed) as usize;

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, parse_params};
+use super::{Error, get_hash_key, parse_params, redacted_params};
 use async_trait::async_trait;
 use http::StatusCode;
 use pingap_config::PluginConf;
@@ -78,7 +78,7 @@ impl Redirect {
     /// - Plugin step is not set to "request"
     /// - Required configuration parameters are missing
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new redirect plugin");
+        debug!(params = redacted_params(params), "new redirect plugin");
         let hash_value = get_hash_key(params);
         let params: RedirectParams = parse_params(params, "redirect")?;
 

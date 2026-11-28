@@ -23,6 +23,7 @@ use chrono_tz::Tz;
 use sea_orm::{DatabaseConnection, Value};
 use serde::Serialize;
 use uuid::Uuid;
+use varman_waf::html::escape_html;
 
 use crate::api_util::query_all;
 use crate::error::ApiError;
@@ -386,23 +387,6 @@ pub(crate) struct ReportData {
     pub(crate) ips_by_blocked: Vec<IpRow>,
     pub(crate) paths: Vec<PathRow>,
     pub(crate) daily: Vec<DailyPoint>,
-}
-
-/// Escapes text for HTML text nodes and attributes. Report data (paths,
-/// IPs, rule names) is attacker-reachable; nothing may skip this.
-fn escape_html(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(ch),
-        }
-    }
-    out
 }
 
 const STYLE: &str = "\

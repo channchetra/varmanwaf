@@ -131,6 +131,14 @@ fn key_principal(
     key: &api_key::Model,
     owner: &user::Model,
 ) -> Result<McpPrincipal, McpAuthError> {
+    // A key belongs to an account, so it inherits the forced first-login
+    // password change: otherwise a key minted before the change would bypass
+    // the gate every REST mutation and JWT principal enforces.
+    if owner.must_change_password {
+        return Err(McpAuthError::forbidden(
+            "replace the initial password before using MCP",
+        ));
+    }
     let has_read = key.permissions.iter().any(|p| p == permission::READ);
     let has_write = key.permissions.iter().any(|p| p == permission::WRITE);
     if !has_read && !has_write {
@@ -325,6 +333,12 @@ mod tests {
             AuthUser::new(Uuid::new_v4(), "fresh@example.com", role::ADMIN);
         user.must_change_password = true;
         let err = jwt_principal(&user).unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+
+        let mut key_owner = owner(role::ADMIN);
+        key_owner.must_change_password = true;
+        let err =
+            key_principal(&key(&[permission::WRITE]), &key_owner).unwrap_err();
         assert_eq!(err.status, StatusCode::FORBIDDEN);
     }
 }

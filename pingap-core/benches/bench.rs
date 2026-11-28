@@ -1,11 +1,12 @@
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use criterion::{Criterion, criterion_group, criterion_main};
-use http::HeaderValue;
-use pingap_core::{Ctx, format_duration};
+use http::{HeaderName, HeaderValue, StatusCode};
+use pingap_core::{Ctx, HttpResponse, convert_headers, format_duration};
 use pingap_core::{
     convert_header, get_host, get_ts, now_ms, now_sec, remove_query_from_header,
 };
-use pingora::http::RequestHeader;
+use pingora::http::{RequestHeader, ResponseHeader};
+use std::collections::HashMap;
 use std::hint::black_box;
 
 #[allow(clippy::unwrap_used)]
@@ -114,8 +115,151 @@ fn bench_get_variable(c: &mut Criterion) {
         });
     });
 }
+#[allow(clippy::unwrap_used)]
+fn bench_insert_bytes_header(c: &mut Criterion) {
+    c.bench_function("bytes header", |b| {
+        let arr = vec![
+            (
+                Bytes::from("Cache-Control"),
+                Bytes::from("private, no-store"),
+            ),
+            (
+                Bytes::from("Content-Type"),
+                Bytes::from("text/html; charset=utf-8"),
+            ),
+            (Bytes::from("Etag"), Bytes::from("\"274-24eed9fe\"")),
+            (
+                Bytes::from("Date"),
+                Bytes::from("Fri, 22 Mar 2024 17:16:30 GMT"),
+            ),
+        ];
+        b.iter(|| {
+            let headers = arr.clone();
+            let mut resp = ResponseHeader::build(200, Some(4)).unwrap();
+            for (k, v) in headers {
+                let _ = resp.insert_header(k, v.to_vec());
+            }
+        })
+    });
+}
+
+#[allow(clippy::unwrap_used)]
+fn bench_insert_header_name(c: &mut Criterion) {
+    c.bench_function("header name", |b| {
+        let arr = vec![
+            (
+                HeaderName::from_bytes(b"Cache-Control").unwrap(),
+                HeaderValue::from_str("private, no-store").unwrap(),
+            ),
+            (
+                HeaderName::from_bytes(b"Content-Type").unwrap(),
+                HeaderValue::from_str("text/html; charset=utf-8").unwrap(),
+            ),
+            (
+                HeaderName::from_bytes(b"Etag").unwrap(),
+                HeaderValue::from_str("\"274-24eed9fe\"").unwrap(),
+            ),
+            (
+                HeaderName::from_bytes(b"Date").unwrap(),
+                HeaderValue::from_str("Fri, 22 Mar 2024 17:16:30 GMT").unwrap(),
+            ),
+        ];
+        b.iter(|| {
+            let headers = arr.clone();
+            let mut resp = ResponseHeader::build(200, Some(4)).unwrap();
+            for (k, v) in headers {
+                let _ = resp.insert_header(k, v);
+            }
+        })
+    });
+}
+
+#[allow(clippy::unwrap_used)]
+fn bench_new_response_header(c: &mut Criterion) {
+    c.bench_function("new response header for http response", |b| {
+        let resp = HttpResponse {
+            status: StatusCode::OK,
+            body: Bytes::from("Hello world!"),
+            max_age: Some(3600),
+            created_at: Some(0),
+            cache_private: Some(true),
+            headers: Some(
+                convert_headers(&[
+                    "Contont-Type: application/json".to_string(),
+                    "Content-Encoding: gzip".to_string(),
+                ])
+                .unwrap(),
+            ),
+        };
+
+        b.iter(|| {
+            let value = resp.clone();
+            value.new_response_header().unwrap();
+        });
+    });
+}
+
+#[allow(clippy::unwrap_used)]
+fn bench_get_header_value(c: &mut Criterion) {
+    c.bench_function("get header value", |b| {
+        let mut req_header =
+            RequestHeader::build("GET", b"/users/v1/me", None).unwrap();
+        req_header.insert_header("User-Agent", "pingap").unwrap();
+        req_header
+            .insert_header("Content-Type", "application/json")
+            .unwrap();
+        req_header
+            .insert_header(http::header::CONTENT_LENGTH, "10240")
+            .unwrap();
+
+        b.iter(|| {
+            if req_header
+                .headers
+                .get(http::header::CONTENT_LENGTH)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .is_empty()
+            {
+                panic!("get header value fail")
+            }
+        });
+    });
+}
+
+#[allow(clippy::unwrap_used)]
+fn bench_map(c: &mut Criterion) {
+    let mut map = HashMap::new();
+    let mut amap = ahash::AHashMap::new();
+    for i in 0..10 {
+        let id = format!("key-{i}");
+        map.insert(id.clone(), i);
+        amap.insert(id, i);
+    }
+    let id = "key-lookup".to_string();
+    map.insert(id.clone(), 100);
+    amap.insert(id.clone(), 100);
+    c.bench_function("normal hash map", |b| {
+        let new_id = id.clone();
+        b.iter(|| {
+            map.get(&new_id);
+        });
+    });
+    c.bench_function("ahash map", |b| {
+        let new_id = id.clone();
+        b.iter(|| {
+            amap.get(&new_id);
+        });
+    });
+}
+
 criterion_group!(
     benches,
+    bench_insert_bytes_header,
+    bench_insert_header_name,
+    bench_new_response_header,
+    bench_get_header_value,
+    bench_map,
     bench_remove_query_from_header,
     bench_get_host,
     bench_convert_header_value,

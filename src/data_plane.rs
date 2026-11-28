@@ -34,16 +34,18 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::warn;
+use tracing::{error, info};
 
 use bytes::BytesMut;
+use pingap_acme::new_lets_encrypt_service;
 use pingap_cache::new_storage_clear_service;
+use pingap_certificate::CertificateProvider;
 use pingap_certificate::{
-    CertificateProvider, new_certificate_validity_service,
+    new_certificate_validity_service,
     new_self_signed_certificate_validity_service,
 };
 use pingap_config::{ConfigManager, PingapConfig, PluginConf};
-use pingap_core::BackgroundTaskService;
+use pingap_core::{BackgroundTaskService, NotificationSender};
 use pingap_performance::new_performance_metrics_log_service;
 use pingap_proxy::AppContext;
 use pingora::server;
@@ -51,14 +53,7 @@ use pingora::server::configuration::Opt;
 use pingora::services::ServiceHandle;
 use tokio::sync::mpsc::Sender;
 
-use crate::certificates::{new_certificate_provider, try_update_certificates};
-use crate::config_apply::ProviderUpdate;
-use crate::locations::{new_location_provider, try_init_locations};
-use crate::plugin::{new_plugin_provider, try_init_plugins};
-use crate::server_locations::{
-    new_server_locations_provider, try_init_server_locations,
-};
-use crate::upstreams::{new_upstream_provider, try_init_upstreams};
+use crate::provider::ProviderUpdate;
 use crate::webhook::get_webhook_sender;
 
 /// Interval of the shared background-task service.
@@ -70,6 +65,45 @@ const DEFAULT_UPGRADE_SOCK: &str = "/tmp/pingap_upgrade.sock";
 
 /// pingora's upgrade socket for this deployment: `basic.upgrade_sock`, or the
 /// path pingap has always defaulted to.
+/// Logs the outcome both data-plane roots used to print themselves.
+pub(crate) fn report_provider_updates(
+    plugins: &ProviderUpdate,
+    certificates: &ProviderUpdate,
+) {
+    if !plugins.updated.is_empty() {
+        info!(plugins = plugins.updated.join(","), "plugins initialized");
+    }
+    if !plugins.errors.is_empty() {
+        error!(error = plugins.errors.as_str(), "plugin init errors");
+    }
+    if !certificates.updated.is_empty() {
+        info!(
+            certs = certificates.updated.join(","),
+            "certificates loaded"
+        );
+    }
+    if !certificates.errors.is_empty() {
+        error!(
+            error = certificates.errors.as_str(),
+            "certificate parse errors"
+        );
+    }
+}
+
+/// Registers the shared ACME task on the plane's background service.
+pub(crate) fn add_acme_task(
+    tasks: &mut BackgroundTaskService,
+    config_manager: Arc<ConfigManager>,
+    provider: Arc<dyn CertificateProvider>,
+    sender: Option<Arc<NotificationSender>>,
+) {
+    tasks.add_task(
+        "lets_encrypt",
+        new_lets_encrypt_service(config_manager, provider, sender),
+    );
+}
+
+/// The upgrade socket for a plane, defaulting to the historical path.
 pub(crate) fn upgrade_sock_path(
     basic_conf: &pingap_config::BasicConf,
 ) -> String {
@@ -161,29 +195,98 @@ pub(crate) fn new_server_config_from(
 /// background loops - is fixed by [`assemble`].
 pub struct DataPlaneOptions {
     /// `-d`: run pingora in the background.
-    pub daemon: bool,
+    daemon: bool,
     /// `-u`: hot upgrade from a running instance. Only the file-configured
     /// daemon asks for it.
-    pub upgrade: bool,
+    upgrade: bool,
     /// `--threads`, overriding `basic.threads` for every runtime.
-    pub threads: Option<usize>,
+    threads: Option<usize>,
     /// Plugins built in addition to `config.plugins`. The `--cp` node and
     /// the file-configured daemon pass the admin listener parsed from
     /// `--admin` here; the agent-hosted plane has none.
-    pub admin_plugin: Option<(String, PluginConf)>,
+    admin_plugin: Option<(String, PluginConf)>,
     /// Name of the shared background-task service. The file-configured daemon
     /// and the agent-hosted plane have always reported different names and
     /// both are kept. `None` for the `--cp` admin node, which runs no
     /// data-plane loop.
-    pub background_tasks: Option<&'static str>,
+    background_task_service_name: Option<&'static str>,
     /// The `--cp` control-panel node: it serves the admin plugin only and
     /// loads no configuration, so it keeps pingora's built-in server
     /// configuration (its own pid file and upgrade socket) instead of one
     /// derived from `basic`.
-    pub admin_only: bool,
+    admin_only: bool,
+}
+
+impl DataPlaneOptions {
+    /// The normal proxy plane: listeners, providers and the background
+    /// loops.
+    pub fn data_plane(
+        daemon: bool,
+        upgrade: bool,
+        threads: Option<usize>,
+        admin_plugin: Option<crate::provider::AdminPluginEntry>,
+        background_task_service_name: &'static str,
+    ) -> Self {
+        Self {
+            daemon,
+            upgrade,
+            threads,
+            admin_plugin,
+            background_task_service_name: Some(background_task_service_name),
+            admin_only: false,
+        }
+    }
+
+    /// The `--cp` control-panel node: the admin plugin only, no data-plane
+    /// loops, and pingora's built-in server configuration.
+    pub fn admin_only(
+        daemon: bool,
+        threads: Option<usize>,
+        admin_plugin: Option<crate::provider::AdminPluginEntry>,
+    ) -> Self {
+        Self {
+            daemon,
+            upgrade: false,
+            threads,
+            admin_plugin,
+            background_task_service_name: None,
+            admin_only: true,
+        }
+    }
 }
 
 /// The assembled plane, plus the pieces each root still has to place itself.
+/// The five registries one plane owns, so every listener context and every
+/// background task of this plane uses the same instances instead of
+/// re-resolving process globals.
+#[derive(Clone)]
+pub struct ProviderSet {
+    pub upstreams: Arc<crate::upstreams::Provider>,
+    pub locations: Arc<crate::locations::Provider>,
+    pub server_locations: Arc<crate::server_locations::Provider>,
+    pub plugins: Arc<crate::plugin::Provider>,
+    pub certificates: Arc<crate::certificates::Provider>,
+}
+
+impl ProviderSet {
+    /// Five empty registries that share no state with any other set.
+    pub fn new() -> Self {
+        Self {
+            upstreams: Arc::new(crate::upstreams::Provider::new()),
+            locations: Arc::new(crate::locations::Provider::new()),
+            server_locations: Arc::new(crate::server_locations::Provider::new()),
+            plugins: Arc::new(crate::plugin::Provider::new()),
+            certificates: Arc::new(crate::certificates::Provider::new()),
+        }
+    }
+}
+
+impl Default for ProviderSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct AssembledPlane {
     /// pingora's server. The caller owns its lifetime: `run` + webhook flush,
     /// `run_forever`, or a dedicated thread for the agent-hosted plane.
@@ -194,32 +297,45 @@ pub struct AssembledPlane {
     pub bootstrap: ServiceHandle,
     /// The caller's config manager, the instance [`assemble`] was handed.
     pub config_manager: Arc<ConfigManager>,
-    /// The process-wide certificate provider the listeners resolve SNI
-    /// against.
-    pub certificate_provider: Arc<dyn CertificateProvider>,
+    /// The providers this assembly initialised.
+    pub providers: ProviderSet,
     /// The four common loops, when the caller runs a data plane: certificate
     /// validity, self-signed rotation, performance metrics and storage clear.
     /// The caller adds its own tasks (ACME, Prometheus push, log handling)
     /// and registers the service at its historical point in start-up.
     pub background_tasks: Option<BackgroundTaskService>,
     /// Plugin rebuild results, for the caller to log in its own words.
-    pub plugins: ProviderUpdate,
+    pub plugin_update: ProviderUpdate,
     /// Certificate load results, for the caller to log in its own words.
-    pub certificates: ProviderUpdate,
+    pub certificate_update: ProviderUpdate,
 }
 
 impl AssembledPlane {
+    /// Adds one listener and makes it wait for the bootstrap service.
+    ///
+    /// Every listener must depend on bootstrap: without it a restarted
+    /// process binds fresh sockets instead of building them from the
+    /// inherited fds, and the zero-downtime hand-over fails.
+    pub(crate) fn add_listener(
+        &mut self,
+        services: pingap_proxy::ServerServices,
+    ) {
+        self.server
+            .add_service(services.lb)
+            .add_dependency(&self.bootstrap);
+    }
+
     /// Builds the per-listener [`AppContext`] on the shared providers.
     ///
     /// `logger` is the listener's access logger; only the file-configured
     /// daemon builds one, from the listener's `access_log` directive.
     pub fn app_context(&self, logger: Option<Sender<BytesMut>>) -> AppContext {
         AppContext {
-            server_locations_provider: new_server_locations_provider(),
-            location_provider: new_location_provider(),
-            upstream_provider: new_upstream_provider(),
-            plugin_provider: new_plugin_provider(),
-            certificate_provider: self.certificate_provider.clone(),
+            server_locations_provider: self.providers.server_locations.clone(),
+            location_provider: self.providers.locations.clone(),
+            upstream_provider: self.providers.upstreams.clone(),
+            plugin_provider: self.providers.plugins.clone(),
+            certificate_provider: self.providers.certificates.clone(),
             config_manager: self.config_manager.clone(),
             logger,
         }
@@ -245,29 +361,45 @@ pub fn assemble(
     config_manager: Arc<ConfigManager>,
     options: DataPlaneOptions,
 ) -> anyhow::Result<AssembledPlane> {
-    try_init_upstreams(&config.upstreams, Some(get_webhook_sender()))
+    // The plane owns its registries: this set is the only place they live, so
+    // two assemblies (or a test) never share upstream, location, plugin or
+    // certificate state. The order is the one every entry point has always
+    // used: upstreams (locations resolve them by name), locations, the server
+    // index built from those locations, then the plugins they reference and
+    // the certificates.
+    let providers = ProviderSet::new();
+    providers
+        .upstreams
+        .replace_upstreams(&config.upstreams, Some(get_webhook_sender()))
         .map_err(|e| anyhow::anyhow!("failed to init upstreams: {e}"))?;
-    try_init_locations(&config.locations)
+    providers
+        .locations
+        .replace_locations(&config.locations)
         .map_err(|e| anyhow::anyhow!("failed to init locations: {e}"))?;
-    try_init_server_locations(&config.servers, &config.locations)
+    providers
+        .server_locations
+        .replace_server_locations(
+            providers.locations.as_ref(),
+            &config.servers,
+            &config.locations,
+        )
         .map_err(|e| anyhow::anyhow!("failed to init server locations: {e}"))?;
 
-    let (updated, errors) = try_init_plugins(
+    let plugins = providers.plugins.replace_plugins(
         &config.plugins,
         options.admin_plugin,
         config_manager.clone(),
+        &providers,
     );
-    // `try_init_plugins` still reports the old tuple; `ProviderUpdate` treats
-    // the same non-empty error the same way (nothing was applied).
-    let plugins = ProviderUpdate { updated, errors };
 
-    let certificate_provider = new_certificate_provider();
     // Nothing configured (the `--cp` node) leaves the provider untouched
     // instead of replacing it with an empty one.
     let certificates = if config.certificates.is_empty() {
         ProviderUpdate::default()
     } else {
-        try_update_certificates(&config.certificates)
+        providers
+            .certificates
+            .replace_certificates(&config.certificates)
             .map_err(|e| anyhow::anyhow!("failed to init certificates: {e}"))?
     };
 
@@ -291,7 +423,7 @@ pub fn assemble(
         server::Server::new_with_opt_and_conf(Some(opt), server_conf);
     let bootstrap = server.bootstrap_as_a_service();
 
-    let background_tasks = options.background_tasks.map(|name| {
+    let background_tasks = options.background_task_service_name.map(|name| {
         let mut tasks = BackgroundTaskService::new(
             name,
             BACKGROUND_TASK_INTERVAL,
@@ -299,7 +431,7 @@ pub fn assemble(
                 (
                     "validity_checker".to_string(),
                     new_certificate_validity_service(
-                        certificate_provider.clone(),
+                        providers.certificates.clone(),
                         Some(get_webhook_sender()),
                     ),
                 ),
@@ -310,8 +442,8 @@ pub fn assemble(
                 (
                     "performance_metrics".to_string(),
                     new_performance_metrics_log_service(
-                        new_location_provider(),
-                        new_upstream_provider(),
+                        providers.locations.clone(),
+                        providers.upstreams.clone(),
                     ),
                 ),
             ],
@@ -324,22 +456,14 @@ pub fn assemble(
         tasks
     });
 
-    if !plugins.is_ok() || !certificates.is_ok() {
-        warn!(
-            plugin_errors = %plugins.errors,
-            certificate_errors = %certificates.errors,
-            "data plane assembled with deferred provider errors"
-        );
-    }
-
     Ok(AssembledPlane {
         server,
         bootstrap,
         config_manager,
-        certificate_provider,
+        providers,
         background_tasks,
-        plugins,
-        certificates,
+        plugin_update: plugins,
+        certificate_update: certificates,
     })
 }
 
@@ -351,7 +475,8 @@ mod tests {
     /// A local manager: `assemble` takes the instance as a parameter, so the
     /// tests no longer have to install anything process-wide first.
     fn new_config_manager() -> Arc<ConfigManager> {
-        Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None))
+        crate::config_manager::build_memory_config_manager("[basic]\n", None)
+            .expect("test manager")
     }
 
     #[test]
@@ -366,6 +491,34 @@ mod tests {
         assert_eq!("/run/custom.sock", upgrade_sock_path(&basic));
     }
 
+    /// Two independently constructed sets must not share a registry: the
+    /// provider state is per-plane now, never process-wide.
+    #[test]
+    fn independently_constructed_provider_sets_do_not_share_state() {
+        use pingap_config::LocationConf;
+        use pingap_location::LocationProvider;
+        use std::collections::HashMap;
+
+        let first = ProviderSet::new();
+        let second = ProviderSet::new();
+        first
+            .locations
+            .replace_locations(&HashMap::from([(
+                "provider-set-local".to_string(),
+                LocationConf {
+                    path: Some("/local".to_string()),
+                    ..Default::default()
+                },
+            )]))
+            .expect("a valid location path");
+
+        assert!(first.locations.get("provider-set-local").is_some());
+        assert!(
+            second.locations.get("provider-set-local").is_none(),
+            "the second set must not see the first set's locations"
+        );
+    }
+
     /// The daemon and thread overrides have to reach pingora's configuration,
     /// and a data plane gets the shared background loops.
     #[test]
@@ -374,14 +527,13 @@ mod tests {
         let assembled = assemble(
             &PingapConfig::default(),
             config_manager.clone(),
-            DataPlaneOptions {
-                daemon: true,
-                upgrade: false,
-                threads: Some(3),
-                admin_plugin: None,
-                background_tasks: Some("test_background_service"),
-                admin_only: false,
-            },
+            DataPlaneOptions::data_plane(
+                true,
+                false,
+                Some(3),
+                None,
+                "test_background_service",
+            ),
         )
         .expect("assembly must succeed on the default config");
 
@@ -405,14 +557,7 @@ mod tests {
         let assembled = assemble(
             &PingapConfig::default(),
             config_manager,
-            DataPlaneOptions {
-                daemon: false,
-                upgrade: false,
-                threads: None,
-                admin_plugin: None,
-                background_tasks: None,
-                admin_only: true,
-            },
+            DataPlaneOptions::admin_only(false, None, None),
         )
         .expect("assembly must succeed on the default config");
 

@@ -54,7 +54,7 @@ fn default_action() -> String {
 
 /// `<= 0` (or the UI's "manual" choice) clears the interval; positive values
 /// are kept as-is.
-fn normalise_interval(minutes: Option<i32>) -> Option<i32> {
+fn normalize_interval(minutes: Option<i32>) -> Option<i32> {
     minutes.filter(|minutes| *minutes > 0)
 }
 
@@ -151,14 +151,13 @@ fn validate_ip_ranges(ranges: &[String]) -> Result<Vec<String>, ApiError> {
         if trimmed.is_empty() {
             continue;
         }
-        let base = trimmed.split('/').next().unwrap_or(trimmed);
-        if base.parse::<std::net::IpAddr>().is_err() {
+        let Some(range) = crate::api::common::parse_ip_range(trimmed) else {
             return Err(ApiError::BadRequest(format!(
                 "invalid IP address or CIDR: '{trimmed}'"
             )));
-        }
-        if !out.contains(&trimmed.to_string()) {
-            out.push(trimmed.to_string());
+        };
+        if !out.contains(&range) {
+            out.push(range);
         }
     }
     Ok(out)
@@ -255,7 +254,7 @@ async fn list(
     current: AuthUser,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Page<IpGroupResponse>>, ApiError> {
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let mut condition = visible_group_condition(&current);
     if let Some(ref action) = non_empty(&query.action) {
@@ -355,7 +354,7 @@ async fn create(
         subscription_enabled: Set(payload.subscription_enabled),
         source_url: Set(source_url),
         source_selector: Set(source_selector),
-        sync_interval_minutes: Set(normalise_interval(
+        sync_interval_minutes: Set(normalize_interval(
             payload.sync_interval_minutes,
         )),
         last_synced_at: Set(None),
@@ -450,7 +449,7 @@ async fn update(
                 .unwrap_or_default());
     }
     if let Some(interval) = payload.sync_interval_minutes {
-        active.sync_interval_minutes = Set(normalise_interval(Some(interval)));
+        active.sync_interval_minutes = Set(normalize_interval(Some(interval)));
     }
     if let Some(enabled) = payload.enabled {
         active.enabled = Set(enabled);
@@ -472,7 +471,7 @@ async fn remove(
     State(state): State<AppState>,
     current: AuthUser,
     Path(group_id): Path<String>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
     require_write(&current)?;
     let target = parse_uuid(&group_id, "IP group id")?;
@@ -497,7 +496,7 @@ async fn remove(
     tracing::info!(group_id = %target, "IP group deleted");
     propagate_group_change(&state, target, Some(&current.email)).await;
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Sites whose agent configuration embeds this group: explicitly associated
@@ -629,7 +628,7 @@ async fn set_sites(
     current: AuthUser,
     Path(group_id): Path<String>,
     Json(payload): Json<SetSitesRequest>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
     require_write(&current)?;
     let target = parse_uuid(&group_id, "IP group id")?;
@@ -692,7 +691,7 @@ async fn set_sites(
         notify_config_changed(&state, sid, Some(&current.email)).await;
     }
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /api/v1/ip-groups/{group_id}/sync` — trigger a manual sync from the
@@ -1017,7 +1016,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selector_normalisation_rejects_bad_input() {
+    fn selector_normalization_rejects_bad_input() {
         // Absent, empty and whitespace-only selectors all collapse to "auto".
         assert_eq!(validate_selector(&None).unwrap(), None);
         assert_eq!(validate_selector(&Some(String::new())).unwrap(), None);

@@ -273,13 +273,12 @@ pub fn get_hash_key(conf: &PluginConf) -> String {
     format!("{hash:X}")
 }
 
-/// Registers a plugin with the global plugin factory inside a pre-main
-/// constructor. Collapses the identical `#[ctor(unsafe)] fn init()` block
-/// that every plugin module would otherwise repeat.
+/// Generates the module's explicit registration function. The root calls
+/// [`register_builtins`] at start-up; nothing depends on a pre-main
+/// constructor any more.
 macro_rules! register_plugin {
     ($category:literal, $ty:ty) => {
-        #[::ctor::ctor(unsafe)]
-        fn init() {
+        pub(crate) fn register() {
             $crate::get_plugin_factory().register($category, |params| {
                 Ok(::std::sync::Arc::new(<$ty>::new(params)?))
             });
@@ -289,17 +288,15 @@ macro_rules! register_plugin {
 
 mod accept_encoding;
 mod basic_auth;
-mod bot_dns;
-mod cache;
-mod challenge;
+pub mod bot_dns;
 mod combined_auth;
 mod compression;
 mod cors;
 mod csrf;
 mod directory;
-mod error_page;
 mod forward_auth;
-#[cfg(feature = "geo")]
+pub mod geo;
+#[cfg(feature = "geo-restriction")]
 mod geo_restriction;
 mod ip_restriction;
 mod jwt;
@@ -307,141 +304,44 @@ mod key_auth;
 mod limit;
 mod mock;
 mod ping;
+mod plugin;
 mod redirect;
 mod referer_restriction;
 mod request_id;
 mod response_headers;
-mod rewrite;
 mod sub_filter;
+pub mod text;
 mod traffic_splitting;
 mod ua_restriction;
-mod waf;
-/// Failed-authentication streak tracker (Phase 8 ATO defense).
-pub mod waf_ato;
-/// Per-site custom layers: SecLang virtual patches + OpenAPI validation.
-pub mod waf_custom;
-/// External-processor transport (Phase 9); see the module docs.
-pub mod waf_processor;
-/// Shadow execution of the Varman pipeline beside the legacy engine (Phase 2
-/// wiring); see the module docs. Selected with `VARMAN_WAF_ENGINE=shadow|varman`.
-pub mod waf_shadow;
-/// Stream inspection: body tails and WebSocket frames (Phase 8).
-pub mod waf_stream;
-
-mod plugin;
 
 pub use plugin::get_plugin_factory;
-// The data plane drives the WAF plugin's access-log sweep timer from its
-// own runtime, so these two items are re-exported.
-pub use waf::{PENDING_ACCESS_SWEEP_TTL, sweep_stale_access};
 
-#[cfg(test)]
-pub(crate) mod test_support {
-    //! Fixtures shared by plugin test modules.
-    use pingora::proxy::Session;
-    use tokio_test::io::Builder;
-
-    /// Serializes tests that install the process-wide agent.
-    ///
-    /// The agent instance is a global and cargo runs tests in parallel: a test
-    /// reaching the plugin's agent paths while another has an agent installed
-    /// would record into that agent's metrics collector.
-    pub(crate) static AGENT_LOCK: tokio::sync::Mutex<()> =
-        tokio::sync::Mutex::const_new(());
-
-    /// Acquires the process-wide agent test lock.
-    pub(crate) async fn lock_agent() -> tokio::sync::MutexGuard<'static, ()> {
-        AGENT_LOCK.lock().await
-    }
-
-    /// Builds an H1 session preloaded with a single request.
-    pub(crate) async fn h1_session(
-        method: &str,
-        target: &str,
-        host: &str,
-    ) -> Session {
-        let input =
-            format!("{method} {target} HTTP/1.1\r\nHost: {host}\r\n\r\n");
-        let mock_io = Builder::new().read(input.as_bytes()).build();
-        let mut s = Session::new_h1(Box::new(mock_io));
-        s.read_request().await.expect("read_request");
-        s
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{accepts_encoding, parse_params, redacted_params};
-    use pingap_config::PluginConf;
-    use pretty_assertions::assert_eq;
-
-    #[derive(Debug, Default, serde::Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    struct TestParams {
-        level: u32,
-        name: String,
-    }
-
-    #[test]
-    fn test_parse_params_ignores_common_keys_and_rejects_typos() {
-        let mut conf = PluginConf::new();
-        conf.insert(
-            "category".into(),
-            toml::Value::String("compression".into()),
-        );
-        conf.insert("step".into(), toml::Value::String("request".into()));
-        conf.insert("level".into(), toml::Value::Integer(3));
-        conf.insert("name".into(), toml::Value::String("x".into()));
-
-        let params: TestParams =
-            parse_params(&conf, "compression").expect("valid params");
-        assert_eq!(3, params.level);
-        assert_eq!("x", params.name);
-
-        conf.insert("levle".into(), toml::Value::Integer(3));
-        assert!(parse_params::<TestParams>(&conf, "compression").is_err());
-
-        conf.remove("levle");
-        conf.insert("level".into(), toml::Value::String("3".into()));
-        assert!(parse_params::<TestParams>(&conf, "compression").is_err());
-    }
-
-    #[test]
-    fn test_accepts_encoding() {
-        assert_eq!(true, accepts_encoding("gzip, br", "br"));
-        assert_eq!(true, accepts_encoding("gzip, deflate, br;q=0.9", "br"));
-        assert_eq!(true, accepts_encoding("BR", "br"));
-        // Substring false-matches must be rejected.
-        assert_eq!(false, accepts_encoding("x-gzip", "gzip"));
-        assert_eq!(false, accepts_encoding("gzipx", "gzip"));
-        // Explicit q=0 means "not acceptable".
-        assert_eq!(false, accepts_encoding("br;q=0", "br"));
-    }
-
-    #[test]
-    fn test_redacted_params_hides_credentials() {
-        // spellchecker:off
-        let conf: PluginConf = toml::from_str(
-            r#"
-category = "basic_auth"
-authorizations = ["YWRtaW46MTIzMTIz"]
-secret = "super-secret"
-keys = ["key-one", "key-two"]
-delay = "10ms"
-"#,
-        )
-        .unwrap();
-        // spellchecker:on
-
-        let rendered = redacted_params(&conf);
-        assert!(!rendered.contains("YWRtaW46MTIzMTIz"));
-        assert!(!rendered.contains("super-secret"));
-        assert!(!rendered.contains("key-one"));
-        // Two list entries remain visible as two placeholders.
-        assert!(rendered.contains("<redacted>"));
-        assert!(rendered.contains(r#"["<redacted>", "<redacted>"]"#));
-        // Non-secret keys are untouched.
-        assert!(rendered.contains("basic_auth"));
-        assert!(rendered.contains("10ms"));
-    }
+/// Registers every generic plugin in this crate.
+///
+/// The binary calls this once, before any config is parsed, so availability
+/// is a visible start-up step instead of a pre-main constructor side effect.
+pub fn register_builtins() {
+    accept_encoding::register();
+    basic_auth::register();
+    combined_auth::register();
+    compression::register();
+    cors::register();
+    csrf::register();
+    directory::register();
+    forward_auth::register();
+    #[cfg(feature = "geo-restriction")]
+    geo_restriction::register();
+    ip_restriction::register();
+    jwt::register();
+    key_auth::register();
+    limit::register();
+    mock::register();
+    ping::register();
+    redirect::register();
+    referer_restriction::register();
+    request_id::register();
+    response_headers::register();
+    sub_filter::register();
+    traffic_splitting::register();
+    ua_restriction::register();
 }

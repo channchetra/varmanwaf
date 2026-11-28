@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, accepts_encoding, get_hash_key, parse_params};
+use super::{
+    Error, accepts_encoding, get_hash_key, parse_params, redacted_params,
+};
 use async_trait::async_trait;
 use http::HeaderValue;
 use http::header::{
@@ -181,7 +183,7 @@ impl Compression {
     /// # Returns
     /// * `Result<Self>` - New compression plugin instance or error
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new compression plugin");
+        debug!(params = redacted_params(params), "new compression plugin");
         Self::try_from(params)
     }
     fn get_compress_level(&self, session: &Session) -> (u32, u32, u32) {

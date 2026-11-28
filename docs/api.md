@@ -766,7 +766,7 @@ SHA-256 fingerprint are.
 
 ### POST /sites/{site_id}/mtls/cas
 
-Create a CA. Requires the `write` role.
+Create a CA. Requires the administrator role.
 
 **Request (generate):**
 ```json
@@ -898,7 +898,7 @@ own. The plaintext is never returned here.
 
 ### POST /keys
 
-Create a new API key. Requires the `write` role.
+Create a new API key. Requires the administrator role.
 
 **Request:**
 ```json

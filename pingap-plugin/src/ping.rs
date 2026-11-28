@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, parse_params};
+use super::{Error, get_hash_key, parse_params, redacted_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -61,7 +61,7 @@ impl Ping {
     /// # Returns
     /// * `Result<Self>` - New Ping instance or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new ping plugin");
+        debug!(params = redacted_params(params), "new ping plugin");
         let hash_value = get_hash_key(params);
         let params: PingParams = parse_params(params, "ping")?;
         Ok(Self {

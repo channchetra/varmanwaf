@@ -1,13 +1,10 @@
 use super::*;
-use crate::test_support::lock_agent;
+use crate::test_support::{install_test_agent, lock_agent};
 use pingap_core::PluginStep;
+use pingap_plugin::text::contains_ignore_case;
 use pingap_util::base64_encode;
 use pingora::proxy::Session;
 use tokio_test::io::Builder;
-use varman_agent::cache::RuleCache;
-use varman_agent::client::ControlPlaneClient;
-use varman_agent::config::AgentConfig;
-use varman_agent::heartbeat::MetricsCollector;
 use varman_challenge::ClearanceLevel;
 use varman_protocol::control_plane as proto;
 
@@ -534,38 +531,6 @@ async fn test_off_mode_skips() {
         .await
         .unwrap();
     assert!(result == RequestPluginResult::Skipped);
-}
-
-/// Install a never-connecting agent for the duration of one test,
-/// holding the agent lock so sibling tests stay off the global.
-pub(crate) async fn install_test_agent() -> (
-    tokio::sync::MutexGuard<'static, ()>,
-    Arc<VarmanAgent>,
-    tempfile::TempDir,
-) {
-    let lock = lock_agent().await;
-    let dir = tempfile::tempdir().unwrap();
-    let config = AgentConfig {
-        cache_dir: dir.path().to_string_lossy().to_string(),
-        ..Default::default()
-    };
-    let rule_cache =
-        RuleCache::new(dir.path().to_path_buf(), "test-agent".to_string())
-            .unwrap();
-    let metrics = Arc::new(MetricsCollector::new());
-    let client = Arc::new(ControlPlaneClient::new(
-        config.clone(),
-        Arc::clone(&rule_cache),
-        Arc::clone(&metrics),
-    ));
-    let agent = Arc::new(VarmanAgent {
-        config,
-        client,
-        rule_cache,
-        metrics,
-    });
-    VarmanAgent::set_agent_instance(Some(Arc::clone(&agent)));
-    (lock, agent, dir)
 }
 
 /// Pushes site rules to the test agent: a whitelist allow rule above a
@@ -1775,7 +1740,7 @@ async fn test_exclusion_package_suppresses_under_its_prefix() {
 /// the denial carries the display country on the emitted security event.
 #[tokio::test]
 async fn test_geo_rule_blocks_listed_country() {
-    LazyLock::force(&GEO_DB);
+    pingap_plugin::geo::warm_geoip();
     let country = lookup_country_addr("8.8.8.8".parse().unwrap())
         .expect("embedded db resolves 8.8.8.8 for display");
 
@@ -1834,7 +1799,7 @@ async fn test_geo_rule_blocks_listed_country() {
 /// enforcing: the request continues and the event carries `monitor`.
 #[tokio::test]
 async fn test_geo_rule_monitor_action_records_without_blocking() {
-    LazyLock::force(&GEO_DB);
+    pingap_plugin::geo::warm_geoip();
     let country = lookup_country_addr("8.8.8.8".parse().unwrap())
         .expect("embedded db resolves 8.8.8.8 for display");
 
@@ -3007,7 +2972,7 @@ fn rate_rule_build_filters_unenforceable_rules() {
         ))
         .is_none()
     );
-    // The prost debug name of ip_nat normalises to the plain IP key.
+    // The prost debug name of ip_nat normalizes to the plain IP key.
     let nat = build(rate_rule(
         "f",
         vec![proto::RateLimitCharacteristics::RateLimitCharIpNat],

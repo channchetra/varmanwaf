@@ -202,20 +202,20 @@ async fn sync_keys(
 ) -> Vec<SyncResult> {
     let mut results = Vec::with_capacity(keys.len());
     for key in keys {
-        let normalised = ipverse::normalise_key(kind, key);
-        let result = match normalised {
-            Ok(normalised) => {
-                match ipverse::sync_dataset(&state.db, kind, &normalised).await
+        let normalized = ipverse::normalize_key(kind, key);
+        let result = match normalized {
+            Ok(normalized) => {
+                match ipverse::sync_dataset(&state.db, kind, &normalized).await
                 {
                     Ok(row) => SyncResult {
-                        key: normalised,
+                        key: normalized,
                         synced: true,
                         ipv4_ranges: row.ipv4_ranges.len(),
                         ipv6_ranges: row.ipv6_ranges.len(),
                         error: None,
                     },
                     Err(error) => SyncResult {
-                        key: normalised,
+                        key: normalized,
                         synced: false,
                         ipv4_ranges: 0,
                         ipv6_ranges: 0,
@@ -246,9 +246,9 @@ async fn push_affected_sites(
     if synced_keys.is_empty() {
         return 0;
     }
-    let normalised: std::collections::HashSet<String> = synced_keys
+    let normalized: std::collections::HashSet<String> = synced_keys
         .iter()
-        .filter_map(|key| ipverse::normalise_key(kind, key).ok())
+        .filter_map(|key| ipverse::normalize_key(kind, key).ok())
         .collect();
 
     let rows = match geo_rules::Entity::find().all(&state.db).await {
@@ -263,12 +263,12 @@ async fn push_affected_sites(
     for row in rows {
         let affected = match kind {
             KIND_COUNTRY => row.countries.iter().any(|key| {
-                ipverse::normalise_key(KIND_COUNTRY, key)
-                    .is_ok_and(|key| normalised.contains(&key))
+                ipverse::normalize_key(KIND_COUNTRY, key)
+                    .is_ok_and(|key| normalized.contains(&key))
             }),
             KIND_ASN => row.blocked_asns.iter().any(|key| {
-                ipverse::normalise_key(KIND_ASN, key)
-                    .is_ok_and(|key| normalised.contains(&key))
+                ipverse::normalize_key(KIND_ASN, key)
+                    .is_ok_and(|key| normalized.contains(&key))
             }),
             _ => false,
         };
@@ -309,19 +309,19 @@ async fn referenced_keys(
             .map(|key| (KIND_COUNTRY, key))
             .chain(row.blocked_asns.iter().map(|key| (KIND_ASN, key)))
         {
-            let Ok(normalised) = ipverse::normalise_key(kind, key) else {
+            let Ok(normalized) = ipverse::normalize_key(kind, key) else {
                 continue;
             };
-            if !seen.insert((kind.to_string(), normalised.clone())) {
+            if !seen.insert((kind.to_string(), normalized.clone())) {
                 continue;
             }
             let synced_at = synced
-                .get(&(kind.to_string(), normalised.clone()))
+                .get(&(kind.to_string(), normalized.clone()))
                 .copied()
                 .flatten();
             referenced.push(ReferencedKey {
                 kind: kind.to_string(),
-                key: normalised,
+                key: normalized,
                 synced: synced_at.is_some(),
                 synced_at,
             });

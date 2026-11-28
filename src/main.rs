@@ -22,13 +22,11 @@ compile_error!(
 );
 
 use crate::config_manager::{
-    try_init_config_manager, try_init_memory_config_manager,
+    build_config_manager, build_memory_config_manager,
 };
-use crate::upstreams::new_upstream_provider;
 use bytes::BytesMut;
 use clap::Parser;
 use crossbeam_channel::Receiver;
-use pingap_acme::new_lets_encrypt_service;
 use pingap_certificate::{
     install_default_crypto_provider, validate_servers_tls_for_backend,
 };
@@ -51,7 +49,6 @@ use pingora::services::background::background_service;
 use process::{
     init_start_time, new_auto_restart_service, new_observer_service,
 };
-use std::error::Error;
 use std::ffi::OsString;
 use std::future::Future;
 use std::str::FromStr;
@@ -63,15 +60,16 @@ use tracing::{error, info, warn};
 
 mod certificates;
 mod cli;
+mod config;
+pub(crate) use config::file as config_file;
+pub(crate) use config::manager as config_manager;
+pub(crate) use config::quick_start;
 mod config_apply;
-mod config_file;
-mod config_manager;
 mod data_plane;
 mod locations;
-mod maintenance;
 mod plugin;
 mod process;
-mod quick_start;
+mod provider;
 mod server_locations;
 mod upstreams;
 mod varman;
@@ -246,7 +244,7 @@ where
     r
 }
 
-fn get_config(
+fn load_config_in_background(
     config_manager: Arc<ConfigManager>,
 ) -> Receiver<Result<PingapConfig, pingap_config::Error>> {
     run_startup(
@@ -288,12 +286,12 @@ fn new_access_logger(
 > {
     let file = path.to_string();
     run_startup(
-        move || async move { new_async_logger(&file).await },
+        move || std::future::ready(new_async_logger(&file)),
         |message| Err(pingap_core::Error::Invalid { message }),
     )
 }
 
-fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
+fn run_admin_node(args: Args) -> anyhow::Result<()> {
     pingap_logger::logger_try_init(pingap_logger::LoggerParams {
         ..Default::default()
     })?;
@@ -301,12 +299,14 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     // through `assemble`. The plugin no longer reads the process-global slot,
     // so its existence depends only on that hand-over, not on start-up order.
     let config_manager =
-        try_init_config_manager(&args.conf.clone().unwrap_or_default())?;
+        build_config_manager(&args.conf.clone().unwrap_or_default())?;
     tokio::runtime::Runtime::new()?
         .block_on(migrate_config_layout(&config_manager));
 
-    let (admin_server_conf, admin_name, admin_plugin_conf) =
-        plugin::parse_admin_plugin(&args.admin.unwrap_or_default())?;
+    let admin_addr = args.admin.clone().unwrap_or_default();
+    let parsed_admin = plugin::parse_admin_plugin(&admin_addr)?;
+    let admin_server_conf = parsed_admin.server;
+    let (admin_name, admin_plugin_conf) = parsed_admin.plugin;
     // No config is loaded in this mode: the plane is assembled from the
     // defaults, with the admin plugin as its only extra. `background_tasks`
     // is `None` because the control-panel node serves no data plane and has
@@ -314,31 +314,66 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     let mut assembled = data_plane::assemble(
         &PingapConfig::default(),
         config_manager,
-        data_plane::DataPlaneOptions {
-            daemon: args.daemon,
-            upgrade: false,
-            threads: None,
-            admin_plugin: Some((admin_name, admin_plugin_conf)),
-            background_tasks: None,
-            admin_only: true,
-        },
+        data_plane::DataPlaneOptions::admin_only(
+            args.daemon,
+            args.threads,
+            Some((admin_name, admin_plugin_conf)),
+        ),
     )?;
-    let error = assembled.plugins.errors.as_str();
-    if !error.is_empty() {
-        error!(error, "init plugins fail",);
+    // `POST /restart` is part of the admin API in every mode. The control-panel
+    // node must install the same command the data-plane root does, or the
+    // endpoint always answers "Command not found".
+    if let Ok(exec_path) = std::env::current_exe() {
+        let mut restart_args =
+            vec!["--cp".to_string(), format!("--admin={admin_addr}")];
+        if let Some(conf) = &args.conf {
+            restart_args.push(format!("-c={conf}"));
+        }
+        if let Some(log) = &args.log {
+            restart_args.push(format!("--log={log}"));
+        }
+        if let Some(threads) = args.threads {
+            restart_args.push(format!("--threads={threads}"));
+        }
+        let mut cmd = process::RestartProcessCommand::new(
+            exec_path,
+            restart_args,
+            &assembled.server.configuration.upgrade_sock,
+            assembled.server.configuration.pid_file.clone(),
+            process::DEFAULT_RESTART_READY_TIMEOUT,
+        );
+        cmd.log_level = std::env::var("RUST_LOG")
+            .unwrap_or_else(|_| args.log.clone().unwrap_or_default());
+        process::set_restart_process_command(cmd);
     }
+    data_plane::report_provider_updates(
+        &assembled.plugin_update,
+        &assembled.certificate_update,
+    );
     let ps = Server::new(&admin_server_conf, assembled.app_context(None))?;
     let services = ps.run(assembled.server.configuration.clone())?;
     // See run(): bootstrap as a service, with the listener depending on it so
     // it waits for the inherited sockets instead of binding fresh ones.
-    assembled
-        .server
-        .add_service(services.lb)
-        .add_dependency(&assembled.bootstrap);
+    assembled.add_listener(services);
     info!(target: LOG_TARGET, "Admin node server is running");
 
     // TODO not process exit until pingora supports
     assembled.server.run_forever();
+}
+
+/// Whether the ACME background task should run.
+///
+/// `VARMAN_DISABLE_ACME` is the VarmanWAF spelling; `PINGAP_DISABLE_ACME`
+/// stays supported for existing deployments. Either one, set to a non-empty
+/// value, opts out.
+pub(crate) fn acme_enabled() -> bool {
+    ["VARMAN_DISABLE_ACME", "PINGAP_DISABLE_ACME"]
+        .iter()
+        .all(|key| {
+            std::env::var(key)
+                .map(|value| value.trim().is_empty())
+                .unwrap_or(true)
+        })
 }
 
 fn parse_arguments() -> Args {
@@ -405,13 +440,6 @@ fn parse_arguments() -> Args {
         args.cp = true;
     }
 
-    if args.log.is_none() {
-        let log = get_from_env("log");
-        if !log.is_empty() {
-            args.log = Some(log);
-        }
-    }
-
     if !args.autorestart && !get_from_env("autorestart").is_empty() {
         args.autorestart = true;
     }
@@ -429,21 +457,26 @@ fn parse_arguments() -> Args {
 /// runtime behaviour; any other construction error is treated as fatal.
 ///
 /// An admin plugin is not registered in the factory (it needs a
-/// `ConfigManager`), so it is dry-run the same way `try_init_plugins` builds
+/// `ConfigManager`), so it is dry-run the same way ``Provider::replace_plugins` builds
 /// it, with `config_manager`.
 fn validate_plugins(
     config: &PingapConfig,
     config_manager: &Arc<ConfigManager>,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     let factory = pingap_plugin::get_plugin_factory();
+    // A local set: plugin validation is a dry run and must not touch (or
+    // depend on) a process-global registry.
+    let providers = data_plane::ProviderSet::new();
     for (name, conf) in config.plugins.iter() {
         let category = conf
             .get("category")
             .and_then(|value| value.as_str())
             .unwrap_or_default();
         if category == "admin" {
-            plugin::AdminServe::new(conf, config_manager.clone())
-                .map_err(|e| format!("plugin \"{name}\" is invalid: {e}"))?;
+            plugin::AdminServe::new(conf, config_manager.clone(), &providers)
+                .map_err(|e| {
+                anyhow::anyhow!("plugin \"{name}\" is invalid: {e}")
+            })?;
             continue;
         }
         match factory.create(conf) {
@@ -457,7 +490,9 @@ fn validate_plugins(
                 );
             },
             Err(e) => {
-                return Err(format!("plugin \"{name}\" is invalid: {e}").into());
+                return Err(anyhow::anyhow!(
+                    "plugin \"{name}\" is invalid: {e}"
+                ));
             },
         }
     }
@@ -477,22 +512,22 @@ fn init_available_memory() {
     pingap_cache::update_available_memory(sys.available_memory());
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
+fn run() -> anyhow::Result<()> {
     let args = parse_arguments();
 
-    // Handle template output request
     if args.template {
-        println!("{TEMPLATE_CONFIG}");
+        println!("{}", cli::template_config());
         return Ok(());
     }
 
     // `--cp` is the admin-only control-panel mode; without an admin
     // listener it would silently run a full proxy instead.
     if args.cp && args.admin.is_none() {
-        return Err("--cp requires --admin user:pass@host:port[/prefix]".into());
+        return Err(anyhow::anyhow!(
+            "--cp requires --admin user:pass@host:port[/prefix]"
+        ));
     }
 
-    // Set up admin node if specified
     if args.cp {
         return run_admin_node(args);
     }
@@ -519,46 +554,55 @@ fn run() -> Result<(), Box<dyn Error>> {
             println!(
                 "acme state: {} ({})",
                 path.to_string_lossy(),
-                if restored {
-                    "certificate restored"
-                } else {
-                    "no certificate yet, one will be requested"
+                match restored {
+                    quick_start::AcmeRestore::Restored =>
+                        "certificate restored",
+                    quick_start::AcmeRestore::NoStateFile =>
+                        "no certificate yet, one will be requested",
+                    quick_start::AcmeRestore::Unreadable =>
+                        "state file unreadable, a new certificate will be requested",
+                    quick_start::AcmeRestore::InvalidState =>
+                        "state file invalid, a new certificate will be requested",
+                    quick_start::AcmeRestore::NoCertificate =>
+                        "no saved certificate, one will be requested",
+                    quick_start::AcmeRestore::NoMaterial =>
+                        "saved entry has no PEM yet, one will be requested",
+                    quick_start::AcmeRestore::NoEntry =>
+                        "generated config has no certificate entry",
                 }
             );
         }
-        try_init_memory_config_manager(
+        build_memory_config_manager(
             &toml::to_string_pretty(&config)?,
             acme_state_path,
         )?
     } else {
-        try_init_config_manager(&args.conf.clone().unwrap_or_default())?
+        build_config_manager(&args.conf.clone().unwrap_or_default())?
     };
 
-    let r = get_config(config_manager.clone());
+    let r = load_config_in_background(config_manager.clone());
     // A broken config is fatal on its own, but not with `--admin`: the admin
     // server has to come up so the configuration can be repaired through it.
     // Starting on an empty config is indistinguishable from a healthy server
     // that simply has nothing configured, though, so the reason has to be
     // reported. This runs before the logger exists, hence stderr.
-    let empty_config =
-        |e: Box<dyn Error>| -> Result<PingapConfig, Box<dyn Error>> {
-            if args.admin.is_none() {
-                return Err(e);
-            }
-            eprintln!(
-                "load config fail, starting with an empty config so it can be fixed through the admin server: {e}"
-            );
-            Ok(PingapConfig::default())
-        };
+    let empty_config = |e: anyhow::Error| -> anyhow::Result<PingapConfig> {
+        if args.admin.is_none() {
+            return Err(e);
+        }
+        eprintln!(
+            "load config fail, starting with an empty config so it can be fixed through the admin server: {e:#}"
+        );
+        Ok(PingapConfig::default())
+    };
     let config = match r.recv() {
         Ok(Ok(conf)) => conf,
         Ok(Err(e)) => empty_config(e.into())?,
         Err(e) => empty_config(e.into())?,
     };
 
-    config_manager.set_current_config(config.clone());
+    config_manager.activate_config(config.clone());
 
-    // Convert config to HCL and output
     if args.to_hcl {
         let toml_str = toml::to_string_pretty(&config)?;
         let hcl_str = pingap_config::hcl::convert_toml_to_hcl(&toml_str)?;
@@ -566,7 +610,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    // Convert config to KDL and output
     if args.to_kdl {
         let toml_str = toml::to_string_pretty(&config)?;
         let kdl_str = pingap_config::kdl::convert_toml_to_kdl(&toml_str)?;
@@ -576,7 +619,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let mut application_log_paths = vec![];
 
-    // Initialize logging system
     let (reload_handle, log_path) =
         pingap_logger::logger_try_init(pingap_logger::LoggerParams {
             capacity: config
@@ -600,7 +642,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     // safeguard for library use and for the OpenSSL backend.
     install_default_crypto_provider();
 
-    // sync config to other storage
     if let Some(sync_path) = args.sync {
         let r = sync_config(config_manager.clone(), sync_path);
         r.recv()??;
@@ -612,7 +653,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     webhook::set_webhook_notification_sender(basic_conf);
 
-    // return if test mode
     if args.test {
         validate_plugins(&config, &config_manager)?;
         info!(target: LOG_TARGET, "Validate config success");
@@ -627,14 +667,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     info!(target: LOG_TARGET, "Enable feature perf");
 
     if let Ok(exec_path) = std::env::current_exe() {
-        let mut cmd = process::RestartProcessCommand {
-            exec_path,
-            ..Default::default()
-        };
-        if let Ok(env) = std::env::var("RUST_LOG") {
-            cmd.log_level = env;
-        }
-        let mut new_args = vec!["-d".to_string(), "-u".to_string()];
+        let mut new_args = Vec::new();
         if let Some(conf) = &args.conf {
             let conf_path = if conf.starts_with(ETCD_PROTOCOL) {
                 conf.clone()
@@ -668,24 +701,24 @@ fn run() -> Result<(), Box<dyn Error>> {
         if let Some(threads) = args.threads {
             new_args.push(format!("--threads={threads}"));
         }
-        // `--autoreload` is deliberately not forwarded: it is implied by
-        // `--autorestart`, which the restarted process gets below.
         if args.autorestart {
             new_args.push("--autorestart".to_string());
+        } else if args.autoreload {
+            new_args.push("--autoreload".to_string());
         }
-        // The readiness channel for the hand-over: a unix socket next to the
-        // upgrade socket, plus the pid file both generations share so that a
-        // daemon dying before it reports is noticed.
-        cmd.ready_sock = std::path::PathBuf::from(format!(
-            "{}.ready",
-            data_plane::upgrade_sock_path(&config.basic)
-        ));
-        cmd.ready_timeout = config
-            .basic
-            .restart_ready_timeout
-            .unwrap_or(process::DEFAULT_RESTART_READY_TIMEOUT);
-        cmd.pid_file = config.basic.get_pid_file();
-        cmd.args = new_args;
+        let mut cmd = process::RestartProcessCommand::new(
+            exec_path,
+            new_args,
+            &data_plane::upgrade_sock_path(&config.basic),
+            config.basic.get_pid_file(),
+            config
+                .basic
+                .restart_ready_timeout
+                .unwrap_or(process::DEFAULT_RESTART_READY_TIMEOUT),
+        );
+        if let Ok(env) = std::env::var("RUST_LOG") {
+            cmd.log_level = env;
+        }
         process::set_restart_process_command(cmd);
     }
 
@@ -698,29 +731,26 @@ fn run() -> Result<(), Box<dyn Error>> {
         .map(plugin::parse_admin_plugin)
         .transpose()?
     {
-        Some((server_conf, name, conf)) => {
-            (Some(server_conf), Some((name, conf)))
-        },
+        Some(parsed) => (Some(parsed.server), Some(parsed.plugin)),
         None => (None, None),
     };
 
     let mut assembled = data_plane::assemble(
         &config,
         config_manager.clone(),
-        data_plane::DataPlaneOptions {
-            daemon: args.daemon,
-            upgrade: args.upgrade,
-            threads: args.threads,
-            admin_plugin: admin_plugin.clone(),
-            background_tasks: Some("simple_background_service"),
-            admin_only: false,
-        },
+        data_plane::DataPlaneOptions::data_plane(
+            args.daemon,
+            args.upgrade,
+            args.threads,
+            admin_plugin.clone(),
+            "simple_background_service",
+        ),
     )?;
     // Wire upstreams into Prometheus scrapes for per-backend gauges. Only this
     // entry point has ever done it: the setter is a process-wide `OnceLock`,
     // and the agent-hosted plane leaves the gauges unwired.
     #[cfg(feature = "tracing")]
-    set_metrics_upstream_provider(new_upstream_provider());
+    set_metrics_upstream_provider(assembled.providers.upstreams.clone());
 
     {
         let server_conf = assembled.server.configuration.as_ref();
@@ -786,11 +816,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         plugins = get_plugin_factory().supported_plugins().join(","),
         "plugins are registered"
     );
-    let plugin_errors = assembled.plugins.errors.as_str();
-    if !plugin_errors.is_empty() {
-        error!(target: LOG_TARGET, error = plugin_errors, "init plugins fail",);
-    }
-
     let mut server_conf_list: Vec<ServerConf> = parse_from_conf(config.clone());
 
     if let Some(server_conf) = admin_server_conf {
@@ -814,10 +839,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let mut exits_80_server = false;
+    let mut exists_80_server = false;
     for serve_conf in server_conf_list.iter() {
-        if serve_conf.addr.ends_with(":80") {
-            exits_80_server = true;
+        if serve_conf
+            .addr
+            .split(',')
+            .any(|addr| addr.trim().ends_with(":80"))
+        {
+            exists_80_server = true;
         }
         #[cfg(feature = "full")]
         // add otlp service
@@ -828,7 +857,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ));
         }
     }
-    let certificate_provider = assembled.certificate_provider.clone();
+    let certificate_provider = assembled.providers.certificates.clone();
     let mut simple_background_service = assembled
         .background_tasks
         .take()
@@ -842,38 +871,22 @@ fn run() -> Result<(), Box<dyn Error>> {
             !acme.is_empty() && !domains.is_empty() && !dns_challenge
         });
 
-    if std::env::var("PINGAP_DISABLE_ACME")
-        .unwrap_or_default()
-        .is_empty()
-    {
-        simple_background_service.add_task(
-            "lets_encrypt",
-            new_lets_encrypt_service(
-                config_manager.clone(),
-                certificate_provider.clone(),
-                Some(webhook::get_webhook_sender()),
-            ),
+    if acme_enabled() {
+        data_plane::add_acme_task(
+            &mut simple_background_service,
+            config_manager.clone(),
+            certificate_provider.clone(),
+            Some(webhook::get_webhook_sender()),
         );
     }
 
-    let certificate_update = &assembled.certificates;
-    if !certificate_update.updated.is_empty() {
-        info!(
-            target: LOG_TARGET,
-            updated_certificates = certificate_update.updated.join(","),
-            "init certificates success"
-        );
-    }
-    if !certificate_update.errors.is_empty() {
-        error!(
-            target: LOG_TARGET,
-            error = certificate_update.errors.as_str(),
-            "parse certificate fail"
-        );
-    }
+    data_plane::report_provider_updates(
+        &assembled.plugin_update,
+        &assembled.certificate_update,
+    );
 
     // no server listen 80 and lets encrypt domains is not empty
-    if !exits_80_server && enabled_http_challenge {
+    if !exists_80_server && enabled_http_challenge {
         server_conf_list.push(ServerConf {
             name: "lets encrypt".to_string(),
             addr: "0.0.0.0:80".to_string(),
@@ -955,6 +968,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     auto_restart_check_interval,
                     hot_reload_only,
                     admin_plugin,
+                    assembled.providers.clone(),
                 ),
             ));
         } else {
@@ -964,6 +978,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 auto_restart_check_interval,
                 hot_reload_only,
                 admin_plugin,
+                assembled.providers.clone(),
             );
             let name = auto_restart_task.name().to_string();
             assembled
@@ -979,7 +994,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_service(background_service(&name, simple_background_service));
 
     let upstream_health_check_task = new_upstream_health_check_task(
-        new_upstream_provider(),
+        assembled.providers.upstreams.clone(),
         Duration::from_secs(10),
         Some(webhook::get_webhook_sender()),
     );
@@ -1044,7 +1059,7 @@ fn main() {
     if let Err(e) = run() {
         // stderr, and unbuffered: everything that can fail here can fail before
         // `logger_try_init`, in which case the `error!` below reaches nobody.
-        eprintln!("{e}");
+        eprintln!("{e:#}");
         error!(error = e.to_string());
         // Exit non-zero. Without this `pingap -t` reported success on a config
         // it had just refused to load, so `pingap -t && systemctl reload pingap`

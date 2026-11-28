@@ -36,7 +36,7 @@ use crate::models::{
     site_certificate_bindings, site_certificates, site_routes, site_ssl,
     site_status, site_upstream_pools, site_upstreams, waf_settings,
 };
-use crate::pki::mtls::normalise_fingerprint;
+use crate::pki::mtls::normalize_fingerprint;
 use crate::policy;
 use crate::site_credentials;
 use crate::waf_values::{challenge_level, ip_action};
@@ -649,7 +649,7 @@ async fn load_mtls(
     Ok(MtlsPush {
         revoked_fingerprints: revoked
             .into_iter()
-            .map(|row| normalise_fingerprint(&row.fingerprint_sha256))
+            .map(|row| normalize_fingerprint(&row.fingerprint_sha256))
             .collect(),
     })
 }
@@ -1410,18 +1410,18 @@ async fn geo_to_proto(
     let mut country_ranges = Vec::new();
     let mut missing_keys = Vec::new();
     for key in &g.countries {
-        let normalised =
-            crate::ipverse::normalise_key(crate::ipverse::KIND_COUNTRY, key);
-        match normalised.ok().and_then(|key| country_datasets.get(&key)) {
+        let normalized =
+            crate::ipverse::normalize_key(crate::ipverse::KIND_COUNTRY, key);
+        match normalized.ok().and_then(|key| country_datasets.get(&key)) {
             Some(dataset) => country_ranges.extend(dataset.all()),
             None => missing_keys.push(key.clone()),
         }
     }
     let mut asn_ranges = Vec::new();
     for key in &g.blocked_asns {
-        let normalised =
-            crate::ipverse::normalise_key(crate::ipverse::KIND_ASN, key);
-        match normalised.ok().and_then(|key| asn_datasets.get(&key)) {
+        let normalized =
+            crate::ipverse::normalize_key(crate::ipverse::KIND_ASN, key);
+        match normalized.ok().and_then(|key| asn_datasets.get(&key)) {
             Some(dataset) => asn_ranges.extend(dataset.all()),
             None => missing_keys.push(format!(
                 "AS{}",

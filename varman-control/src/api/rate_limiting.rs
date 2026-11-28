@@ -114,7 +114,7 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-fn normalise_characteristics(raw: &[String]) -> Result<Vec<String>, ApiError> {
+fn normalize_characteristics(raw: &[String]) -> Result<Vec<String>, ApiError> {
     let mut out: Vec<String> = Vec::new();
     for value in raw {
         let trimmed = value.trim();
@@ -204,7 +204,7 @@ async fn list(
 ) -> Result<Json<Page<rate_limit_rules::Model>>, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     load_site_read(&state.db, id, &current).await?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let paginator = rate_limit_rules::Entity::find()
         .filter(rate_limit_rules::Column::SiteId.eq(id))
@@ -234,7 +234,7 @@ async fn create(
         payload.threshold,
         payload.mitigation_timeout_seconds,
     )?;
-    let characteristics = normalise_characteristics(&payload.characteristics)?;
+    let characteristics = normalize_characteristics(&payload.characteristics)?;
 
     let timestamp = chrono::Utc::now();
     let model = rate_limit_rules::ActiveModel {
@@ -289,7 +289,7 @@ async fn update(
     }
     if let Some(characteristics) = payload.characteristics {
         active.characteristics =
-            Set(normalise_characteristics(&characteristics)?);
+            Set(normalize_characteristics(&characteristics)?);
     }
     if let Some(period) = payload.period_seconds {
         if !(MIN_PERIOD_SECONDS..=MAX_PERIOD_SECONDS).contains(&period) {
@@ -344,7 +344,7 @@ async fn remove(
     State(state): State<AppState>,
     current: AuthUser,
     Path((site_id, rule_id)): Path<(String, String)>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     let target = parse_uuid(&rule_id, "rate limit rule id")?;
     load_site_write(&state.db, id, &current).await?;
@@ -358,7 +358,7 @@ async fn remove(
     touch_site(&state, id).await?;
     notify_config_changed(&state, id, Some(&current.email)).await;
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn find(
@@ -380,21 +380,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn characteristics_are_normalised() {
-        let out = normalise_characteristics(&[
+    fn characteristics_are_normalized() {
+        let out = normalize_characteristics(&[
             "IP".into(),
             " ip ".into(),
             "path".into(),
         ])
         .unwrap();
         assert_eq!(out, vec!["ip".to_string(), "path".to_string()]);
-        assert!(normalise_characteristics(&["unknown".into()]).is_err());
-        assert!(normalise_characteristics(&[]).is_err());
+        assert!(normalize_characteristics(&["unknown".into()]).is_err());
+        assert!(normalize_characteristics(&[]).is_err());
     }
 
     #[test]
     fn parameterized_characteristics_keep_the_param_case() {
-        let out = normalise_characteristics(&[
+        let out = normalize_characteristics(&[
             "Header: X-Api-Key ".into(),
             "header:x-api-key".into(),
             "cookie:Session".into(),
@@ -405,10 +405,10 @@ mod tests {
             vec!["header:x-api-key".to_string(), "cookie:Session".to_string()]
         );
         // Bare kinds carry no key to count on and are rejected.
-        assert!(normalise_characteristics(&["header".into()]).is_err());
-        assert!(normalise_characteristics(&["cookie:".into()]).is_err());
-        assert!(normalise_characteristics(&["query:has space".into()]).is_err());
-        assert!(normalise_characteristics(&["host:nope".into()]).is_err());
+        assert!(normalize_characteristics(&["header".into()]).is_err());
+        assert!(normalize_characteristics(&["cookie:".into()]).is_err());
+        assert!(normalize_characteristics(&["query:has space".into()]).is_err());
+        assert!(normalize_characteristics(&["host:nope".into()]).is_err());
     }
 
     #[test]

@@ -278,7 +278,7 @@ pub(crate) fn validity_window(days: i64) -> (OffsetDateTime, OffsetDateTime) {
 
 /// Normalises a fingerprint for storage and comparison: lowercase hex with the
 /// separators an operator may have copied out of `openssl x509 -fingerprint`.
-pub fn normalise_fingerprint(raw: &str) -> String {
+pub fn normalize_fingerprint(raw: &str) -> String {
     raw.chars()
         .filter(|ch| ch.is_ascii_hexdigit())
         .flat_map(char::to_lowercase)
@@ -311,7 +311,7 @@ mod tests {
         let reparsed = parse_cert_meta(&ca.cert_pem).unwrap();
         assert_eq!(reparsed, ca.meta);
         assert_eq!(
-            normalise_fingerprint(&ca.meta.fingerprint_sha256),
+            normalize_fingerprint(&ca.meta.fingerprint_sha256),
             ca.meta.fingerprint_sha256
         );
     }
@@ -432,8 +432,8 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_normalisation_accepts_openssl_output() {
-        assert_eq!(normalise_fingerprint("AB:cd:01"), "abcd01".to_string());
-        assert_eq!(normalise_fingerprint("ab cd 01"), "abcd01");
+    fn fingerprint_normalization_accepts_openssl_output() {
+        assert_eq!(normalize_fingerprint("AB:cd:01"), "abcd01".to_string());
+        assert_eq!(normalize_fingerprint("ab cd 01"), "abcd01");
     }
 }

@@ -323,7 +323,7 @@ impl RuleCache {
         self.inner.rcu(|current| {
             let mut updated = (**current).clone();
             // Remove old domain index entries for this site. Removal keys
-            // are normalised the same way as insertion keys below, so an
+            // are normalized the same way as insertion keys below, so an
             // entry written as `EXAMPLE.com` is still findable for cleanup.
             if let Some(old_site) = updated.sites.get(&site_id) {
                 updated

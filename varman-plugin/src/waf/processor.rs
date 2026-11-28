@@ -131,21 +131,6 @@ pub fn is_enabled() -> bool {
     PROCESSOR.endpoint.is_some()
 }
 
-/// The configured failure policy.
-pub fn policy() -> FailurePolicy {
-    PROCESSOR.policy
-}
-
-/// The configured per-call timeout.
-pub fn timeout() -> Duration {
-    PROCESSOR.timeout
-}
-
-/// The configured processor name.
-pub fn name() -> &'static str {
-    &PROCESSOR.name
-}
-
 /// Call the configured processor for one request and resolve its outcome
 /// under the failure policy. `metrics` receives the call outcome for the
 /// control plane's engine telemetry. `None` when no processor is configured.

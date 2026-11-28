@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-> **Current release:** [v1.5.0](docs/releases/v1.5.0.md). [HANDOFF.md](HANDOFF.md)
+> **Current release:** [v1.6.0](docs/releases/v1.6.0.md). [HANDOFF.md](HANDOFF.md)
 > is historical (v1.1.9); start from `docs/README.md`.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -20,7 +20,7 @@ Most crates inherit the workspace version `1.5.0` with `version.workspace = true
 
 Editions are mixed by design: the workspace default is 2024, but `varman-agent`, `varman-protocol`, `varman-control` and most `pingap-*` foundation crates still declare 2021. MSRV is 1.96.0 for both. The internal `pingap-*` dependencies live in `[workspace.dependencies]`, so a member depends on a sibling with `{ workspace = true }`.
 
-**Bumping the version means editing two places in the root `Cargo.toml`**: `workspace.package.version`, and the `version = "..."` on each `pingap-*` entry in `[workspace.dependencies]` — cargo has no way to inherit the package version into a dependency requirement. `publish.sh` then publishes all crates at the new version in dependency order.
+**Bumping the version means editing two places in the root `Cargo.toml`**: `workspace.package.version`, and the `version = "..."` on each `pingap-*` entry in `[workspace.dependencies]` — cargo has no way to inherit the package version into a dependency requirement. `publish.sh` then publishes the `pingap-*` foundation crates at the new version in dependency order; the Varman platform crates are path-only workspace members and are not published.
 
 ## Common commands
 
@@ -67,7 +67,8 @@ from every member's `Cargo.toml` by `src/bin/generate-mermaid.rs`):
 
 - **Varman platform** — the root `varman` binary, `varman-control` (control
   plane, REST/gRPC, console), `varman-agent` (edge client), `varman-waf`
-  (pipeline engine), `varman-protocol`, `varman-challenge`, `varman-pprof`.
+  (pipeline engine), `varman-plugin` (WAF, challenge, cache, rewrite, error-page,
+  stream/processor/shadow/custom plugins), `varman-protocol`, `varman-challenge`, `varman-pprof`.
 - **Pingap foundation** — `pingap-core`, `pingap-config`, `pingap-proxy`,
   `pingap-plugin`, `pingap-upstream`, `pingap-discovery`, `pingap-health`,
   `pingap-location`, `pingap-cache`, `pingap-certificate`, `pingap-acme`,
@@ -77,7 +78,7 @@ from every member's `Cargo.toml` by `src/bin/generate-mermaid.rs`):
 - `pingap-core` — `HttpResponse`, `Ctx`, plugin traits, clock helpers (`now_sec`/`now_ms`), `BackgroundTaskService`. Every other crate depends on it.
 - `pingap-config` — `PingapConfig` model plus storage backends (`file_storage.rs`, `etcd_storage.rs`) chosen at runtime by URL prefix (`file://`, `etcd://`). Supports TOML, HCL (`hcl.rs`), and KDL (`kdl.rs`) input formats.
 - `pingap-proxy` — implements pingora's `ProxyHttp`. The request lifecycle in `pingap-proxy/src/server.rs` calls (in order) `early_request_filter` -> `request_filter` -> `proxy_upstream_filter` -> `upstream_request_filter` -> `upstream_response_filter` -> `logging`. Each step matches the `PluginStep` enum in `pingap-core/src/plugin.rs` (`EarlyRequest`, `Request`, `ProxyUpstream`, `UpstreamResponse`, `Response`); a plugin runs at most one step per request.
-- `pingap-plugin` — built-in plugins. Add new ones by implementing the `Plugin` trait from `pingap-core` and registering them via the plugin factory.
+- `pingap-plugin` — generic Pingap plugins and the plugin factory. Add a generic plugin by implementing the `Plugin` trait from `pingap-core` and registering it via the plugin factory; Varman-specific plugins live in `varman-plugin`.
 - `pingap-upstream` — pingora `Backends` + load-balancing wiring; gets its backend set from `pingap-discovery` (static / DNS / Docker labels / transparent) and `pingap-health` for active checks.
 - `src/main.rs` — argument parsing, config bootstrap, daemonization, server assembly. `src/varman/` is the all-in-one platform mode, `src/cli.rs` the Varman CLI, `src/maintenance.rs` the PostgreSQL maintenance commands (`varman user|mode|security|config`), and `src/quick_start.rs` the starter config. `src/process/` and `src/plugin/` handle hot reload and the data-plane admin plugin.
 - `--admin` is the **data-plane admin JSON/profiling API** (`PINGAP_ADMIN_*`) and serves no console; `--admin-addr` / `VARMAN_ADMIN_ADDR` is the **control-plane console + REST listener** (`varman server`, default `0.0.0.0:9080`). They are different features.
@@ -126,7 +127,7 @@ When adding a feature-gated module, mirror the wiring in both the workspace `Car
 
 ## Configuration loading and env vars
 
-`src/main.rs::parse_arguments()` overlays CLI args with `PINGAP_*` env vars. Anything not on the CLI falls back to env: `PINGAP_CONF`, `PINGAP_DAEMON`, `PINGAP_UPGRADE`, `PINGAP_LOG`, `PINGAP_ADMIN_ADDR`/`PINGAP_ADMIN_USER`/`PINGAP_ADMIN_PASSWORD` (these three combine into `--admin user:pass@addr` with base64-encoded creds). Other env vars used at runtime: `PINGAP_DISABLE_ACME`, and `$ENV:...` interpolations inside HCL configs (e.g. `$ENV:PINGAP_DNS_SERVICE_URL`).
+`src/main.rs::parse_arguments()` overlays CLI args with `PINGAP_*` env vars. Anything not on the CLI falls back to env: `PINGAP_CONF`, `PINGAP_DAEMON`, `PINGAP_UPGRADE`, `PINGAP_LOG`, `PINGAP_ADMIN_ADDR`/`PINGAP_ADMIN_USER`/`PINGAP_ADMIN_PASSWORD` (these three combine into `--admin user:pass@addr` with base64-encoded creds). Other env vars used at runtime: `VARMAN_DISABLE_ACME` (legacy alias `PINGAP_DISABLE_ACME`), and `$ENV:...` interpolations inside HCL configs (e.g. `$ENV:PINGAP_DNS_SERVICE_URL`).
 
 CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot upgrade from a running instance), `-t/--test` (validate config and exit), `-a/--autorestart` (graceful restart on config change), `--autoreload` (hot reload only — preferred for containers), `--cp` (control-panel mode, admin only).
 
@@ -168,9 +169,9 @@ these targets and the `Dockerfile`; the former workflow steps now run locally.
 
 `web/` is the Vite/React console. After editing it, run `make build-web` so the compiled assets in `web/dist/` get embedded into `varman-control` via `rust-embed` at compile time. The console is served by the control plane (`varman server --admin-addr <addr>`, or `VARMAN_ADMIN_ADDR`; default `0.0.0.0:9080`) next to its `/api/v1` REST API. The data-plane admin plugin behind `--admin user:pass@host:port[/prefix]` is API only — `/configs`, `/config-history`, `/basic`, `/restart`, `/aes`, `/certificates`, `/pprof/*` — and serves no UI; `make dev` exposes that API on `127.0.0.1:3018`.
 
-**Every config field must have a form item in `web/`.** A field added to a `pingap-config` struct (`BasicConf`, `ServerConf`, `LocationConf`, `UpstreamConf`, `CertificateConf`, `StorageConf`) or to a plugin's config is not done until the console can show and edit it. For a config struct, add the field to the matching interface in `web/src/states/config.ts` and an item to the page in `web/src/pages/` (`Basic.tsx`, `Servers.tsx`, `Locations.tsx`, `Upstreams.tsx`, `Certificates.tsx`, `Storages.tsx`); for a plugin field, add it to that plugin's builder in `web/src/plugin-fields.ts`. Each item needs its label/placeholder (and a `tips` line when the semantics are not obvious) in **both** `web/src/i18n/en.ts` and `web/src/i18n/zh.ts`, under the page's section. Pick the control by the Rust type: `Option<bool>` -> `RADIOS` + `newBooleanOptions()` with `defaultValue: conf.field` (never `|| null`, that turns an explicit `false` into Unset); enum-like `Option<String>` -> `RADIOS`/`SELECT` + `newStringOptions(..., withNone = true)` with `defaultValue: conf.field || ""` so an unset field stays unset instead of being saved as the first option; `Option<Vec<String>>` of free-form entries (`name` or `name:value`) -> `TEXTS`, and only use `KV_LIST` when every entry really is `key<sep>value` (its placeholder is `"key hint : value hint"`, split on `" : "`); numbers -> `NUMBER`; durations/sizes -> `TEXT` with the `newZodDuration()`/`newZodBytes()` schema entry.
+**Every config field the console edits must have a form item in `web/`.** The console is site-centric: a field added to a config struct that a site or the control plane exposes through `/api/v1` is not done until the operator can see and edit it. Add the field to the matching interface under `web/src/api/` (`sites.ts`, `ssl.ts`, `settings.ts`, `wafSettings.ts`, ...) and the control to the owning page or panel: `web/src/pages/sites/*` for per-site policy, `SettingsPage.tsx` for instance settings, `GlobalSslPage.tsx` for control-plane TLS. A plugin field belongs in the panel that owns that plugin (for example `ProtectionSettingsPanel.tsx`); there is no generic plugin builder any more. Each item needs its label, placeholder and help text in `web/src/i18n/locales/en/common.json` (the console ships one locale). Follow the existing control for the Rust type: a toggle for `Option<bool>`, a select with an explicit "unset" choice for enum-like `Option<String>`, a tag/text list for `Option<Vec<String>>`, a number input for integers, and text with duration/byte validation for durations and sizes.
 
-The pages save an entry by merging the form values over the loaded entry (`{ ...loaded, ...value }`) because the server replaces the whole entry with what it receives; keep that merge when touching `onSave`, and keep it before `omitEmptyArrayString` so a field cleared in the form is still removed. Verify a new item end to end in the console (run `varman server` with `--admin-addr` after `make build-web`): the value renders, an edit is saved, and clearing it removes the key from the config file.
+Keep "unset" distinct from an explicit `false` or empty string when building the request payload, and send only the fields the form owns. Verify a new item end to end in the console (run `varman server` with `--admin-addr` after `make build-web`): the value renders, an edit is saved, and clearing it removes the key or restores the documented default.
 
 ## Documentation (English only)
 

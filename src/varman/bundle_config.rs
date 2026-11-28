@@ -218,28 +218,20 @@ struct PluginWiring {
 
 /// The process-wide plugin instances every generated config registers.
 fn varman_plugin_confs() -> HashMap<String, PluginConf> {
-    let mut plugins: HashMap<String, PluginConf> = HashMap::new();
-    plugins.insert(
-        WAF_PLUGIN_NAME.to_string(),
-        toml::from_str::<PluginConf>(r###"category = "waf""###)
-            .unwrap_or_default(),
-    );
-    plugins.insert(
-        CHALLENGE_PLUGIN_NAME.to_string(),
-        toml::from_str::<PluginConf>(r###"category = "challenge""###)
-            .unwrap_or_default(),
-    );
-    plugins.insert(
-        REWRITE_PLUGIN_NAME.to_string(),
-        toml::from_str::<PluginConf>(r###"category = "rewrite""###)
-            .unwrap_or_default(),
-    );
-    plugins.insert(
-        ERROR_PAGE_PLUGIN_NAME.to_string(),
-        toml::from_str::<PluginConf>(r###"category = "error_page""###)
-            .unwrap_or_default(),
-    );
-    plugins
+    fn conf(category: &str) -> PluginConf {
+        [(
+            "category".to_string(),
+            toml::Value::String(category.to_string()),
+        )]
+        .into_iter()
+        .collect()
+    }
+    HashMap::from([
+        (WAF_PLUGIN_NAME.to_string(), conf("waf")),
+        (CHALLENGE_PLUGIN_NAME.to_string(), conf("challenge")),
+        (REWRITE_PLUGIN_NAME.to_string(), conf("rewrite")),
+        (ERROR_PAGE_PLUGIN_NAME.to_string(), conf("error_page")),
+    ])
 }
 
 /// Registers the plugin instances and wires the per-site location lists.
@@ -509,12 +501,22 @@ fn route_target(
     }
 }
 
-/// pingap path pattern for the route's match type.
-fn route_path(route: &RouteConfig) -> String {
+/// pingap path pattern for the route's match type. `None` for an unknown
+/// type: treating it as a prefix silently widened a route the control plane
+/// rejected.
+fn route_path(route: &RouteConfig) -> Option<String> {
     match route.match_type.as_str() {
-        "exact" => format!("={}", route.path),
-        "regex" => format!("~{}", route.path),
-        _ => route.path.clone(),
+        "exact" => Some(format!("={}", route.path)),
+        "regex" => Some(format!("~{}", route.path)),
+        "" | "prefix" => Some(route.path.clone()),
+        other => {
+            warn!(
+                route = %route.id,
+                match_type = other,
+                "route has an unknown match type; route skipped"
+            );
+            None
+        },
     }
 }
 
@@ -543,13 +545,16 @@ fn add_route_locations(
         let Some(target) = route_target(site, route, pools) else {
             continue;
         };
+        let Some(path) = route_path(route) else {
+            continue;
+        };
         let loc_name = format!("{site_id}_route_{}", route.id);
         built.locations.insert(
             loc_name.clone(),
             LocationConf {
                 upstream: Some(target),
                 host: Some(host.to_string()),
-                path: Some(route_path(route)),
+                path: Some(path),
                 weight: route
                     .priority
                     .map(|p| p.clamp(1, u16::MAX as i32) as u16),
@@ -764,8 +769,9 @@ fn build_servers(
 /// default pool — or the only pool, when no routes exist — receives the
 /// site's `/` fallback location, and every enabled route becomes an
 /// additional location carrying the pingap path marker for its match
-/// type. All sites share a single server listening on ports 80 and 443
-/// with TLS enabled via the global certificate store.
+/// type. All sites share the HTTP server on port 80 and, when any
+/// certificate exists, the TLS server on port 443 using the global
+/// certificate store.
 ///
 /// The individual steps live in [`build_plugins`], [`build_upstreams`],
 /// [`build_locations`], [`build_certificates`], [`build_mtls_ca`] and

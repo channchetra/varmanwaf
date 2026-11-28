@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::api::common::{
     ensure_acme_wildcard_supported, load_site_read, load_site_write, non_empty,
-    normalise_domain, parse_uuid, scope_site, Page, Pagination,
+    normalize_domain, parse_uuid, scope_site, Page, Pagination,
 };
 use crate::api::error::ApiError;
 use crate::api::sites::{
@@ -221,13 +221,13 @@ fn split_domains(value: &str) -> Vec<String> {
 
 /// Normalises the SAN list for a multi-domain certificate. Accepts both the
 /// array shape and comma-separated entries inside it.
-fn normalise_certificate_domains(
+fn normalize_certificate_domains(
     raw: &[String],
 ) -> Result<Vec<String>, ApiError> {
     let mut out = Vec::new();
     for value in raw {
         for part in value.split(',') {
-            let domain = normalise_domain(part)?;
+            let domain = normalize_domain(part)?;
             if !out.contains(&domain) {
                 out.push(domain);
             }
@@ -335,7 +335,7 @@ async fn list_certificates(
 ) -> Result<Json<Page<CertificateResponse>>, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     let site = load_site_read(&state.db, id, &current).await?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     // The owner's rows plus every imported certificate whose SAN list covers
     // this site. The latter is what lets a wildcard from another site appear
@@ -466,7 +466,7 @@ async fn insert_certificate<C: ConnectionTrait>(
     } else {
         payload.domains
     };
-    let domains = normalise_certificate_domains(&raw_domains)?;
+    let domains = normalize_certificate_domains(&raw_domains)?;
     let domain = domains.join(",");
     if !acme_challenge::is_valid(&payload.acme_challenge_type) {
         return Err(ApiError::BadRequest(format!(
@@ -592,9 +592,9 @@ async fn update_certificate(
     };
     let effective_domains = match payload.domains.as_deref() {
         Some(domains) if !domains.is_empty() => {
-            normalise_certificate_domains(domains)?
+            normalize_certificate_domains(domains)?
         },
-        _ => normalise_certificate_domains(&split_domains(
+        _ => normalize_certificate_domains(&split_domains(
             &non_empty(&payload.domain).unwrap_or_else(|| row.domain.clone()),
         ))?,
     };
@@ -612,11 +612,11 @@ async fn update_certificate(
 
     if let Some(domains) = payload.domains {
         if !domains.is_empty() {
-            let domains = normalise_certificate_domains(&domains)?;
+            let domains = normalize_certificate_domains(&domains)?;
             active.domain = Set(domains.join(","));
         }
     } else if let Some(domain) = non_empty(&payload.domain) {
-        let domains = normalise_certificate_domains(&split_domains(&domain))?;
+        let domains = normalize_certificate_domains(&split_domains(&domain))?;
         active.domain = Set(domains.join(","));
     }
     if let Some(cert) = payload.cert_pem {
@@ -699,7 +699,7 @@ async fn delete_certificate(
     State(state): State<AppState>,
     current: AuthUser,
     Path((site_id, cert_id)): Path<(String, String)>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     let target = parse_uuid(&cert_id, "certificate id")?;
     load_site_write(&state.db, id, &current).await?;
@@ -799,7 +799,7 @@ async fn delete_certificate(
     touch_site(&state, id).await?;
     notify_config_changed(&state, id, Some(&current.email)).await;
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Loads the site row for posture writes inside certificate handlers.
@@ -978,7 +978,7 @@ async fn list_all_certificates(
         None => None,
     };
     let sites = visible_sites(&state, &current).await?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let mut condition = Condition::all();
     if let Some(id) = scope_site(requested, &current)? {
@@ -1101,7 +1101,7 @@ async fn delete_global_certificate(
     State(state): State<AppState>,
     current: AuthUser,
     Path(cert_id): Path<String>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let target = parse_uuid(&cert_id, "certificate id")?;
     let row = find_certificate_by_id(&state, target).await?;
     delete_certificate(
@@ -1282,7 +1282,7 @@ async fn list_certificate_events(
     let row = find_certificate_by_id(&state, target).await?;
     load_site_read(&state.db, row.site_id, &current).await?;
 
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
     let condition = Condition::all()
         .add(certificate_events::Column::CertificateId.eq(target));
     let (condition, ascending) = apply_event_query(condition, &query)?;
@@ -1322,7 +1322,7 @@ async fn list_all_events(
     Query(query): Query<EventsQuery>,
 ) -> Result<Json<Page<CertificateEventResponse>>, ApiError> {
     let sites = visible_sites(&state, &current).await?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let mut condition = Condition::all();
     if !current.is_admin() {
@@ -1467,8 +1467,8 @@ mod domain_tests {
     }
 
     #[test]
-    fn certificate_domains_normalise_and_dedupe() {
-        let domains = normalise_certificate_domains(&[
+    fn certificate_domains_normalize_and_dedupe() {
+        let domains = normalize_certificate_domains(&[
             " Example.COM ".to_string(),
             "example.com, WWW.example.com".to_string(),
         ])

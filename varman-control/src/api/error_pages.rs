@@ -89,7 +89,7 @@ async fn list(
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Page<error_pages::Model>>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let paginator = error_pages::Entity::find()
         .order_by_asc(error_pages::Column::StatusCode)
@@ -195,7 +195,7 @@ async fn remove(
     State(state): State<AppState>,
     current: AuthUser,
     Path(page_id): Path<String>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
     require_write(&current)?;
     let target = parse_uuid(&page_id, "error page id")?;
@@ -208,7 +208,7 @@ async fn remove(
     tracing::info!(page_id = %target, "error page deleted");
     notify_all_config_changed(&state, Some(&current.email)).await;
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn find(

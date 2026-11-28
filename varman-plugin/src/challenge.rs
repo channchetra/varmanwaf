@@ -23,7 +23,6 @@
 //! the [`PENDING_CHALLENGES`] store so a challenge issued by one can be
 //! verified by the other's verify endpoint.
 
-use super::{Error, get_hash_key, parse_params, redacted_params};
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
@@ -35,6 +34,7 @@ use pingap_core::{
     RequestPluginResult, ensure_client_ip, get_cookie_value, get_host,
     get_req_header_value,
 };
+use pingap_plugin::{Error, get_hash_key, parse_params, redacted_params};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::path::Path;
@@ -54,11 +54,12 @@ use varman_challenge::{
     ChallengeConfig, ChallengeDecision, ChallengeEngine, ChallengeRequest,
     ChallengeSubmission, ClearanceLevel, VerifyResult, generate_request_id,
 };
+use varman_waf::html::escape_html;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Endpoint the challenge page POSTs its proof-of-work solution to.
-pub(crate) const VERIFY_ENDPOINT: &str = "/_varman/challenge/verify";
+pub const VERIFY_ENDPOINT: &str = "/_varman/challenge/verify";
 
 /// Maximum request-body size accepted on the verify endpoint (64 KiB).
 const MAX_VERIFY_BODY: usize = 64 * 1024;
@@ -140,7 +141,7 @@ fn take_pending(request_id: &str) -> Option<PendingChallenge> {
 
 /// Which challenge page to render.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ChallengeKind {
+pub enum ChallengeKind {
     Js,
     Managed,
     Interactive,
@@ -148,7 +149,7 @@ pub(crate) enum ChallengeKind {
 
 /// Build a 503 challenge response, registering the pending challenge so the
 /// verify endpoint can later resolve the nonce.
-pub(crate) fn build_challenge_response(
+pub fn build_challenge_response(
     request_id: &str,
     original_url: &str,
     site_id: &str,
@@ -217,24 +218,6 @@ fn mitigated_header(
         header::HeaderName::from_static("x-varmanwaf-mitigated"),
         HeaderValue::from_static(mitigation.value()),
     )
-}
-
-/// Minimal HTML escaping for values embedded in brand pages. Reasons come
-/// from rule descriptions today, but any future user-influenced text keeps
-/// the page inert this way.
-fn escape_html(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(ch),
-        }
-    }
-    out
 }
 
 /// Wraps short-circuit page content in the shared VarmanWAF page style (the
@@ -331,7 +314,7 @@ administrator with the Request ID below.",
 }
 
 /// A 403 HTML block page.
-pub(crate) fn block_page(request_id: &str, reason: &str) -> HttpResponse {
+pub fn block_page(request_id: &str, reason: &str) -> HttpResponse {
     HttpResponse::builder(StatusCode::FORBIDDEN)
         .body(block_body(request_id, reason))
         .header(HTTP_HEADER_CONTENT_HTML.clone())
@@ -343,7 +326,7 @@ pub(crate) fn block_page(request_id: &str, reason: &str) -> HttpResponse {
 
 /// A 401 HTML page asking the client to authenticate, sent by the site-wide
 /// basic auth gate and by access rules that require credentials.
-pub(crate) fn basic_auth_page(
+pub fn basic_auth_page(
     request_id: &str,
     realm: &str,
     reason: &str,
@@ -381,7 +364,7 @@ your credentials to continue.",
 /// A 503 maintenance page for a paused site. Sending a response instead of
 /// dropping the site from the data-plane config keeps the certificate and the
 /// log pipeline live, so the dashboard still shows the traffic.
-pub(crate) fn paused_page(request_id: &str) -> HttpResponse {
+pub fn paused_page(request_id: &str) -> HttpResponse {
     const RETRY_AFTER_SECS: &str = "3600";
     let details = detail_row("Request ID", request_id);
     let body = brand_page(
@@ -407,7 +390,7 @@ thanks for your patience.",
 
 /// A 429 HTML page for requests stopped by a rate limit rule, telling the
 /// client when it may retry.
-pub(crate) fn rate_limit_page(
+pub fn rate_limit_page(
     request_id: &str,
     reason: &str,
     retry_after_secs: u64,
@@ -522,7 +505,7 @@ fn build_site_engine(
 /// agent the generated config carries no secret: one is generated on first
 /// boot and persisted in the agent cache dir so clearance cookies survive
 /// config reloads and process restarts.
-pub(crate) fn resolve_cookie_secret(configured: &str) -> String {
+pub fn resolve_cookie_secret(configured: &str) -> String {
     if !configured.is_empty() && configured != "change-me" {
         return configured.to_string();
     }
@@ -820,7 +803,7 @@ impl TryFrom<&PluginConf> for ChallengePlugin {
         let exempt_paths = params.exempt_paths;
         let exempt_user_agents = params.exempt_user_agents;
 
-        let plugin_step = match super::get_step_conf_in(
+        let plugin_step = match pingap_plugin::get_step_conf_in(
             value,
             "challenge",
             PluginStep::EarlyRequest,
@@ -983,8 +966,6 @@ impl Plugin for ChallengePlugin {
         )))
     }
 }
-
-register_plugin!("challenge", ChallengePlugin);
 
 #[cfg(test)]
 mod tests {

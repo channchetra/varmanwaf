@@ -1343,16 +1343,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctor"
-version = "1.0.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "914a755b7c2d4af2bdcff7ce1739e2db9a1b81a9b07123d8015786ae03c0980d"
-dependencies = [
- "link-section",
- "linktime-proc-macro",
-]
-
-[[package]]
 name = "ctr"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2507,18 +2497,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hmac-sha256"
-version = "1.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ad320b3b96fb2a455a0726d16efe0a5afdbd34b71dea5bc53b05ea057714d4e"
-
-[[package]]
-name = "hmac-sha512"
-version = "1.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66de62217b456dfbbba2bed965a134a4df57c48f0eac4c772018aee528e72244"
-
-[[package]]
 name = "home"
 version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3366,18 +3344,6 @@ dependencies = [
  "pkg-config",
  "vcpkg",
 ]
-
-[[package]]
-name = "link-section"
-version = "0.19.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39c29a617ce3df32c08497bdc1ab6e2376e0b17948ac166a2fbe5977c5954cd9"
-
-[[package]]
-name = "linktime-proc-macro"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e57c38c1e860fd37c604281cdfb1dd2216977fd76a50f85ba2f388ef3219616"
 
 [[package]]
 name = "linux-raw-sys"
@@ -4634,7 +4600,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pingap-acme"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -4668,7 +4634,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-cache"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -4701,7 +4667,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-certificate"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4727,7 +4693,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-config"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4762,7 +4728,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-core"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "TinyUFO",
  "ahash",
@@ -4791,7 +4757,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-discovery"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "async-trait",
  "bollard",
@@ -4810,7 +4776,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-health"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4832,13 +4798,12 @@ dependencies = [
 
 [[package]]
 name = "pingap-imageoptim"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "async-trait",
  "bytemuck",
  "bytes",
  "criterion",
- "ctor",
  "http",
  "image",
  "imagequant",
@@ -4860,7 +4825,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-location"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4881,7 +4846,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-logger"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4914,7 +4879,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-otel"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4931,7 +4896,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-performance"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4961,7 +4926,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-plugin"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "TinyUFO",
  "ahash",
@@ -4974,22 +4939,17 @@ dependencies = [
  "chrono",
  "cookie",
  "crc32fast",
- "ctor",
  "dashmap 6.2.1",
  "fancy-regex",
  "glob",
  "hex",
  "hickory-resolver",
- "hmac-sha256",
- "hmac-sha512",
  "http",
  "humantime",
- "ipnet",
  "jsonwebtoken",
  "mime_guess",
  "nanoid",
  "path-absolutize",
- "pingap-cache",
  "pingap-config",
  "pingap-core",
  "pingap-util",
@@ -5003,9 +4963,7 @@ dependencies = [
  "sha2 0.11.0",
  "smallvec",
  "snafu",
- "substring",
  "tempfile",
- "tera",
  "tokio",
  "tokio-test",
  "toml",
@@ -5014,15 +4972,11 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
- "varman-agent",
- "varman-challenge",
- "varman-protocol",
- "varman-waf",
 ]
 
 [[package]]
 name = "pingap-proxy"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -5056,27 +5010,26 @@ dependencies = [
 
 [[package]]
 name = "pingap-pyroscope"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "async-trait",
  "pingora",
  "pyroscope",
  "snafu",
- "substring",
  "tracing",
  "url",
 ]
 
 [[package]]
 name = "pingap-sentry"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "sentry-core",
 ]
 
 [[package]]
 name = "pingap-upstream"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -5107,7 +5060,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-util"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "aes-gcm-siv",
  "ahash",
@@ -5129,7 +5082,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-webhook"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "async-trait",
  "local-ip-address",
@@ -6335,7 +6288,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower",
- "tower-http 0.6.11",
+ "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -6377,7 +6330,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tower",
- "tower-http 0.6.11",
+ "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -7675,15 +7628,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "substring"
-version = "1.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42ee6433ecef213b2e72f587ef64a2f5943e7cd16fbd82dbe8bc07486c534c86"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8290,37 +8234,21 @@ version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
 dependencies = [
- "bitflags 2.13.2",
- "bytes",
- "futures-util",
- "http",
- "http-body",
- "pin-project-lite",
- "tower",
- "tower-layer",
- "tower-service",
- "url",
-]
-
-[[package]]
-name = "tower-http"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08a05a66a4fdd61cbbe0a1d755ffe0ca6aba159dd4820936a0ff8a8278245b9c"
-dependencies = [
  "async-compression",
  "bitflags 2.13.2",
  "bytes",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
- "percent-encoding",
  "pin-project-lite",
  "tokio",
  "tokio-util",
+ "tower",
  "tower-layer",
  "tower-service",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -8623,7 +8551,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "varman"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "ahash",
  "anyhow",
@@ -8635,7 +8563,6 @@ dependencies = [
  "clap",
  "criterion",
  "crossbeam-channel",
- "ctor",
  "glob",
  "hex",
  "http",
@@ -8668,12 +8595,12 @@ dependencies = [
  "regex",
  "rustls",
  "sea-orm",
+ "sea-orm-migration",
  "serde",
  "serde_json",
  "serde_qs",
  "sha2 0.11.0",
  "snafu",
- "substring",
  "sysinfo",
  "tempfile",
  "tokio",
@@ -8686,6 +8613,7 @@ dependencies = [
  "uuid",
  "varman-agent",
  "varman-control",
+ "varman-plugin",
  "varman-pprof",
  "vergen",
  "vergen-git2",
@@ -8693,7 +8621,7 @@ dependencies = [
 
 [[package]]
 name = "varman-agent"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -8733,7 +8661,7 @@ dependencies = [
 
 [[package]]
 name = "varman-control"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -8776,13 +8704,50 @@ dependencies = [
  "tonic",
  "tor-geoip",
  "tower",
- "tower-http 0.7.1",
+ "tower-http",
  "tracing",
  "uuid",
  "varman-pprof",
  "varman-protocol",
  "varman-waf",
  "x509-parser 0.18.1",
+]
+
+[[package]]
+name = "varman-plugin"
+version = "1.6.0"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "bstr",
+ "bytes",
+ "bytesize",
+ "chrono",
+ "dashmap 6.2.1",
+ "http",
+ "humantime",
+ "ipnet",
+ "pingap-cache",
+ "pingap-config",
+ "pingap-core",
+ "pingap-plugin",
+ "pingap-util",
+ "pingora",
+ "pretty_assertions",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tera",
+ "tokio",
+ "tokio-test",
+ "toml",
+ "tracing",
+ "uuid",
+ "varman-agent",
+ "varman-challenge",
+ "varman-protocol",
+ "varman-waf",
 ]
 
 [[package]]
@@ -8800,7 +8765,7 @@ dependencies = [
 
 [[package]]
 name = "varman-protocol"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "prost 0.14.4",
  "prost-types 0.14.4",
@@ -8819,7 +8784,6 @@ dependencies = [
  "arc-swap",
  "base64 0.23.1",
  "ipnet",
- "once_cell",
  "regex",
  "serde",
  "serde_json",

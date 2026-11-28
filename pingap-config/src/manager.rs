@@ -306,12 +306,19 @@ impl ConfigManager {
     pub fn get_current_config(&self) -> Arc<PingapConfig> {
         self.current_config.load().clone()
     }
+    /// Replaces the in-memory current config without touching process-wide
+    /// runtime state. Use [`Self::activate_config`] when this config is the
+    /// one the process is actually serving.
     pub fn set_current_config(&self, config: PingapConfig) {
-        // Keep the global trusted-proxy set in sync with the active config so
-        // client-IP resolution (X-Forwarded-For handling) is applied on both
-        // boot and every reload without a separate wiring point.
-        pingap_core::set_trusted_proxies(&config.basic.trusted_proxies);
         self.current_config.store(Arc::new(config));
+    }
+
+    /// Replaces the current config and applies its process-wide runtime
+    /// settings, currently the trusted-proxy ranges used for client-IP
+    /// resolution. The explicit name keeps the side effect visible.
+    pub fn activate_config(&self, config: PingapConfig) {
+        pingap_core::set_trusted_proxies(&config.basic.trusted_proxies);
+        self.set_current_config(config);
     }
 
     /// get storage key

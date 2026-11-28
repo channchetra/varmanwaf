@@ -1,4 +1,5 @@
 use super::*;
+use pingap_plugin::text::contains_ignore_case;
 
 // ─────────────────────────────────────────────────────────────
 // Bot protection (user-agent classification)
@@ -13,7 +14,7 @@ pub(crate) enum BotAction {
 }
 
 /// Bot protection compiled from the site bundle: verified-bot user agent
-/// substrings normalised for case-insensitive matching plus the action for
+/// substrings normalized for case-insensitive matching plus the action for
 /// everything that does not look like a browser.
 pub(crate) struct BotPolicy {
     pub(crate) whitelist: Vec<String>,
@@ -201,18 +202,21 @@ impl BotPolicy {
         if self.dns_verification
             && let Some(ip) = client_ip
             && let Some((token, _)) =
-                crate::bot_dns::known_bot_family(user_agent)
+                pingap_plugin::bot_dns::known_bot_family(user_agent)
         {
-            match crate::bot_dns::bot_dns_verifier().verify(ip, token).await {
-                crate::bot_dns::DnsVerdict::Confirmed => {
+            match pingap_plugin::bot_dns::bot_dns_verifier()
+                .verify(ip, token)
+                .await
+            {
+                pingap_plugin::bot_dns::DnsVerdict::Confirmed => {
                     return BotDecision::Pass;
                 },
-                crate::bot_dns::DnsVerdict::Refuted => {
+                pingap_plugin::bot_dns::DnsVerdict::Refuted => {
                     return self.decide(self.denial(format!(
                         "user agent claims to be a '{token}' crawler but {ip} does not resolve to its network"
                     )));
                 },
-                crate::bot_dns::DnsVerdict::Unknown => {},
+                pingap_plugin::bot_dns::DnsVerdict::Unknown => {},
             }
         }
         self.classify_with_signals(user_agent, signals)
@@ -340,20 +344,4 @@ pub(crate) fn is_browser_ua(ua: &str) -> bool {
             || contains_ignore_case(ua, "edg/")
             || contains_ignore_case(ua, "opr/")
             || contains_ignore_case(ua, "samsungbrowser/"))
-}
-
-/// ASCII case-insensitive `contains`: user agents are ASCII in practice, and
-/// this spares the classification path a `to_lowercase` allocation per
-/// request.
-pub(crate) fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
-    let haystack = haystack.as_bytes();
-    let needle = needle.as_bytes();
-    !needle.is_empty()
-        && haystack.len() >= needle.len()
-        && haystack.windows(needle.len()).any(|window| {
-            window
-                .iter()
-                .zip(needle)
-                .all(|(a, b)| a.eq_ignore_ascii_case(b))
-        })
 }

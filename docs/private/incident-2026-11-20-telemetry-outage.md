@@ -1,7 +1,7 @@
 # Incident report — seven-day telemetry outage (2026-11-20 → 2026-11-27)
 
 > **Internal document.** Not part of the public website. Evidence collected
-> from production `proxy-1` (`103.189.187.19`) on 2026-11-27.
+> from the production edge on 2026-11-27.
 
 ## Symptom
 

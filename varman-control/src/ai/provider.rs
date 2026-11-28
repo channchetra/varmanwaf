@@ -461,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn the_base_url_is_normalised_and_the_endpoint_built() {
+    fn the_base_url_is_normalized_and_the_endpoint_built() {
         let provider = Provider::new(&settings()).unwrap();
         assert_eq!(
             provider.endpoint(),

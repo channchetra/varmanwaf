@@ -97,7 +97,7 @@ pub struct AccessLogEntry {
 }
 
 // ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-// VarmanAgent ΓÇö the main public interface
+// VarmanAgent — the main public interface
 // ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 /// The VarmanWAF agent that connects to the control plane, caches rules locally,
@@ -164,7 +164,7 @@ impl VarmanAgent {
         // Start background tasks (connection, heartbeat, log shipping)
         if let Err(e) = client.start().await {
             error!(error = %e, "Failed to start client background tasks");
-            // Don't fail ΓÇö agent can still operate from cached rules
+            // Don't fail — agent can still operate from cached rules
         }
 
         info!(agent_id = %agent_id, "VarmanWAF agent started");
@@ -310,7 +310,7 @@ impl VarmanAgent {
         self.client.send_log(log_entry);
     }
 
-    /// Record a request for metrics (hot path ΓÇö must be fast).
+    /// Record a request for metrics (hot path — must be fast).
     #[inline]
     pub fn record_request(&self, blocked: bool) {
         self.metrics.record_request(blocked);
@@ -334,7 +334,7 @@ impl VarmanAgent {
     /// Resolution order: the site's own failover policy from the registry
     /// (primary or alternate domain match), then the control-plane-wide
     /// default from the last sync, then this agent's local `--fail-open`
-    /// setting ΓÇö which is the only layer available in standalone mode or
+    /// setting — which is the only layer available in standalone mode or
     /// before the first sync completes.
     pub fn effective_fail_open(&self, domain: &str) -> bool {
         match self.rule_cache.failover_for_domain(domain) {
@@ -363,7 +363,7 @@ impl VarmanAgent {
         fingerprint_for(&site.config_hash, self.config_hash())
     }
 
-    /// Graceful shutdown ΓÇö signals all background tasks to stop.
+    /// Graceful shutdown — signals all background tasks to stop.
     pub async fn shutdown(&self) {
         info!("Shutting down VarmanWAF agent...");
         self.client.shutdown();

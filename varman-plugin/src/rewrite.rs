@@ -35,7 +35,6 @@
 //! [`parse_condition`]) supporting `and`/`or`/`not`, parentheses, header
 //! lookups, `exists`, and `http.response.status`.
 
-use super::{Error, get_hash_key, get_step_conf_in};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bstr::ByteSlice;
@@ -50,6 +49,7 @@ use pingap_core::{
     RequestPluginResult, ResponseBodyPluginResult, ResponsePluginResult,
     ensure_client_ip, get_host,
 };
+use pingap_plugin::{Error, get_hash_key, get_step_conf_in};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
@@ -1256,7 +1256,10 @@ pub struct RewritePlugin {
 impl RewritePlugin {
     /// Create a new plugin from configuration.
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new rewrite plugin");
+        debug!(
+            params = pingap_plugin::redacted_params(params),
+            "new rewrite plugin"
+        );
         Self::try_from(params)
     }
 
@@ -1516,7 +1519,7 @@ impl Plugin for RewritePlugin {
 
         let client_ip = ensure_client_ip(session, ctx).to_string();
         let country = if conditions_use_country(&rules) {
-            crate::waf::lookup_country(&client_ip).unwrap_or_default()
+            pingap_plugin::geo::lookup_country(&client_ip).unwrap_or_default()
         } else {
             String::new()
         };
@@ -1583,7 +1586,7 @@ impl Plugin for RewritePlugin {
 
         let client_ip = ensure_client_ip(session, ctx).to_string();
         let country = if conditions_use_country(&rules) {
-            crate::waf::lookup_country(&client_ip).unwrap_or_default()
+            pingap_plugin::geo::lookup_country(&client_ip).unwrap_or_default()
         } else {
             String::new()
         };
@@ -1696,8 +1699,6 @@ impl Plugin for RewritePlugin {
         }
     }
 }
-
-register_plugin!("rewrite", RewritePlugin);
 
 #[cfg(test)]
 mod tests {
@@ -1856,7 +1857,7 @@ rules = '[{"id":"h","direction":"response","operations":[{"type":"set_header","n
 
     mod agent_mode {
         use super::*;
-        use crate::waf::tests::install_test_agent;
+        use crate::test_support::install_test_agent;
         use pretty_assertions::assert_eq;
         use varman_protocol::control_plane as proto;
 

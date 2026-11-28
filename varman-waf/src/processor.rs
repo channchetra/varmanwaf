@@ -4,7 +4,7 @@
 //! request and contribute extra findings (fraud checks, tenant-specific
 //! logic, external threat feeds). This module owns the **contract and the
 //! failure semantics** so they are testable without a network. The transport
-//! lives in `pingap-plugin::waf_processor`: it owns the socket I/O and the
+//! lives in `varman-plugin::waf_processor`: it owns the socket I/O and the
 //! asynchronous timeout, and consumes the contract types below.
 //!
 //! # Invariants (mandate §9)

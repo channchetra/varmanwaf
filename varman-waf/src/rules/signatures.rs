@@ -11,9 +11,9 @@
 use std::fmt;
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 
 use crate::{StackSet, WafLevel};
 
@@ -1929,8 +1929,8 @@ fn builtin_patterns() -> Vec<SignaturePattern> {
 /// Both the engine and the dashboard catalogue read this one copy instead of
 /// rebuilding the vector for every lookup. `SignaturePattern` is `Copy`, so
 /// the engine can still own the filtered subset it scans.
-static BUILTIN_PATTERNS: Lazy<Vec<SignaturePattern>> =
-    Lazy::new(builtin_patterns);
+static BUILTIN_PATTERNS: LazyLock<Vec<SignaturePattern>> =
+    LazyLock::new(builtin_patterns);
 
 /// Dashboard-facing metadata for one built-in detection signature.
 ///
@@ -2395,13 +2395,13 @@ fn fingerprint_sql(lower: &str) -> String {
 }
 
 /// Regex set used to confirm SQLi beyond the fingerprint.
-static SQLI_UNION_SELECT: Lazy<Regex> = Lazy::new(|| {
+static SQLI_UNION_SELECT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\bunion\b[\s/*!]+(?:\ball\b[\s/*!]+)?\bselect\b").unwrap()
 });
 /// `union all` with no following `select` (`2 union all/bar`) — libinjection
 /// flags the `UNION ALL` keyword phrase on its own (CRS 942101 test 9).
-static SQLI_UNION_ALL: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bunion\b[\s/*!+(]+all\b").unwrap());
+static SQLI_UNION_ALL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bunion\b[\s/*!+(]+all\b").unwrap());
 /// Comment-glued union/select split: `unION#filler\nselECT`,
 /// `union--filler\nselect`. The `#`/`--` must sit *glued* to `union` —
 /// honest prose and teaching SQL always keep whitespace before a comment, so
@@ -2409,13 +2409,13 @@ static SQLI_UNION_ALL: Lazy<Regex> =
 /// 64 filler bytes. The right edge accepts a digit or any non-letter
 /// (`select1`) because attacker-controlled newline deletion glues the
 /// keyword to the following token; `selection` still cannot fire.
-static SQLI_UNION_COMMENT_SPLIT: Lazy<Regex> = Lazy::new(|| {
+static SQLI_UNION_COMMENT_SPLIT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\bunion(?:#|--)[\s\S]{0,64}?\bselect(?:[^a-z]|$)").unwrap()
 });
-static SQLI_STACKED: Lazy<Regex> = Lazy::new(|| {
+static SQLI_STACKED: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i);\s*(?:select|insert|update|delete|drop|alter|create|truncate|exec|execute|grant|revoke|declare|begin|shutdown)\b").unwrap()
 });
-static SQLI_DANGEROUS_FN: Lazy<Regex> = Lazy::new(|| {
+static SQLI_DANGEROUS_FN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(?:sleep|benchmark|pg_sleep|waitfor|load_file|extractvalue|updatexml|xp_cmdshell|sp_executesql)\s*\(").unwrap()
 });
 // T-SQL `WAITFOR` is a standalone statement keyword — `WAITFOR DELAY '0:05'`
@@ -2423,9 +2423,9 @@ static SQLI_DANGEROUS_FN: Lazy<Regex> = Lazy::new(|| {
 // time-blindness payloads (`));wAITfor` in a transport-wrapped value).
 // Bare `waitfor` inside an HTTP surface has no honest prose use and the
 // keyword prefilter already bounds the cost to inputs mentioning it.
-static SQLI_WAITFOR: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bwaitfor\b").unwrap());
-static SQLI_TAUTOLOGY: Lazy<Regex> = Lazy::new(|| {
+static SQLI_WAITFOR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bwaitfor\b").unwrap());
+static SQLI_TAUTOLOGY: LazyLock<Regex> = LazyLock::new(|| {
     // Tautology shapes only: numeric self-equality (`or 1=1`, `1='1'`),
     // quoted-token equality (`or 'a'='a'`, `"1"="1"`) and the classic blind
     // inequalities. A generic `word = string` comparison — Lucene/API filter
@@ -2436,9 +2436,10 @@ static SQLI_TAUTOLOGY: Lazy<Regex> = Lazy::new(|| {
     )
     .unwrap()
 });
-static SQLI_COMMENT_TERM: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?:--\s|--$|#\s|#$|/\*[\s\S]*?\*/)").unwrap());
-static SQLI_QUOTE_KEYWORD: Lazy<Regex> = Lazy::new(|| {
+static SQLI_COMMENT_TERM: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:--\s|--$|#\s|#$|/\*[\s\S]*?\*/)").unwrap()
+});
+static SQLI_QUOTE_KEYWORD: LazyLock<Regex> = LazyLock::new(|| {
     // Quote immediately followed by a *SQL-specific* keyword (whitespace,
     // a stray `)`/`;` between them is allowed) — the `') union` / `'; drop`
     // quote-break family. `or`/`and` are deliberately excluded (prose) and
@@ -2450,22 +2451,22 @@ static SQLI_QUOTE_KEYWORD: Lazy<Regex> = Lazy::new(|| {
     )
     .unwrap()
 });
-static SQLI_INFO_SCHEMA: Lazy<Regex> = Lazy::new(|| {
+static SQLI_INFO_SCHEMA: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)information_schema|\bsqlite_master\b|\bpg_catalog\b|\bsysobjects\b|\bsyscolumns\b").unwrap()
 });
-static SQLI_INTO_FILE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\binto\s+(?:out|dump)file\b").unwrap());
+static SQLI_INTO_FILE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\binto\s+(?:out|dump)file\b").unwrap());
 // Bare statement shape without a quote break: `SELECT * FROM all_tables`,
 // `SELECT id,name FROM users`. The column list must carry statement markers
 // (a star or a comma list) so prose like "select a gift from our store"
 // cannot fire, and a *complete* query (WHERE/GROUP BY/ORDER BY/LIMIT/…)
 // passed as a parameter is treated as the legitimate-query class and skipped
 // — lexically indistinguishable, same tradeoff as the prose union-select pin.
-static SQLI_BARE_SELECT: Lazy<Regex> = Lazy::new(|| {
+static SQLI_BARE_SELECT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\bselect\s+(?:\*|\w+\s*,\s*[\w.\'"()]+\s*(?:,\s*[\w.\'"()]+)*)\s+from\s+[\w."']"#)
         .unwrap()
 });
-static SQLI_FULL_QUERY_CLAUSE: Lazy<Regex> = Lazy::new(|| {
+static SQLI_FULL_QUERY_CLAUSE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)\b(?:where|group\s+by|order\s+by|having|limit|offset|join)\b",
     )
@@ -2475,7 +2476,7 @@ static SQLI_FULL_QUERY_CLAUSE: Lazy<Regex> = Lazy::new(|| {
 // probing `TO_CHAR(1/0)`, and the generic CASE…WHEN…THEN skeleton behind an
 // SQL operator (`select/and/or/||/;/quote/(` prefix). The operator prefix
 // keeps prose like "in the case when you feel chest pain … then" clean.
-static SQLI_BLIND_PROBE: Lazy<Regex> = Lazy::new(|| {
+static SQLI_BLIND_PROBE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(?i)\bselect\s+case\s+when\b|(?:\bselect\b|\b(?:and|or)\b|\|\||;|['"`(])\s*case\s+when\b[\s\S]{0,80}\bthen\b|\bto_char\s*\(\s*[\w'"]+\s*/\s*[\w'"]+\s*\)"#,
     )
@@ -2484,19 +2485,19 @@ static SQLI_BLIND_PROBE: Lazy<Regex> = Lazy::new(|| {
 // Quote-unbalanced tautology tail: `1' or ''=`, `1' or ''='` — the value was
 // truncated mid-injection but the tautology attempt is explicit. Innocent
 // prose does not end in `or '<empty>=`.
-static SQLI_TRUNCATED_TAUTOLOGY: Lazy<Regex> = Lazy::new(|| {
+static SQLI_TRUNCATED_TAUTOLOGY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)(?:\bor\b|\band\b|\|\|)\s*['"`]{1,2}\s*=\s*['"`]{0,2}\s*(?:--|#)?\s*$"#)
         .unwrap()
 });
 // Inline SQL comments used as keyword splitter: `OR/**/"1"="1"`.
-static SQLI_INLINE_COMMENT: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"/\*[\s\S]*?\*/").unwrap());
+static SQLI_INLINE_COMMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"/\*[\s\S]*?\*/").unwrap());
 // Boolean-context subquery — PortSwigger-style blind SQLi:
 // `and (select …)='a'`, `or 1=(select cast((select …) as int))--`,
 // `where 1=(select 'secret')`. An operator-prefixed subquery or a bare
 // `N=(SELECT` comparison never occurs in prose; `and select`/`or select`
 // alone is deliberately NOT matched (ordinary prose imperative).
-static SQLI_BOOL_SUBQUERY: Lazy<Regex> = Lazy::new(|| {
+static SQLI_BOOL_SUBQUERY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(?i)\b(?:and|or)\b\s*(?:\(\s*select\b|\d+\s*=\s*(?:\(\s*)?(?:cast\s*\(\s*\(?\s*)?select\b)|\b\d+\s*=\s*\(\s*select\b"#,
     )
@@ -2545,7 +2546,7 @@ static SQLI_PREFILTER_NEEDLES: &[&str] = &[
     "to_char",
 ];
 
-static SQLI_PREFILTER: Lazy<AhoCorasick> = Lazy::new(|| {
+static SQLI_PREFILTER: LazyLock<AhoCorasick> = LazyLock::new(|| {
     AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
         .build(SQLI_PREFILTER_NEEDLES)
@@ -2682,33 +2683,33 @@ pub fn detect_sqli(input: &str) -> (bool, String) {
 // libinjection-style XSS detection
 // ---------------------------------------------------------------------------
 
-static XSS_SCRIPT_TAG: Lazy<Regex> = Lazy::new(|| {
+static XSS_SCRIPT_TAG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)<\s*/?\s*(?:[a-z0-9_-]{1,32}:)?script\b").unwrap()
 });
 // Event handler opener. The `\s` arm matches real markup (` on…=`); the
 // `+` arm covers URL-encoded headers/paths where the space stayed literal
 // (`<xss+onafterscriptexecute=…>` in a Referer query) — browsers reflect
 // query strings with `+` for space into Referer URLs verbatim.
-static XSS_EVENT_HANDLER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?i)(?:[\s\+"'`]|^)on[a-z]+\s*="#).unwrap());
-static XSS_JS_URI: Lazy<Regex> = Lazy::new(|| {
+static XSS_EVENT_HANDLER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)(?:[\s\+"'`]|^)on[a-z]+\s*="#).unwrap());
+static XSS_JS_URI: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(?:javascript|vbscript|livescript|mocha)\s*:").unwrap()
 });
-static XSS_DANGEROUS_TAG: Lazy<Regex> = Lazy::new(|| {
+static XSS_DANGEROUS_TAG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)<\s*(?:iframe|object|embed|svg|math|form|input|body|frame|frameset|applet|meta|link|base|style|marquee|details|audio|video|template|portal)\b").unwrap()
 });
-static XSS_DATA_URI: Lazy<Regex> = Lazy::new(|| {
+static XSS_DATA_URI: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)data\s*:\s*(?:text/html|application/xhtml|text/javascript|application/javascript)").unwrap()
 });
-static XSS_STYLE_EXPR: Lazy<Regex> = Lazy::new(|| {
+static XSS_STYLE_EXPR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)expression\s*\(|url\s*\(\s*['\"]?\s*javascript"#).unwrap()
 });
-static XSS_HTML_COMMENT_BREAK: Lazy<Regex> = Lazy::new(|| {
+static XSS_HTML_COMMENT_BREAK: LazyLock<Regex> = LazyLock::new(|| {
     // `</style>`, `</title>`, `</textarea>` used to escape an HTML context.
     Regex::new(r"(?i)<\s*/\s*(?:style|title|textarea|noscript|comment)\b")
         .unwrap()
 });
-static XSS_DOM_CHAIN: Lazy<Regex> = Lazy::new(|| {
+static XSS_DOM_CHAIN: LazyLock<Regex> = LazyLock::new(|| {
     // Prototype-gadget traversal: `ctor.prototype…`, `ctor.constructor(…)`,
     // `ctor["constructor"]` — chains used to reach Function/eval from an
     // ordinary object. A single `x.constructor.name` read is not a chain.
@@ -2734,7 +2735,7 @@ static XSS_PREFILTER_NEEDLES: &[&str] = &[
     "constructor",
 ];
 
-static XSS_PREFILTER: Lazy<AhoCorasick> = Lazy::new(|| {
+static XSS_PREFILTER: LazyLock<AhoCorasick> = LazyLock::new(|| {
     AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
         .build(XSS_PREFILTER_NEEDLES)
@@ -2743,8 +2744,8 @@ static XSS_PREFILTER: Lazy<AhoCorasick> = Lazy::new(|| {
 
 /// An HTML tag anywhere in the value (`<svg onload=…>`, `"><img …`) — the
 /// structural marker of a payload prepared for markup execution.
-static HTML_TAG_STRUCTURE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?i)<\s*\w{1,32}[^>]{0,200}>"#).unwrap());
+static HTML_TAG_STRUCTURE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)<\s*\w{1,32}[^>]{0,200}>"#).unwrap());
 
 /// Does the value carry HTML tag structure around the script-URI hit?
 /// An injection payload needs a tag context to execute (`<svg onload=…>`,
@@ -2817,21 +2818,21 @@ pub fn detect_xss(input: &str) -> (bool, String) {
     (is_xss, fingerprint)
 }
 
-static DESER_PHP_OBJECT: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"\bO:\s*\d+\s*:\s*["']"#).unwrap());
-static DESER_PHP_PAIR: Lazy<Regex> = Lazy::new(|| {
+static DESER_PHP_OBJECT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\bO:\s*\d+\s*:\s*["']"#).unwrap());
+static DESER_PHP_PAIR: LazyLock<Regex> = LazyLock::new(|| {
     // Two consecutive serialized members (`s:11:"avatar_link";s:16:"…"`) —
     // a single `s:N:"…"` can appear inside logged/quoted content, the pair
     // is the serialized record shape.
     Regex::new(r#"\b[sia]\s*:\s*\d+\s*:\s*["'][^"']{0,256}["']\s*;\s*[sia]\s*:\s*\d+\s*:\s*["']"#)
         .unwrap()
 });
-static DESER_OGNL_CALL: Lazy<Regex> = Lazy::new(|| {
+static DESER_OGNL_CALL: LazyLock<Regex> = LazyLock::new(|| {
     // Static-class invocation `@java.lang.Runtime@getRuntime(…)` or a
     // value-stack assignment into one (`#ctx=@java.lang.System@…`).
     Regex::new(r#"@[A-Za-z][\w.]*@[A-Za-z_]\w*\s*\("#).unwrap()
 });
-static DESER_JAVA_MAGIC: Lazy<Regex> = Lazy::new(|| {
+static DESER_JAVA_MAGIC: LazyLock<Regex> = LazyLock::new(|| {
     // Java ObjectStream magic `AC ED 00 05` percent-transported in a query:
     // the byte-restoring decoder surfaces those bytes as Latin-1 text
     // (U+00AC U+00ED NUL U+0005), which neither the hex-text needle for the
@@ -2956,7 +2957,7 @@ fn is_structural_expr(inner: &str) -> bool {
     false
 }
 
-static JS_BRACKET_CALL: Lazy<Regex> = Lazy::new(|| {
+static JS_BRACKET_CALL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         // Call-paren tail stays content-agnostic (`x[y](…`, bare or quoted)
         // — a real invocation is strong signal. A chained-bracket tail is
@@ -2968,14 +2969,15 @@ static JS_BRACKET_CALL: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
-static SQLI_UNION_BREAK: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?i)['"`]\s*union\b"#).unwrap());
-static SQLI_UNION_CONST: Lazy<Regex> = Lazy::new(|| {
+static SQLI_UNION_BREAK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)['"`]\s*union\b"#).unwrap());
+static SQLI_UNION_CONST: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)union[\s/+]{1,8}select[\s/+]{0,4}(?:[\d('"*]|null\b)"#)
         .unwrap()
 });
-static SQLI_STMT_MARKER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?i)(?:--|/\*|(?:^|\s)#)|\bfrom\b"#).unwrap());
+static SQLI_STMT_MARKER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(?:--|/\*|(?:^|\s)#)|\bfrom\b"#).unwrap()
+});
 
 /// Does a `union select` occurrence inside `input` look like an actual
 /// injected statement rather than a search phrase quoting the keywords?
@@ -2989,7 +2991,7 @@ pub fn sqli_union_statement_shaped(input: &str) -> bool {
         || SQLI_STMT_MARKER.is_match(input)
 }
 
-static SQLI_INTO_FILE_TARGET: Lazy<Regex> = Lazy::new(|| {
+static SQLI_INTO_FILE_TARGET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)into\s+(?:out|dump)file\s*['\"`]"#).unwrap()
 });
 
@@ -3001,10 +3003,10 @@ pub fn sqli_into_file_statement_shaped(input: &str) -> bool {
     SQLI_INTO_FILE_TARGET.is_match(input)
 }
 
-static SCRIPT_TAG_ATTR: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)<script[\s+][^>]*>").unwrap());
-static SCRIPT_TAG_COMPACT: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)<script>").unwrap());
+static SCRIPT_TAG_ATTR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)<script[\s+][^>]*>").unwrap());
+static SCRIPT_TAG_COMPACT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)<script>").unwrap());
 
 /// Does a `<script` occurrence in `input` actually open a tag? Two real-tag
 /// shapes exist: with attributes (`<script src=…>`, `<script+src=…>`) and the
@@ -3050,7 +3052,7 @@ pub fn path_tautology_segment(path: &str) -> bool {
 /// backtick pair glued inside a command word behind a shell operator. Honest
 /// text keeps whitespace before a backtick span, so the interleaved shape is
 /// authored obfuscation against literal `` `id` ``-style signatures.
-static CI_BACKTICK_INTERLEAVED: Lazy<Regex> = Lazy::new(|| {
+static CI_BACKTICK_INTERLEAVED: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:;|\||&&|&)\s*[a-z_]{1,12}`{2}[a-z_]").unwrap()
 });
 
@@ -3073,8 +3075,8 @@ pub fn ssrf_protocol_smuggling(input: &str) -> bool {
 /// prefix followed by backslash traversal — RFI and Windows-path traversal
 /// composed into one payload. Backslash traversal alone is PT-002; the
 /// scheme prefix in front of it marks an inclusion attempt.
-static PT_REMOTE_BACKSLASH: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)(?:https?|ftp)\\+\.\.\\").unwrap());
+static PT_REMOTE_BACKSLASH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(?:https?|ftp)\\+\.\.\\").unwrap());
 
 pub fn pt_remote_backslash_include(input: &str) -> bool {
     PT_REMOTE_BACKSLASH.is_match(input)
@@ -3084,7 +3086,7 @@ pub fn pt_remote_backslash_include(input: &str) -> bool {
 /// (`chr(121)+chr(101)+chr(115)` → "yes"). Assembling evaluation input from
 /// codepoints is an injection-building shape; benign traffic carries no
 /// chr() chains at all.
-static CI_CHR_CHAIN: Lazy<Regex> = Lazy::new(|| {
+static CI_CHR_CHAIN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)chr\(\d{1,3}\)\s*[+%&|^.]\s*chr\(\d{1,3}\)").unwrap()
 });
 
@@ -3102,7 +3104,7 @@ pub fn ci_chr_chain(input: &str) -> bool {
 // `shell.php.jpeg` is the classic upload-bypass form. Desktop-binary names
 // (exe/dll/sh/bat) are excluded — `vendor.dll.js` is standard webpack DLL
 // bundle output and a much larger benign population than an attack surface.
-static PT_DOUBLE_EXEC_EXT: Lazy<Regex> = Lazy::new(|| {
+static PT_DOUBLE_EXEC_EXT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)\.(?:php\d?|phtml|asp|aspx|jsp|jspx|cgi|pl|ashx)\.[a-z0-9]{1,5}$",
     )
@@ -3113,8 +3115,8 @@ pub fn pt_double_exec_extension(path: &str) -> bool {
     PT_DOUBLE_EXEC_EXT.is_match(path)
 }
 
-static CRLF_HEADER_SHAPE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)[\r\n]{2,}\s*[\w-]{1,32}\s*:").unwrap());
+static CRLF_HEADER_SHAPE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)[\r\n]{2,}\s*[\w-]{1,32}\s*:").unwrap());
 
 /// Does a CRLF occurrence inside `input` precede a header-name shape
 /// (`…\r\nX-Foo: bar`, including mixed `\r\r\n\n` evasion)? That is

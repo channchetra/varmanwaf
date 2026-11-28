@@ -1,4 +1,4 @@
-//! `cache_settings` ΓÇö one global row holding the deployment-wide cache
+//! `cache_settings` — one global row holding the deployment-wide cache
 //! ceiling.
 //!
 //! Four knobs: the largest single cacheable object (`max_file_size_mb`,

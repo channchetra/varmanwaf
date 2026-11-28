@@ -2,7 +2,7 @@
 //!
 //! Historically the control plane never configured origin health checks:
 //! every pool's upstream was pushed to agents with `health_check: None`, so
-//! the data plane fell back to a bare TCP probe ΓÇö a 5xx-soft-failing origin
+//! the data plane fell back to a bare TCP probe — a 5xx-soft-failing origin
 //! (process up, business broken) was never removed from rotation. These
 //! columns carry the operator's HTTP health check posture per pool; the
 //! agent synthesizes the data-plane check URL from them.

@@ -21,7 +21,6 @@ use pyroscope::{
     pyroscope::{PyroscopeAgentBuilder, PyroscopeAgentRunning},
 };
 use snafu::{ResultExt, Snafu};
-use substring::Substring;
 use tracing::{error, info};
 use url::Url;
 
@@ -85,7 +84,7 @@ fn start_pyroscope(
     let mut tags = vec![];
     let format_tag_value = |value: &str| {
         if value.starts_with("$") {
-            std::env::var(value.substring(1, value.len()))
+            std::env::var(value.get(1..).unwrap_or_default())
                 .unwrap_or(value.to_string())
         } else {
             value.to_string()
@@ -104,8 +103,10 @@ fn start_pyroscope(
             },
             _ if key.starts_with(tag_key_prefix) => {
                 let tag_value = format_tag_value(&value);
-                let key =
-                    key.substring(tag_key_prefix.len(), key.len()).to_string();
+                let key = key
+                    .get(tag_key_prefix.len()..)
+                    .unwrap_or_default()
+                    .to_string();
                 tags.push((key.to_string(), tag_value));
             },
             _ => {},

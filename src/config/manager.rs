@@ -30,7 +30,7 @@ type Result<T> = std::result::Result<T, Error>;
 ///
 /// Nothing is cached: every call builds a fresh manager, so a failed attempt
 /// is retried by calling again, and the caller owns the result.
-pub fn try_init_config_manager(value: &str) -> Result<Arc<ConfigManager>> {
+pub fn build_config_manager(value: &str) -> Result<Arc<ConfigManager>> {
     Ok(Arc::new(new_config_manager(value)?))
 }
 
@@ -38,7 +38,7 @@ pub fn try_init_config_manager(value: &str) -> Result<Arc<ConfigManager>> {
 /// the command line proxy (`--upstream`) and the agent-hosted data plane,
 /// where there is no file or etcd backing store to read from. `path` receives
 /// the acme state so an issued certificate is not thrown away on restart.
-pub fn try_init_memory_config_manager(
+pub fn build_memory_config_manager(
     data: &str,
     path: Option<PathBuf>,
 ) -> Result<Arc<ConfigManager>> {
@@ -50,12 +50,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_failed_initialization_reports_the_error_and_the_next_call_succeeds() {
+    fn a_failed_build_reports_the_error_and_the_next_call_succeeds() {
         // Arrange: an etcd URL that names no host, so building it cannot work.
         let invalid_source = "etcd://";
 
         // Act: the first attempt fails ...
-        let error = try_init_config_manager(invalid_source)
+        let error = build_config_manager(invalid_source)
             .err()
             .expect("an unparsable source must not produce a manager");
 
@@ -63,16 +63,16 @@ mod tests {
         assert!(matches!(error, Error::Invalid { .. }));
 
         // ... and nothing was cached, so the next call is independent.
-        try_init_memory_config_manager("[basic]\n", None)
+        build_memory_config_manager("[basic]\n", None)
             .expect("the retry must succeed");
     }
 
     #[test]
     fn every_call_builds_its_own_manager() {
         // Arrange/Act: two callers ask for the same in-memory source.
-        let first = try_init_memory_config_manager("[basic]\n", None)
+        let first = build_memory_config_manager("[basic]\n", None)
             .expect("the first manager");
-        let second = try_init_memory_config_manager("[basic]\n", None)
+        let second = build_memory_config_manager("[basic]\n", None)
             .expect("the second manager");
 
         // Assert: with no process-wide slot, each call owns the manager it was

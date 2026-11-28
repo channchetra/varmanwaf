@@ -96,7 +96,7 @@ async fn list(
 ) -> Result<Json<Page<rewrite_rules::Model>>, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     load_site_read(&state.db, id, &current).await?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let paginator = rewrite_rules::Entity::find()
         .filter(rewrite_rules::Column::SiteId.eq(id))
@@ -221,7 +221,7 @@ async fn remove(
     State(state): State<AppState>,
     current: AuthUser,
     Path((site_id, rule_id)): Path<(String, String)>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let id = parse_uuid(&site_id, "site id")?;
     let target = parse_uuid(&rule_id, "rewrite rule id")?;
     load_site_write(&state.db, id, &current).await?;
@@ -235,7 +235,7 @@ async fn remove(
     touch_site(&state, id).await?;
     notify_config_changed(&state, id, Some(&current.email)).await;
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn find(

@@ -13,9 +13,8 @@
 // limitations under the License.
 
 use super::{get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf};
-use crate::certificates::new_certificate_provider;
+use crate::data_plane::ProviderSet;
 use crate::process::{get_start_time, restart_now};
-use crate::upstreams::new_upstream_provider;
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
@@ -23,12 +22,14 @@ use hex::ToHex;
 use http::Method;
 use http::{HeaderValue, StatusCode, header};
 use humantime::parse_duration;
-use pingap_certificate::validate_servers_tls_for_backend;
+use pingap_certificate::{
+    CertificateProvider, validate_servers_tls_for_backend,
+};
 use pingap_config::hcl::convert_toml_to_hcl;
 use pingap_config::kdl::convert_toml_to_kdl;
 use pingap_config::{
-    BasicConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE, Category,
-    CertificateConf, ConfigManager, LocationConf, PingapTomlConfig,
+    BasicConf, CATEGORY_BASIC, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
+    Category, CertificateConf, ConfigManager, LocationConf, PingapTomlConfig,
     PluginCategory, PluginConf, ServerConf, StorageConf, UpstreamConf,
     Validate, format_category,
 };
@@ -42,7 +43,7 @@ use pingap_core::{
 use pingap_performance::get_process_system_info;
 use pingap_performance::get_processing_accepted;
 use pingap_plugin::{Error, get_plugin_factory, redacted_params};
-use pingap_upstream::UpstreamHealthyStatus;
+use pingap_upstream::{UpstreamHealthyStatus, UpstreamProvider};
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
@@ -54,8 +55,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use substring::Substring;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use urlencoding::decode;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -67,6 +67,10 @@ pub struct AdminServe {
     pub authorizations: Vec<(String, String)>,
     pub plugin_step: PluginStep,
     config_manager: Arc<ConfigManager>,
+    /// The plane's upstream registry, for `/basic`'s health snapshot.
+    upstream_provider: Arc<dyn UpstreamProvider>,
+    /// The plane's certificate registry, for `/certificates`.
+    certificate_provider: Arc<dyn CertificateProvider>,
     max_age: Duration,
     hash_value: String,
     ip_fail_limit: TtlLruLimit,
@@ -119,7 +123,8 @@ struct FullConfigJson {
 
 impl AdminServe {
     /// Creates the admin API plugin, reading and writing the configuration
-    /// through `config_manager`.
+    /// through `config_manager` and reading the introspection providers from
+    /// `providers` (the plane's own set, never a process global).
     ///
     /// The manager is a parameter rather than a process-global lookup: the
     /// assembly and reload paths already own one, so construction carries no
@@ -127,6 +132,7 @@ impl AdminServe {
     pub fn new(
         value: &PluginConf,
         config_manager: Arc<ConfigManager>,
+        providers: &ProviderSet,
     ) -> Result<Self> {
         debug!(target: LOG_TARGET, params = redacted_params(value), "new admin server plugin");
         let hash_value = get_hash_key(value);
@@ -202,7 +208,10 @@ impl AdminServe {
         }
         let mut path = get_str_conf(value, "path");
         if path.len() > 1 && path.ends_with("/") {
-            path = path.substring(0, path.len() - 1).to_string();
+            path = path
+                .get(..path.len().saturating_sub(1))
+                .unwrap_or_default()
+                .to_string();
         }
 
         let params = AdminServe {
@@ -216,6 +225,8 @@ impl AdminServe {
                 ip_fail_limit as usize,
             ),
             config_manager,
+            upstream_provider: providers.upstreams.clone(),
+            certificate_provider: providers.certificates.clone(),
             authorizations,
             allow_unauthenticated,
         };
@@ -245,9 +256,12 @@ async fn get_request_body(session: &mut Session) -> pingora::Result<BytesMut> {
 }
 
 impl AdminServe {
-    fn auth_validate(&self, req_header: &RequestHeader) -> bool {
+    fn auth_validate<'a>(
+        &'a self,
+        req_header: &RequestHeader,
+    ) -> Option<&'a str> {
         if self.allow_unauthenticated {
-            return true;
+            return Some("anonymous");
         }
         // Construction rejects an empty list unless `allow_unauthenticated` is
         // set, so this is a belt-and-braces fail-closed default: a malformed
@@ -257,7 +271,7 @@ impl AdminServe {
                 target: LOG_TARGET,
                 "auth validate fail: no authorizations configured"
             );
-            return false;
+            return None;
         }
         let path = req_header.uri.path();
         let value =
@@ -265,14 +279,22 @@ impl AdminServe {
                 .unwrap_or_default();
         if value.is_empty() {
             error!(target: LOG_TARGET, path, "auth validate fail: missing authorization header");
-            return false;
+            return None;
         }
         let Some((token, ts)) = value.split_once(':') else {
             error!(target: LOG_TARGET, path, "auth validate fail: malformed authorization, expect token:ts");
-            return false;
+            return None;
         };
         let now = pingap_core::now_sec() as i64;
-        let parsed_ts = ts.parse::<i64>().unwrap_or_default();
+        let Ok(parsed_ts) = ts.parse::<i64>() else {
+            error!(
+                target: LOG_TARGET,
+                path,
+                ts,
+                "auth validate fail: timestamp is not an integer"
+            );
+            return None;
+        };
         let offset = now - parsed_ts;
         let max_age = self.max_age.as_secs() as i64;
         if offset.abs() > max_age {
@@ -286,7 +308,7 @@ impl AdminServe {
                 max_age,
                 "auth validate fail: timestamp out of max_age window"
             );
-            return false;
+            return None;
         }
 
         for (user, pass) in self.authorizations.iter() {
@@ -297,7 +319,7 @@ impl AdminServe {
                 hash256.encode_hex::<String>().as_bytes(),
                 token.as_bytes(),
             ) {
-                return true;
+                return Some(user.as_str());
             }
         }
         error!(
@@ -307,7 +329,7 @@ impl AdminServe {
             authorizations = self.authorizations.len(),
             "auth validate fail: token hash mismatch"
         );
-        false
+        None
     }
     async fn load_config(
         &self,
@@ -323,7 +345,7 @@ impl AdminServe {
         })?;
         Ok(config)
     }
-    async fn get_config(
+    async fn get_config_response(
         &self,
         category: &str,
     ) -> pingora::Result<HttpResponse> {
@@ -354,6 +376,7 @@ impl AdminServe {
             });
         }
         let resp = match category {
+            CATEGORY_BASIC => HttpResponse::try_from_json(&conf.basic)?,
             CATEGORY_UPSTREAM => HttpResponse::try_from_json(&conf.upstreams)?,
             CATEGORY_LOCATION => HttpResponse::try_from_json(&conf.locations)?,
             CATEGORY_SERVER => HttpResponse::try_from_json(&conf.servers)?,
@@ -361,6 +384,7 @@ impl AdminServe {
             CATEGORY_CERTIFICATE => {
                 HttpResponse::try_from_json(&conf.certificates)?
             },
+            CATEGORY_STORAGE => HttpResponse::try_from_json(&conf.storages)?,
             _ => HttpResponse::try_from_json(&conf)?,
         };
         Ok(resp)
@@ -370,13 +394,22 @@ impl AdminServe {
         &self,
         category: &str,
         name: &str,
+        actor: &str,
     ) -> pingora::Result<HttpResponse> {
         let category = Category::from_str(category)
-            .map_err(|e| pingap_core::new_internal_error(500, e))?;
-        self.config_manager.delete(category, name).await.map_err(|e| {
-            error!(target: LOG_TARGET, error = e.to_string(), "delete config fail");
-            pingap_core::new_internal_error(500, e)
-        })?;
+            .map_err(|e| pingap_core::new_internal_error(400, e))?;
+        let category_name = category.to_string();
+        self.config_manager
+            .delete(category, name)
+            .await
+            .map_err(|e| internal_error("delete config fail", e))?;
+        info!(
+            target: LOG_TARGET,
+            actor,
+            category = %category_name,
+            name,
+            "admin config deleted"
+        );
         Ok(HttpResponse::no_content())
     }
     async fn handle_update_config<T>(
@@ -388,27 +421,15 @@ impl AdminServe {
     where
         T: DeserializeOwned + Serialize + Send + Sync + Validate,
     {
-        let conf: T = serde_json::from_slice(buf).map_err(|e| {
-            error!(
-                target: LOG_TARGET,
-                error = e.to_string(),
-                "parse {} config fail",
-                category.to_string()
-            );
-            pingap_core::new_internal_error(500, e)
-        })?;
-        conf.validate().map_err(|e| {
-            error!(target: LOG_TARGET, error = e.to_string(), "validate config fail");
-            pingap_core::new_internal_error(500, e)
-        })?;
+        let conf: T = serde_json::from_slice(buf)
+            .map_err(|e| internal_error("parse config fail", e))?;
+        conf.validate()
+            .map_err(|e| internal_error("validate config fail", e))?;
 
         self.config_manager
             .update(category, name, &conf)
             .await
-            .map_err(|e| {
-                error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
-                pingap_core::new_internal_error(500, e)
-            })?;
+            .map_err(|e| internal_error("update config fail", e))?;
 
         Ok(())
     }
@@ -418,6 +439,7 @@ impl AdminServe {
         session: &mut Session,
         category: &str,
         name: &str,
+        actor: &str,
     ) -> pingora::Result<HttpResponse> {
         if name.is_empty() {
             return Err(pingap_core::new_internal_error(
@@ -486,11 +508,19 @@ impl AdminServe {
             },
         };
 
+        info!(
+            target: LOG_TARGET,
+            actor,
+            category,
+            name,
+            "admin config updated"
+        );
         Ok(HttpResponse::no_content())
     }
     async fn import_config(
         &self,
         session: &mut Session,
+        actor: &str,
     ) -> pingora::Result<HttpResponse> {
         let buf = get_request_body(session).await?;
         let config: PingapTomlConfig = match toml::from_slice(&buf) {
@@ -511,56 +541,68 @@ impl AdminServe {
             error!(target: LOG_TARGET, error = e, "import config fail");
             return Ok(HttpResponse::bad_request(e));
         }
-        self.config_manager.save_all(&config).await.map_err(|e| {
-            error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
-            pingap_core::new_internal_error(500, e)
-        })?;
+        self.config_manager
+            .save_all(&config)
+            .await
+            .map_err(|e| internal_error("import config fail", e))?;
+        info!(target: LOG_TARGET, actor, "admin config imported");
 
         Ok(HttpResponse::no_content())
     }
 
     /// `GET|POST|DELETE /configs[/{category}[/{name}]]` — read the running
-    /// configuration or write a single category entry. Failures are reported
-    /// as a 500 with the error message, matching the old inline dispatcher.
+    /// configuration or write a single category entry. A client error keeps
+    /// its 4xx status; a storage/serialisation failure is a 500.
     async fn handle_configs(
         &self,
         session: &mut Session,
         method: Method,
         category: &str,
         params: &[String],
+        actor: &str,
     ) -> HttpResponse {
+        let known = Category::from_str(category).is_ok();
+        let category_ok = match method {
+            // Reads may also ask for the whole document.
+            Method::GET => category.is_empty() || category == "full" || known,
+            // Writes accept one category, or the wholesale import route.
+            Method::POST => known || category == "import",
+            Method::DELETE => known,
+            _ => false,
+        };
+        if !category_ok {
+            return json_response_with_status(
+                &ErrorResponse {
+                    message: format!("unknown config category: '{category}'"),
+                },
+                StatusCode::BAD_REQUEST,
+            );
+        }
         let result = match method {
             Method::POST => {
                 if category == "import" {
-                    self.import_config(session).await
+                    self.import_config(session, actor).await
                 } else if params.len() < 4 {
                     Err(pingora::Error::new_str("Url is invalid(no name)"))
                 } else {
-                    self.update_config(session, category, &params[3]).await
+                    self.update_config(session, category, &params[3], actor)
+                        .await
                 }
             },
             Method::DELETE => {
                 if params.len() < 4 {
                     Err(pingora::Error::new_str("Url is invalid(no name)"))
                 } else {
-                    self.remove_config(category, &params[3]).await
+                    self.remove_config(category, &params[3], actor).await
                 }
             },
-            _ => self.get_config(category).await,
+            _ => self.get_config_response(category).await,
         };
-        result.unwrap_or_else(|err| {
-            HttpResponse::try_from_json_status(
-                &ErrorResponse {
-                    message: err.to_string(),
-                },
-                StatusCode::INTERNAL_SERVER_ERROR,
-            )
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
-        })
+        result.unwrap_or_else(|err| error_response(&err))
     }
 
-    /// `GET /config-history/{category}[/{name}]` — stored revisions of a
-    /// category, or of one entry inside it.
+    /// `GET /config-history/{category}/{name}` — stored revisions of one
+    /// entry. The name is required; a category-only request is rejected.
     async fn handle_config_history(
         &self,
         category: &str,
@@ -568,7 +610,7 @@ impl AdminServe {
     ) -> pingora::Result<HttpResponse> {
         let category = Category::from_str(category).map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "get config category fail");
-            pingap_core::new_internal_error(500, e)
+            pingap_core::new_internal_error(400, e)
         })?;
         // The name segment is optional in the url but not in the code below,
         // so reject a short url instead of indexing past the end of `params`.
@@ -579,10 +621,9 @@ impl AdminServe {
             ));
         };
         let history = self.config_history_entries(&category, &name).await?;
-        Ok(HttpResponse::try_from_json(&json!({
+        Ok(json_response(&json!({
             "history": history,
-        }))
-        .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
+        })))
     }
 
     /// Loads the stored revisions of one entry and shapes them for the console,
@@ -596,18 +637,13 @@ impl AdminServe {
             .config_manager
             .history(category.clone(), name)
             .await
-            .map_err(|e| {
-                error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
-                pingap_core::new_internal_error(500, e)
-            })?
+            .map_err(|e| internal_error("get config history fail", e))?
             .unwrap_or_default();
 
         let mut history = vec![];
         for item in arr {
-            let data: toml::Table = toml::from_str(&item.data).map_err(|e| {
-                error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
-                pingap_core::new_internal_error(500, e)
-            })?;
+            let data: toml::Table = toml::from_str(&item.data)
+                .map_err(|e| internal_error("get config history fail", e))?;
             let key = format_category(category);
             let Some(data) = data.get(key).cloned() else {
                 continue;
@@ -663,23 +699,36 @@ impl AdminServe {
             tcp_count: info.tcp_count,
             tcp6_count: info.tcp6_count,
             supported_plugins: get_plugin_factory().supported_plugins(),
-            upstream_healthy_status: new_upstream_provider().healthy_status(),
+            upstream_healthy_status: self.upstream_provider.healthy_status(),
             support_history: self.config_manager.support_history(),
             git_hash: crate::git_hash().to_string(),
             now: pingap_core::now_sec(),
         };
 
-        Ok(HttpResponse::try_from_json(&basic_info)
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
+        Ok(json_response(&basic_info))
     }
 
     /// `POST /restart` — graceful restart of the data-plane process.
-    async fn handle_restart(&self) -> HttpResponse {
-        if let Err(e) = restart_now().await {
-            error!(target: LOG_TARGET, error = e.to_string(), "Restart fail");
-            HttpResponse::bad_request(e.to_string())
-        } else {
-            HttpResponse::no_content()
+    async fn handle_restart(&self, actor: &str) -> HttpResponse {
+        info!(target: LOG_TARGET, actor, "admin restart requested");
+        match restart_now().await {
+            Ok(()) => HttpResponse::no_content(),
+            Err(e) => {
+                error!(target: LOG_TARGET, error = e.to_string(), "Restart fail");
+                // "already restarting" is a conflict, not a malformed
+                // request; every other failure is ours.
+                let status = if e.kind() == std::io::ErrorKind::InvalidInput {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                };
+                json_response_with_status(
+                    &ErrorResponse {
+                        message: e.to_string(),
+                    },
+                    status,
+                )
+            },
         }
     }
 
@@ -697,14 +746,13 @@ impl AdminServe {
             pingap_util::aes_decrypt(&params.key, &params.data)
         }
         .map_err(|e| pingap_core::new_internal_error(500, e))?;
-        Ok(HttpResponse::try_from_json(&AesResp { value })
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
+        Ok(json_response(&AesResp { value }))
     }
 
     /// `GET /certificates` — certificate metadata known to this process.
     fn handle_certificates(&self) -> HttpResponse {
         let mut infos = HashMap::new();
-        for (name, cert) in new_certificate_provider().list().iter() {
+        for (name, cert) in self.certificate_provider.list().iter() {
             if let Some(info) = &cert.info {
                 let key = if let Some(value) = &cert.name {
                     value.clone()
@@ -714,8 +762,7 @@ impl AdminServe {
                 infos.insert(key, info.clone());
             }
         }
-        HttpResponse::try_from_json(&infos)
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
+        json_response(&infos)
     }
 }
 
@@ -723,25 +770,17 @@ impl AdminServe {
 /// disable settings the running binary cannot honour. The TLS backend is named
 /// (`openssl` or `rustls`) alongside the enabled cargo features.
 fn feature_flags() -> Vec<String> {
+    #[allow(unused_mut)]
     let mut features = vec![
         "default".to_string(),
         pingap_certificate::TLS_BACKEND.to_string(),
     ];
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "tracing")] {
-            features.push("tracing".to_string());
-        }
-    }
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "full")] {
-            features.push("full".to_string());
-        }
-    }
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "pyro")] {
-            features.push("pyroscope".to_string());
-        }
-    }
+    #[cfg(feature = "tracing")]
+    features.push("tracing".to_string());
+    #[cfg(feature = "full")]
+    features.push("full".to_string());
+    #[cfg(feature = "pyro")]
+    features.push("pyroscope".to_string());
     features
 }
 
@@ -790,6 +829,52 @@ fn pprof_query(session: &Session) -> PprofQuery {
 /// Renders a profiling failure like the control plane does: 409 while
 /// another capture is running, 501 where sampling cannot run at all, 500
 /// otherwise.
+/// Serialises a value for an admin response. A failure is logged with the
+/// serde error and reported as a 500 instead of the opaque "Json serde fail".
+fn json_response<T: Serialize>(value: &T) -> HttpResponse {
+    HttpResponse::try_from_json(value).unwrap_or_else(|e| {
+        error!(target: LOG_TARGET, error = %e, "serialize admin response fail");
+        HttpResponse::unknown_error(format!("Json serde fail: {e}"))
+    })
+}
+
+/// Same as [`json_response`] with an explicit status code.
+fn json_response_with_status<T: Serialize>(
+    value: &T,
+    status: StatusCode,
+) -> HttpResponse {
+    HttpResponse::try_from_json_status(value, status).unwrap_or_else(|e| {
+        error!(target: LOG_TARGET, error = %e, "serialize admin response fail");
+        HttpResponse::unknown_error(format!("Json serde fail: {e}"))
+    })
+}
+
+/// Renders an admin error with the status its `ErrorType` carries, falling
+/// back to 500. A client error keeps its 400 instead of being flattened.
+fn error_response(err: &pingora::Error) -> HttpResponse {
+    let status = match err.etype {
+        pingora::ErrorType::HTTPStatus(code) => StatusCode::from_u16(code)
+            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    json_response_with_status(
+        &ErrorResponse {
+            message: err.to_string(),
+        },
+        status,
+    )
+}
+
+/// Logs a configuration/storage failure and turns it into a 500 with context.
+fn internal_error(
+    context: &'static str,
+    err: impl std::fmt::Display,
+) -> pingora::BError {
+    error!(target: LOG_TARGET, error = %err, "{context}");
+    pingap_core::new_internal_error(500, err)
+}
+
+/// Maps a profiling failure onto its HTTP status and a JSON error body.
 fn pprof_error_response(err: varman_pprof::ProfileError) -> HttpResponse {
     error!(target: LOG_TARGET, error = %err, "pprof request fail");
     let status = match err {
@@ -799,13 +884,12 @@ fn pprof_error_response(err: varman_pprof::ProfileError) -> HttpResponse {
         },
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    HttpResponse::try_from_json_status(
+    json_response_with_status(
         &ErrorResponse {
             message: err.to_string(),
         },
         status,
     )
-    .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
 }
 
 /// `GET /api/pprof/{profile,flamegraph,memory}` — built-in profiling of this
@@ -819,10 +903,9 @@ async fn handle_pprof_request(
     if method != Method::GET {
         return HttpResponse::bad_request("Only GET is supported");
     }
-    let endpoint = path.substring("/pprof/".len(), path.len());
+    let endpoint = path.get("/pprof/".len()..).unwrap_or_default();
     if endpoint == "memory" {
-        return HttpResponse::try_from_json(&varman_pprof::memory_snapshot())
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail"));
+        return json_response(&varman_pprof::memory_snapshot());
     }
     if endpoint != "profile" && endpoint != "flamegraph" {
         return HttpResponse::not_found("Unknown pprof endpoint");
@@ -908,8 +991,10 @@ async fn handle_request_admin(
 
     let header = session.req_header_mut();
     let path = header.uri.path();
-    let mut new_path =
-        path.substring(plugin.path.len(), path.len()).to_string();
+    let mut new_path = path
+        .get(plugin.path.len()..)
+        .unwrap_or_default()
+        .to_string();
     if plugin.path.len() > 1 && new_path.is_empty() {
         new_path = format!("{path}/");
         if let Some(query) = header.uri.query() {
@@ -922,51 +1007,71 @@ async fn handle_request_admin(
     // parses that as an authority with an empty path, so the bare single-segment
     // routes (`/basic`, `/configs`, ...) would fall through to 404. Restore the
     // leading slash before rewriting the request URI.
-    if !new_path.is_empty() && !new_path.starts_with('/') {
+    if new_path.is_empty() {
+        new_path = "/".to_string();
+    } else if !new_path.starts_with('/') {
         new_path = format!("/{new_path}");
     }
     if let Some(query) = header.uri.query() {
         new_path = format!("{new_path}?{query}");
     }
-    // ignore parse error
-    if let Ok(uri) = new_path.parse::<http::Uri>() {
-        header.set_uri(uri);
+    match new_path.parse::<http::Uri>() {
+        Ok(uri) => header.set_uri(uri),
+        Err(e) => {
+            return Ok(Some(json_response_with_status(
+                &ErrorResponse {
+                    message: format!("invalid admin request path: {e}"),
+                },
+                StatusCode::BAD_REQUEST,
+            )));
+        },
     }
-    if !plugin.auth_validate(header) {
+    let Some(actor) = plugin.auth_validate(header) else {
         plugin.ip_fail_limit.inc(ip);
         return Ok(Some(HttpResponse {
             status: StatusCode::UNAUTHORIZED,
             ..Default::default()
         }));
-    }
+    };
+    let actor = actor.to_string();
     let (method, mut path) = get_method_path(session);
     let api_prefix = "/api";
     if path.starts_with(api_prefix) {
-        path = path.substring(api_prefix.len(), path.len()).to_string();
+        path = path.get(api_prefix.len()..).unwrap_or_default().to_string();
     }
     let params: Vec<String> = path
         .split('/')
-        .map(|item| decode(item).unwrap_or_default().to_string())
-        .collect();
+        .map(|item| {
+            decode(item).map(|value| value.into_owned()).map_err(|e| {
+                pingap_core::new_internal_error(
+                    400,
+                    format!("invalid percent-encoding in admin path: {e}"),
+                )
+            })
+        })
+        .collect::<pingora::Result<_>>()?;
     let mut category = "";
     if params.len() >= 3 {
         category = &params[2];
     }
-    let resp = if path.starts_with("/configs") {
+    // Dispatch on the first path segment, not a string prefix: `/configsfoo`
+    // is not the config API.
+    let route = params.get(1).map(String::as_str).unwrap_or_default();
+    let resp = if route == "configs" {
         plugin
-            .handle_configs(session, method, category, &params)
+            .handle_configs(session, method, category, &params, &actor)
             .await
-    } else if path.starts_with("/config-history") {
+    } else if route == "config-history" {
         plugin.handle_config_history(category, &params).await?
-    } else if path == "/basic" {
+    } else if route == "basic" {
         plugin.handle_basic().await?
-    } else if path == "/restart" && method == Method::POST {
-        plugin.handle_restart().await
-    } else if path == "/aes" {
+    } else if route == "restart" && method == Method::POST {
+        plugin.handle_restart(&actor).await
+    } else if route == "aes" {
         plugin.handle_aes(session).await?
-    } else if path == "/certificates" {
+    } else if route == "certificates" {
         plugin.handle_certificates()
-    } else if path.starts_with("/pprof/") {
+    } else if route == "pprof" {
         handle_pprof_request(session, &path, &method).await
     } else {
         // The data-plane plugin is an API only; the console bundle belongs to
@@ -986,7 +1091,7 @@ impl Plugin for AdminServe {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         if self.plugin_step != step {
             return Ok(RequestPluginResult::Skipped);
@@ -994,7 +1099,7 @@ impl Plugin for AdminServe {
         if !session.req_header().uri.path().starts_with(&self.path) {
             return Ok(RequestPluginResult::Skipped);
         }
-        let resp = handle_request_admin(self, session, _ctx).await?;
+        let resp = handle_request_admin(self, session, ctx).await?;
         if let Some(resp) = resp {
             return Ok(RequestPluginResult::Respond(resp));
         }
@@ -1005,13 +1110,18 @@ impl Plugin for AdminServe {
 #[cfg(test)]
 mod tests {
     use super::{AdminServe, handle_request_admin, validate_import};
+    use crate::data_plane::ProviderSet;
     use hex::ToHex;
     use http::Method;
-    use pingap_config::{ConfigManager, PingapTomlConfig, PluginConf};
+    use pingap_config::{
+        CertificateConf, ConfigManager, PingapTomlConfig, PluginConf,
+        UpstreamConf,
+    };
     use pingap_core::{Ctx, HttpResponse};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use sha2::{Digest, Sha256};
+    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio_test::io::Builder;
 
@@ -1019,7 +1129,8 @@ mod tests {
     /// the plugin no longer reads the process-global slot, so a test can hand
     /// it its own instance instead of installing one process-wide first.
     fn new_config_manager() -> Arc<ConfigManager> {
-        Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None))
+        crate::config_manager::build_memory_config_manager("[basic]\n", None)
+            .expect("test manager")
     }
 
     /// Builds the `token:ts` header the admin API expects.
@@ -1049,7 +1160,8 @@ mod tests {
     /// mutation handlers can be driven without signing every request.
     fn admin_with_config(config: &str) -> (AdminServe, Arc<ConfigManager>) {
         let manager =
-            Arc::new(pingap_config::new_memory_config_manager(config, None));
+            crate::config_manager::build_memory_config_manager(config, None)
+                .expect("test manager");
         let admin = AdminServe::new(
             &toml::from_str::<PluginConf>(
                 r#"
@@ -1059,9 +1171,27 @@ mod tests {
             )
             .unwrap(),
             manager.clone(),
+            &ProviderSet::new(),
         )
         .unwrap();
         (admin, manager)
+    }
+
+    /// A plugin over `providers`, unauthenticated so the introspection
+    /// handlers can be called directly.
+    fn admin_with_providers(providers: &ProviderSet) -> AdminServe {
+        AdminServe::new(
+            &toml::from_str::<PluginConf>(
+                r#"
+category = "admin"
+allow_unauthenticated = true
+"#,
+            )
+            .unwrap(),
+            new_config_manager(),
+            providers,
+        )
+        .unwrap()
     }
 
     /// Drives the admin router with a request body, which is how the mutation
@@ -1096,6 +1226,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1123,6 +1254,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         );
 
         assert_eq!(
@@ -1144,6 +1276,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1179,48 +1312,58 @@ mod tests {
             "/pingap.png",
         ] {
             assert_eq!(
-                false,
-                admin.auth_validate(&request(Method::GET, path, None)),
+                true,
+                admin
+                    .auth_validate(&request(Method::GET, path, None))
+                    .is_none(),
                 "{path} must require authentication"
             );
         }
         assert_eq!(
-            false,
-            admin.auth_validate(&request(
-                Method::POST,
-                "/configs/upstream/evil.js",
-                None
-            ))
+            true,
+            admin
+                .auth_validate(&request(
+                    Method::POST,
+                    "/configs/upstream/evil.js",
+                    None
+                ))
+                .is_none()
         );
 
         // A valid signed token still authenticates any of them.
         let token = auth_header("admin", "123123");
         assert_eq!(
             true,
-            admin.auth_validate(&request(
-                Method::GET,
-                "/configs/full",
-                Some(&token)
-            ))
+            admin
+                .auth_validate(&request(
+                    Method::GET,
+                    "/configs/full",
+                    Some(&token)
+                ))
+                .is_some()
         );
         assert_eq!(
             true,
-            admin.auth_validate(&request(
-                Method::GET,
-                "/assets/index-abc.js",
-                Some(&token)
-            ))
+            admin
+                .auth_validate(&request(
+                    Method::GET,
+                    "/assets/index-abc.js",
+                    Some(&token)
+                ))
+                .is_some()
         );
 
         // A token signed for a different password does not.
         let token = auth_header("admin", "wrong");
         assert_eq!(
-            false,
-            admin.auth_validate(&request(
-                Method::GET,
-                "/configs/full",
-                Some(&token)
-            ))
+            true,
+            admin
+                .auth_validate(&request(
+                    Method::GET,
+                    "/configs/full",
+                    Some(&token)
+                ))
+                .is_none()
         );
     }
 
@@ -1237,6 +1380,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1276,6 +1420,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1307,6 +1452,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1362,6 +1508,7 @@ mod tests {
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1384,6 +1531,7 @@ mod tests {
             AdminServe::new(
                 &toml::from_str::<PluginConf>(conf).unwrap(),
                 new_config_manager(),
+                &ProviderSet::new(),
             )
         };
 
@@ -1438,6 +1586,7 @@ authorizations = [""]
         );
 
         // One valid entry is enough.
+        // spellchecker:off
         assert!(
             build(
                 r#"
@@ -1447,6 +1596,7 @@ authorizations = ["YWRtaW46MTIzMTIz"]
             )
             .is_ok()
         );
+        // spellchecker:on
 
         // The explicit opt-out still allows an empty list.
         assert!(
@@ -1500,6 +1650,7 @@ allow_unauthenticated = true
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
 
@@ -1538,6 +1689,7 @@ allow_unauthenticated = true
                     &format!("[basic]\nlog_level = \"{log_level}\"\n"),
                     None,
                 )),
+                &ProviderSet::new(),
             )
             .unwrap()
         };
@@ -1552,6 +1704,72 @@ allow_unauthenticated = true
                 "the injected manager's document must be served: {body}"
             );
         }
+    }
+
+    /// `/basic`'s upstream health and `/certificates` must come from the
+    /// provider set the plugin was built with, never a process-global
+    /// registry: a seeded set is reported, a second empty set is not.
+    #[tokio::test]
+    async fn test_introspection_uses_the_injected_providers() {
+        let certified_key = rcgen::generate_simple_self_signed(vec![
+            "admin-injected.example.com".to_string(),
+        ])
+        .unwrap();
+        let providers = ProviderSet::new();
+        providers
+            .upstreams
+            .replace_upstreams(
+                &HashMap::from([(
+                    "admin-injected-upstream".to_string(),
+                    UpstreamConf {
+                        addrs: vec!["127.0.0.1:80".to_string()],
+                        ..Default::default()
+                    },
+                )]),
+                None,
+            )
+            .expect("a valid upstream");
+        providers
+            .certificates
+            .replace_certificates(&HashMap::from([(
+                "admin-injected-cert".to_string(),
+                CertificateConf {
+                    domains: Some("admin-injected.example.com".to_string()),
+                    tls_cert: Some(certified_key.cert.pem()),
+                    tls_key: Some(certified_key.signing_key.serialize_pem()),
+                    ..Default::default()
+                },
+            )]))
+            .expect("a certificate update never fails the call");
+
+        let admin = admin_with_providers(&providers);
+        let basic = admin.handle_basic().await.unwrap();
+        let basic: serde_json::Value =
+            serde_json::from_slice(&basic.body).unwrap();
+        assert!(
+            basic["upstream_healthy_status"]
+                .get("admin-injected-upstream")
+                .is_some(),
+            "{basic}"
+        );
+        let certificates = admin.handle_certificates();
+        let certificates: serde_json::Value =
+            serde_json::from_slice(&certificates.body).unwrap();
+        assert!(
+            certificates.get("admin-injected-cert").is_some(),
+            "{certificates}"
+        );
+
+        // A second, empty set reports nothing: the two share no state.
+        let empty = admin_with_providers(&ProviderSet::new());
+        let basic = empty.handle_basic().await.unwrap();
+        let basic: serde_json::Value =
+            serde_json::from_slice(&basic.body).unwrap();
+        assert_eq!(serde_json::json!({}), basic["upstream_healthy_status"]);
+        let certificates = empty.handle_certificates();
+        let certificates: serde_json::Value =
+            serde_json::from_slice(&certificates.body).unwrap();
+        assert_eq!(serde_json::json!({}), certificates);
     }
 
     /// A freshly signed token is accepted; ageing it past `max_age`, or
@@ -1569,6 +1787,7 @@ allow_unauthenticated = true
             )
             .unwrap(),
             new_config_manager(),
+            &ProviderSet::new(),
         )
         .unwrap();
         // spellchecker:on
@@ -1585,9 +1804,11 @@ allow_unauthenticated = true
 
         let now = pingap_core::now_sec();
         assert!(
-            admin.auth_validate(&request(&auth_header_at(
-                "admin", "123123", now
-            ))),
+            admin
+                .auth_validate(&request(&auth_header_at(
+                    "admin", "123123", now
+                )))
+                .is_some(),
             "a fresh token must authenticate"
         );
 
@@ -1595,16 +1816,18 @@ allow_unauthenticated = true
         // refuse it is the two-day window.
         let stale = now - 3 * 24 * 3600;
         assert!(
-            !admin.auth_validate(&request(&auth_header_at(
-                "admin", "123123", stale
-            ))),
+            admin
+                .auth_validate(&request(&auth_header_at(
+                    "admin", "123123", stale
+                )))
+                .is_none(),
             "a token older than max_age must be refused"
         );
 
         assert!(
-            !admin.auth_validate(&request(&auth_header_at(
-                "admin", "wrong", now
-            ))),
+            admin
+                .auth_validate(&request(&auth_header_at("admin", "wrong", now)))
+                .is_none(),
             "a token signed for the wrong password must be refused"
         );
     }

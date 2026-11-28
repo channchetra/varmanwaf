@@ -263,7 +263,7 @@ async fn list(
     current: AuthUser,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Page<AgentResponse>>, ApiError> {
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let site_filter = match non_empty(&query.site_id) {
         Some(raw) => Some(parse_uuid(&raw, "site id")?),
@@ -397,7 +397,7 @@ async fn samples(
     let id = parse_uuid(&agent_id, "agent id")?;
     load_agent(&state, id, &current).await?;
 
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
     let from = parse_optional_datetime(&query.from, "from")?;
     let to = parse_optional_datetime(&query.to, "to")?;
 
@@ -573,7 +573,7 @@ async fn remove(
     State(state): State<AppState>,
     current: AuthUser,
     Path(agent_id): Path<String>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     require_write(&current)?;
     let id = parse_uuid(&agent_id, "agent id")?;
     load_agent(&state, id, &current).await?;
@@ -582,7 +582,7 @@ async fn remove(
     state.agents.disconnect(&id).await;
 
     tracing::info!(agent_id = %id, requested_by = %current.id, "agent de-registered");
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /api/v1/agents/{agent_id}/commands`

@@ -47,7 +47,6 @@ use pingora::proxy::Session;
 use scopeguard::defer;
 use std::collections::HashMap;
 use std::sync::Arc;
-#[cfg(feature = "openssl")]
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -95,21 +94,14 @@ async fn acme_call<T>(
 }
 
 /// ACME talks rustls even when the proxy TLS backend is OpenSSL, so the
-/// process still needs a CryptoProvider. Prefer the shared installer when
-/// the rustls backend owns it; otherwise install aws-lc-rs here once.
+/// process still needs a CryptoProvider. Ring is the workspace-wide choice;
+/// installing it here keeps a library-only consumer on the same provider as
+/// the binary instead of silently preferring aws-lc-rs.
 fn ensure_crypto_provider() {
-    #[cfg(feature = "tls-rustls")]
-    {
-        pingap_certificate::install_default_crypto_provider();
-    }
-    #[cfg(feature = "openssl")]
-    {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let _ =
-                rustls::crypto::aws_lc_rs::default_provider().install_default();
-        });
-    }
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
 }
 
 /// Updates the certificate for the given name and domains using Let's Encrypt.
@@ -398,7 +390,7 @@ async fn handle_successful_renewal(
     } else {
         // update certificate success
         // so set the current config
-        config_manager.set_current_config(config);
+        config_manager.activate_config(config);
     }
     Ok(())
 }

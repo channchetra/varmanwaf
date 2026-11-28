@@ -94,7 +94,7 @@ impl VarmanCommand {
 
 /// Options shared by all VarmanWAF modes.
 #[derive(Parser, Debug, Clone)]
-pub struct CommonOpts {
+pub struct ControlPlaneOpts {
     /// PostgreSQL connection string
     #[arg(
         long,
@@ -237,7 +237,7 @@ pub struct AgentSharedOpts {
 #[command(args_override_self = true)]
 pub struct ServerOpts {
     #[command(flatten)]
-    pub common: CommonOpts,
+    pub common: ControlPlaneOpts,
 
     /// TOML configuration file; its `[server]` and `[agent]` tables hold
     /// these same settings. Precedence is this file, then the `VARMAN_*`
@@ -281,7 +281,7 @@ pub struct AgentOpts {
 #[command(args_override_self = true)]
 pub struct AllInOneOpts {
     #[command(flatten)]
-    pub common: CommonOpts,
+    pub common: ControlPlaneOpts,
 
     /// TOML configuration file; its `[server]` and `[agent]` tables hold
     /// these same settings. Precedence is this file, then the `VARMAN_*`
@@ -300,8 +300,8 @@ pub struct AllInOneOpts {
 ///
 /// Those commands talk straight to PostgreSQL instead of the REST API, so
 /// they keep working when the control plane is down or its IP allowlist has
-/// locked the operator out. A running control plane notices their writes
-/// within a few seconds.
+/// locked the operator out. A running control plane reads the database on its
+/// next request or reload; a config rollback can restore an earlier revision.
 #[derive(clap::Args, Debug, Clone)]
 pub struct DbOpts {
     /// PostgreSQL connection string
@@ -532,14 +532,14 @@ fn is_mode(value: &str) -> bool {
 
 /// Trims and lower-cases a configured mode, keeping it only when it names a
 /// subcommand.
-fn normalise_mode(raw: &str) -> Option<String> {
+fn normalize_mode(raw: &str) -> Option<String> {
     let mode = raw.trim().to_lowercase();
     is_mode(&mode).then_some(mode)
 }
 
 /// The mode named by `VARMAN_MODE`, when it names one.
 fn mode_from_env() -> Option<String> {
-    normalise_mode(&std::env::var("VARMAN_MODE").ok()?)
+    normalize_mode(&std::env::var("VARMAN_MODE").ok()?)
 }
 
 /// Whether an invocation selects VarmanWAF mode.
@@ -556,13 +556,67 @@ fn selects_varman_mode(
     env_mode: Option<&str>,
 ) -> bool {
     let from_argv = mode_token(argv).is_some();
-    let from_env = env_mode.and_then(normalise_mode).is_some();
+    let from_env = env_mode.and_then(normalize_mode).is_some();
     let varman_own_cli = invoked_as(program, "varman")
         && argv
             .iter()
             .skip(1)
             .all(|arg| matches!(arg.as_str(), "-h" | "--help" | "--template"));
     from_argv || from_env || varman_own_cli
+}
+
+/// Which product the invocation identifies as.
+///
+/// The binary name decides the brand, and a VarmanWAF subcommand or
+/// `VARMAN_MODE` selects it for any binary. This is deliberately separate
+/// from `selects_varman_mode`: an installed `varman` may still run the flat
+/// legacy proxy parser, but it must not print a pingap-named template or
+/// write its ACME state under the pingap directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Identity {
+    Varman,
+    Pingap,
+}
+
+fn identity_for(
+    program: &str,
+    argv: &[String],
+    env_mode: Option<&str>,
+) -> Identity {
+    let pingap_binary = invoked_as(program, "pingap");
+    if pingap_binary
+        && mode_token(argv).is_none()
+        && env_mode.and_then(normalize_mode).is_none()
+    {
+        Identity::Pingap
+    } else {
+        // The installed `varman` binary, any renamed build (including the
+        // test harness), a VarmanWAF subcommand and VARMAN_MODE all brand
+        // the output as VarmanWAF.
+        Identity::Varman
+    }
+}
+
+/// Resolves the product identity from the current process environment.
+pub fn identity() -> Identity {
+    let args: Vec<String> = std::env::args().collect();
+    let program = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| env!("CARGO_BIN_NAME").to_string());
+    identity_for(
+        &program,
+        &args,
+        std::env::var("VARMAN_MODE").ok().as_deref(),
+    )
+}
+
+/// The starter configuration branded for the resolved identity.
+pub fn template_config() -> String {
+    match identity() {
+        Identity::Varman => crate::TEMPLATE_CONFIG.replace("pingap", "varman"),
+        Identity::Pingap => crate::TEMPLATE_CONFIG.to_string(),
+    }
 }
 
 /// Check whether the command line invokes the VarmanWAF CLI.
@@ -621,7 +675,7 @@ fn wants_template(args: &[String]) -> bool {
 /// `pingap`-named file. `TEMPLATE_CONFIG` stays at the crate root so the flat
 /// `pingap --template` output is unchanged.
 fn print_template() -> ! {
-    print!("{}", crate::TEMPLATE_CONFIG.replace("pingap", "varman"));
+    print!("{}", template_config());
     std::process::exit(0);
 }
 
@@ -1107,6 +1161,36 @@ mod tests {
         assert!(invoked_as("./varman", "varman"));
         assert!(!invoked_as("/usr/local/bin/varman-debug", "varman"));
         assert!(!invoked_as("/usr/local/bin/pingap", "varman"));
+    }
+
+    #[test]
+    fn product_identity_is_decided_once() {
+        assert_eq!(
+            Identity::Varman,
+            identity_for("varman", &argv("varman", &[]), None)
+        );
+        assert_eq!(
+            Identity::Varman,
+            identity_for("pingap", &argv("pingap", &["server"]), None)
+        );
+        assert_eq!(
+            Identity::Varman,
+            identity_for("pingap", &argv("pingap", &[]), Some("agent"))
+        );
+        assert_eq!(
+            Identity::Pingap,
+            identity_for("pingap", &argv("pingap", &[]), None)
+        );
+        // A renamed varman build, including the test harness, keeps the
+        // VarmanWAF brand.
+        assert_eq!(
+            Identity::Varman,
+            identity_for(
+                "/tmp/varman-1234",
+                &argv("/tmp/varman-1234", &[]),
+                None
+            )
+        );
     }
 
     #[test]

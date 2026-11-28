@@ -537,13 +537,13 @@ pub fn validate_path_prefix(prefix: &str) -> Result<String, String> {
     if trimmed.contains("..") {
         return Err("the path prefix must not contain '..'".to_string());
     }
-    let normalised = trimmed.trim_end_matches('/');
+    let normalized = trimmed.trim_end_matches('/');
     // The root prefix covers every path; keep it as `/` so the engine's
     // prefix check never sees an empty string (which it skips).
-    if normalised.is_empty() {
+    if normalized.is_empty() {
         return Ok("/".to_string());
     }
-    Ok(normalised.to_string())
+    Ok(normalized.to_string())
 }
 
 #[cfg(test)]

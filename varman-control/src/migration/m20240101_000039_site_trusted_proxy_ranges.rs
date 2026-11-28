@@ -2,7 +2,7 @@
 //!
 //! Trusting forwarded headers becomes scoped: only connections whose direct
 //! peer falls inside one of these CIDR ranges may influence the resolved
-//! client IP. An empty list means no proxy is trusted ΓÇö forwarded headers are
+//! client IP. An empty list means no proxy is trusted — forwarded headers are
 //! ignored and the TCP peer is used, which tightens the behaviour of sites
 //! that previously enabled `trust_proxy_headers` without any scoping.
 

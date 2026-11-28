@@ -24,14 +24,19 @@
 //! Verdicts map onto the proxy pipeline: `Pass`/`Monitor` continue, `Block`
 //! returns 403, and `Challenge` delegates to the challenge subsystem.
 
-use super::{Error, get_hash_key, parse_params};
+mod ato;
+mod custom;
+mod processor;
+mod shadow;
+mod stream;
+
 use crate::challenge::{
     ChallengeKind, VERIFY_ENDPOINT, basic_auth_page, block_page,
     build_challenge_response, paused_page, rate_limit_page,
     resolve_cookie_secret,
 };
-use crate::waf_ato::{FailedAuthTracker, is_state_changing};
-use crate::waf_stream::{StreamFinding, StreamInspector, TailWindow};
+use crate::waf::ato::{FailedAuthTracker, is_state_changing};
+use crate::waf::stream::{StreamFinding, StreamInspector, TailWindow};
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
@@ -42,6 +47,7 @@ use pingap_core::{
     RequestPluginResult, ResponseBodyPluginResult, ResponsePluginResult,
     constant_time_eq, ensure_client_ip, get_host, new_internal_error,
 };
+use pingap_plugin::{Error, get_hash_key, parse_params};
 use pingap_util::{IpRules, base64_decode};
 use pingora::http::{ResponseHeader, Version};
 use pingora::proxy::Session;
@@ -51,7 +57,6 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tor_geoip::GeoipDb;
 use tracing::{debug, warn};
 use varman_agent::cache::PathTargetExclusion as CachePathTargetExclusion;
 use varman_agent::cache::{
@@ -299,7 +304,7 @@ struct SiteContext {
     path_target_exclusions: Vec<CachePathTargetExclusion>,
     /// Compiled per-site custom layers (SecLang virtual patches + OpenAPI
     /// validation); `None` when neither is configured.
-    custom: Option<Arc<crate::waf_custom::CustomLayers>>,
+    custom: Option<Arc<crate::waf::custom::CustomLayers>>,
 }
 
 impl SiteContext {
@@ -307,7 +312,7 @@ impl SiteContext {
         let waf_cfg = site_rules.waf_config.as_ref();
         let (custom, custom_errors) = waf_cfg
             .map(|cfg| {
-                crate::waf_custom::CustomLayers::build(
+                crate::waf::custom::CustomLayers::build(
                     &cfg.virtual_patches,
                     &cfg.openapi_spec,
                     &cfg.api_operations,
@@ -422,7 +427,7 @@ pub(crate) use state::*;
 pub use state::{PENDING_ACCESS_SWEEP_TTL, sweep_stale_access};
 
 /// Web Application Firewall plugin.
-struct WafPlugin {
+pub(crate) struct WafPlugin {
     plugin_step: PluginStep,
     /// Locally configured engine; shared and hot-reloadable.
     engine: Arc<RwLock<WafEngine>>,
@@ -460,10 +465,13 @@ struct WafPlugin {
 impl WafPlugin {
     /// Create a new plugin from configuration.
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new waf plugin");
+        debug!(
+            params = pingap_plugin::redacted_params(params),
+            "new waf plugin"
+        );
         // Load the embedded GeoIP database here rather than on the first
         // request: the lookup is on the request path and its parse is not.
-        LazyLock::force(&GEO_DB);
+        pingap_plugin::geo::warm_geoip();
         Self::try_from(params)
     }
 
@@ -764,7 +772,7 @@ impl TryFrom<&PluginConf> for WafPlugin {
         } else {
             StackSet::from_names(stack_names.iter().map(String::as_str))
         };
-        let paranoia_level = (params.paranoia_level as u8).clamp(1, 4);
+        let paranoia_level = (params.paranoia_level.clamp(1, 4)) as u8;
         let anomaly_threshold = params.anomaly_threshold as u32;
         let detections = params.detections;
         let mut monitor_categories =
@@ -836,7 +844,7 @@ impl TryFrom<&PluginConf> for WafPlugin {
             params.ato_block_secs as u64,
         ));
 
-        let plugin_step = match super::get_step_conf_in(
+        let plugin_step = match pingap_plugin::get_step_conf_in(
             value,
             "waf",
             PluginStep::EarlyRequest,
@@ -1222,7 +1230,7 @@ impl WafPlugin {
     /// disabled WAF ([`EngineChoice::Disabled`]), observation mode, a
     /// non-Block site mode and a non-Varman engine all keep the stream in
     /// monitor-only mode. The engine goes through
-    /// [`crate::waf_shadow::resolve_mode`], so the aliases (`enforce`,
+    /// [`crate::waf::shadow::resolve_mode`], so the aliases (`enforce`,
     /// `observe`, `base`) and the invalid-value fallback match the request
     /// path exactly.
     fn stream_policy(&self, host: &str, path: &str) -> StreamPolicy {
@@ -1242,8 +1250,8 @@ impl WafPlugin {
         let enforce = !matches!(resolved.choice, EngineChoice::Disabled)
             && context.mode == Some(WafMode::Block)
             && !context.observation_mode
-            && crate::waf_shadow::resolve_mode(Some(&context.engine_mode))
-                == crate::waf_shadow::EngineMode::Varman;
+            && crate::waf::shadow::resolve_mode(Some(&context.engine_mode))
+                == crate::waf::shadow::EngineMode::Varman;
         StreamPolicy {
             enforce,
             monitored: context.monitor_categories.clone(),
@@ -1442,8 +1450,6 @@ impl WafPlugin {
         blocking
     }
 }
-
-register_plugin!("waf", WafPlugin);
 
 #[cfg(test)]
 pub(crate) mod tests;

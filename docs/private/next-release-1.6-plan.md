@@ -1,9 +1,38 @@
 # 1.6.0 plan — finish the code-health architecture work
 
 > Internal. Written after the 1.5.0 production release (2026-11-28).
-> Current strict score: 84.9/85. The three below-target dimensions are
-> cross-module architecture (78), initialization coupling (80) and test
-> strategy (80).
+> Current strict score: 84.9/85. Cross-module architecture rose to 82 after
+> the plugin extraction; the remaining below-target dimensions are test
+> strategy (78-80), abstraction fitness (82) and cross-module (82).
+
+## Progress (2026-11-28)
+
+- **Phase 1 complete**: `varman-plugin` owns the WAF surface (waf/, waf_ato,
+  waf_custom, waf_processor, waf_shadow, waf_stream) and registers explicitly.
+  Commit `ea041da`.
+- **Phase 2 complete**: challenge, cache, rewrite and error_page moved;
+  `pingap-plugin` has **no** `varman-*` dependencies and the module graph no
+  longer shows the foundation -> platform edges. Commit `a28f548`.
+- **Phase 3 complete**: each provider is constructible (`Provider::new`) with
+  instance init/update methods; `ProviderSet` owns the five concrete
+  providers; `assemble`, `app_context`, `apply_config`, the observer/
+  auto-restart services, the agent reload loop and the legacy admin
+  diagnostics all use the set. The five `LazyLock` registries, their
+  `new_*_provider` constructors and the compatibility `try_*` wrappers are
+  **deleted** (`1405fb8`); tests use local providers. Commits `6705a42`,
+  `161b7df`, `1405fb8`.
+- **Tests**: a disposable-PostgreSQL harness covers add-admin,
+  reset-password and the allowlist switch; provider tests share a process
+  lock; the unconsumed plugin fixture is gone. Commits `d90ac11`, plus the
+  test-isolation commit. 127 unit + 5 boot-smoke tests pass.
+- **Score**: strict **84.8** after the registry removal; test strategy **75**,
+  abstraction **80**, init coupling **80**, cross-module **82**. The remaining
+  findings are test breadth (restart orchestration, webhook exit flush/
+  batching, upstream health-check reload, handler matrix) and the assembly/
+  CLI abstraction seams (`ApplyOptions`, post-assembly glue).
+- Branch `refactor/varman-plugin`, pushed to origin; not merged to `main`.
+- 148 `varman-plugin` tests + 69 `pingap-plugin` tests; full suite, clippy,
+  fmt, machete green.
 
 ## Goal
 
@@ -11,7 +40,7 @@ Move the Varman-specific plugins out of the Pingap foundation, make the five
 provider registries injectable, and add the missing database-backed tests —
 without changing runtime behavior. Target: strict **85.0**, then 1.6.0.
 
-## Phase 1 — create `varman-plugin`, move the WAF surface
+## Phase 1 — create `varman-plugin`, move the WAF surface  ✅
 
 1. Branch from `main` (1.5.0) as `refactor/varman-plugin`.
 2. Create `varman-plugin/Cargo.toml`:
@@ -33,7 +62,7 @@ without changing runtime behavior. Target: strict **85.0**, then 1.6.0.
 6. Gate: `cargo test -p varman-plugin`, `-p pingap-plugin`, full workspace,
    clippy, fmt, container e2e (WAF still blocks).
 
-## Phase 2 — move the remaining Varman plugins
+## Phase 2 — move the remaining Varman plugins  ✅
 
 Move `challenge.rs`, `cache.rs`, `rewrite.rs`, `error_page.rs` into
 `varman-plugin`; drop `varman-waf`, `varman-agent` and `varman-challenge`
@@ -45,7 +74,7 @@ Residual `varman_agent::cache` model types used by the moved plugins should
 move to `varman-waf`/`varman-protocol` (or a small `varman-edge-model` crate)
 so `pingap-plugin` no longer imports the agent at all.
 
-## Phase 3 — inject the provider registries
+## Phase 3 — inject the provider registries  (capture done, injection pending)
 
 Replace the five `LazyLock<Arc<Provider>>` statics with a `ProviderSet` owned
 by the composition root:
@@ -82,6 +111,52 @@ pub struct ProviderSet {
    `require_password_changed`, `load_site_write`, or is on the documented
    exemption list.
 
+## Release timing
+
+Production is on **1.5.0**. A 1.6.0 restart must not happen before the
+2026-12-01 renewal is confirmed and the 2026-12-04 ACME window passes; the
+2026-12-01 renewal is the fifth issued certificate and must succeed. The
+1.5.0 restart proved the management-certificate seed prevents a duplicate
+order, but the remaining window is too close for another production restart.
+Merge/tag/build 1.6.0 only after the renewal check, or explicitly accept the
+order-risk after verifying the certificate baseline.
+
+## Current state (2026-11-28)
+
+- Strict **85.1/100** from the fresh 20-batch blind review; the previous
+  84.8 queue was cleared and the remaining 28 imported review items are
+  documented architecture/layout/test suggestions, not functional defects.
+- All five process-global provider registries are gone; providers are owned
+  by `ProviderSet`, and plugin registration is explicit (the `#[ctor]` path
+  was removed from `pingap-plugin`, `pingap-imageoptim` and the binary's
+  stats plugin).
+- The agent data plane is split into named boot phases and covered by
+  certificate-status tests; restart hand-over, exit flush, reload health
+  checks and a real listener have end-to-end coverage.
+- `make lint`, `make test`, `make lint-rustls`, `make test-rustls`,
+  `cargo fmt --check`, `cargo machete` and `make build-web` are green.
+
+## Remaining review items (28)
+
+The strict score is 85.1; these imported findings are still open and are
+deliberately left for a follow-up rather than blocking 1.6.0:
+
+- WAF plugin reads `VarmanAgent::instance()` at 16 sites; rule vocabulary and
+  several leaf types are still duplicated across crates.
+- `run()` in `src/main.rs` is still a ~515-line boot body.
+- Provider rebuild functions use three return shapes; `replace_certificates`
+  has a `Result` whose `Err` is unreachable.
+- `apply_config` still takes six positional arguments.
+- The CLI uses default-valued `String`/`bool` fields where `Option` would
+  distinguish "unset" from "explicitly set to the default".
+- Cache/Prometheus process-global single-owner slots warn instead of
+  supporting a second plane.
+- Admin route handlers still mix two return protocols.
+- Test naming prefix drift and missing `--admin`/`--cp` binary tests.
+
+Changing these is architectural churn with low functional benefit at this
+point; they are recorded so the next cycle starts from the measured state.
+
 ## Acceptance
 
 - Strict **85.0** from a fresh blind review of the changed dimensions.
@@ -94,8 +169,8 @@ pub struct ProviderSet {
 
 ## Risks / notes
 
-- `register_plugin!` uses `#[ctor]`; keep the explicit `register()` entry point
-  from 1.5.0 so the link anchor cannot regress.
+- Plugin registration is explicit (`register_builtins` + the binary's
+  `register_builtin_plugins`); do not reintroduce pre-main constructors.
 - The WAF tests share process-global state; keep the existing locks and run
   the new crate's tests serially if needed.
 - Do not trigger ACME orders while staging; the 2026-12-01 renewal is the

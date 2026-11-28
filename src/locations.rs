@@ -12,34 +12,66 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config_apply::ProviderUpdate;
+use crate::provider::{ProviderUpdate, provider_error};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use pingap_config::Error;
 use pingap_config::{Hashable, LocationConf};
 use pingap_location::{Location, LocationProvider, LocationStats, Locations};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::LazyLock;
 
 type Result<T> = std::result::Result<T, String>;
 
-/// The construction failure in the wording the callers have always logged
-/// (`Error::Invalid`'s display).
-fn invalid_error(error: impl std::fmt::Display) -> String {
-    Error::Invalid {
-        message: error.to_string(),
-    }
-    .to_string()
-}
-
-struct Provider {
+/// One owner's location registry. Constructed per data plane, never shared.
+pub struct Provider {
     locations: ArcSwap<Locations>,
 }
 
 impl Provider {
+    /// A registry with no locations.
+    pub fn new() -> Self {
+        Self {
+            locations: ArcSwap::from_pointee(AHashMap::new()),
+        }
+    }
+
     fn store(&self, data: Locations) {
         self.locations.store(Arc::new(data));
+    }
+
+    /// Initializes or updates the locations of this provider.
+    /// Returns the names of the locations that were updated
+    pub fn replace_locations(
+        &self,
+        location_configs: &HashMap<String, LocationConf>,
+    ) -> Result<ProviderUpdate> {
+        let mut locations = AHashMap::new();
+        let mut updated_locations = vec![];
+        for (name, conf) in location_configs.iter() {
+            if let Some(found) = self.get(name)
+                && found.key == conf.hash_key()
+            {
+                locations.insert(name.to_string(), found);
+                continue;
+            }
+            // A location that cannot be built aborts the rebuild: storing the
+            // partial map would drop the entries that failed.
+            let lo = Location::new(name, conf)
+                .map_err(|e| provider_error("build location", e))?;
+            updated_locations.push(name.clone());
+            locations.insert(name.to_string(), Arc::new(lo));
+        }
+        self.store(locations);
+        Ok(ProviderUpdate {
+            updated: updated_locations,
+            errors: String::new(),
+        })
+    }
+}
+
+impl Default for Provider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -59,42 +91,6 @@ impl LocationProvider for Provider {
     }
 }
 
-static LOCATION_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
-    Arc::new(Provider {
-        locations: ArcSwap::from_pointee(AHashMap::new()),
-    })
-});
-pub fn new_location_provider() -> Arc<dyn LocationProvider> {
-    LOCATION_PROVIDER.clone()
-}
-
-/// Initializes or updates the global location configurations
-/// Returns the names of the locations that were updated
-pub fn try_init_locations(
-    location_configs: &HashMap<String, LocationConf>,
-) -> Result<ProviderUpdate> {
-    let mut locations = AHashMap::new();
-    let mut updated_locations = vec![];
-    for (name, conf) in location_configs.iter() {
-        if let Some(found) = LOCATION_PROVIDER.get(name)
-            && found.key == conf.hash_key()
-        {
-            locations.insert(name.to_string(), found);
-            continue;
-        }
-        // A location that cannot be built aborts the rebuild: storing the
-        // partial map would drop the entries that failed.
-        let lo = Location::new(name, conf).map_err(invalid_error)?;
-        updated_locations.push(name.clone());
-        locations.insert(name.to_string(), Arc::new(lo));
-    }
-    LOCATION_PROVIDER.store(locations);
-    Ok(ProviderUpdate {
-        updated: updated_locations,
-        errors: String::new(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,8 +108,10 @@ mod tests {
     #[test]
     fn a_new_location_is_reported_as_updated() {
         // Act
-        let update =
-            try_init_locations(&config(Some("/api"))).expect("a valid path");
+        let provider = Provider::new();
+        let update = provider
+            .replace_locations(&config(Some("/api")))
+            .expect("a valid path");
 
         // Assert
         assert!(update.is_ok(), "{}", update.errors);
@@ -126,10 +124,12 @@ mod tests {
     #[test]
     fn an_unparseable_location_is_a_fatal_error() {
         // Act: a broken regex path cannot be built.
-        let error = try_init_locations(&config(Some("~(")))
+        let provider = Provider::new();
+        let error = provider
+            .replace_locations(&config(Some("~(")))
             .expect_err("an invalid path pattern must fail the rebuild");
 
         // Assert: the failure is the `Err`, not a per-entry error.
-        assert!(error.contains("Invalid error"), "{error}");
+        assert!(error.contains("build location"), "{error}");
     }
 }

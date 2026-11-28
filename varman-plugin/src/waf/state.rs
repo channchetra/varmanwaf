@@ -719,7 +719,7 @@ pub(crate) fn build_site_engine_config(
         } else {
             WafEngineConfig::default().threshold
         },
-        paranoia_level: (cfg.paranoia_level as u8).clamp(1, 4),
+        paranoia_level: (cfg.paranoia_level.clamp(1, 4)) as u8,
         rules,
         // Per-rule monitor downgrades from the control plane: managed rule
         // ids arrive on the site's WAF config; a custom rule's own `mode`

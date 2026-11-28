@@ -17,10 +17,17 @@
 //! Handles the three operating modes: Server (control plane only),
 //! Agent (data plane only), and AllInOne (both in a single process).
 
+mod acme;
+mod bundle_config;
+mod data_plane;
+mod maintenance;
+
+use data_plane::start_data_plane;
 use std::sync::Arc;
 
 use crate::cli::{
-    AgentOpts, AllInOneOpts, CommonOpts, ServerOpts, VarmanCli, VarmanCommand,
+    AgentOpts, AgentSharedOpts, AllInOneOpts, ControlPlaneOpts, ServerOpts,
+    ServerSharedOpts, VarmanCli, VarmanCommand,
 };
 use tracing::{error, info};
 use varman_agent::config::AgentConfig;
@@ -38,16 +45,24 @@ pub enum RunMode {
 
 /// Convert CLI server options into a `ServerConfig`.
 fn server_config_from_opts(opts: &ServerOpts) -> ServerConfig {
+    server_config_from_shared(&opts.common, &opts.server)
+}
+
+/// Builds the server config from the options every run mode shares.
+fn server_config_from_shared(
+    common: &ControlPlaneOpts,
+    server: &ServerSharedOpts,
+) -> ServerConfig {
     let mut config = ServerConfig::from_env();
     apply_cli_server_overrides(
         &mut config,
-        &opts.common,
-        opts.server.jwt_secret.as_str(),
-        &opts.server.admin_email,
-        &opts.server.admin_password,
-        opts.server.serve_frontend,
+        common,
+        server.jwt_secret.as_str(),
+        &server.admin_email,
+        &server.admin_password,
+        server.serve_frontend,
     );
-    apply_tls_opts(&mut config, &opts.common);
+    apply_tls_opts(&mut config, common);
     config
 }
 
@@ -59,7 +74,7 @@ fn server_config_from_opts(opts: &ServerOpts) -> ServerConfig {
 /// variable was absent.
 fn apply_cli_server_overrides(
     config: &mut ServerConfig,
-    common: &CommonOpts,
+    common: &ControlPlaneOpts,
     jwt_secret: &str,
     admin_email: &str,
     admin_password: &str,
@@ -100,24 +115,14 @@ fn apply_cli_server_overrides(
 
 /// Convert CLI all-in-one options into a `ServerConfig`.
 fn server_config_from_all_in_one(opts: &AllInOneOpts) -> ServerConfig {
-    let mut config = ServerConfig::from_env();
-    apply_cli_server_overrides(
-        &mut config,
-        &opts.common,
-        opts.server.jwt_secret.as_str(),
-        &opts.server.admin_email,
-        &opts.server.admin_password,
-        opts.server.serve_frontend,
-    );
-    apply_tls_opts(&mut config, &opts.common);
-    config
+    server_config_from_shared(&opts.common, &opts.server)
 }
 
 /// Layers the shared TLS options onto a server config.
 ///
 /// The SAN list is only replaced when the operator actually spelled one out,
 /// so the built-in defaults survive an invocation without `--tls-sans`.
-fn apply_tls_opts(config: &mut ServerConfig, opts: &CommonOpts) {
+fn apply_tls_opts(config: &mut ServerConfig, opts: &ControlPlaneOpts) {
     if !opts.tls_enabled {
         config.tls_enabled = false;
     }
@@ -131,24 +136,38 @@ fn apply_tls_opts(config: &mut ServerConfig, opts: &CommonOpts) {
 
 /// Convert CLI agent options into an `AgentConfig`.
 fn agent_config_from_opts(opts: &AgentOpts) -> AgentConfig {
+    agent_config_from_shared(
+        opts.server_url.clone(),
+        opts.server_ca_cert.clone(),
+        &opts.agent,
+    )
+}
+
+/// Builds an agent config from the shared agent options plus the connection
+/// fields that differ between standalone and all-in-one mode.
+fn agent_config_from_shared(
+    server_url: String,
+    server_ca_cert: Option<String>,
+    opts: &AgentSharedOpts,
+) -> AgentConfig {
     AgentConfig {
-        server_url: opts.server_url.clone(),
-        api_key: opts.agent.api_key.clone(),
+        server_url,
+        api_key: opts.api_key.clone(),
         agent_id: String::new(),
-        server_ca_cert: opts.server_ca_cert.clone(),
+        server_ca_cert,
         server_ca_pem: None,
         server_tls_name: None,
-        heartbeat_interval_secs: opts.agent.heartbeat_interval_secs,
-        cache_dir: opts.agent.cache_dir.clone(),
-        log_batch_size: opts.agent.log_batch_size,
-        log_flush_interval_secs: opts.agent.log_flush_interval_secs,
-        max_body_log_size: opts.agent.max_body_log_size,
+        heartbeat_interval_secs: opts.heartbeat_interval_secs,
+        cache_dir: opts.cache_dir.clone(),
+        log_batch_size: opts.log_batch_size,
+        log_flush_interval_secs: opts.log_flush_interval_secs,
+        max_body_log_size: opts.max_body_log_size,
         reconnect_initial_delay_ms: 1000,
         reconnect_max_delay_ms: 60000,
-        fail_open: opts.agent.fail_open,
+        fail_open: opts.fail_open,
         probe_interval_secs: varman_agent::probe::DEFAULT_INTERVAL_SECS,
         probe_disk_path: "/".to_string(),
-        metrics_ship_interval_secs: opts.agent.metrics_ship_interval_secs,
+        metrics_ship_interval_secs: opts.metrics_ship_interval_secs,
     }
 }
 
@@ -176,25 +195,7 @@ fn agent_config_from_all_in_one(opts: &AllInOneOpts) -> AgentConfig {
                 },
             },
         };
-    AgentConfig {
-        server_url,
-        api_key: opts.agent.api_key.clone(),
-        agent_id: String::new(),
-        server_ca_cert,
-        server_ca_pem: None,
-        server_tls_name: None,
-        heartbeat_interval_secs: opts.agent.heartbeat_interval_secs,
-        cache_dir: opts.agent.cache_dir.clone(),
-        log_batch_size: opts.agent.log_batch_size,
-        log_flush_interval_secs: opts.agent.log_flush_interval_secs,
-        max_body_log_size: opts.agent.max_body_log_size,
-        reconnect_initial_delay_ms: 1000,
-        reconnect_max_delay_ms: 60000,
-        fail_open: opts.agent.fail_open,
-        probe_interval_secs: varman_agent::probe::DEFAULT_INTERVAL_SECS,
-        probe_disk_path: "/".to_string(),
-        metrics_ship_interval_secs: opts.agent.metrics_ship_interval_secs,
-    }
+    agent_config_from_shared(server_url, server_ca_cert, &opts.agent)
 }
 
 /// Extract port from an address string like "0.0.0.0:9090".
@@ -202,18 +203,13 @@ fn extract_port(addr: &str) -> &str {
     addr.rsplit(':').next().unwrap_or("9090")
 }
 
-/// Whether this command runs against the database and exits.
-///
-/// Every variant that is not a run mode must be listed here: `main` routes
-/// these to [`crate::maintenance::run`], and [`build_run_mode`] treats anything
-/// else as unreachable. Omitting one (Config was) panics the CLI.
 /// Build the `RunMode` from the parsed CLI.
 ///
 /// The maintenance commands never reach this: [`main`] routes them to
-/// [`crate::maintenance::run`] before a run mode is built, and a panic here means
-/// that routing was broken.
-pub fn build_run_mode(cli: VarmanCli) -> RunMode {
-    match cli.command {
+/// [`maintenance::run`] first. Returning an error instead of panicking
+/// keeps a future routing mistake from taking the process down.
+pub fn build_run_mode(cli: VarmanCli) -> anyhow::Result<RunMode> {
+    Ok(match cli.command {
         VarmanCommand::Server(ref opts) => {
             RunMode::Server(Box::new(server_config_from_opts(opts)))
         },
@@ -229,15 +225,12 @@ pub fn build_run_mode(cli: VarmanCli) -> RunMode {
         | VarmanCommand::Mode { .. }
         | VarmanCommand::Security { .. }
         | VarmanCommand::Config { .. } => {
-            unreachable!("maintenance commands do not build a run mode")
+            anyhow::bail!(
+                "maintenance command must be routed to maintenance::run, not build_run_mode"
+            )
         },
-    }
+    })
 }
-
-mod acme;
-mod bundle_config;
-mod data_plane;
-use data_plane::start_data_plane;
 
 /// Run VarmanWAF in the specified mode.
 ///
@@ -288,7 +281,9 @@ pub async fn run(mode: RunMode) -> anyhow::Result<()> {
             // Auto-provision a bootstrap API key when none is configured so the
             // embedded agent can authenticate with the local gRPC server.
             if agent_config.api_key.is_empty() {
-                match bootstrap_agent_key(&server_config).await {
+                match varman_control::bootstrap_and_seed_api_key(&server_config)
+                    .await
+                {
                     Ok(key) => {
                         agent_config.api_key = key;
                     },
@@ -363,12 +358,6 @@ pub async fn run(mode: RunMode) -> anyhow::Result<()> {
 
 /// Connect to the database, run migrations, and create a bootstrap API key
 /// for the embedded agent in all-in-one mode.
-async fn bootstrap_agent_key(
-    config: &varman_control::ServerConfig,
-) -> anyhow::Result<String> {
-    varman_control::bootstrap_and_seed_api_key(config).await
-}
-
 /// Wait for SIGINT or SIGTERM.
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -416,14 +405,17 @@ pub fn main() {
         .expect("failed to create tokio runtime");
 
     let result = if cli.command.is_maintenance() {
-        rt.block_on(crate::maintenance::run(cli))
+        rt.block_on(maintenance::run(cli))
     } else {
-        rt.block_on(run(build_run_mode(cli)))
+        match build_run_mode(cli) {
+            Ok(mode) => rt.block_on(run(mode)),
+            Err(e) => Err(e),
+        }
     };
 
     if let Err(e) = result {
         error!(error = %e, "VarmanWAF exited with error");
-        eprintln!("VarmanWAF error: {e}");
+        eprintln!("VarmanWAF error: {e:#}");
         std::process::exit(1);
     }
 }

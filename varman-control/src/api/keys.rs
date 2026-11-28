@@ -107,7 +107,7 @@ async fn list(
     current: AuthUser,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Page<ApiKeyResponse>>, ApiError> {
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
     let mut condition = Condition::all();
     if !current.is_admin() {
         condition = condition.add(api_key::Column::UserId.eq(current.id));
@@ -180,7 +180,7 @@ async fn create(
         ));
     }
 
-    let mut permissions = normalise_permissions(&payload.permissions)?;
+    let mut permissions = normalize_permissions(&payload.permissions)?;
     if permissions.is_empty() {
         return Err(ApiError::BadRequest(
             "at least one permission is required".to_string(),
@@ -224,7 +224,7 @@ async fn remove(
     State(state): State<AppState>,
     current: AuthUser,
     Path(key_id): Path<String>,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     // Any account may revoke its own keys; the filter below already restricts
     // non-admins to their own rows.
     require_password_changed(&current)?;
@@ -240,7 +240,7 @@ async fn remove(
     }
 
     tracing::info!(key_id = %id, "API key revoked");
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Stores a new API key and hands back the plaintext, which the caller shows
@@ -275,7 +275,7 @@ pub(crate) async fn mint_key(
 }
 
 /// Validates, de-duplicates and sorts the requested permission set.
-fn normalise_permissions(raw: &[String]) -> Result<Vec<String>, ApiError> {
+fn normalize_permissions(raw: &[String]) -> Result<Vec<String>, ApiError> {
     let mut out: Vec<String> = Vec::new();
     for value in raw {
         let trimmed = value.trim().to_lowercase();
@@ -300,15 +300,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn permissions_are_normalised() {
-        let out = normalise_permissions(&[
+    fn permissions_are_normalized() {
+        let out = normalize_permissions(&[
             "AGENT".into(),
             " agent ".into(),
             "read".into(),
         ])
         .unwrap();
         assert_eq!(out, vec!["agent".to_string(), "read".to_string()]);
-        assert!(normalise_permissions(&["admin-all".into()]).is_err());
-        assert!(normalise_permissions(&[]).unwrap().is_empty());
+        assert!(normalize_permissions(&["admin-all".into()]).is_err());
+        assert!(normalize_permissions(&[]).unwrap().is_empty());
     }
 }

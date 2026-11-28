@@ -61,7 +61,7 @@ static SELF_SIGNED_CERTIFICATE_MAP: LazyLock<
 /// 2. Removes expired certificates
 /// 3. Updates usage statistics and stale flags
 /// 4. Stores the updated certificate map
-async fn do_self_signed_certificate_validity(
+fn do_self_signed_certificate_validity(
     count: u32,
 ) -> Result<bool, ServiceError> {
     if !count.is_multiple_of(VALIDITY_CHECK_INTERVAL) {
@@ -103,7 +103,7 @@ struct SelfSignedCertificateValidityTask {}
 #[async_trait]
 impl BackgroundTask for SelfSignedCertificateValidityTask {
     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
-        do_self_signed_certificate_validity(count).await?;
+        do_self_signed_certificate_validity(count)?;
         Ok(true)
     }
 }
@@ -276,7 +276,7 @@ kknq2XUsBMCyIW1BqgLVEyeNxg==
             subject(&cert)
         );
 
-        do_self_signed_certificate_validity(0).await.unwrap();
+        do_self_signed_certificate_validity(0).unwrap();
 
         let cert = get_self_signed_certificate(&name).unwrap();
         assert_eq!(

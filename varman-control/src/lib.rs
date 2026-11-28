@@ -543,10 +543,10 @@ async fn seed_admin(
         return Ok(());
     }
 
-    // The shared writer normalises the address, so the existence check must
+    // The shared writer normalizes the address, so the existence check must
     // use the same form: a differently-cased configured address would
     // otherwise miss and hit the unique constraint on insert.
-    let email = crate::email::normalise_email(&config.default_admin_email)
+    let email = crate::email::normalize_email(&config.default_admin_email)
         .map_err(|err| {
             anyhow::anyhow!(
                 "invalid default_admin_email in the configuration: {err}"
@@ -1001,8 +1001,8 @@ mod embedded_agent_tls_tests {
         // An ACME IP certificate only carries the management IP; the agent
         // must verify that name instead of the loopback URL host.
         assert_eq!(
-            preferred_tls_name(&sans(&["103.189.187.19"])),
-            Some("103.189.187.19".to_string())
+            preferred_tls_name(&sans(&["203.0.113.10"])),
+            Some("203.0.113.10".to_string())
         );
         assert_eq!(
             preferred_tls_name(&sans(&["waf.example.com", "www.example.com"])),
@@ -1157,7 +1157,7 @@ mod seed_admin_tests {
     }
 
     #[tokio::test]
-    async fn seeding_creates_exactly_one_normalised_administrator() {
+    async fn seeding_creates_exactly_one_normalized_administrator() {
         let (db, statements) = database(vec![
             vec![count_row(0)],
             Vec::new(),

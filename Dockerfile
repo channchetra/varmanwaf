@@ -68,22 +68,21 @@ COPY varman-protocol/Cargo.toml varman-protocol/
 COPY varman-pprof/Cargo.toml varman-pprof/
 COPY varman-control/Cargo.toml varman-control/
 COPY varman-agent/Cargo.toml varman-agent/
+COPY varman-plugin/Cargo.toml varman-plugin/
 COPY varman-waf/Cargo.toml varman-waf/
 COPY varman-challenge/Cargo.toml varman-challenge/
 
 # 2c. 创建 dummy 源文件，让 cargo 能通过 manifest 解析并编译第三方依赖
-#     benches/bench.rs 是根 Cargo.toml 的 [[bench]] target，manifest 解析期必须存在；
-#     pingap-{core,cache,util,location,logger,proxy,upstream} 这 7 个成员 crate 也声明了
+#     pingap-{core,cache,util,location,logger,proxy,upstream} 这 7 个成员 crate 声明了
 #     [[bench]] name = "bench"，即使 cargo build 不构建 bench target，manifest 解析期
 #     仍要求各自 benches/bench.rs 存在，否则整个预热构建直接失败
 RUN mkdir -p src && echo "fn main() {}" > src/main.rs \
-    && mkdir -p benches && echo "fn main() {}" > benches/bench.rs \
     && for dir in pingap-core pingap-util pingap-config pingap-cache \
        pingap-certificate pingap-discovery pingap-health pingap-location \
        pingap-logger pingap-plugin pingap-proxy pingap-upstream pingap-acme \
        pingap-performance pingap-otel pingap-sentry pingap-pyroscope \
        pingap-imageoptim pingap-webhook varman-pprof varman-control \
-       varman-agent \
+       varman-agent varman-plugin \
        varman-waf varman-challenge; do \
        mkdir -p "$dir/src" && echo "" > "$dir/src/lib.rs"; \
     done \
@@ -102,7 +101,6 @@ RUN cargo build --release --features full || true; \
 
 # 2e. 拷真实源码（任何源码变化让此层及以下失效，但 2d 的缓存层仍命中）
 COPY src/ src/
-COPY benches/ benches/
 COPY pingap-core/ pingap-core/
 COPY pingap-util/ pingap-util/
 COPY pingap-config/ pingap-config/
@@ -126,6 +124,7 @@ COPY varman-protocol/ varman-protocol/
 COPY varman-pprof/ varman-pprof/
 COPY varman-control/ varman-control/
 COPY varman-agent/ varman-agent/
+COPY varman-plugin/ varman-plugin/
 COPY varman-waf/ varman-waf/
 COPY varman-challenge/ varman-challenge/
 
@@ -133,7 +132,7 @@ COPY varman-challenge/ varman-challenge/
 COPY --from=frontend-builder /app/web/dist/ web/dist/
 
 # 2g. 最终构建：touch 使 workspace crate 的 mtime 指纹失效（排除 target/ 避免污染生成代码），
-#     触发 25 个 workspace crate 重编，而第三方 .rlib 从预热层继承、不受影响
+#     触发 26 个 workspace crate 重编，而第三方 .rlib 从预热层继承、不受影响
 #     （Docker 层叠加：target/ 存在于 2d 预热层的文件系统中，后续 COPY 源码层不会覆盖它）
 RUN find . -path ./target -prune -o -name '*.rs' -print0 | xargs -0 --no-run-if-empty touch \
     && cargo build --release --bin varman --features full

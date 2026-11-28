@@ -6,7 +6,7 @@
 
 Strict **84.9 / 85.0** (plan start 22.1, +62.8). Queue **112**.
 The branch was merged to `main` and released as **1.5.0** on 2026-11-28;
-production `proxy-1` is verified on 1.5.0. The remaining architecture work is
+the production edge is verified on 1.5.0. The remaining architecture work is
 planned in [`next-release-1.6-plan.md`](./next-release-1.6-plan.md).
 
 The remaining gap is concentrated in three dimensions:

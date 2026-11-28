@@ -24,7 +24,7 @@ use tracing::{debug, warn};
 
 /// Well-known crawler families: the user-agent token and the DNS zones the
 /// operator's crawlers reverse-resolve into. Custom whitelist entries stay
-/// out of this table ΓÇö user-agent matching remains their only signal.
+/// out of this table — user-agent matching remains their only signal.
 const KNOWN_BOT_FAMILIES: &[(&str, &[&str])] = &[
     ("googlebot", &["googlebot.com", "google.com"]),
     ("bingbot", &["search.msn.com"]),
@@ -34,18 +34,18 @@ const KNOWN_BOT_FAMILIES: &[(&str, &[&str])] = &[
 ];
 
 /// Returns the crawler family whose token appears in the user agent, if any.
-pub(crate) fn known_bot_family(
+pub fn known_bot_family(
     user_agent: &str,
 ) -> Option<(&'static str, &'static [&'static str])> {
     KNOWN_BOT_FAMILIES
         .iter()
-        .find(|(token, _)| crate::waf::contains_ignore_case(user_agent, token))
+        .find(|(token, _)| crate::text::contains_ignore_case(user_agent, token))
         .map(|(token, suffixes)| (*token, *suffixes))
 }
 
 /// Outcome of verifying one client IP against a claimed crawler family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DnsVerdict {
+pub enum DnsVerdict {
     /// PTR + forward lookup both agree: the client is the crawler it claims
     /// to be.
     Confirmed,
@@ -86,7 +86,7 @@ impl DnsVerdict {
 }
 
 /// Cached verdict entry. Shared behind an `Arc` so an expired hit can be
-/// refreshed in place ΓÇö TinyUfo has no removal, and replacing the value
+/// refreshed in place — TinyUfo has no removal, and replacing the value
 /// would leave other holders with a stale verdict.
 struct CacheEntry {
     expires_at_ms: AtomicU64,
@@ -95,7 +95,7 @@ struct CacheEntry {
 
 /// Resolves and caches crawler IP verdicts. One instance serves every site:
 /// a verdict depends only on the client IP and the claimed family.
-pub(crate) struct BotDnsVerifier {
+pub struct BotDnsVerifier {
     resolver: TokioResolver,
     cache: TinyUfo<u64, Arc<CacheEntry>>,
     hasher: RandomState,
@@ -150,11 +150,7 @@ impl BotDnsVerifier {
     /// Verifies `ip` against the family `token` claims, consulting the cache
     /// first. The key pairs the IP with the family because the same IP may
     /// carry different verdicts for different operators.
-    pub(crate) async fn verify(
-        &self,
-        ip: IpAddr,
-        token: &'static str,
-    ) -> DnsVerdict {
+    pub async fn verify(&self, ip: IpAddr, token: &'static str) -> DnsVerdict {
         let key = self.hasher.hash_one((ip, token));
         if let Some(entry) = self.cache.get(&key) {
             let expires_at_ms = entry.expires_at_ms.load(Ordering::Relaxed);
@@ -238,7 +234,7 @@ static BOT_DNS_VERIFIER: OnceLock<Arc<BotDnsVerifier>> = OnceLock::new();
 
 /// The process-wide verifier, built lazily on the first DNS-verified bot
 /// check so sites without the feature pay nothing.
-pub(crate) fn bot_dns_verifier() -> &'static Arc<BotDnsVerifier> {
+pub fn bot_dns_verifier() -> &'static Arc<BotDnsVerifier> {
     BOT_DNS_VERIFIER.get_or_init(|| Arc::new(BotDnsVerifier::build()))
 }
 

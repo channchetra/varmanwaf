@@ -67,8 +67,7 @@ bench-all:
 	cargo bench -p pingap-logger
 	cargo bench -p pingap-location
 
-bench:
-	cargo bench
+bench: bench-all
 
 # Bacon dev loop; the data-plane admin API on :3018 is JSON/profiling only
 # (no console — that is served by `varman server --admin-addr`).

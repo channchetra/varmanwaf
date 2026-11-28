@@ -1,7 +1,7 @@
 //! Notification entities: delivery channels and the dispatched-event history.
 //!
-//! Each table lives in its own inner module ΓÇö the shape `DeriveEntityModel`
-//! generates ΓÇö re-exported under their singular names from [`super`].
+//! Each table lives in its own inner module — the shape `DeriveEntityModel`
+//! generates — re-exported under their singular names from [`super`].
 
 /// Delivery channel kinds.
 pub mod channel_kind {
@@ -34,7 +34,7 @@ pub mod event_type {
     pub const CERT_EXPIRED: &str = "cert.expired";
     /// Syncing configuration or an IP group subscription to the edge failed.
     pub const CONFIG_SYNC_FAILED: &str = "config.sync_failed";
-    /// A site's disconnected (failover) policy was changed ΓÇö an
+    /// A site's disconnected (failover) policy was changed — an
     /// availability/security-relevant decision worth an audit trail.
     pub const SITE_FAILOVER_CHANGED: &str = "site.failover_changed";
     /// An admin signed in from a country outside their recent-login
@@ -45,7 +45,7 @@ pub mod event_type {
     /// A scheduled interception report was generated and dispatched.
     pub const REPORT_SCHEDULED: &str = "report.scheduled";
 
-    pub const ALL: [&str; 11] = [
+    pub const ALL: [&str; 12] = [
         AGENT_OFFLINE,
         AGENT_ONLINE,
         AGENT_RESOURCE,
@@ -57,6 +57,7 @@ pub mod event_type {
         SITE_FAILOVER_CHANGED,
         AUTH_LOGIN_ANOMALY,
         SECURITY_ALERT,
+        REPORT_SCHEDULED,
     ];
 }
 
@@ -69,7 +70,7 @@ pub mod severity {
     pub const ALL: [&str; 3] = [INFO, WARNING, CRITICAL];
 }
 
-/// `notification_channels` ΓÇö user-configured alert targets.
+/// `notification_channels` — user-configured alert targets.
 pub mod notification_channels {
     use sea_orm::entity::prelude::*;
     use serde::{Deserialize, Serialize};
@@ -101,7 +102,7 @@ pub mod notification_channels {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-/// `notification_events` ΓÇö one row per dispatched alert, for the dashboard.
+/// `notification_events` — one row per dispatched alert, for the dashboard.
 pub mod notification_events {
     use sea_orm::entity::prelude::*;
     use serde::{Deserialize, Serialize};

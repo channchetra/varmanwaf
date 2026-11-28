@@ -58,6 +58,22 @@ fn new_sender(basic: &BasicConf) -> WebhookNotificationSender {
     sender
 }
 
+/// Builds a webhook with explicit batch settings, for tests that exercise the
+/// production batching/flush paths without the `cfg(test)` shortcut above.
+#[cfg(test)]
+fn new_sender_with_batch(
+    basic: &BasicConf,
+    window: Duration,
+    max_events: usize,
+) -> WebhookNotificationSender {
+    WebhookNotificationSender::new(
+        basic.webhook.clone().unwrap_or_default(),
+        basic.webhook_type.clone().unwrap_or_default(),
+        basic.webhook_notifications.clone().unwrap_or_default(),
+    )
+    .with_batch(window, max_events)
+}
+
 /// What `get_webhook_sender` hands out. Upstreams, discovery and the
 /// certificate checkers keep that `Arc` for as long as they live, so it cannot
 /// be the webhook itself: this forwards each notification to whichever
@@ -175,6 +191,10 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::sync::mpsc;
 
+    /// The webhook is process-global; keep the tests that replace it apart.
+    static WEBHOOK_LOCK: tokio::sync::Mutex<()> =
+        tokio::sync::Mutex::const_new(());
+
     /// A webhook endpoint that answers 200 and passes on each request body.
     async fn spawn_endpoint() -> (String, mpsc::UnboundedReceiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -219,8 +239,55 @@ mod tests {
         (url, rx)
     }
 
+    /// A plain stdlib endpoint, for the exit flush test that must run without
+    /// a tokio runtime on the calling thread.
+    fn spawn_blocking_endpoint() -> (String, std::sync::mpsc::Receiver<String>)
+    {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut request = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&request);
+                    let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                        continue;
+                    };
+                    let content_length = head
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            if !name.eq_ignore_ascii_case("content-length") {
+                                return None;
+                            }
+                            value.trim().parse::<usize>().ok()
+                        })
+                        .unwrap_or_default();
+                    if body.len() >= content_length {
+                        let _ = tx.send(body.to_string());
+                        break;
+                    }
+                }
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        (url, rx)
+    }
+
     #[tokio::test]
     async fn test_reload_reaches_senders_handed_out_earlier() {
+        let _guard = WEBHOOK_LOCK.lock().await;
         let (url, mut bodies) = spawn_endpoint().await;
         let mut current = BasicConf {
             webhook: Some(url),
@@ -279,5 +346,103 @@ mod tests {
             new.webhook_batch_max_events,
             current.webhook_batch_max_events
         );
+    }
+
+    #[tokio::test]
+    async fn production_batch_settings_are_applied() {
+        let _guard = WEBHOOK_LOCK.lock().await;
+        let (url, mut bodies) = spawn_endpoint().await;
+        let basic = BasicConf {
+            webhook: Some(url),
+            webhook_notifications: Some(vec![
+                "batch_a".to_string(),
+                "batch_b".to_string(),
+            ]),
+            ..Default::default()
+        };
+        WEBHOOK.store(Arc::new(new_sender_with_batch(
+            &basic,
+            Duration::from_millis(100),
+            10,
+        )));
+        send_notification(NotificationData {
+            category: "batch_a".to_string(),
+            ..Default::default()
+        })
+        .await;
+        send_notification(NotificationData {
+            category: "batch_b".to_string(),
+            ..Default::default()
+        })
+        .await;
+        // Still queued: the configured window is in effect.
+        assert!(bodies.try_recv().is_err());
+        let body = tokio::time::timeout(Duration::from_secs(2), bodies.recv())
+            .await
+            .expect("the batch window must flush")
+            .expect("a batch body");
+        assert!(body.contains("batch_a"), "{body}");
+        assert!(body.contains("batch_b"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn flush_pending_posts_a_queued_batch() {
+        let _guard = WEBHOOK_LOCK.lock().await;
+        let (url, mut bodies) = spawn_endpoint().await;
+        let basic = BasicConf {
+            webhook: Some(url),
+            webhook_notifications: Some(vec!["flush_a".to_string()]),
+            ..Default::default()
+        };
+        WEBHOOK.store(Arc::new(new_sender_with_batch(
+            &basic,
+            Duration::from_secs(60),
+            10,
+        )));
+        send_notification(NotificationData {
+            category: "flush_a".to_string(),
+            ..Default::default()
+        })
+        .await;
+        assert!(bodies.try_recv().is_err());
+        flush_pending().await;
+        let body = tokio::time::timeout(Duration::from_secs(2), bodies.recv())
+            .await
+            .expect("flush must post")
+            .expect("a flushed body");
+        assert!(body.contains("flush_a"), "{body}");
+    }
+
+    #[test]
+    fn exit_flush_posts_a_queued_batch() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(2)
+            .build()
+            .expect("test runtime");
+        let _guard = runtime.block_on(WEBHOOK_LOCK.lock());
+        let (url, bodies) = spawn_blocking_endpoint();
+        let basic = BasicConf {
+            webhook: Some(url),
+            webhook_notifications: Some(vec!["exit_flush".to_string()]),
+            ..Default::default()
+        };
+        runtime.block_on(async {
+            WEBHOOK.store(Arc::new(new_sender_with_batch(
+                &basic,
+                Duration::from_secs(60),
+                10,
+            )));
+            send_notification(NotificationData {
+                category: "exit_flush".to_string(),
+                ..Default::default()
+            })
+            .await;
+        });
+        flush_pending_before_exit();
+        let body = bodies
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the exit flush must post");
+        assert!(body.contains("exit_flush"), "{body}");
     }
 }

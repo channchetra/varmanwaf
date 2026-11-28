@@ -1,7 +1,7 @@
 //! Global cache settings (`cache_settings`) and per-site cache limits.
 //!
 //! The settings table follows the single-row pattern of `defense_settings`:
-//! one global row (id = 1) holding the deployment-wide cache ceiling ΓÇö the
+//! one global row (id = 1) holding the deployment-wide cache ceiling — the
 //! largest single cacheable object, the total disk budget every site's quota
 //! is clamped against, the cache master switch, and the default edge TTL a
 //! rule without an explicit TTL falls back to.

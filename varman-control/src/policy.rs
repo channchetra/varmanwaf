@@ -881,8 +881,7 @@ fn validate_ip_access_rule(value: &Value) -> Result<(), String> {
                         "'ip_ranges' must be an array of strings".to_string()
                     })?;
                     let trimmed = entry.trim();
-                    let base = trimmed.split('/').next().unwrap_or(trimmed);
-                    if base.parse::<std::net::IpAddr>().is_err() {
+                    if crate::api::common::parse_ip_range(trimmed).is_none() {
                         return Err(format!(
                             "invalid IP address or CIDR: '{trimmed}'"
                         ));

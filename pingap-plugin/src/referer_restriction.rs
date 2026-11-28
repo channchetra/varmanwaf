@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, RestrictionCategory, get_hash_key, parse_params};
+use super::{
+    Error, RestrictionCategory, get_hash_key, parse_params, redacted_params,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -20,7 +22,6 @@ use pingap_config::PluginConf;
 use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
 use std::borrow::Cow;
-use substring::Substring;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -94,7 +95,7 @@ impl TryFrom<&PluginConf> for RefererRestriction {
         for item in params.referer_list.iter() {
             if item.starts_with('*') {
                 prefix_referer_list
-                    .push(item.substring(1, item.len()).to_string());
+                    .push(item.get(1..).unwrap_or_default().to_string());
             } else {
                 referer_list.push(item.to_string());
             }
@@ -144,7 +145,7 @@ impl RefererRestriction {
     /// ```
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(
-            params = params.to_string(),
+            params = redacted_params(params),
             "new referer restriction plugin"
         );
         Self::try_from(params)

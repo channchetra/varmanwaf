@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_step_conf_in};
+use super::{Error, get_hash_key, get_step_conf_in, redacted_params};
 use async_trait::async_trait;
 use http::StatusCode;
 use humantime::parse_duration;
@@ -198,7 +198,7 @@ impl Limiter {
     /// interval = "60s"      # time window for rate limiting
     /// ```
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new limit plugin");
+        debug!(params = redacted_params(params), "new limit plugin");
         Self::try_from(params)
     }
     /// Increments and checks the limit counter for the current request

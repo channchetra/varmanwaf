@@ -351,7 +351,7 @@ async fn list_logs(
 ) -> Result<Json<Page<control_plane_access_log::Model>>, ApiError> {
     current.require_admin().map_err(ApiError::from)?;
     let (from, to) = resolve_window(&query.from, &query.to)?;
-    let pagination = query.pagination.normalise();
+    let pagination = query.pagination.normalize();
 
     let mut condition = sea_orm::Condition::all()
         .add(control_plane_access_log::Column::Timestamp.gte(from))

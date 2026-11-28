@@ -38,7 +38,7 @@ impl WafPlugin {
         // so dashboard-configured custom rules stay effective. The mode comes
         // from the site's `waf_settings.engine_mode` (when it is not
         // `inherit`) and falls back to the process-wide `VARMAN_WAF_ENGINE`.
-        let engine = crate::waf_shadow::resolve_mode(
+        let engine = crate::waf::shadow::resolve_mode(
             state
                 .context
                 .as_ref()
@@ -52,7 +52,7 @@ impl WafPlugin {
             .unwrap_or_default();
         // Engine telemetry sink: only meaningful when an agent reports it.
         let metrics = state.agent.as_ref().map(|agent| agent.metrics.as_ref());
-        let mut verdict = match crate::waf_shadow::analyze(
+        let mut verdict = match crate::waf::shadow::analyze(
             &state.request_data,
             &verdict,
             engine,
@@ -60,9 +60,9 @@ impl WafPlugin {
             metrics,
         ) {
             Some(pipeline)
-                if engine == crate::waf_shadow::EngineMode::Varman =>
+                if engine == crate::waf::shadow::EngineMode::Varman =>
             {
-                crate::waf_shadow::effective_verdict(&verdict, &pipeline)
+                crate::waf::shadow::effective_verdict(&verdict, &pipeline)
             },
             _ => verdict,
         };
@@ -74,11 +74,11 @@ impl WafPlugin {
             state.context.as_ref().and_then(|site| site.custom.as_ref())
         {
             let canonical =
-                crate::waf_shadow::canonicalize(&state.request_data);
+                crate::waf::shadow::canonicalize(&state.request_data);
             if let Some(custom_verdict) =
                 custom.evaluate(&canonical, !state.body_truncated)
             {
-                verdict = crate::waf_shadow::effective_verdict(
+                verdict = crate::waf::shadow::effective_verdict(
                     &verdict,
                     &custom_verdict,
                 );
@@ -88,15 +88,15 @@ impl WafPlugin {
         // External processor (Phase 9): bounded, policy-resolved and
         // additive. The processor can only escalate the verdict; a failure
         // resolves through its configured policy.
-        if crate::waf_processor::is_enabled() {
+        if crate::waf::processor::is_enabled() {
             let findings =
-                crate::waf_processor::evaluate(&state.request_data, metrics)
+                crate::waf::processor::evaluate(&state.request_data, metrics)
                     .await
                     .filter(|findings| !findings.is_empty());
             if let Some(findings) = findings {
                 let processor_verdict =
-                    crate::waf_processor::to_waf_verdict(&findings);
-                verdict = crate::waf_shadow::effective_verdict(
+                    crate::waf::processor::to_waf_verdict(&findings);
+                verdict = crate::waf::shadow::effective_verdict(
                     &verdict,
                     &processor_verdict,
                 );

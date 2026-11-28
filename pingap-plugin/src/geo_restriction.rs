@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, parse_params};
+use super::{Error, get_hash_key, parse_params, redacted_params};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -24,14 +24,9 @@ use pingap_core::{
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::net::IpAddr;
-use std::sync::Arc;
-use std::sync::LazyLock;
-use tor_geoip::GeoipDb;
 use tracing::{debug, info};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
-
-static GEO_DB: LazyLock<Arc<GeoipDb>> = LazyLock::new(GeoipDb::new_embedded);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestrictionCategory {
@@ -133,8 +128,11 @@ impl TryFrom<&PluginConf> for GeoRestriction {
 
 impl GeoRestriction {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new geo restriction plugin");
-        LazyLock::force(&GEO_DB);
+        debug!(
+            params = redacted_params(params),
+            "new geo restriction plugin"
+        );
+        super::geo::warm_geoip();
         let result = Self::try_from(params)?;
         info!(
             country_codes = ?result.country_codes,
@@ -172,7 +170,7 @@ impl Plugin for GeoRestriction {
             },
         };
 
-        let country_code = GEO_DB.lookup_country_code(ip_addr);
+        let country_code = super::geo::lookup_country_addr(ip_addr);
         let country_code_str =
             country_code.as_ref().map(AsRef::as_ref).unwrap_or("??");
 

@@ -12,25 +12,68 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config_apply::ProviderUpdate;
-use crate::locations::new_location_provider;
+use crate::provider::ProviderUpdate;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use pingap_location::ServerLocationRoute;
+use pingap_location::{LocationProvider, ServerLocationRoute};
 use pingap_proxy::{ServerLocations, ServerLocationsProvider};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::LazyLock;
 
 type Result<T> = std::result::Result<T, String>;
 
-struct Provider {
+/// One owner's server->location index. Constructed per data plane.
+pub struct Provider {
     server_locations: ArcSwap<ServerLocations>,
 }
 
 impl Provider {
+    /// An index with no servers.
+    pub fn new() -> Self {
+        Self {
+            server_locations: ArcSwap::from_pointee(AHashMap::new()),
+        }
+    }
+
     fn store(&self, data: ServerLocations) {
         self.server_locations.store(Arc::new(data));
+    }
+
+    /// Rebuilds the index from `servers`, resolving each location name
+    /// through `location_provider`.
+    pub fn replace_server_locations(
+        &self,
+        location_provider: &dyn LocationProvider,
+        servers: &HashMap<String, pingap_config::ServerConf>,
+        locations: &HashMap<String, pingap_config::LocationConf>,
+    ) -> Result<ProviderUpdate> {
+        // get the location weight
+        let location_weights = locations
+            .iter()
+            .map(|(name, item)| (name.to_string(), item.get_weight()))
+            .collect::<HashMap<_, _>>();
+        let ordered = ordered_server_locations(servers, &location_weights);
+        let updated_servers =
+            changed_server_locations(&ordered, |name| self.get(name));
+
+        let mut server_locations = AHashMap::new();
+        for (name, items) in ordered {
+            let route = ServerLocationRoute::build(items, |loc_name| {
+                location_provider.get(loc_name)
+            });
+            server_locations.insert(name, Arc::new(route));
+        }
+        self.store(server_locations);
+        Ok(ProviderUpdate {
+            updated: updated_servers,
+            errors: String::new(),
+        })
+    }
+}
+
+impl Default for Provider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -40,25 +83,8 @@ impl ServerLocationsProvider for Provider {
     }
 }
 
-static SERVER_LOCATIONS_PROVIDER: LazyLock<Arc<Provider>> =
-    LazyLock::new(|| {
-        Arc::new(Provider {
-            server_locations: ArcSwap::from_pointee(AHashMap::new()),
-        })
-    });
-
-/// Creates a new instance of the server locations provider
-///
-/// # Returns
-/// * `Arc<dyn ServerLocationsProvider>` - The server locations provider
-pub fn new_server_locations_provider() -> Arc<dyn ServerLocationsProvider> {
-    SERVER_LOCATIONS_PROVIDER.clone()
-}
-
 /// Sorts a server's configured location names by their weight, highest first,
-/// so the first match keeps the priority `LocationConf` declares. A name with
-/// no configured weight sorts as 0; the sort is stable, so equal-weight
-/// locations keep the order the server lists them in.
+/// so the first match keeps the priority `LocationConf` declares.
 fn ordered_locations(
     items: &[String],
     weights: &HashMap<String, u16>,
@@ -72,8 +98,6 @@ fn ordered_locations(
     items
 }
 
-/// The weight-ordered location names of every server that has a `locations`
-/// list. A server without one serves nothing and is left out.
 fn ordered_server_locations(
     servers: &HashMap<String, pingap_config::ServerConf>,
     weights: &HashMap<String, u16>,
@@ -104,35 +128,6 @@ fn changed_server_locations(
         })
         .map(|(name, _)| name.to_string())
         .collect()
-}
-
-pub fn try_init_server_locations(
-    servers: &HashMap<String, pingap_config::ServerConf>,
-    locations: &HashMap<String, pingap_config::LocationConf>,
-) -> Result<ProviderUpdate> {
-    // get the location weight
-    let location_weights = locations
-        .iter()
-        .map(|(name, item)| (name.to_string(), item.get_weight()))
-        .collect::<HashMap<_, _>>();
-    let ordered = ordered_server_locations(servers, &location_weights);
-    let updated_servers = changed_server_locations(&ordered, |name| {
-        SERVER_LOCATIONS_PROVIDER.get(name)
-    });
-
-    let location_provider = new_location_provider();
-    let mut server_locations = AHashMap::new();
-    for (name, items) in ordered {
-        let route = ServerLocationRoute::build(items, |loc_name| {
-            location_provider.get(loc_name)
-        });
-        server_locations.insert(name, Arc::new(route));
-    }
-    SERVER_LOCATIONS_PROVIDER.store(server_locations);
-    Ok(ProviderUpdate {
-        updated: updated_servers,
-        errors: String::new(),
-    })
 }
 
 #[cfg(test)]
@@ -300,13 +295,20 @@ mod tests {
         )]);
 
         // Act
-        let first = try_init_server_locations(&servers, &locations)
+        let location_provider = crate::locations::Provider::new();
+        location_provider
+            .replace_locations(&locations)
+            .expect("the test locations build");
+        let provider = Provider::new();
+        let first = provider
+            .replace_server_locations(&location_provider, &servers, &locations)
             .expect("a server location index never fails to build")
             .updated;
-        let published = SERVER_LOCATIONS_PROVIDER
+        let published = provider
             .get("server-locations-order-test")
             .map(|route| route.ordered.as_slice().to_vec());
-        let second = try_init_server_locations(&servers, &locations)
+        let second = provider
+            .replace_server_locations(&location_provider, &servers, &locations)
             .expect("a server location index never fails to build");
 
         // Assert

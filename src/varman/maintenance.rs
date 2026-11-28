@@ -37,7 +37,7 @@ use varman_control::api::defense;
 use varman_control::api::self_protection::{self, effective_allowlist};
 use varman_control::auth::password::{MAX_PASSWORD_BYTES, validate_password};
 use varman_control::config_history::{self, VersionScope};
-use varman_control::email::normalise_email;
+use varman_control::email::normalize_email;
 use varman_control::models::{
     api_protection_setting, config_version, defense_settings, ip_groups, role,
     site, user,
@@ -164,7 +164,7 @@ async fn list_users(db: DbOpts) -> anyhow::Result<()> {
 
 async fn add_admin(opts: AddAdminOpts) -> anyhow::Result<()> {
     let db = connect(&opts.db.db_url).await?;
-    let email = normalise_email(&opts.email)?;
+    let email = normalize_email(&opts.email)?;
     let (password, generated) = resolve_password(&opts.password)?;
 
     let existing = user::Entity::find()
@@ -207,7 +207,7 @@ async fn add_admin(opts: AddAdminOpts) -> anyhow::Result<()> {
 
 async fn reset_password(opts: ResetPasswordOpts) -> anyhow::Result<()> {
     let db = connect(&opts.db.db_url).await?;
-    let email = normalise_email(&opts.email)?;
+    let email = normalize_email(&opts.email)?;
     let (password, generated) = resolve_password(&opts.password)?;
 
     let Some(row) = user::Entity::find()
@@ -645,20 +645,20 @@ mod tests {
     #[test]
     fn emails_are_lowercased_and_validated_like_the_api() {
         assert_eq!(
-            normalise_email("  Ops@Example.COM ").unwrap(),
+            normalize_email("  Ops@Example.COM ").unwrap(),
             "ops@example.com"
         );
-        assert!(normalise_email("no-at-sign").is_err());
-        assert!(normalise_email("user@nodot").is_err());
-        assert!(normalise_email("@example.com").is_err());
-        assert!(normalise_email("user@.example.com").is_err());
-        assert!(normalise_email("user@example.com.").is_err());
+        assert!(normalize_email("no-at-sign").is_err());
+        assert!(normalize_email("user@nodot").is_err());
+        assert!(normalize_email("@example.com").is_err());
+        assert!(normalize_email("user@.example.com").is_err());
+        assert!(normalize_email("user@example.com.").is_err());
         // The local-part cap the CLI used to omit.
         assert!(
-            normalise_email(&format!("{}@example.com", "a".repeat(65)))
+            normalize_email(&format!("{}@example.com", "a".repeat(65)))
                 .is_err()
         );
-        assert!(normalise_email(&format!("user@{}", "a".repeat(255))).is_err());
+        assert!(normalize_email(&format!("user@{}", "a".repeat(255))).is_err());
     }
 
     #[test]
@@ -708,5 +708,189 @@ mod tests {
             "cannot update the password",
         );
         assert!(missing.to_string().starts_with("user "));
+    }
+}
+
+#[cfg(test)]
+mod db_write_tests {
+    use super::{
+        AddAdminOpts, AllowlistOpts, DbOpts, OnOff, ResetPasswordOpts,
+    };
+    use sea_orm::{
+        ColumnTrait, ConnectionTrait, Database, DatabaseBackend, EntityTrait,
+        QueryFilter, Statement,
+    };
+    use sea_orm_migration::MigratorTrait;
+    use std::net::TcpListener;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use varman_control::migration::Migrator;
+    use varman_control::models::{api_protection_setting, role, user};
+
+    struct TestCluster {
+        dir: tempfile::TempDir,
+        url: String,
+    }
+
+    impl Drop for TestCluster {
+        fn drop(&mut self) {
+            let _ = Command::new("pg_ctl")
+                .args([
+                    "-D",
+                    self.dir.path().to_str().unwrap_or("."),
+                    "stop",
+                    "-m",
+                    "immediate",
+                ])
+                .output();
+        }
+    }
+
+    fn pg_bin(name: &str) -> Option<PathBuf> {
+        let mut found: Vec<PathBuf> =
+            glob::glob(&format!("/usr/lib/postgresql/*/bin/{name}"))
+                .ok()?
+                .filter_map(|p| p.ok())
+                .collect();
+        found.sort();
+        found.pop()
+    }
+
+    /// Starts a disposable cluster, or returns `None` when this machine has
+    /// no PostgreSQL binaries at all. Once `initdb` exists, every later
+    /// failure is a test failure: silently skipping a broken setup would let
+    /// the maintenance write tests report success without running.
+    async fn start_cluster() -> Option<TestCluster> {
+        let initdb = pg_bin("initdb")?;
+        let pg_ctl = pg_bin("pg_ctl").expect("pg_ctl must ship with initdb");
+        let dir = tempfile::tempdir().expect("cluster tempdir");
+        let port = {
+            let listener =
+                TcpListener::bind("127.0.0.1:0").expect("a free port");
+            listener.local_addr().expect("the bound address").port()
+        };
+        let output = Command::new(&initdb)
+            .args([
+                "-D",
+                dir.path().to_str().unwrap(),
+                "-U",
+                "postgres",
+                "--auth=trust",
+            ])
+            .output()
+            .expect("run initdb");
+        assert!(
+            output.status.success(),
+            "initdb failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = Command::new(&pg_ctl)
+            .args([
+                "-D",
+                dir.path().to_str().unwrap(),
+                "-o",
+                &format!("-p {port} -k {} -h 127.0.0.1", dir.path().display()),
+                "-l",
+                dir.path().join("postgres.log").to_str().unwrap(),
+                "start",
+            ])
+            .output()
+            .expect("start the cluster");
+        assert!(
+            output.status.success(),
+            "pg_ctl start failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let admin_url =
+            format!("postgres://postgres@127.0.0.1:{port}/postgres");
+        let db = Database::connect(&admin_url)
+            .await
+            .expect("connect to the admin database");
+        db.execute(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "CREATE DATABASE varman".to_string(),
+        ))
+        .await
+        .expect("create the test database");
+        let url = format!("postgres://postgres@127.0.0.1:{port}/varman");
+        let db = Database::connect(&url)
+            .await
+            .expect("connect to the test database");
+        Migrator::up(&db, None).await.expect("run migrations");
+        Some(TestCluster { dir, url })
+    }
+
+    async fn connect(url: &str) -> sea_orm::DatabaseConnection {
+        Database::connect(url).await.expect("test database")
+    }
+
+    #[tokio::test]
+    async fn maintenance_user_writes_reach_the_database() {
+        let Some(cluster) = start_cluster().await else {
+            eprintln!(
+                "skipping maintenance DB test: no local PostgreSQL binaries"
+            );
+            return;
+        };
+        let db = connect(&cluster.url).await;
+
+        // add-admin creates an administrator that must change the password.
+        super::add_admin(AddAdminOpts {
+            db: DbOpts {
+                db_url: cluster.url.clone(),
+            },
+            email: "Ops@Example.com".to_string(),
+            name: Some("Ops".to_string()),
+            password: Some("MaintenancePass123!".to_string()),
+        })
+        .await
+        .expect("add-admin");
+        let row = user::Entity::find()
+            .filter(user::Column::Email.eq("ops@example.com"))
+            .one(&db)
+            .await
+            .expect("query user")
+            .expect("created user");
+        assert_eq!(role::ADMIN, row.role);
+        assert!(row.must_change_password);
+        assert_eq!(0, row.token_version);
+
+        // reset-password revokes outstanding sessions and forces a change.
+        super::reset_password(ResetPasswordOpts {
+            db: DbOpts {
+                db_url: cluster.url.clone(),
+            },
+            email: "ops@example.com".to_string(),
+            password: Some("MaintenancePass456!".to_string()),
+        })
+        .await
+        .expect("reset-password");
+        let row = user::Entity::find()
+            .filter(user::Column::Email.eq("ops@example.com"))
+            .one(&db)
+            .await
+            .expect("query user")
+            .expect("updated user");
+        assert_eq!(1, row.token_version);
+        assert!(row.must_change_password);
+
+        // security allowlist on/force writes the control-plane setting.
+        super::set_allowlist(AllowlistOpts {
+            db: DbOpts {
+                db_url: cluster.url.clone(),
+            },
+            state: OnOff::On,
+            force: true,
+        })
+        .await
+        .expect("set allowlist");
+        let settings = api_protection_setting::Entity::find()
+            .one(&db)
+            .await
+            .expect("query protection settings")
+            .expect("settings row");
+        assert!(settings.ip_allowlist_enabled);
+
+        drop(cluster);
     }
 }

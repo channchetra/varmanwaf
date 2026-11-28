@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Applies a new [`PingapConfig`] to the process-wide providers in place.
+//! Applies a new [`PingapConfig`] to the plane's provider set in place.
 //!
 //! Two roots reload configuration at runtime: the file-configured daemon's
-//! watcher (`src/process/auto_restart.rs`) and the agent-hosted data plane
+//! watcher (`src/process/config_watch.rs`) and the agent-hosted data plane
 //! (`src/varman/data_plane.rs`). They differ in *policy* - what may be
 //! committed, restarted or notified - never in how a changed category is
 //! pushed into its provider. That policy is [`ApplyOptions`], so the
@@ -32,11 +32,8 @@
 //! [`apply_config`] only rebuilds providers and reports whether the caller
 //! may commit.
 
-use crate::certificates::try_update_certificates;
-use crate::locations::try_init_locations;
-use crate::plugin::{AdminPlugin, try_init_plugins};
-use crate::server_locations::try_init_server_locations;
-use crate::upstreams::{try_init_upstreams, try_update_upstreams};
+use crate::data_plane::ProviderSet;
+use crate::provider::{AdminPluginEntry, ProviderUpdate};
 use crate::webhook::{
     get_webhook_sender, reload_webhook_notification_sender, send_notification,
 };
@@ -50,110 +47,74 @@ use tracing::{debug, error, info};
 
 static LOG_TARGET: &str = "main::config_apply";
 
-/// What one provider rebuild did.
-///
-/// Every provider's `try_init_*`/`try_update_*` returns this, so an apply pass
-/// consumes them all the same way: a non-empty `errors` means the provider
-/// kept its previous state and the update did not apply, while `Err` is a
-/// failure of the call itself.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ProviderUpdate {
-    /// Names of the entries created or reloaded.
-    pub updated: Vec<String>,
-    /// Per-entry failures, joined with `;`. Empty when the update applied.
-    pub errors: String,
-}
-
-impl ProviderUpdate {
-    /// The update applied: no entry failed.
-    pub fn is_ok(&self) -> bool {
-        self.errors.is_empty()
-    }
-
-    /// Nothing changed and nothing failed.
-    pub fn is_empty(&self) -> bool {
-        self.updated.is_empty() && self.errors.is_empty()
-    }
+/// The two production policies an apply pass follows.
+#[derive(Clone, Copy, Debug)]
+enum ApplyPolicy {
+    /// The file-configured daemon's watcher.
+    Daemon { hot_reload_only: bool },
+    /// The agent-hosted data plane, which never restarts.
+    Agent,
 }
 
 /// The policy an apply pass follows.
 ///
-/// Every field exists because the two roots really do behave differently;
-/// [`ApplyOptions::daemon`] and [`ApplyOptions::agent_data_plane`] are the two
-/// policies in production.
+/// The six behaviours are derived from one of the two policies above, so a
+/// caller cannot assemble a combination neither root uses.
 #[derive(Clone, Copy, Debug)]
 pub struct ApplyOptions {
-    /// Whether a change no provider can apply in place (`basic`, server
-    /// `addr`/`threads`, ...) is applied hot and *not* reported as
-    /// [`ApplyOutcome::RestartRequired`].
-    ///
-    /// The agent-hosted plane sets this: it never restarts, so a
-    /// control-plane rule push must not ask for one. The daemon clears it so
-    /// its watcher restarts on such a change.
-    pub hot_reload_only: bool,
-    /// Build upstreams with the process webhook sender and run the health
-    /// check of every new or changed upstream before it takes traffic.
-    ///
-    /// The daemon sets this. The agent-hosted plane does neither: its
-    /// periodic `HealthCheckTask` owns checking and it passes no notification
-    /// sender (its `try_init_upstreams` call has always used `None`).
-    pub update_health_checks: bool,
-    /// Rebuild every provider from `next` even when its category is unchanged.
-    ///
-    /// The agent-hosted plane has always reloaded all five from the whole
-    /// document - entries are content-keyed, so unchanged ones are reused,
-    /// but the calls still publish a fresh provider map and bump the plugin
-    /// provider version. The daemon only touches the categories its diff
-    /// reports, because the same diff decides between hot reload and restart.
-    pub rebuild_unchanged: bool,
-    /// Send the `reload_config` notifications for rebuilt categories, the
-    /// webhook change and the certificate parse failure.
-    ///
-    /// The daemon sets this. The agent-hosted plane never emitted reload
-    /// notifications; its webhook is configured by the control plane.
-    pub notify: bool,
-    /// Reload the webhook settings from `next.basic` before the other
-    /// categories and carry them in the projection.
-    ///
-    /// The daemon sets this. The agent-hosted plane's rule document carries
-    /// no webhook settings, so taking them from it would clear the process
-    /// webhook.
-    pub reload_webhook: bool,
-    /// Leave certificates out of the in-place apply when any certificate in
-    /// `next` still has to be issued by the lets-encrypt task: neither the
-    /// projection nor the certificate provider is touched.
-    ///
-    /// The daemon sets this: an `acme` entry is created at runtime, so it must
-    /// not be committed as a loaded certificate nor rebuilt by either side.
-    /// The agent-hosted plane builds its provider from the whole certificate
-    /// map (an unissued entry keeps serving the previous certificate), so it
-    /// does not.
-    pub skip_acme_certificates: bool,
+    policy: ApplyPolicy,
 }
 
 impl ApplyOptions {
     /// The file-configured daemon's policy.
     pub fn daemon(hot_reload_only: bool) -> Self {
         Self {
-            hot_reload_only,
-            update_health_checks: true,
-            rebuild_unchanged: false,
-            notify: true,
-            reload_webhook: true,
-            skip_acme_certificates: true,
+            policy: ApplyPolicy::Daemon { hot_reload_only },
         }
     }
 
     /// The agent-hosted data plane's policy.
     pub fn agent_data_plane() -> Self {
         Self {
-            hot_reload_only: true,
-            update_health_checks: false,
-            rebuild_unchanged: true,
-            notify: false,
-            reload_webhook: false,
-            skip_acme_certificates: false,
+            policy: ApplyPolicy::Agent,
         }
+    }
+
+    /// A non-hot-reloadable change is applied hot instead of asking for a
+    /// restart.
+    fn hot_reload_only(&self) -> bool {
+        matches!(
+            self.policy,
+            ApplyPolicy::Agent
+                | ApplyPolicy::Daemon {
+                    hot_reload_only: true
+                }
+        )
+    }
+
+    /// New or changed upstreams are health-checked before they take traffic.
+    fn update_health_checks(&self) -> bool {
+        matches!(self.policy, ApplyPolicy::Daemon { .. })
+    }
+
+    /// Rebuild every provider even when its category did not change.
+    fn rebuild_unchanged(&self) -> bool {
+        matches!(self.policy, ApplyPolicy::Agent)
+    }
+
+    /// Emit the reload notifications.
+    fn notify(&self) -> bool {
+        matches!(self.policy, ApplyPolicy::Daemon { .. })
+    }
+
+    /// Reload the process webhook from the document.
+    fn reload_webhook(&self) -> bool {
+        matches!(self.policy, ApplyPolicy::Daemon { .. })
+    }
+
+    /// Leave unissued ACME certificates out of the in-place apply.
+    fn skip_acme_certificates(&self) -> bool {
+        matches!(self.policy, ApplyPolicy::Daemon { .. })
     }
 }
 
@@ -199,7 +160,7 @@ pub fn commit_if_applied(
     if let ApplyOutcome::Failed(_) = outcome {
         return false;
     }
-    config_manager.set_current_config(config);
+    config_manager.activate_config(config);
     true
 }
 
@@ -232,13 +193,15 @@ impl Categories {
 /// rebuild, or the admin listener would lose its plugin after a reload.
 /// `config_manager` is the manager every admin plugin reads and writes the
 /// configuration through; it is forwarded to the plugin rebuild instead of
-/// being looked up from a process global.
+/// being looked up from a process global. `providers` is the plane's own
+/// provider set; a pass touches only those instances, never a process global.
 pub async fn apply_config(
     previous: &PingapConfig,
     next: &PingapConfig,
     options: &ApplyOptions,
-    admin_plugin: Option<&AdminPlugin>,
+    admin_plugin: Option<&AdminPluginEntry>,
     config_manager: &Arc<ConfigManager>,
+    providers: &ProviderSet,
 ) -> ApplyOutcome {
     let (changed, diff) = previous.diff(next);
     debug!(
@@ -249,7 +212,7 @@ pub async fn apply_config(
     );
     // A hot-reload-only pass may leave a change behind that only a restart
     // applies, but there is nothing to do when the document itself is equal.
-    if diff.is_empty() && !options.rebuild_unchanged {
+    if diff.is_empty() && !options.rebuild_unchanged() {
         return ApplyOutcome::Unchanged;
     }
 
@@ -261,6 +224,7 @@ pub async fn apply_config(
         options,
         admin_plugin,
         config_manager,
+        providers,
     )
     .await;
     if !failures.is_empty() {
@@ -271,7 +235,7 @@ pub async fn apply_config(
         diff,
         config: projection,
     };
-    if !options.hot_reload_only {
+    if !options.hot_reload_only() {
         let (_, reason) = report.config.diff(next);
         debug!(
             target: LOG_TARGET,
@@ -296,7 +260,7 @@ fn dispatch(
     changed: &[String],
     options: &ApplyOptions,
 ) -> Categories {
-    if options.rebuild_unchanged {
+    if options.rebuild_unchanged() {
         return Categories::all();
     }
     let changed = |category: &str| changed.iter().any(|item| item == category);
@@ -306,7 +270,8 @@ fn dispatch(
         locations,
         plugins: changed(CATEGORY_PLUGIN),
         certificates: changed(CATEGORY_CERTIFICATE)
-            && !(options.skip_acme_certificates && has_acme_certificate(next)),
+            && !(options.skip_acme_certificates()
+                && has_acme_certificate(next)),
         // The server->location index owns host/path/weight ordering. A
         // location edit must rebuild it even when no server's name list
         // changed, or the new routing never applies.
@@ -319,50 +284,58 @@ async fn apply_categories(
     next: &PingapConfig,
     categories: Categories,
     options: &ApplyOptions,
-    admin_plugin: Option<&AdminPlugin>,
+    admin_plugin: Option<&AdminPluginEntry>,
     config_manager: &Arc<ConfigManager>,
+    providers: &ProviderSet,
 ) -> Vec<String> {
     let mut failures = vec![];
 
     if categories.upstreams {
-        let result = if options.update_health_checks {
+        let result = if options.update_health_checks() {
             as_step(
-                try_update_upstreams(
-                    &next.upstreams,
-                    Some(get_webhook_sender()),
-                )
-                .await,
+                providers
+                    .upstreams
+                    .replace_upstreams_checked(
+                        &next.upstreams,
+                        Some(get_webhook_sender()),
+                    )
+                    .await,
             )
         } else {
             // The agent-hosted plane's rebuild reports no names; it must not
             // gain the daemon's success log line.
-            as_silent_step(try_init_upstreams(&next.upstreams, None))
+            as_silent_step(
+                providers.upstreams.replace_upstreams(&next.upstreams, None),
+            )
         };
         if let Some(failure) = run_step(&UPSTREAM_STEP, options, result).await {
             failures.push(failure);
         }
     }
     if categories.locations {
-        let result = as_step(try_init_locations(&next.locations));
+        let result =
+            as_step(providers.locations.replace_locations(&next.locations));
         if let Some(failure) = run_step(&LOCATION_STEP, options, result).await {
             failures.push(failure);
         }
     }
     if categories.plugins {
-        let (updated, errors) = try_init_plugins(
+        let result = as_step(Ok(providers.plugins.replace_plugins(
             &next.plugins,
             admin_plugin.cloned(),
             config_manager.clone(),
-        );
-        // `try_init_plugins` still reports the old tuple; a non-empty error
-        // means it kept the previous map.
-        let result = as_step(Ok(ProviderUpdate { updated, errors }));
+            providers,
+        )));
         if let Some(failure) = run_step(&PLUGIN_STEP, options, result).await {
             failures.push(failure);
         }
     }
     if categories.certificates {
-        let result = as_step(try_update_certificates(&next.certificates));
+        let result = as_step(
+            providers
+                .certificates
+                .replace_certificates(&next.certificates),
+        );
         if let Some(failure) =
             run_step(&CERTIFICATE_STEP, options, result).await
         {
@@ -371,7 +344,11 @@ async fn apply_categories(
     }
     if categories.server_locations {
         let result =
-            as_step(try_init_server_locations(&next.servers, &next.locations));
+            as_step(providers.server_locations.replace_server_locations(
+                providers.locations.as_ref(),
+                &next.servers,
+                &next.locations,
+            ));
         if let Some(failure) =
             run_step(&SERVER_LOCATION_STEP, options, result).await
         {
@@ -393,14 +370,14 @@ async fn hot_projection(
 
     // The webhook goes first, so the notifications for everything else this
     // change reloads already go out with the new settings.
-    if options.reload_webhook
+    if options.reload_webhook()
         && reload_webhook_notification_sender(
             &mut projection.basic,
             &next.basic,
         )
     {
         info!(target: LOG_TARGET, "reload webhook success");
-        if options.notify {
+        if options.notify() {
             send_notification(NotificationData {
                 category: "reload_config".to_string(),
                 level: NotificationLevel::Info,
@@ -427,7 +404,7 @@ async fn hot_projection(
 
     // An `acme` certificate is created by the lets-encrypt service, so it
     // cannot be reloaded as a loaded certificate; the service owns it.
-    if !(options.skip_acme_certificates && has_acme_certificate(next)) {
+    if !(options.skip_acme_certificates() && has_acme_certificate(next)) {
         projection.certificates = next.certificates.clone();
     }
 
@@ -538,7 +515,7 @@ async fn run_step(
         Ok(StepReport::Named(update)) => {
             if step.always_report || !update.is_empty() {
                 info!(target: LOG_TARGET, "{}", step.success);
-                if options.notify {
+                if options.notify() {
                     send_notification(NotificationData {
                         category: "reload_config".to_string(),
                         level: NotificationLevel::Info,
@@ -553,7 +530,7 @@ async fn run_step(
         Ok(StepReport::Silent) => None,
         Err(error) => {
             error!(target: LOG_TARGET, error, "{}", step.failure);
-            if options.notify
+            if options.notify()
                 && let Some(category) = step.error_notification
             {
                 send_notification(NotificationData {
@@ -569,6 +546,7 @@ async fn run_step(
     }
 }
 
+/// Formats the notification message for a changed entry list.
 fn format_message(name: &str, list: Vec<String>) -> String {
     if list.is_empty() {
         return format!("{name} is removed",);
@@ -601,16 +579,18 @@ fn server_location_lists_changed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config_manager::try_init_memory_config_manager;
+    use crate::config_manager::build_memory_config_manager;
     use pingap_config::{
         CertificateConf, LocationConf, PluginConf, ServerConf, UpstreamConf,
     };
+    use pingap_upstream::UpstreamProvider;
     use pretty_assertions::assert_eq;
 
     /// A local manager for the plugin rebuild. The admin plugin reads and
     /// writes through it, so `apply_config` takes it instead of a global.
     fn new_config_manager() -> Arc<ConfigManager> {
-        Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None))
+        crate::config_manager::build_memory_config_manager("[basic]\n", None)
+            .expect("test manager")
     }
 
     fn config_with_upstream(name: &str) -> PingapConfig {
@@ -860,6 +840,7 @@ mod tests {
     async fn an_equal_document_is_unchanged() {
         // Arrange
         let config = config_with_upstream("apply-engine-equal");
+        let providers = ProviderSet::new();
 
         // Act
         let outcome = apply_config(
@@ -868,6 +849,7 @@ mod tests {
             &ApplyOptions::daemon(false),
             None,
             &new_config_manager(),
+            &providers,
         )
         .await;
 
@@ -881,6 +863,7 @@ mod tests {
         let previous = PingapConfig::default();
         let mut next = PingapConfig::default();
         next.basic.log_level = Some("debug".to_string());
+        let providers = ProviderSet::new();
 
         // Act
         let restarting = apply_config(
@@ -889,6 +872,7 @@ mod tests {
             &ApplyOptions::daemon(false),
             None,
             &new_config_manager(),
+            &providers,
         )
         .await;
         let hot_only = apply_config(
@@ -897,6 +881,7 @@ mod tests {
             &ApplyOptions::daemon(true),
             None,
             &new_config_manager(),
+            &providers,
         )
         .await;
 
@@ -925,9 +910,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        let config_manager = try_init_memory_config_manager("[basic]\n", None)
+        let config_manager = build_memory_config_manager("[basic]\n", None)
             .expect("in-memory config manager");
         config_manager.set_current_config(previous.clone());
+        let providers = ProviderSet::new();
 
         // Act
         let outcome = apply_config(
@@ -936,6 +922,7 @@ mod tests {
             &ApplyOptions::daemon(false),
             None,
             &new_config_manager(),
+            &providers,
         )
         .await;
         let committed =
@@ -959,5 +946,37 @@ mod tests {
             current_diff.is_empty(),
             "the previous config must stay current: {current_diff:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_successful_apply_installs_the_rebuilt_providers() {
+        // Arrange: a document with one upstream the empty plane does not have.
+        let previous = PingapConfig::default();
+        let next = config_with_upstream("apply-engine-new");
+        let providers = ProviderSet::new();
+
+        // Act
+        let outcome = apply_config(
+            &previous,
+            &next,
+            &ApplyOptions::daemon(false),
+            None,
+            &new_config_manager(),
+            &providers,
+        )
+        .await;
+
+        // Assert: the pass reports success and the rebuilt upstream is in the
+        // plane's registry, not in a discarded intermediate map.
+        let ApplyOutcome::Applied(report) = outcome else {
+            panic!("a valid upstream addition must apply");
+        };
+        assert!(
+            report
+                .diff
+                .iter()
+                .any(|line| line.contains("apply-engine-new"))
+        );
+        assert!(providers.upstreams.get("apply-engine-new").is_some());
     }
 }

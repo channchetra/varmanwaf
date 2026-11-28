@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::restart;
+use super::common::restart_after_debounce;
 use crate::config_apply::{self, ApplyOptions, ApplyOutcome};
-use crate::plugin::AdminPlugin;
+use crate::data_plane::ProviderSet;
+use crate::provider::AdminPluginEntry;
 use crate::webhook::send_notification;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_trait::async_trait;
@@ -30,7 +31,7 @@ use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{debug, error, info};
@@ -96,7 +97,8 @@ async fn diff_and_update_config(
     config_manager: Arc<ConfigManager>,
     last_seen: &LastSeenCell,
     hot_reload_only: bool,
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
+    providers: &ProviderSet,
 ) -> Result<Option<PingapConfig>, Box<dyn std::error::Error>> {
     let raw = config_manager.load_all_raw().await?;
     let hash = raw_hash(&raw);
@@ -106,11 +108,12 @@ async fn diff_and_update_config(
     }
     let new_config =
         PingapTomlConfig::from_toml(&raw)?.to_pingap_config(true)?;
-    let restart_requested = apply_config(
+    let restart_requested = apply_daemon_config(
         config_manager,
         &new_config,
         hot_reload_only,
         admin_plugin,
+        providers,
     )
     .await?;
     // Recorded only after a pass that finished. An error - the document
@@ -139,11 +142,12 @@ async fn diff_and_update_config(
 ///    triggers a full server restart
 ///
 /// Returns whether a restart was requested.
-async fn apply_config(
+async fn apply_daemon_config(
     config_manager: Arc<ConfigManager>,
     new_config: &PingapConfig,
     hot_reload_only: bool,
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
+    providers: &ProviderSet,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     new_config.validate()?;
     validate_servers_tls_for_backend(&new_config.servers)?;
@@ -155,10 +159,11 @@ async fn apply_config(
         &ApplyOptions::daemon(hot_reload_only),
         admin_plugin.as_ref(),
         &config_manager,
+        providers,
     )
     .await;
 
-    let (report, restart_reason) = match outcome {
+    let (report, restart_reason) = match &outcome {
         ApplyOutcome::Unchanged => return Ok(false),
         ApplyOutcome::Failed(message) => {
             // A partial apply must not become the current config: the next
@@ -188,7 +193,7 @@ async fn apply_config(
         },
         ApplyOutcome::Applied(report) => (report, None),
         ApplyOutcome::RestartRequired { report, reason } => {
-            (report, Some(reason))
+            (report, Some(reason.clone()))
         },
     };
 
@@ -201,12 +206,16 @@ async fn apply_config(
             original_diff_result = original_diff_result.join("\n"),
             "current config diff from hot reload config"
         );
-        // no update config
         if original_diff_result.is_empty() {
             return Ok(false);
         }
-        // update current config to be hot reload config
-        config_manager.set_current_config(report.config);
+        if !config_apply::commit_if_applied(
+            &config_manager,
+            report.config.clone(),
+            &outcome,
+        ) {
+            return Ok(false);
+        }
         send_notification(NotificationData {
             category: "diff_config".to_string(),
             message: original_diff_result.join("\n").trim().to_string(),
@@ -215,9 +224,13 @@ async fn apply_config(
         .await;
         return Ok(false);
     }
-    // restart mode
-    // update current config to be hot reload config
-    config_manager.set_current_config(report.config);
+    if !config_apply::commit_if_applied(
+        &config_manager,
+        report.config.clone(),
+        &outcome,
+    ) {
+        return Ok(false);
+    }
 
     let should_restart = restart_reason.is_some();
     send_notification(NotificationData {
@@ -227,7 +240,7 @@ async fn apply_config(
     })
     .await;
     if should_restart {
-        let _ = restart().await;
+        let _ = restart_after_debounce().await;
     }
     Ok(should_restart)
 }
@@ -235,39 +248,46 @@ async fn apply_config(
 /// AutoRestart service manages configuration updates on a schedule
 ///
 /// The service alternates between hot reloads and full restarts based on:
-/// - restart_unit: Determines frequency of full restarts vs hot reloads
+/// - ticks_per_restart: Determines frequency of full restarts vs hot reloads
 /// - hot_reload_only: Forces hot reload only mode
 /// - count: Tracks intervals to coordinate restart timing
 struct AutoRestart {
     /// How many intervals to wait before allowing a full restart (vs hot reload)
-    restart_unit: u32,
+    ticks_per_restart: u32,
     /// If true, only perform hot reloads and never restart
     hot_reload_only: bool,
-    /// Tracks if currently performing a hot reload
-    running_hot_reload: AtomicBool,
     config_manager: Arc<ConfigManager>,
     log_reload_handle: LoggerReloadHandle,
     current_log_level: ArcSwap<String>,
     /// Re-registered with every plugin rebuild, or the admin listener would
     /// lose its plugin after the first reload. The rebuild gets this
     /// watcher's `config_manager` for it.
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
+    /// The registries this watcher reloads. Owned, so a second plane or a
+    /// test never shares them.
+    providers: ProviderSet,
     /// The document this watcher last handled. Per instance, never shared.
     last_seen: LastSeenCell,
 }
 
-/// Creates a new auto-restart service that checks for config changes periodically
+/// Creates a new auto-restart service that checks for config changes
+/// periodically.
+///
+/// The service ticks at most every 10 seconds (and at `interval` when that is
+/// shorter); `ticks_per_restart` keeps a full-restart opportunity on the original
+/// cadence even then.
 pub fn new_auto_restart_service(
     config_manager: Arc<ConfigManager>,
     log_reload_handle: LoggerReloadHandle,
     interval: Duration,
     hot_reload_only: bool,
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
+    providers: ProviderSet,
 ) -> BackgroundTaskService {
-    let mut restart_unit = 1_u32;
+    let mut ticks_per_restart = 1_u32;
     let unit = Duration::from_secs(10);
     if interval > unit {
-        restart_unit = (interval.as_secs() / unit.as_secs()) as u32;
+        ticks_per_restart = (interval.as_secs() / unit.as_secs()) as u32;
     }
 
     let current_log_level = config_manager
@@ -280,11 +300,11 @@ pub fn new_auto_restart_service(
     let task = Box::new(AutoRestart {
         log_reload_handle,
         config_manager,
-        running_hot_reload: AtomicBool::new(false),
         hot_reload_only,
-        restart_unit,
+        ticks_per_restart,
         current_log_level: ArcSwap::from_pointee(current_log_level),
         admin_plugin,
+        providers,
         last_seen: LastSeenCell::default(),
     });
     let name = "auto_restart";
@@ -312,7 +332,9 @@ pub struct ConfigObserverService {
     /// If true, only perform hot reloads when changes detected
     hot_reload_only: bool,
     /// Re-registered with every plugin rebuild, like the polling service.
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
+    /// The registries this watcher reloads. Owned, never shared.
+    providers: ProviderSet,
     delay: AtomicU32,
     /// The document this watcher last handled. Per instance, never shared.
     last_seen: LastSeenCell,
@@ -321,12 +343,16 @@ pub struct ConfigObserverService {
 const MIN_DELAY: u32 = 500;
 const MAX_DELAY: u32 = 60 * 1000;
 
+/// Creates the push-driven watcher used by storage backends that support
+/// observation (etcd). It reacts to the backend's watch stream and has no
+/// polling cadence of its own; `interval` is only the fallback tick.
 pub fn new_observer_service(
     config_manager: Arc<ConfigManager>,
     log_reload_handle: LoggerReloadHandle,
     interval: Duration,
     hot_reload_only: bool,
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
+    providers: ProviderSet,
 ) -> ConfigObserverService {
     let current_log_level = config_manager
         .get_current_config()
@@ -342,12 +368,34 @@ pub fn new_observer_service(
         hot_reload_only,
         current_log_level: ArcSwap::from_pointee(current_log_level),
         admin_plugin,
+        providers,
         delay: AtomicU32::new(MIN_DELAY),
         last_seen: LastSeenCell::default(),
     }
 }
 
 static OBSERVER_NAME: &str = "configObserver";
+
+impl ConfigObserverService {
+    /// Runs one diff/apply pass and reloads the log level when it committed.
+    async fn apply_tick(&self, hot_reload_only: bool) {
+        if let Some(new_config) = run_diff_and_update_config(
+            self.config_manager.clone(),
+            &self.last_seen,
+            hot_reload_only,
+            self.admin_plugin.clone(),
+            &self.providers,
+        )
+        .await
+        {
+            reload_log_level(
+                &self.log_reload_handle,
+                &self.current_log_level,
+                &new_config,
+            );
+        }
+    }
+}
 
 #[async_trait]
 impl BackgroundService for ConfigObserverService {
@@ -383,20 +431,7 @@ impl BackgroundService for ConfigObserverService {
                     break;
                 }
                 _ = period.tick() => {
-                    // fetch and diff update
-                    // some change may be restart
-                    if let Some(new_config) = run_diff_and_update_config(
-                        self.config_manager.clone(),
-                        &self.last_seen,
-                        self.hot_reload_only,
-                        self.admin_plugin.clone(),
-                    ).await {
-                        reload_log_level(
-                            &self.log_reload_handle,
-                            &self.current_log_level,
-                            &new_config,
-                        );
-                    }
+                    self.apply_tick(self.hot_reload_only).await;
                 }
                 result = observer.watch() => {
                     let delay = self.delay.load(Ordering::Relaxed);
@@ -409,12 +444,7 @@ impl BackgroundService for ConfigObserverService {
                                 continue;
                             }
                             // only hot reload for observe updated
-                            run_diff_and_update_config(
-                                self.config_manager.clone(),
-                                &self.last_seen,
-                                true,
-                                self.admin_plugin.clone(),
-                            ).await;
+                            self.apply_tick(true).await;
                         },
                         Err(e) => {
                             error!(
@@ -440,13 +470,15 @@ async fn run_diff_and_update_config(
     config_manager: Arc<ConfigManager>,
     last_seen: &LastSeenCell,
     hot_reload_only: bool,
-    admin_plugin: Option<AdminPlugin>,
+    admin_plugin: Option<AdminPluginEntry>,
+    providers: &ProviderSet,
 ) -> Option<PingapConfig> {
     match diff_and_update_config(
         config_manager,
         last_seen,
         hot_reload_only,
         admin_plugin,
+        providers,
     )
     .await
     {
@@ -462,30 +494,44 @@ async fn run_diff_and_update_config(
     }
 }
 
+/// Whether a tick is hot-reload-only.
+///
+/// `count == 0` is the first pass after start-up: apply it gently. Later
+/// ticks that are not a full interval (`ticks_per_restart`) are hot-only too, so a
+/// full restart is offered on the original cadence rather than every 10s.
+fn tick_is_hot_reload_only(
+    configured: bool,
+    ticks_per_restart: u32,
+    count: u32,
+) -> bool {
+    configured || count == 0 || !count.is_multiple_of(ticks_per_restart)
+}
+
 #[async_trait]
 impl BackgroundTask for AutoRestart {
     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
         // Calculate if this iteration should be hot reload only.
         //
-        // `restart_unit` is how many check ticks make one full config interval
+        // `ticks_per_restart` is how many check ticks make one full config interval
         // (the service itself runs every min(interval, 10s)). Full restart is
-        // offered when `count` is a multiple of `restart_unit`.
+        // offered when `count` is a multiple of `ticks_per_restart`.
         //
-        // When interval ≤ 10s, `restart_unit == 1`, so every tick after the
+        // When interval ≤ 10s, `ticks_per_restart == 1`, so every tick after the
         // first is a full-restart opportunity — otherwise non-hot-reloadable
         // changes (server addr, threads, …) would never take effect.
         //
         // count=0 is always hot-reload-only so the first pass is gentle.
-        let hot_reload_only = self.hot_reload_only
-            || count == 0
-            || !count.is_multiple_of(self.restart_unit);
-        self.running_hot_reload
-            .store(hot_reload_only, Ordering::Relaxed);
+        let hot_reload_only = tick_is_hot_reload_only(
+            self.hot_reload_only,
+            self.ticks_per_restart,
+            count,
+        );
         if let Some(new_config) = run_diff_and_update_config(
             self.config_manager.clone(),
             &self.last_seen,
             hot_reload_only,
             self.admin_plugin.clone(),
+            &self.providers,
         )
         .await
         {
@@ -530,13 +576,16 @@ fn reload_log_level(
 
 #[cfg(test)]
 mod tests {
-    use super::{AutoRestart, LastSeen, LastSeenCell, should_skip};
+    use super::{
+        AutoRestart, LastSeen, LastSeenCell, should_skip,
+        tick_is_hot_reload_only,
+    };
+    use crate::data_plane::ProviderSet;
     use arc_swap::ArcSwap;
     use pingap_config::ConfigManager;
     use pingap_logger::{LoggerReloadHandle, new_env_filter};
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
 
     /// A watcher with its own memo. The reload handle is never used: the test
     /// exercises the handled-document memo, not a log-level reload.
@@ -544,13 +593,13 @@ mod tests {
         let (_layer, log_reload_handle): (_, LoggerReloadHandle) =
             tracing_subscriber::reload::Layer::new(new_env_filter("INFO"));
         AutoRestart {
-            restart_unit: 1,
+            ticks_per_restart: 1,
             hot_reload_only: false,
-            running_hot_reload: AtomicBool::new(false),
             config_manager,
             log_reload_handle,
             current_log_level: ArcSwap::from_pointee(String::new()),
             admin_plugin: None,
+            providers: ProviderSet::new(),
             last_seen: LastSeenCell::default(),
         }
     }
@@ -601,5 +650,21 @@ mod tests {
         };
         assert_eq!(true, should_skip(Some(&settled), 1, true));
         assert_eq!(true, should_skip(Some(&settled), 1, false));
+    }
+
+    #[test]
+    fn the_daemon_restart_cadence_is_explicit() {
+        // The configured hot-only mode always wins.
+        assert!(tick_is_hot_reload_only(true, 1, 5));
+        // The first pass never restarts.
+        assert!(tick_is_hot_reload_only(false, 1, 0));
+        // With the default interval every later tick may restart.
+        assert!(!tick_is_hot_reload_only(false, 1, 1));
+        assert!(!tick_is_hot_reload_only(false, 1, 5));
+        // A 30s interval maps to every third 10s tick.
+        assert!(tick_is_hot_reload_only(false, 3, 1));
+        assert!(tick_is_hot_reload_only(false, 3, 2));
+        assert!(!tick_is_hot_reload_only(false, 3, 3));
+        assert!(!tick_is_hot_reload_only(false, 3, 6));
     }
 }

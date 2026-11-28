@@ -32,6 +32,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection,
     EntityTrait, QueryFilter, QueryOrder, Set,
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -210,35 +211,74 @@ impl NotificationSettings {
 /// Key of the settings row in `instance_settings`.
 pub const SETTINGS_KEY: &str = "notification_settings";
 
+/// Loads a JSON settings value from `instance_settings`, falling back to the
+/// type's default when the row is missing or unparsable.
+async fn load_json_setting<T: DeserializeOwned + Default>(
+    db: &DatabaseConnection,
+    key: &str,
+) -> T {
+    use crate::models::instance_setting;
+
+    let stored = match instance_setting::Entity::find_by_id(key).one(db).await {
+        Ok(row) => row,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                key,
+                "failed to load settings; using defaults"
+            );
+            return T::default();
+        },
+    };
+    match stored {
+        Some(row) => serde_json::from_str(&row.value).unwrap_or_else(|e| {
+            tracing::warn!(
+                error = %e,
+                key,
+                "settings are invalid; using defaults"
+            );
+            T::default()
+        }),
+        None => T::default(),
+    }
+}
+
+/// Persists a JSON settings value in `instance_settings`.
+async fn store_json_setting<T: Serialize>(
+    db: &DatabaseConnection,
+    key: &str,
+    value: &T,
+) -> Result<(), sea_orm::DbErr> {
+    use crate::models::instance_setting;
+
+    let value = serde_json::to_string(value)
+        .map_err(|err| sea_orm::DbErr::Custom(err.to_string()))?;
+    let existing = instance_setting::Entity::find_by_id(key).one(db).await?;
+    match existing {
+        Some(row) => {
+            let mut active: instance_setting::ActiveModel = row.into();
+            active.value = Set(value);
+            active.updated_at = Set(chrono::Utc::now());
+            active.update(db).await?;
+        },
+        None => {
+            instance_setting::ActiveModel {
+                key: Set(key.to_string()),
+                value: Set(value),
+                updated_at: Set(chrono::Utc::now()),
+            }
+            .insert(db)
+            .await?;
+        },
+    }
+    Ok(())
+}
+
 impl NotificationSettings {
     /// Loads the settings from `instance_settings`, falling back to the
     /// defaults when the row is missing or unparsable.
     pub async fn load(db: &DatabaseConnection) -> Self {
-        use crate::models::instance_setting;
-
-        let stored = match instance_setting::Entity::find_by_id(SETTINGS_KEY)
-            .one(db)
-            .await
-        {
-            Ok(row) => row,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "failed to load notification settings; using defaults"
-                );
-                return Self::default();
-            },
-        };
-        match stored {
-            Some(row) => serde_json::from_str(&row.value).unwrap_or_else(|e| {
-                tracing::warn!(
-                    error = %e,
-                    "notification settings are invalid; using defaults"
-                );
-                Self::default()
-            }),
-            None => Self::default(),
-        }
+        load_json_setting(db, SETTINGS_KEY).await
     }
 
     /// Persists the settings; called by the settings API.
@@ -246,31 +286,7 @@ impl NotificationSettings {
         &self,
         db: &DatabaseConnection,
     ) -> Result<(), sea_orm::DbErr> {
-        use crate::models::instance_setting;
-
-        let value = serde_json::to_string(self)
-            .map_err(|err| sea_orm::DbErr::Custom(err.to_string()))?;
-        let existing = instance_setting::Entity::find_by_id(SETTINGS_KEY)
-            .one(db)
-            .await?;
-        match existing {
-            Some(row) => {
-                let mut active: instance_setting::ActiveModel = row.into();
-                active.value = Set(value);
-                active.updated_at = Set(chrono::Utc::now());
-                active.update(db).await?;
-            },
-            None => {
-                instance_setting::ActiveModel {
-                    key: Set(SETTINGS_KEY.to_string()),
-                    value: Set(value),
-                    updated_at: Set(chrono::Utc::now()),
-                }
-                .insert(db)
-                .await?;
-            },
-        }
-        Ok(())
+        store_json_setting(db, SETTINGS_KEY, self).await
     }
 }
 
