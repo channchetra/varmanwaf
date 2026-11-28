@@ -129,3 +129,49 @@ impl UpstreamProvider for Provider {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn update_upstreams_health_checks_changed_backends() {
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let origin = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf).await;
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
+            }
+        });
+
+        let provider = Arc::new(Provider::new());
+        let configs = HashMap::from([(
+            "origin".to_string(),
+            UpstreamConf {
+                addrs: vec![addr.to_string()],
+                health_check: Some(format!("http://{addr}/health")),
+                ..Default::default()
+            },
+        )]);
+
+        let update = provider
+            .update_upstreams(&configs, None)
+            .await
+            .expect("the upstream must build");
+        assert!(update.is_ok(), "{}", update.errors);
+        assert_eq!(vec!["origin".to_string()], update.updated);
+        assert!(provider.get("origin").is_some());
+        origin.abort();
+    }
+}

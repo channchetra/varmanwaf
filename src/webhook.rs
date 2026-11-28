@@ -58,6 +58,22 @@ fn new_sender(basic: &BasicConf) -> WebhookNotificationSender {
     sender
 }
 
+/// Builds a webhook with explicit batch settings, for tests that exercise the
+/// production batching/flush paths without the `cfg(test)` shortcut above.
+#[cfg(test)]
+fn new_sender_with_batch(
+    basic: &BasicConf,
+    window: Duration,
+    max_events: usize,
+) -> WebhookNotificationSender {
+    WebhookNotificationSender::new(
+        basic.webhook.clone().unwrap_or_default(),
+        basic.webhook_type.clone().unwrap_or_default(),
+        basic.webhook_notifications.clone().unwrap_or_default(),
+    )
+    .with_batch(window, max_events)
+}
+
 /// What `get_webhook_sender` hands out. Upstreams, discovery and the
 /// certificate checkers keep that `Arc` for as long as they live, so it cannot
 /// be the webhook itself: this forwards each notification to whichever
@@ -175,6 +191,10 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::sync::mpsc;
 
+    /// The webhook is process-global; keep the tests that replace it apart.
+    static WEBHOOK_LOCK: tokio::sync::Mutex<()> =
+        tokio::sync::Mutex::const_new(());
+
     /// A webhook endpoint that answers 200 and passes on each request body.
     async fn spawn_endpoint() -> (String, mpsc::UnboundedReceiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -221,6 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reload_reaches_senders_handed_out_earlier() {
+        let _guard = WEBHOOK_LOCK.lock().await;
         let (url, mut bodies) = spawn_endpoint().await;
         let mut current = BasicConf {
             webhook: Some(url),
@@ -279,5 +300,70 @@ mod tests {
             new.webhook_batch_max_events,
             current.webhook_batch_max_events
         );
+    }
+
+    #[tokio::test]
+    async fn production_batch_settings_are_applied() {
+        let _guard = WEBHOOK_LOCK.lock().await;
+        let (url, mut bodies) = spawn_endpoint().await;
+        let basic = BasicConf {
+            webhook: Some(url),
+            webhook_notifications: Some(vec![
+                "batch_a".to_string(),
+                "batch_b".to_string(),
+            ]),
+            ..Default::default()
+        };
+        WEBHOOK.store(Arc::new(new_sender_with_batch(
+            &basic,
+            Duration::from_millis(100),
+            10,
+        )));
+        send_notification(NotificationData {
+            category: "batch_a".to_string(),
+            ..Default::default()
+        })
+        .await;
+        send_notification(NotificationData {
+            category: "batch_b".to_string(),
+            ..Default::default()
+        })
+        .await;
+        // Still queued: the configured window is in effect.
+        assert!(bodies.try_recv().is_err());
+        let body = tokio::time::timeout(Duration::from_secs(2), bodies.recv())
+            .await
+            .expect("the batch window must flush")
+            .expect("a batch body");
+        assert!(body.contains("batch_a"), "{body}");
+        assert!(body.contains("batch_b"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn flush_pending_posts_a_queued_batch() {
+        let _guard = WEBHOOK_LOCK.lock().await;
+        let (url, mut bodies) = spawn_endpoint().await;
+        let basic = BasicConf {
+            webhook: Some(url),
+            webhook_notifications: Some(vec!["flush_a".to_string()]),
+            ..Default::default()
+        };
+        WEBHOOK.store(Arc::new(new_sender_with_batch(
+            &basic,
+            Duration::from_secs(60),
+            10,
+        )));
+        send_notification(NotificationData {
+            category: "flush_a".to_string(),
+            ..Default::default()
+        })
+        .await;
+        assert!(bodies.try_recv().is_err());
+        flush_pending().await;
+        let body = tokio::time::timeout(Duration::from_secs(2), bodies.recv())
+            .await
+            .expect("flush must post")
+            .expect("a flushed body");
+        assert!(body.contains("flush_a"), "{body}");
     }
 }
