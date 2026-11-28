@@ -67,8 +67,8 @@ from every member's `Cargo.toml` by `src/bin/generate-mermaid.rs`):
 
 - **Varman platform** — the root `varman` binary, `varman-control` (control
   plane, REST/gRPC, console), `varman-agent` (edge client), `varman-waf`
-  (pipeline engine), `varman-plugin` (WAF/stream/processor/shadow/custom
-  plugins), `varman-protocol`, `varman-challenge`, `varman-pprof`.
+  (pipeline engine), `varman-plugin` (WAF, challenge, cache, rewrite, error-page,
+  stream/processor/shadow/custom plugins), `varman-protocol`, `varman-challenge`, `varman-pprof`.
 - **Pingap foundation** — `pingap-core`, `pingap-config`, `pingap-proxy`,
   `pingap-plugin`, `pingap-upstream`, `pingap-discovery`, `pingap-health`,
   `pingap-location`, `pingap-cache`, `pingap-certificate`, `pingap-acme`,

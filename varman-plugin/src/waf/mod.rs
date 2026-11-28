@@ -24,6 +24,11 @@
 //! Verdicts map onto the proxy pipeline: `Pass`/`Monitor` continue, `Block`
 //! returns 403, and `Challenge` delegates to the challenge subsystem.
 
+use crate::challenge::{
+    ChallengeKind, VERIFY_ENDPOINT, basic_auth_page, block_page,
+    build_challenge_response, paused_page, rate_limit_page,
+    resolve_cookie_secret,
+};
 use crate::waf_ato::{FailedAuthTracker, is_state_changing};
 use crate::waf_stream::{StreamFinding, StreamInspector, TailWindow};
 use async_trait::async_trait;
@@ -35,11 +40,6 @@ use pingap_core::{
     Ctx, HTTP_HEADER_NAME_X_REQUEST_ID, HttpResponse, Plugin, PluginStep,
     RequestPluginResult, ResponseBodyPluginResult, ResponsePluginResult,
     constant_time_eq, ensure_client_ip, get_host, new_internal_error,
-};
-use pingap_plugin::{
-    ChallengeKind, VERIFY_ENDPOINT, basic_auth_page, block_page,
-    build_challenge_response, paused_page, rate_limit_page,
-    resolve_cookie_secret,
 };
 use pingap_plugin::{Error, get_hash_key, parse_params};
 use pingap_util::{IpRules, base64_decode};

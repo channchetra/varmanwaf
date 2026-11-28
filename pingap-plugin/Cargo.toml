@@ -37,7 +37,6 @@ glob = { workspace = true }
 hex = { workspace = true }
 hickory-resolver = { workspace = true }
 http = { workspace = true }
-ipnet = { workspace = true }
 jsonwebtoken = { workspace = true }
 hmac-sha256 = { workspace = true }
 hmac-sha512 = { workspace = true, default-features = false }
@@ -45,13 +44,9 @@ humantime = { workspace = true }
 mime_guess = { workspace = true }
 nanoid = { workspace = true }
 path-absolutize = { workspace = true }
-pingap-cache = { workspace = true }
 pingap-config = { workspace = true }
 pingap-core = { workspace = true }
 pingap-util = { workspace = true }
-varman-waf = { path = "../varman-waf" }
-varman-challenge = { path = "../varman-challenge" }
-varman-agent = { path = "../varman-agent" }
 pingora = { workspace = true }
 rand = { workspace = true }
 regex = { workspace = true }
@@ -62,7 +57,6 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 smallvec = { workspace = true }
 snafu = { workspace = true }
-tera = { workspace = true }
 TinyUFO = { workspace = true }
 tokio = { workspace = true, features = ["net", "io-util"] }
 toml = { workspace = true }
@@ -76,11 +70,6 @@ uuid = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }
-# Rule bundles are pushed to the test agent through the proto types.
-varman-protocol = { path = "../varman-protocol" }
-# Enables the test-util feature (agent instance installer + log introspection)
-# for the waf plugin access-log tests.
-varman-agent = { path = "../varman-agent", features = ["test-util"] }
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny

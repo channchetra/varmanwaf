@@ -23,7 +23,6 @@
 //! the [`PENDING_CHALLENGES`] store so a challenge issued by one can be
 //! verified by the other's verify endpoint.
 
-use super::{Error, get_hash_key, parse_params, redacted_params};
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
@@ -35,6 +34,7 @@ use pingap_core::{
     RequestPluginResult, ensure_client_ip, get_cookie_value, get_host,
     get_req_header_value,
 };
+use pingap_plugin::{Error, get_hash_key, parse_params, redacted_params};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::path::Path;
@@ -820,7 +820,7 @@ impl TryFrom<&PluginConf> for ChallengePlugin {
         let exempt_paths = params.exempt_paths;
         let exempt_user_agents = params.exempt_user_agents;
 
-        let plugin_step = match super::get_step_conf_in(
+        let plugin_step = match pingap_plugin::get_step_conf_in(
             value,
             "challenge",
             PluginStep::EarlyRequest,
@@ -983,8 +983,6 @@ impl Plugin for ChallengePlugin {
         )))
     }
 }
-
-register_plugin!("challenge", ChallengePlugin);
 
 #[cfg(test)]
 mod tests {

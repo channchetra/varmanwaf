@@ -31,7 +31,6 @@
 //! * otherwise the locally configured `pages` from the plugin's TOML config,
 //!   optionally merged with the built-in VarmanWAF defaults.
 
-use super::{Error, get_hash_key, parse_params};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -46,6 +45,7 @@ use pingap_core::{
     ResponseBodyPluginResult, ResponsePluginResult, ensure_client_ip, get_host,
     get_req_header_value,
 };
+use pingap_plugin::{Error, get_hash_key, parse_params};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -702,8 +702,6 @@ impl Plugin for ErrorPagePlugin {
         }
     }
 }
-
-register_plugin!("error_page", ErrorPagePlugin);
 
 #[cfg(test)]
 mod tests {

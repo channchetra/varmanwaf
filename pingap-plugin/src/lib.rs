@@ -290,14 +290,11 @@ macro_rules! register_plugin {
 mod accept_encoding;
 mod basic_auth;
 pub mod bot_dns;
-mod cache;
-mod challenge;
 mod combined_auth;
 mod compression;
 mod cors;
 mod csrf;
 mod directory;
-mod error_page;
 mod forward_auth;
 pub mod geo;
 #[cfg(feature = "geo")]
@@ -313,166 +310,9 @@ mod redirect;
 mod referer_restriction;
 mod request_id;
 mod response_headers;
-mod rewrite;
 mod sub_filter;
 pub mod text;
 mod traffic_splitting;
 mod ua_restriction;
 
 pub use plugin::get_plugin_factory;
-// The WAF plugin (now in `varman-plugin`) uses these challenge helpers; they
-// remain here because the challenge subsystem itself is still a Pingap plugin.
-pub use challenge::{
-    ChallengeKind, VERIFY_ENDPOINT, basic_auth_page, block_page,
-    build_challenge_response, paused_page, rate_limit_page,
-    resolve_cookie_secret,
-};
-
-#[cfg(test)]
-pub(crate) mod test_support {
-    //! Fixtures shared by plugin test modules.
-    use pingora::proxy::Session;
-    use tokio_test::io::Builder;
-
-    /// Serializes tests that install the process-wide agent.
-    ///
-    /// The agent instance is a global and cargo runs tests in parallel: a test
-    /// reaching the plugin's agent paths while another has an agent installed
-    /// would record into that agent's metrics collector.
-    pub(crate) static AGENT_LOCK: tokio::sync::Mutex<()> =
-        tokio::sync::Mutex::const_new(());
-
-    /// Acquires the process-wide agent test lock.
-    pub(crate) async fn lock_agent() -> tokio::sync::MutexGuard<'static, ()> {
-        AGENT_LOCK.lock().await
-    }
-
-    /// Installs a never-connecting agent for the duration of one test,
-    /// holding the agent lock so sibling tests stay off the process global.
-    pub(crate) async fn install_test_agent() -> (
-        tokio::sync::MutexGuard<'static, ()>,
-        std::sync::Arc<varman_agent::VarmanAgent>,
-        tempfile::TempDir,
-    ) {
-        use std::sync::Arc;
-        use varman_agent::cache::RuleCache;
-        use varman_agent::client::ControlPlaneClient;
-        use varman_agent::config::AgentConfig;
-        use varman_agent::heartbeat::MetricsCollector;
-
-        let lock = lock_agent().await;
-        let dir = tempfile::tempdir().expect("test temp dir");
-        let config = AgentConfig {
-            cache_dir: dir.path().to_string_lossy().to_string(),
-            ..Default::default()
-        };
-        let rule_cache =
-            RuleCache::new(dir.path().to_path_buf(), "test-agent".to_string())
-                .expect("test rule cache");
-        let metrics = Arc::new(MetricsCollector::new());
-        let client = Arc::new(ControlPlaneClient::new(
-            config.clone(),
-            Arc::clone(&rule_cache),
-            Arc::clone(&metrics),
-        ));
-        let agent = Arc::new(varman_agent::VarmanAgent {
-            config,
-            client,
-            rule_cache,
-            metrics,
-        });
-        varman_agent::VarmanAgent::set_agent_instance(Some(Arc::clone(&agent)));
-        (lock, agent, dir)
-    }
-
-    /// Builds an H1 session preloaded with a single request.
-    pub(crate) async fn h1_session(
-        method: &str,
-        target: &str,
-        host: &str,
-    ) -> Session {
-        let input =
-            format!("{method} {target} HTTP/1.1\r\nHost: {host}\r\n\r\n");
-        let mock_io = Builder::new().read(input.as_bytes()).build();
-        let mut s = Session::new_h1(Box::new(mock_io));
-        s.read_request().await.expect("read_request");
-        s
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{accepts_encoding, parse_params, redacted_params};
-    use pingap_config::PluginConf;
-    use pretty_assertions::assert_eq;
-
-    #[derive(Debug, Default, serde::Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    struct TestParams {
-        level: u32,
-        name: String,
-    }
-
-    #[test]
-    fn test_parse_params_ignores_common_keys_and_rejects_typos() {
-        let mut conf = PluginConf::new();
-        conf.insert(
-            "category".into(),
-            toml::Value::String("compression".into()),
-        );
-        conf.insert("step".into(), toml::Value::String("request".into()));
-        conf.insert("level".into(), toml::Value::Integer(3));
-        conf.insert("name".into(), toml::Value::String("x".into()));
-
-        let params: TestParams =
-            parse_params(&conf, "compression").expect("valid params");
-        assert_eq!(3, params.level);
-        assert_eq!("x", params.name);
-
-        conf.insert("levle".into(), toml::Value::Integer(3));
-        assert!(parse_params::<TestParams>(&conf, "compression").is_err());
-
-        conf.remove("levle");
-        conf.insert("level".into(), toml::Value::String("3".into()));
-        assert!(parse_params::<TestParams>(&conf, "compression").is_err());
-    }
-
-    #[test]
-    fn test_accepts_encoding() {
-        assert_eq!(true, accepts_encoding("gzip, br", "br"));
-        assert_eq!(true, accepts_encoding("gzip, deflate, br;q=0.9", "br"));
-        assert_eq!(true, accepts_encoding("BR", "br"));
-        // Substring false-matches must be rejected.
-        assert_eq!(false, accepts_encoding("x-gzip", "gzip"));
-        assert_eq!(false, accepts_encoding("gzipx", "gzip"));
-        // Explicit q=0 means "not acceptable".
-        assert_eq!(false, accepts_encoding("br;q=0", "br"));
-    }
-
-    #[test]
-    fn test_redacted_params_hides_credentials() {
-        // spellchecker:off
-        let conf: PluginConf = toml::from_str(
-            r#"
-category = "basic_auth"
-authorizations = ["YWRtaW46MTIzMTIz"]
-secret = "super-secret"
-keys = ["key-one", "key-two"]
-delay = "10ms"
-"#,
-        )
-        .unwrap();
-        // spellchecker:on
-
-        let rendered = redacted_params(&conf);
-        assert!(!rendered.contains("YWRtaW46MTIzMTIz"));
-        assert!(!rendered.contains("super-secret"));
-        assert!(!rendered.contains("key-one"));
-        // Two list entries remain visible as two placeholders.
-        assert!(rendered.contains("<redacted>"));
-        assert!(rendered.contains(r#"["<redacted>", "<redacted>"]"#));
-        // Non-secret keys are untouched.
-        assert!(rendered.contains("basic_auth"));
-        assert!(rendered.contains("10ms"));
-    }
-}

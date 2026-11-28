@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, parse_params};
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::Bytes;
@@ -27,6 +26,7 @@ use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
     ensure_client_ip, get_cache_key, get_host,
 };
+use pingap_plugin::{Error, get_hash_key, parse_params};
 use pingap_util::IpRules;
 use pingora::cache::CacheOptionOverrides;
 use pingora::cache::eviction::EvictionManager;
@@ -920,8 +920,6 @@ impl Plugin for Cache {
         Ok(RequestPluginResult::Continue)
     }
 }
-
-register_plugin!("cache", Cache);
 
 #[cfg(test)]
 mod tests {

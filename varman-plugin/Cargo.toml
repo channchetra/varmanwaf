@@ -13,11 +13,18 @@ path = "src/lib.rs"
 
 [dependencies]
 async-trait = { workspace = true }
-base64 = { workspace = true }
 bytes = { workspace = true }
+arc-swap = { workspace = true }
+bstr = { workspace = true }
+bytesize = { workspace = true }
+chrono = { workspace = true }
 dashmap = { workspace = true }
+fancy-regex = { workspace = true }
+tera = { workspace = true }
+humantime = { workspace = true }
 http = { workspace = true }
 ipnet = { workspace = true }
+pingap-cache = { workspace = true }
 pingap-config = { workspace = true }
 pingap-core = { workspace = true }
 pingap-plugin = { path = "../pingap-plugin" }
@@ -28,8 +35,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["net", "io-util"] }
 toml = { workspace = true }
-tor-geoip = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true }
 varman-agent = { path = "../varman-agent" }
 varman-challenge = { path = "../varman-challenge" }
 varman-waf = { path = "../varman-waf" }

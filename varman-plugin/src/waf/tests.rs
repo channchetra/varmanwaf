@@ -1,18 +1,10 @@
 use super::*;
-use pingap_plugin::text::contains_ignore_case;
-static AGENT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-async fn lock_agent() -> tokio::sync::MutexGuard<'static, ()> {
-    AGENT_LOCK.lock().await
-}
+use crate::test_support::{install_test_agent, lock_agent};
 use pingap_core::PluginStep;
+use pingap_plugin::text::contains_ignore_case;
 use pingap_util::base64_encode;
 use pingora::proxy::Session;
 use tokio_test::io::Builder;
-use varman_agent::cache::RuleCache;
-use varman_agent::client::ControlPlaneClient;
-use varman_agent::config::AgentConfig;
-use varman_agent::heartbeat::MetricsCollector;
 use varman_challenge::ClearanceLevel;
 use varman_protocol::control_plane as proto;
 
@@ -539,38 +531,6 @@ async fn test_off_mode_skips() {
         .await
         .unwrap();
     assert!(result == RequestPluginResult::Skipped);
-}
-
-/// Install a never-connecting agent for the duration of one test,
-/// holding the agent lock so sibling tests stay off the global.
-pub(crate) async fn install_test_agent() -> (
-    tokio::sync::MutexGuard<'static, ()>,
-    Arc<VarmanAgent>,
-    tempfile::TempDir,
-) {
-    let lock = lock_agent().await;
-    let dir = tempfile::tempdir().unwrap();
-    let config = AgentConfig {
-        cache_dir: dir.path().to_string_lossy().to_string(),
-        ..Default::default()
-    };
-    let rule_cache =
-        RuleCache::new(dir.path().to_path_buf(), "test-agent".to_string())
-            .unwrap();
-    let metrics = Arc::new(MetricsCollector::new());
-    let client = Arc::new(ControlPlaneClient::new(
-        config.clone(),
-        Arc::clone(&rule_cache),
-        Arc::clone(&metrics),
-    ));
-    let agent = Arc::new(VarmanAgent {
-        config,
-        client,
-        rule_cache,
-        metrics,
-    });
-    VarmanAgent::set_agent_instance(Some(Arc::clone(&agent)));
-    (lock, agent, dir)
 }
 
 /// Pushes site rules to the test agent: a whitelist allow rule above a

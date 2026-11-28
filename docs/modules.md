@@ -95,13 +95,9 @@ graph TD
     performance --> location
     performance --> upstream
 
-    plugin --> agent
-    plugin --> cache
-    plugin --> challenge
     plugin --> config
     plugin --> core
     plugin --> util
-    plugin --> waf
 
 
 
@@ -148,6 +144,7 @@ graph TD
 
 
     varman-plugin --> agent
+    varman-plugin --> cache
     varman-plugin --> challenge
     varman-plugin --> config
     varman-plugin --> core
