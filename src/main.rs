@@ -430,7 +430,7 @@ fn parse_arguments() -> Args {
 /// runtime behaviour; any other construction error is treated as fatal.
 ///
 /// An admin plugin is not registered in the factory (it needs a
-/// `ConfigManager`), so it is dry-run the same way `try_init_plugins` builds
+/// `ConfigManager`), so it is dry-run the same way ``Provider::init_plugins` builds
 /// it, with `config_manager`.
 fn validate_plugins(
     config: &PingapConfig,

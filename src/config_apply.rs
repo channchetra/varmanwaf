@@ -93,7 +93,7 @@ pub struct ApplyOptions {
     ///
     /// The daemon sets this. The agent-hosted plane does neither: its
     /// periodic `HealthCheckTask` owns checking and it passes no notification
-    /// sender (its `try_init_upstreams` call has always used `None`).
+    /// sender (its upstream builder has always used `None`).
     pub update_health_checks: bool,
     /// Rebuild every provider from `next` even when its category is unchanged.
     ///

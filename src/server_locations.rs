@@ -13,14 +13,12 @@
 // limitations under the License.
 
 use crate::config_apply::ProviderUpdate;
-use crate::locations::new_location_provider;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_location::{LocationProvider, ServerLocationRoute};
 use pingap_proxy::{ServerLocations, ServerLocationsProvider};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::LazyLock;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -85,30 +83,8 @@ impl ServerLocationsProvider for Provider {
     }
 }
 
-// Compatibility layer for the pre-provider-set callers and the test suite.
-// Production assembly and reload use the owned `Provider`, so these are dead
-// in a non-test build by design.
-#[allow(dead_code)]
-static SERVER_LOCATIONS_PROVIDER: LazyLock<Arc<Provider>> =
-    LazyLock::new(|| {
-        Arc::new(Provider {
-            server_locations: ArcSwap::from_pointee(AHashMap::new()),
-        })
-    });
-
-/// Creates a new instance of the server locations provider
-///
-/// # Returns
-/// * `Arc<Provider>` - The server locations provider
-#[allow(dead_code)]
-pub fn new_server_locations_provider() -> Arc<Provider> {
-    SERVER_LOCATIONS_PROVIDER.clone()
-}
-
 /// Sorts a server's configured location names by their weight, highest first,
-/// so the first match keeps the priority `LocationConf` declares. A name with
-/// no configured weight sorts as 0; the sort is stable, so equal-weight
-/// locations keep the order the server lists them in.
+/// so the first match keeps the priority `LocationConf` declares.
 fn ordered_locations(
     items: &[String],
     weights: &HashMap<String, u16>,
@@ -122,8 +98,6 @@ fn ordered_locations(
     items
 }
 
-/// The weight-ordered location names of every server that has a `locations`
-/// list. A server without one serves nothing and is left out.
 fn ordered_server_locations(
     servers: &HashMap<String, pingap_config::ServerConf>,
     weights: &HashMap<String, u16>,
@@ -154,23 +128,6 @@ fn changed_server_locations(
         })
         .map(|(name, _)| name.to_string())
         .collect()
-}
-
-/// Compatibility wrapper over the process-wide registries.
-///
-/// Production assembly and reload go through the [`Provider`] owned by their
-/// provider set, with its own location provider; this is kept for the legacy
-/// paths and tests that have not been converted.
-#[allow(dead_code)]
-pub fn try_init_server_locations(
-    servers: &HashMap<String, pingap_config::ServerConf>,
-    locations: &HashMap<String, pingap_config::LocationConf>,
-) -> Result<ProviderUpdate> {
-    new_server_locations_provider().init_server_locations(
-        new_location_provider().as_ref(),
-        servers,
-        locations,
-    )
 }
 
 #[cfg(test)]
@@ -347,13 +304,20 @@ mod tests {
         )]);
 
         // Act
-        let first = try_init_server_locations(&servers, &locations)
+        let location_provider = crate::locations::Provider::new();
+        location_provider
+            .init_locations(&locations)
+            .expect("the test locations build");
+        let provider = Provider::new();
+        let first = provider
+            .init_server_locations(&location_provider, &servers, &locations)
             .expect("a server location index never fails to build")
             .updated;
-        let published = SERVER_LOCATIONS_PROVIDER
+        let published = provider
             .get("server-locations-order-test")
             .map(|route| route.ordered.as_slice().to_vec());
-        let second = try_init_server_locations(&servers, &locations)
+        let second = provider
+            .init_server_locations(&location_provider, &servers, &locations)
             .expect("a server location index never fails to build");
 
         // Assert

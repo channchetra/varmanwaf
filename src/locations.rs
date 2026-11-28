@@ -20,7 +20,6 @@ use pingap_config::{Hashable, LocationConf};
 use pingap_location::{Location, LocationProvider, LocationStats, Locations};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::LazyLock;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -101,32 +100,6 @@ impl LocationProvider for Provider {
     }
 }
 
-// Compatibility layer for the pre-provider-set callers and the test suite.
-// Production assembly and reload use the owned `Provider`, so these are dead
-// in a non-test build by design.
-#[allow(dead_code)]
-static LOCATION_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
-    Arc::new(Provider {
-        locations: ArcSwap::from_pointee(AHashMap::new()),
-    })
-});
-#[allow(dead_code)]
-pub fn new_location_provider() -> Arc<dyn LocationProvider> {
-    LOCATION_PROVIDER.clone()
-}
-
-/// Compatibility wrapper over the process-wide registry.
-///
-/// Production assembly and reload go through the [`Provider`] owned by their
-/// provider set; this is kept for the legacy paths and tests that have not
-/// been converted.
-#[allow(dead_code)]
-pub fn try_init_locations(
-    location_configs: &HashMap<String, LocationConf>,
-) -> Result<ProviderUpdate> {
-    LOCATION_PROVIDER.init_locations(location_configs)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,8 +119,10 @@ mod tests {
     fn a_new_location_is_reported_as_updated() {
         let _guard = lock_providers();
         // Act
-        let update =
-            try_init_locations(&config(Some("/api"))).expect("a valid path");
+        let provider = Provider::new();
+        let update = provider
+            .init_locations(&config(Some("/api")))
+            .expect("a valid path");
 
         // Assert
         assert!(update.is_ok(), "{}", update.errors);
@@ -161,7 +136,9 @@ mod tests {
     fn an_unparseable_location_is_a_fatal_error() {
         let _guard = lock_providers();
         // Act: a broken regex path cannot be built.
-        let error = try_init_locations(&config(Some("~(")))
+        let provider = Provider::new();
+        let error = provider
+            .init_locations(&config(Some("~(")))
             .expect_err("an invalid path pattern must fail the rebuild");
 
         // Assert: the failure is the `Err`, not a per-entry error.

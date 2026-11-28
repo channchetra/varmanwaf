@@ -22,7 +22,6 @@ use pingap_upstream::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::LazyLock;
 use tracing::error;
 
 static LOG_TARGET: &str = "main::upstreams";
@@ -129,44 +128,4 @@ impl UpstreamProvider for Provider {
             .map(|(k, v)| (k.to_string(), v.clone()))
             .collect()
     }
-}
-
-// Compatibility layer for the pre-provider-set callers and the test suite.
-// Production assembly and reload use the owned `Provider`, so these are dead
-// in a non-test build by design.
-#[allow(dead_code)]
-static UPSTREAM_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
-    Arc::new(Provider {
-        upstreams: ArcSwap::from_pointee(AHashMap::new()),
-    })
-});
-
-#[allow(dead_code)]
-pub fn new_upstream_provider() -> Arc<dyn UpstreamProvider> {
-    UPSTREAM_PROVIDER.clone()
-}
-
-/// Compatibility wrapper over the process-wide registry.
-///
-/// Production assembly and reload go through [`new_upstream_provider`]'s
-/// [`Provider`] instead; this is kept for the legacy paths and tests that
-/// have not been converted to an owned provider set.
-#[allow(dead_code)]
-pub fn try_init_upstreams(
-    upstream_configs: &HashMap<String, UpstreamConf>,
-    sender: Option<Arc<NotificationSender>>,
-) -> Result<ProviderUpdate> {
-    UPSTREAM_PROVIDER.init_upstreams(upstream_configs, sender)
-}
-
-/// Compatibility wrapper over the process-wide registry; see
-/// [`try_init_upstreams`].
-#[allow(dead_code)]
-pub async fn try_update_upstreams(
-    upstream_configs: &HashMap<String, UpstreamConf>,
-    sender: Option<Arc<NotificationSender>>,
-) -> Result<ProviderUpdate> {
-    UPSTREAM_PROVIDER
-        .update_upstreams(upstream_configs, sender)
-        .await
 }

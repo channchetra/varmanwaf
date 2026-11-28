@@ -31,7 +31,6 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info};
 
@@ -47,7 +46,7 @@ pub(crate) use self::admin::AdminServe;
 pub static ADMIN_SERVER_PLUGIN: &str = "pingap:admin";
 
 /// Name and configuration of a plugin the root constructs itself and hands to
-/// [`try_init_plugins`], instead of the registry deriving it from a
+/// [`Provider::init_plugins`], instead of the registry deriving it from a
 /// process-global set during boot.
 pub type AdminPlugin = (String, PluginConf);
 
@@ -275,17 +274,6 @@ impl Default for Provider {
     }
 }
 
-// Compatibility layer for the pre-provider-set callers and the test suite.
-// Production assembly and reload use the owned `Provider`, so these are dead
-// in a non-test build by design.
-#[allow(dead_code)]
-static PLUGIN_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
-    Arc::new(Provider {
-        plugins: ArcSwap::from_pointee(AHashMap::new()),
-        version: AtomicU64::new(0),
-    })
-});
-
 impl PluginProvider for Provider {
     fn get(&self, name: &str) -> Option<Arc<dyn Plugin>> {
         self.plugins.load().get(name).cloned()
@@ -294,11 +282,6 @@ impl PluginProvider for Provider {
     fn version(&self) -> u64 {
         self.version.load(Ordering::Acquire)
     }
-}
-
-#[allow(dead_code)]
-pub fn new_plugin_provider() -> Arc<Provider> {
-    PLUGIN_PROVIDER.clone()
 }
 
 /// Parses plugin configurations and instantiates plugin instances.
@@ -365,26 +348,6 @@ pub fn register_builtin_plugins() {
     #[cfg(feature = "imageoptim")]
     pingap_imageoptim::register();
     varman_plugin::register();
-}
-
-/// Compatibility wrapper over the process-wide registry.
-///
-/// Production assembly and reload go through the [`Provider`] owned by their
-/// provider set; this is kept for the legacy paths and tests that have not
-/// been converted.
-#[allow(dead_code)]
-pub fn try_init_plugins(
-    plugins: &HashMap<String, PluginConf>,
-    admin: Option<AdminPlugin>,
-    config_manager: Arc<ConfigManager>,
-    providers: &ProviderSet,
-) -> ProviderUpdate {
-    new_plugin_provider().init_plugins(
-        plugins,
-        admin,
-        config_manager,
-        providers,
-    )
 }
 
 impl Provider {
@@ -624,7 +587,7 @@ allow_unauthenticated = true
             .unwrap(),
         )]);
 
-        let update = try_init_plugins(
+        let update = Provider::new().init_plugins(
             &plugins,
             None,
             manager.clone(),
@@ -647,8 +610,12 @@ allow_unauthenticated = true
             "test:badAdmin".to_string(),
             toml::from_str::<PluginConf>(r#"category = "admin""#).unwrap(),
         )]);
-        let update =
-            try_init_plugins(&plugins, None, manager, &ProviderSet::new());
+        let update = Provider::new().init_plugins(
+            &plugins,
+            None,
+            manager,
+            &ProviderSet::new(),
+        );
 
         assert!(update.errors.contains("test:badAdmin"), "{}", update.errors);
         assert!(

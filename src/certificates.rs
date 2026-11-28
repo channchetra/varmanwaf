@@ -22,7 +22,6 @@ use pingap_certificate::{
 use pingap_config::CertificateConf;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::LazyLock;
 
 /// One owner's certificate registry. Constructed per data plane, never shared.
 pub struct Provider {
@@ -140,36 +139,9 @@ impl CertificateProvider for Provider {
     }
 }
 
-// Compatibility layer for the pre-provider-set callers and the test suite.
-// Production assembly and reload use the owned `Provider`, so these are dead
-// in a non-test build by design.
-#[allow(dead_code)]
-static CERTIFICATE_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
-    Arc::new(Provider {
-        certificates: ArcSwap::from_pointee(AHashMap::new()),
-    })
-});
-
-#[allow(dead_code)]
-pub fn new_certificate_provider() -> Arc<dyn CertificateProvider> {
-    CERTIFICATE_PROVIDER.clone()
-}
-
-/// Compatibility wrapper over the process-wide registry.
-///
-/// Production assembly and reload go through the [`Provider`] owned by their
-/// provider set; this is kept for the legacy paths and tests that have not
-/// been converted.
-#[allow(dead_code)]
-pub fn try_update_certificates(
-    certificate_configs: &HashMap<String, CertificateConf>,
-) -> Result<ProviderUpdate, String> {
-    CERTIFICATE_PROVIDER.update_certificates(certificate_configs)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::try_update_certificates;
+    use super::Provider;
     use pingap_certificate::CertificateProvider;
     use pingap_certificate::TlsCertificate;
     use pingap_config::CertificateConf;
@@ -180,7 +152,12 @@ mod tests {
     /// map, so they must not interleave.
     use crate::test_support::lock_providers;
 
-    fn seed_provider(domain: &str, name: &str, hash: &str) {
+    fn seed_provider(
+        provider: &Provider,
+        domain: &str,
+        name: &str,
+        hash: &str,
+    ) {
         let mut map = ahash::AHashMap::new();
         map.insert(
             domain.to_string(),
@@ -190,7 +167,7 @@ mod tests {
                 ..Default::default()
             }),
         );
-        super::CERTIFICATE_PROVIDER.store(map);
+        provider.store(map);
     }
 
     fn conf_with(
@@ -213,18 +190,20 @@ mod tests {
     #[test]
     fn test_entries_without_pem_keep_serving_the_previous_certificate() {
         let _guard = lock_providers();
-        seed_provider("carry-a.example.com", "old", "old-hash");
+        let provider = Provider::new();
+        seed_provider(&provider, "carry-a.example.com", "old", "old-hash");
         let mut configs = HashMap::new();
         configs.insert(
             "panel".to_string(),
             conf_with("carry-a.example.com", None, None),
         );
 
-        let update = try_update_certificates(&configs)
+        let update = provider
+            .update_certificates(&configs)
             .expect("a certificate update never fails the call");
         assert!(update.is_ok(), "{}", update.errors);
 
-        let certs = super::CERTIFICATE_PROVIDER.list();
+        let certs = provider.list();
         let cert = certs
             .get("carry-a.example.com")
             .expect("domain must still be served");
@@ -237,6 +216,7 @@ mod tests {
     #[test]
     fn test_fresh_certificate_wins_over_the_carried_over_one() {
         let _guard = lock_providers();
+        let provider = Provider::new();
         let certified_key = rcgen::generate_simple_self_signed(vec![
             "carry-b.example.com".to_string(),
         ])
@@ -244,19 +224,20 @@ mod tests {
         let tls_cert = certified_key.cert.pem();
         let tls_key = certified_key.signing_key.serialize_pem();
 
-        seed_provider("carry-b.example.com", "old", "old-hash");
+        seed_provider(&provider, "carry-b.example.com", "old", "old-hash");
         let mut configs = HashMap::new();
         configs.insert(
             "upload".to_string(),
             conf_with("carry-b.example.com", Some(&tls_cert), Some(&tls_key)),
         );
 
-        let update = try_update_certificates(&configs)
+        let update = provider
+            .update_certificates(&configs)
             .expect("a certificate update never fails the call");
         assert!(update.is_ok(), "{}", update.errors);
         assert_eq!(&["upload".to_string()], update.updated.as_slice());
 
-        let certs = super::CERTIFICATE_PROVIDER.list();
+        let certs = provider.list();
         let cert = certs
             .get("carry-b.example.com")
             .expect("domain must be served by the new certificate");
@@ -270,6 +251,7 @@ mod tests {
     #[test]
     fn test_a_partial_update_reports_the_failed_entry() {
         let _guard = lock_providers();
+        let provider = Provider::new();
         let certified_key = rcgen::generate_simple_self_signed(vec![
             "carry-c.example.com".to_string(),
         ])
@@ -277,7 +259,7 @@ mod tests {
         let tls_cert = certified_key.cert.pem();
         let tls_key = certified_key.signing_key.serialize_pem();
 
-        seed_provider("carry-c.example.com", "old", "old-hash");
+        seed_provider(&provider, "carry-c.example.com", "old", "old-hash");
         let mut configs = HashMap::new();
         configs.insert(
             "good".to_string(),
@@ -293,7 +275,8 @@ mod tests {
         );
 
         // Act
-        let update = try_update_certificates(&configs)
+        let update = provider
+            .update_certificates(&configs)
             .expect("a certificate update never fails the call");
 
         // Assert: the partial update did not apply, and the previous
@@ -301,7 +284,7 @@ mod tests {
         assert!(!update.is_ok(), "the failed entry must be reported");
         assert_eq!(&["good".to_string()], update.updated.as_slice());
         assert!(update.errors.contains("bad"), "{}", update.errors);
-        let certs = super::CERTIFICATE_PROVIDER.list();
+        let certs = provider.list();
         let cert = certs
             .get("carry-c.example.com")
             .expect("the previous certificate must keep serving");
