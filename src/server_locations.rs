@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config_apply::ProviderUpdate;
+use crate::provider::ProviderUpdate;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_location::{LocationProvider, ServerLocationRoute};

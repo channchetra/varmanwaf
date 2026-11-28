@@ -218,28 +218,20 @@ struct PluginWiring {
 
 /// The process-wide plugin instances every generated config registers.
 fn varman_plugin_confs() -> HashMap<String, PluginConf> {
-    let mut plugins: HashMap<String, PluginConf> = HashMap::new();
-    plugins.insert(
-        WAF_PLUGIN_NAME.to_string(),
-        toml::from_str::<PluginConf>(r###"category = "waf""###)
-            .unwrap_or_default(),
-    );
-    plugins.insert(
-        CHALLENGE_PLUGIN_NAME.to_string(),
-        toml::from_str::<PluginConf>(r###"category = "challenge""###)
-            .unwrap_or_default(),
-    );
-    plugins.insert(
-        REWRITE_PLUGIN_NAME.to_string(),
-        toml::from_str::<PluginConf>(r###"category = "rewrite""###)
-            .unwrap_or_default(),
-    );
-    plugins.insert(
-        ERROR_PAGE_PLUGIN_NAME.to_string(),
-        toml::from_str::<PluginConf>(r###"category = "error_page""###)
-            .unwrap_or_default(),
-    );
-    plugins
+    fn conf(category: &str) -> PluginConf {
+        [(
+            "category".to_string(),
+            toml::Value::String(category.to_string()),
+        )]
+        .into_iter()
+        .collect()
+    }
+    HashMap::from([
+        (WAF_PLUGIN_NAME.to_string(), conf("waf")),
+        (CHALLENGE_PLUGIN_NAME.to_string(), conf("challenge")),
+        (REWRITE_PLUGIN_NAME.to_string(), conf("rewrite")),
+        (ERROR_PAGE_PLUGIN_NAME.to_string(), conf("error_page")),
+    ])
 }
 
 /// Registers the plugin instances and wires the per-site location lists.

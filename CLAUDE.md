@@ -20,7 +20,7 @@ Most crates inherit the workspace version `1.5.0` with `version.workspace = true
 
 Editions are mixed by design: the workspace default is 2024, but `varman-agent`, `varman-protocol`, `varman-control` and most `pingap-*` foundation crates still declare 2021. MSRV is 1.96.0 for both. The internal `pingap-*` dependencies live in `[workspace.dependencies]`, so a member depends on a sibling with `{ workspace = true }`.
 
-**Bumping the version means editing two places in the root `Cargo.toml`**: `workspace.package.version`, and the `version = "..."` on each `pingap-*` entry in `[workspace.dependencies]` — cargo has no way to inherit the package version into a dependency requirement. `publish.sh` then publishes all crates at the new version in dependency order.
+**Bumping the version means editing two places in the root `Cargo.toml`**: `workspace.package.version`, and the `version = "..."` on each `pingap-*` entry in `[workspace.dependencies]` — cargo has no way to inherit the package version into a dependency requirement. `publish.sh` then publishes the `pingap-*` foundation crates at the new version in dependency order; the Varman platform crates are path-only workspace members and are not published.
 
 ## Common commands
 

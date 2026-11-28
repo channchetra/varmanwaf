@@ -15,7 +15,7 @@
 use super::restart;
 use crate::config_apply::{self, ApplyOptions, ApplyOutcome};
 use crate::data_plane::ProviderSet;
-use crate::plugin::AdminPluginEntry;
+use crate::provider::AdminPluginEntry;
 use crate::webhook::send_notification;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_trait::async_trait;
@@ -206,11 +206,9 @@ async fn apply_daemon_config(
             original_diff_result = original_diff_result.join("\n"),
             "current config diff from hot reload config"
         );
-        // no update config
         if original_diff_result.is_empty() {
             return Ok(false);
         }
-        // update current config to be hot reload config
         config_manager.set_current_config(report.config);
         send_notification(NotificationData {
             category: "diff_config".to_string(),
@@ -220,8 +218,6 @@ async fn apply_daemon_config(
         .await;
         return Ok(false);
     }
-    // restart mode
-    // update current config to be hot reload config
     config_manager.set_current_config(report.config);
 
     let should_restart = restart_reason.is_some();

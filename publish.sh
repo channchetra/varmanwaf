@@ -1,6 +1,8 @@
 #!/bin/bash
 
-# publish order
+# Publish order for the pingap-* foundation crates. The Varman platform
+# crates (varman-control, varman-agent, varman-plugin, ...) are path-only
+# workspace members and are not published to crates.io.
 CRATES=(
     "pingap-util"
     "pingap-core"

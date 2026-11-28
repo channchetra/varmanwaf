@@ -31,7 +31,6 @@ bytes = { workspace = true }
 bytesize = { workspace = true }
 chrono = { workspace = true }
 cookie = { workspace = true }
-ctor = { workspace = true }
 crc32fast = { workspace = true }
 dashmap = { workspace = true }
 fancy-regex = { workspace = true }

@@ -33,8 +33,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info};
 
-use crate::config_apply::ProviderUpdate;
 use crate::data_plane::ProviderSet;
+use crate::provider::{AdminPluginEntry, ProviderUpdate};
 
 mod admin;
 mod stats;
@@ -47,11 +47,6 @@ pub static ADMIN_SERVER_PLUGIN: &str = "pingap:admin";
 /// Name and configuration of a plugin the root constructs itself and hands to
 /// [`Provider::replace_plugins`], instead of the registry deriving it from a
 /// process-global set during boot.
-/// A named admin plugin configuration: the listener name and its plugin
-/// table. Distinct from [`AdminServe`] (the built plugin) and
-/// `AdminPluginQuery` (the URL query of `--admin`).
-pub type AdminPluginEntry = (String, PluginConf);
-
 static LOG_TARGET: &str = "main::plugin";
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
@@ -178,7 +173,7 @@ zstd_level = 6
 remark = "Compression for http, support zstd:6, br:6, gzip:6"
 "###,
             )
-            .unwrap_or_default(),
+            .expect("built-in plugin config must parse"),
         ),
         (
             "pingap:compressionUpstream".to_string(),
@@ -192,7 +187,7 @@ mode = "upstream"
 remark = "Compression for upstream response, support zstd:6, br:6, gzip:6"
 "###,
             )
-            .unwrap_or_default(),
+            .expect("built-in plugin config must parse"),
         ),
         (
             "pingap:ping".to_string(),
@@ -203,7 +198,7 @@ path = "/ping"
 remark = "Ping pong"
 "###,
             )
-            .unwrap_or_default(),
+            .expect("built-in plugin config must parse"),
         ),
         (
             "pingap:stats".to_string(),
@@ -214,7 +209,7 @@ path = "/stats"
 remark = "Get stats of server"
 "###,
             )
-            .unwrap_or_default(),
+            .expect("built-in plugin config must parse"),
         ),
         (
             "pingap:requestId".to_string(),
@@ -224,7 +219,7 @@ category = "request_id"
 remark = "Generate a request id for service"
 "###,
             )
-            .unwrap_or_default(),
+            .expect("built-in plugin config must parse"),
         ),
         (
             "pingap:acceptEncodingAdjustment".to_string(),
@@ -236,7 +231,7 @@ only_one_encoding = true
 remark = "Adjust the accept encoding order and choose one encoding"
 "###,
             )
-            .unwrap_or_default(),
+            .expect("built-in plugin config must parse"),
         ),
     ]
 }
@@ -331,6 +326,7 @@ pub fn parse_plugins(
 /// crate is linked. Naming it here is that link edge, and the call makes the
 /// registration explicit instead of relying on an unused import in `main`.
 pub fn register_builtin_plugins() {
+    pingap_plugin::register_builtins();
     #[cfg(feature = "imageoptim")]
     pingap_imageoptim::register();
     varman_plugin::register();
@@ -565,6 +561,7 @@ mod tests {
     /// the caller passed, exactly like the `--admin` listener.
     #[test]
     fn a_document_admin_plugin_is_built_with_the_given_manager() {
+        pingap_plugin::register_builtins();
         let manager = Arc::new(pingap_config::new_memory_config_manager(
             "[basic]\n",
             None,

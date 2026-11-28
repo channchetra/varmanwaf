@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pingap_certificate::CertificateProvider;
 use pingap_config::{ConfigManager, PingapConfig, PingapTomlConfig};
+use pingap_performance::set_metrics_upstream_provider;
 use pingap_proxy::{Server as ProxyServer, parse_from_conf};
 use pingap_upstream::new_upstream_health_check_task;
 use pingora::services::background::background_service;
@@ -47,6 +48,10 @@ pub(super) async fn start_data_plane(
             "data_plane_background_tasks",
         ),
     )?;
+
+    // Per-backend Prometheus gauges read the plane's own upstream registry.
+    #[cfg(feature = "tracing")]
+    set_metrics_upstream_provider(assembled.providers.upstreams.clone());
 
     // Activate the WAF plugin: without it the data plane forwards traffic
     // uninspected and no access/security events are ever emitted.
@@ -129,14 +134,27 @@ async fn wait_for_config(rule_cache: &Arc<RuleCache>) -> PingapConfig {
     match build_pingap_config(rule_cache) {
         Some(config) => config,
         None => {
-            warn!("data plane: no sites configured, proxy not started");
+            report_missing_config(rule_cache);
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 if let Some(config) = build_pingap_config(rule_cache) {
                     break config;
                 }
+                report_missing_config(rule_cache);
             }
         },
+    }
+}
+
+/// Says why the cached rules produced no config; the two cases have very
+/// different operator actions.
+fn report_missing_config(rule_cache: &RuleCache) {
+    if rule_cache.all_sites().sites.is_empty() {
+        warn!("data plane: no sites configured, proxy not started");
+    } else {
+        error!(
+            "data plane: cached sites produced no usable locations; waiting for a corrected rule push"
+        );
     }
 }
 
@@ -165,10 +183,22 @@ fn config_manager_for(
         anyhow::anyhow!("failed to serialize proxy config: {}", e)
     })?;
     let acme_state = acme_state_path(rule_cache);
-    let toml_str = merge_config_state(
-        &toml_str,
-        &std::fs::read_to_string(&acme_state).unwrap_or_default(),
-    );
+    // A missing state file is the first start; any other read failure is
+    // worth a diagnostic, because starting from scratch can cost a
+    // re-issuance the CA's duplicate-certificate quota.
+    let previous_state = match std::fs::read_to_string(&acme_state) {
+        Ok(state) => state,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            warn!(
+                path = %acme_state.display(),
+                error = %e,
+                "data plane: unable to read the ACME state; starting from the new config"
+            );
+            String::new()
+        },
+    };
+    let toml_str = merge_config_state(&toml_str, &previous_state);
     let config_manager =
         build_memory_config_manager(&toml_str, Some(acme_state)).map_err(
             |e| anyhow::anyhow!("failed to init config manager: {}", e),
@@ -365,9 +395,7 @@ fn spawn_rule_reload_watcher(
                 "data plane: rule change detected, reloading"
             );
             let Some(converted) = build_pingap_config(&watcher_cache) else {
-                warn!(
-                    "data plane: reload produced no usable config, keeping current"
-                );
+                report_missing_config(&watcher_cache);
                 last_hash = hash;
                 last_management = management;
                 continue;

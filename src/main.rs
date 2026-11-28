@@ -69,6 +69,7 @@ mod locations;
 mod maintenance;
 mod plugin;
 mod process;
+mod provider;
 mod quick_start;
 mod server_locations;
 mod upstreams;
@@ -516,7 +517,6 @@ fn init_available_memory() {
 fn run() -> Result<(), Box<dyn Error>> {
     let args = parse_arguments();
 
-    // Handle template output request
     if args.template {
         println!("{}", cli::template_config());
         return Ok(());
@@ -528,7 +528,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Err("--cp requires --admin user:pass@host:port[/prefix]".into());
     }
 
-    // Set up admin node if specified
     if args.cp {
         return run_admin_node(args);
     }
@@ -594,7 +593,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     config_manager.set_current_config(config.clone());
 
-    // Convert config to HCL and output
     if args.to_hcl {
         let toml_str = toml::to_string_pretty(&config)?;
         let hcl_str = pingap_config::hcl::convert_toml_to_hcl(&toml_str)?;
@@ -602,7 +600,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    // Convert config to KDL and output
     if args.to_kdl {
         let toml_str = toml::to_string_pretty(&config)?;
         let kdl_str = pingap_config::kdl::convert_toml_to_kdl(&toml_str)?;
@@ -612,7 +609,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let mut application_log_paths = vec![];
 
-    // Initialize logging system
     let (reload_handle, log_path) =
         pingap_logger::logger_try_init(pingap_logger::LoggerParams {
             capacity: config
@@ -636,7 +632,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     // safeguard for library use and for the OpenSSL backend.
     install_default_crypto_provider();
 
-    // sync config to other storage
     if let Some(sync_path) = args.sync {
         let r = sync_config(config_manager.clone(), sync_path);
         r.recv()??;
@@ -648,7 +643,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     webhook::set_webhook_notification_sender(basic_conf);
 
-    // return if test mode
     if args.test {
         validate_plugins(&config, &config_manager)?;
         info!(target: LOG_TARGET, "Validate config success");

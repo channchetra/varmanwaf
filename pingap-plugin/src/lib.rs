@@ -273,13 +273,12 @@ pub fn get_hash_key(conf: &PluginConf) -> String {
     format!("{hash:X}")
 }
 
-/// Registers a plugin with the global plugin factory inside a pre-main
-/// constructor. Collapses the identical `#[ctor(unsafe)] fn init()` block
-/// that every plugin module would otherwise repeat.
+/// Generates the module's explicit registration function. The root calls
+/// [`register_builtins`] at start-up; nothing depends on a pre-main
+/// constructor any more.
 macro_rules! register_plugin {
     ($category:literal, $ty:ty) => {
-        #[::ctor::ctor(unsafe)]
-        fn init() {
+        pub(crate) fn register() {
             $crate::get_plugin_factory().register($category, |params| {
                 Ok(::std::sync::Arc::new(<$ty>::new(params)?))
             });
@@ -316,3 +315,33 @@ mod traffic_splitting;
 mod ua_restriction;
 
 pub use plugin::get_plugin_factory;
+
+/// Registers every generic plugin in this crate.
+///
+/// The binary calls this once, before any config is parsed, so availability
+/// is a visible start-up step instead of a pre-main constructor side effect.
+pub fn register_builtins() {
+    accept_encoding::register();
+    basic_auth::register();
+    combined_auth::register();
+    compression::register();
+    cors::register();
+    csrf::register();
+    directory::register();
+    forward_auth::register();
+    #[cfg(feature = "geo-restriction")]
+    geo_restriction::register();
+    ip_restriction::register();
+    jwt::register();
+    key_auth::register();
+    limit::register();
+    mock::register();
+    ping::register();
+    redirect::register();
+    referer_restriction::register();
+    request_id::register();
+    response_headers::register();
+    sub_filter::register();
+    traffic_splitting::register();
+    ua_restriction::register();
+}

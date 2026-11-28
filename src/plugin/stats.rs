@@ -42,48 +42,50 @@ type Result<T> = std::result::Result<T, Error>;
 /// - Network connection details
 #[derive(Serialize)]
 struct ServerStats {
-    // Request Processing Metrics
-    processing: i32, // Number of requests currently being processed across all locations
-    accepted: u64,   // Total number of requests accepted since server start
-    location_processing: i32, // Number of requests currently being processed in this specific location
-    location_accepted: u64, // Total number of requests accepted in this specific location
+    // Request processing
+    processing: i32,
+    accepted: u64,
+    location_processing: i32,
+    location_accepted: u64,
 
-    // Server Identification
-    hostname: String,      // Server's network hostname
-    version: String,       // Current version of the application
-    rustc_version: String, // Version of the Rust compiler used to build the application
+    // Server identification
+    hostname: String,
+    version: String,
+    rustc_version: String,
 
-    // Uptime Information
-    start_time: u64, // Unix timestamp when the server was started
-    uptime: String, // Human-readable duration since server start (e.g., "2 days 3 hours")
+    // Uptime
+    start_time: u64,
+    /// Human-readable duration since `start_time` (e.g. "2 days 3 hours").
+    uptime: String,
 
-    // Memory Statistics
-    memory_mb: usize, // Current process memory usage in megabytes
-    memory: String,   // Human-readable process memory usage (e.g., "1.2 GB")
-    total_memory: String, // Total system memory available (e.g., "16 GB")
-    used_memory: String, // Total system memory in use (e.g., "8.5 GB")
+    // Memory
+    memory_mb: usize,
+    /// Human-readable process memory (e.g. "1.2 GB").
+    memory: String,
+    /// Human-readable total system memory.
+    total_memory: String,
+    /// Human-readable used system memory.
+    used_memory: String,
 
-    // System Information
-    arch: String, // System architecture (e.g., "x86_64", "aarch64")
-    cpus: usize,  // Number of logical CPU cores (including hyperthreading)
-    physical_cpus: usize, // Number of physical CPU cores
+    // System
+    arch: String,
+    cpus: usize,
+    physical_cpus: usize,
 
-    // Resource Usage
-    threads: i64,    // Number of threads in the current process
-    fd_count: usize, // Number of open file descriptors in the process
+    // Resource usage
+    threads: i64,
+    fd_count: usize,
 
-    // Network Connections
-    tcp_count: usize, // Number of active IPv4 TCP connections
-    tcp6_count: usize, // Number of active IPv6 TCP connections
-
-                      // upstream_healthy_status: HashMap<String, UpstreamHealthyStatus>, // Upstream healthy status
+    // Network connections
+    tcp_count: usize,
+    tcp6_count: usize,
 }
 
 /// Stats plugin that exposes server metrics and statistics via an HTTP endpoint
 pub struct Stats {
-    path: String,            // HTTP path to expose stats on
-    plugin_step: PluginStep, // Step at which this plugin executes
-    hash_value: String,      // Unique hash identifying this plugin instance
+    path: String,
+    plugin_step: PluginStep,
+    hash_value: String,
 }
 
 /// Implementation for creating a Stats instance from plugin configuration

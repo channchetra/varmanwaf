@@ -1036,21 +1036,24 @@ async fn handle_request_admin(
     if params.len() >= 3 {
         category = &params[2];
     }
-    let resp = if path.starts_with("/configs") {
+    // Dispatch on the first path segment, not a string prefix: `/configsfoo`
+    // is not the config API.
+    let route = params.get(1).map(String::as_str).unwrap_or_default();
+    let resp = if route == "configs" {
         plugin
             .handle_configs(session, method, category, &params, &actor)
             .await
-    } else if path.starts_with("/config-history") {
+    } else if route == "config-history" {
         plugin.handle_config_history(category, &params).await?
-    } else if path == "/basic" {
+    } else if route == "basic" {
         plugin.handle_basic().await?
-    } else if path == "/restart" && method == Method::POST {
+    } else if route == "restart" && method == Method::POST {
         plugin.handle_restart(&actor).await
-    } else if path == "/aes" {
+    } else if route == "aes" {
         plugin.handle_aes(session).await?
-    } else if path == "/certificates" {
+    } else if route == "certificates" {
         plugin.handle_certificates()
-    } else if path.starts_with("/pprof/") {
+    } else if route == "pprof" {
         handle_pprof_request(session, &path, &method).await
     } else {
         // The data-plane plugin is an API only; the console bundle belongs to

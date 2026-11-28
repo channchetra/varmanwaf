@@ -53,7 +53,7 @@ use pingora::server::configuration::Opt;
 use pingora::services::ServiceHandle;
 use tokio::sync::mpsc::Sender;
 
-use crate::config_apply::ProviderUpdate;
+use crate::provider::ProviderUpdate;
 use crate::webhook::get_webhook_sender;
 
 /// Interval of the shared background-task service.
@@ -223,7 +223,7 @@ impl DataPlaneOptions {
         daemon: bool,
         upgrade: bool,
         threads: Option<usize>,
-        admin_plugin: Option<crate::plugin::AdminPluginEntry>,
+        admin_plugin: Option<crate::provider::AdminPluginEntry>,
         background_task_service_name: &'static str,
     ) -> Self {
         Self {
@@ -240,7 +240,7 @@ impl DataPlaneOptions {
     /// loops, and pingora's built-in server configuration.
     pub fn admin_only(
         daemon: bool,
-        admin_plugin: Option<crate::plugin::AdminPluginEntry>,
+        admin_plugin: Option<crate::provider::AdminPluginEntry>,
     ) -> Self {
         Self {
             daemon,

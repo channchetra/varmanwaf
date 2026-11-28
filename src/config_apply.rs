@@ -33,7 +33,7 @@
 //! may commit.
 
 use crate::data_plane::ProviderSet;
-use crate::plugin::AdminPluginEntry;
+use crate::provider::{AdminPluginEntry, ProviderUpdate};
 use crate::webhook::{
     get_webhook_sender, reload_webhook_notification_sender, send_notification,
 };
@@ -46,37 +46,6 @@ use std::sync::Arc;
 use tracing::{debug, error, info};
 
 static LOG_TARGET: &str = "main::config_apply";
-
-/// The one wording for a provider construction failure.
-pub(crate) fn invalid_error(error: impl std::fmt::Display) -> String {
-    format!("Invalid error {error}")
-}
-
-/// What one provider rebuild did.
-///
-/// Every provider's `try_init_*`/`try_update_*` returns this, so an apply pass
-/// consumes them all the same way: a non-empty `errors` means the provider
-/// kept its previous state and the update did not apply, while `Err` is a
-/// failure of the call itself.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ProviderUpdate {
-    /// Names of the entries created or reloaded.
-    pub updated: Vec<String>,
-    /// Per-entry failures, joined with `;`. Empty when the update applied.
-    pub errors: String,
-}
-
-impl ProviderUpdate {
-    /// The update applied: no entry failed.
-    pub fn is_ok(&self) -> bool {
-        self.errors.is_empty()
-    }
-
-    /// Nothing changed and nothing failed.
-    pub fn is_empty(&self) -> bool {
-        self.updated.is_empty() && self.errors.is_empty()
-    }
-}
 
 /// The two production policies an apply pass follows.
 #[derive(Clone, Copy, Debug)]
