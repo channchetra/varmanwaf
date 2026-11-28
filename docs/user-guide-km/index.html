@@ -923,7 +923,7 @@ http.request.uri.path eq "/secret-admin"</code></pre>
 <p>ផ្ទាំងគ្រប់គ្រង (port <code>9080</code>) អាចប្រើវិញ្ញាបនបត្រពី <b>Let's Encrypt</b> ដោយស្វ័យប្រវត្តិ — ទាំងសម្រាប់ <b>ដែន (domain)</b> និង <b>អាសយដ្ឋាន IP</b> របស់ម៉ាស៊ីន។</p>
 <ol class="steps">
   <li>ចូល <b>Settings → Control plane HTTPS</b>។</li>
-  <li>នៅផ្នែក <b>Auto-issue (Let's Encrypt)</b> បញ្ចូល <b>ដែន ឬ IP</b> (ឧ. <code>waf.example.com</code> ឬ <code>103.189.187.19</code>) និង <b>អ៊ីមែល</b>សម្រាប់ ACME។</li>
+  <li>នៅផ្នែក <b>Auto-issue (Let's Encrypt)</b> បញ្ចូល <b>ដែន ឬ IP</b> (ឧ. <code>waf.example.com</code> ) និង <b>អ៊ីមែល</b>សម្រាប់ ACME។</li>
   <li>បើក <b>Keep this certificate issued and renewed</b> រួចចុច <b>Save</b>។ Edge នឹងបំពេញការផ្ទៀងផ្ទាត់ HTTP-01 (ច្រក ៨០) ហើយវិញ្ញាបនបត្រនឹងត្រូវដំឡើងលើផ្ទាំងភ្លាមៗ។</li>
   <li>បើប្រើ <b>ដែន</b>៖ ត្រូវចង្អុល DNS (A/AAAA) ទៅម៉ាស៊ីននេះជាមុនសិន។ បើប្រើ <b>IP</b>៖ វិញ្ញាបនបត្រមានអាយុ ~៦ ថ្ងៃ ហើយប្រព័ន្ធបន្តអាយុដោយស្វ័យប្រវត្តិ។</li>
 </ol>

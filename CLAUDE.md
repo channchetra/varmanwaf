@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-> **Current release:** [v1.5.0](docs/releases/v1.5.0.md). [HANDOFF.md](HANDOFF.md)
+> **Current release:** [v1.6.0](docs/releases/v1.6.0.md). [HANDOFF.md](HANDOFF.md)
 > is historical (v1.1.9); start from `docs/README.md`.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.

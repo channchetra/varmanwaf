@@ -1001,8 +1001,8 @@ mod embedded_agent_tls_tests {
         // An ACME IP certificate only carries the management IP; the agent
         // must verify that name instead of the loopback URL host.
         assert_eq!(
-            preferred_tls_name(&sans(&["103.189.187.19"])),
-            Some("103.189.187.19".to_string())
+            preferred_tls_name(&sans(&["203.0.113.10"])),
+            Some("203.0.113.10".to_string())
         );
         assert_eq!(
             preferred_tls_name(&sans(&["waf.example.com", "www.example.com"])),

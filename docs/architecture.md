@@ -4,7 +4,7 @@
 > in this repository, not planned marketing features. It is updated in the
 > same change as any behavioural change.
 >
-> Current state: **v1.5.0** - the native engine enforces, the console carries
+> Current state: **v1.6.0** - the native engine enforces, the console carries
 > the full operator surface, and the platform is verified by the full E2E
 > sweep and the benchmark report ([`benchmarks/v1.0.0.md`](./benchmarks/v1.0.0.md)).
 
