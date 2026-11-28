@@ -15,7 +15,7 @@
 //! Applies a new [`PingapConfig`] to the plane's provider set in place.
 //!
 //! Two roots reload configuration at runtime: the file-configured daemon's
-//! watcher (`src/process/auto_restart.rs`) and the agent-hosted data plane
+//! watcher (`src/process/config_watch.rs`) and the agent-hosted data plane
 //! (`src/varman/data_plane.rs`). They differ in *policy* - what may be
 //! committed, restarted or notified - never in how a changed category is
 //! pushed into its provider. That policy is [`ApplyOptions`], so the
@@ -589,7 +589,8 @@ mod tests {
     /// A local manager for the plugin rebuild. The admin plugin reads and
     /// writes through it, so `apply_config` takes it instead of a global.
     fn new_config_manager() -> Arc<ConfigManager> {
-        Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None))
+        crate::config_manager::build_memory_config_manager("[basic]\n", None)
+            .expect("test manager")
     }
 
     fn config_with_upstream(name: &str) -> PingapConfig {

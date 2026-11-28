@@ -376,6 +376,27 @@ pub fn new_observer_service(
 
 static OBSERVER_NAME: &str = "configObserver";
 
+impl ConfigObserverService {
+    /// Runs one diff/apply pass and reloads the log level when it committed.
+    async fn apply_tick(&self, hot_reload_only: bool) {
+        if let Some(new_config) = run_diff_and_update_config(
+            self.config_manager.clone(),
+            &self.last_seen,
+            hot_reload_only,
+            self.admin_plugin.clone(),
+            &self.providers,
+        )
+        .await
+        {
+            reload_log_level(
+                &self.log_reload_handle,
+                &self.current_log_level,
+                &new_config,
+            );
+        }
+    }
+}
+
 #[async_trait]
 impl BackgroundService for ConfigObserverService {
     async fn start(&self, mut shutdown: ShutdownWatch) {
@@ -410,21 +431,7 @@ impl BackgroundService for ConfigObserverService {
                     break;
                 }
                 _ = period.tick() => {
-                    // fetch and diff update
-                    // some change may be restart
-                    if let Some(new_config) = run_diff_and_update_config(
-                        self.config_manager.clone(),
-                        &self.last_seen,
-                        self.hot_reload_only,
-                        self.admin_plugin.clone(),
-                        &self.providers,
-                    ).await {
-                        reload_log_level(
-                            &self.log_reload_handle,
-                            &self.current_log_level,
-                            &new_config,
-                        );
-                    }
+                    self.apply_tick(self.hot_reload_only).await;
                 }
                 result = observer.watch() => {
                     let delay = self.delay.load(Ordering::Relaxed);
@@ -437,19 +444,7 @@ impl BackgroundService for ConfigObserverService {
                                 continue;
                             }
                             // only hot reload for observe updated
-                            if let Some(new_config) = run_diff_and_update_config(
-                                self.config_manager.clone(),
-                                &self.last_seen,
-                                true,
-                                self.admin_plugin.clone(),
-                                &self.providers,
-                            ).await {
-                                reload_log_level(
-                                    &self.log_reload_handle,
-                                    &self.current_log_level,
-                                    &new_config,
-                                );
-                            }
+                            self.apply_tick(true).await;
                         },
                         Err(e) => {
                             error!(

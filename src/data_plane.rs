@@ -475,7 +475,8 @@ mod tests {
     /// A local manager: `assemble` takes the instance as a parameter, so the
     /// tests no longer have to install anything process-wide first.
     fn new_config_manager() -> Arc<ConfigManager> {
-        Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None))
+        crate::config_manager::build_memory_config_manager("[basic]\n", None)
+            .expect("test manager")
     }
 
     #[test]

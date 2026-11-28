@@ -1129,7 +1129,8 @@ mod tests {
     /// the plugin no longer reads the process-global slot, so a test can hand
     /// it its own instance instead of installing one process-wide first.
     fn new_config_manager() -> Arc<ConfigManager> {
-        Arc::new(pingap_config::new_memory_config_manager("[basic]\n", None))
+        crate::config_manager::build_memory_config_manager("[basic]\n", None)
+            .expect("test manager")
     }
 
     /// Builds the `token:ts` header the admin API expects.
@@ -1159,7 +1160,8 @@ mod tests {
     /// mutation handlers can be driven without signing every request.
     fn admin_with_config(config: &str) -> (AdminServe, Arc<ConfigManager>) {
         let manager =
-            Arc::new(pingap_config::new_memory_config_manager(config, None));
+            crate::config_manager::build_memory_config_manager(config, None)
+                .expect("test manager");
         let admin = AdminServe::new(
             &toml::from_str::<PluginConf>(
                 r#"
@@ -1584,6 +1586,7 @@ authorizations = [""]
         );
 
         // One valid entry is enough.
+        // spellchecker:off
         assert!(
             build(
                 r#"
@@ -1593,6 +1596,7 @@ authorizations = ["YWRtaW46MTIzMTIz"]
             )
             .is_ok()
         );
+        // spellchecker:on
 
         // The explicit opt-out still allows an empty list.
         assert!(

@@ -121,6 +121,21 @@ order, but the remaining window is too close for another production restart.
 Merge/tag/build 1.6.0 only after the renewal check, or explicitly accept the
 order-risk after verifying the certificate baseline.
 
+## Current state (2026-11-28)
+
+- Strict **85.1/100** from the fresh 20-batch blind review; the previous
+  84.8 queue was cleared and the remaining 28 imported review items are
+  documented architecture/layout/test suggestions, not functional defects.
+- All five process-global provider registries are gone; providers are owned
+  by `ProviderSet`, and plugin registration is explicit (the `#[ctor]` path
+  was removed from `pingap-plugin`, `pingap-imageoptim` and the binary's
+  stats plugin).
+- The agent data plane is split into named boot phases and covered by
+  certificate-status tests; restart hand-over, exit flush, reload health
+  checks and a real listener have end-to-end coverage.
+- `make lint`, `make test`, `make lint-rustls`, `make test-rustls`,
+  `cargo fmt --check`, `cargo machete` and `make build-web` are green.
+
 ## Acceptance
 
 - Strict **85.0** from a fresh blind review of the changed dimensions.
@@ -133,8 +148,8 @@ order-risk after verifying the certificate baseline.
 
 ## Risks / notes
 
-- `register_plugin!` uses `#[ctor]`; keep the explicit `register()` entry point
-  from 1.5.0 so the link anchor cannot regress.
+- Plugin registration is explicit (`register_builtins` + the binary's
+  `register_builtin_plugins`); do not reintroduce pre-main constructors.
 - The WAF tests share process-global state; keep the existing locks and run
   the new crate's tests serially if needed.
 - Do not trigger ACME orders while staging; the 2026-12-01 renewal is the

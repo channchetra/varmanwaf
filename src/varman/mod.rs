@@ -20,6 +20,7 @@
 mod acme;
 mod bundle_config;
 mod data_plane;
+mod maintenance;
 
 use data_plane::start_data_plane;
 use std::sync::Arc;
@@ -205,7 +206,7 @@ fn extract_port(addr: &str) -> &str {
 /// Build the `RunMode` from the parsed CLI.
 ///
 /// The maintenance commands never reach this: [`main`] routes them to
-/// [`crate::maintenance::run`] first. Returning an error instead of panicking
+/// [`maintenance::run`] first. Returning an error instead of panicking
 /// keeps a future routing mistake from taking the process down.
 pub fn build_run_mode(cli: VarmanCli) -> anyhow::Result<RunMode> {
     Ok(match cli.command {
@@ -280,7 +281,9 @@ pub async fn run(mode: RunMode) -> anyhow::Result<()> {
             // Auto-provision a bootstrap API key when none is configured so the
             // embedded agent can authenticate with the local gRPC server.
             if agent_config.api_key.is_empty() {
-                match bootstrap_agent_key(&server_config).await {
+                match varman_control::bootstrap_and_seed_api_key(&server_config)
+                    .await
+                {
                     Ok(key) => {
                         agent_config.api_key = key;
                     },
@@ -355,12 +358,6 @@ pub async fn run(mode: RunMode) -> anyhow::Result<()> {
 
 /// Connect to the database, run migrations, and create a bootstrap API key
 /// for the embedded agent in all-in-one mode.
-async fn bootstrap_agent_key(
-    config: &varman_control::ServerConfig,
-) -> anyhow::Result<String> {
-    varman_control::bootstrap_and_seed_api_key(config).await
-}
-
 /// Wait for SIGINT or SIGTERM.
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -408,7 +405,7 @@ pub fn main() {
         .expect("failed to create tokio runtime");
 
     let result = if cli.command.is_maintenance() {
-        rt.block_on(crate::maintenance::run(cli))
+        rt.block_on(maintenance::run(cli))
     } else {
         match build_run_mode(cli) {
             Ok(mode) => rt.block_on(run(mode)),

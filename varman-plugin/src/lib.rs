@@ -13,17 +13,6 @@ mod rewrite;
 mod test_support;
 mod waf;
 
-/// Failed-authentication streak tracker (ATO defense).
-mod waf_ato;
-/// Per-site custom layers: SecLang virtual patches + OpenAPI validation.
-mod waf_custom;
-/// External-processor transport.
-mod waf_processor;
-/// Shadow execution of the Varman pipeline beside the legacy engine.
-mod waf_shadow;
-/// Stream inspection: body tails and WebSocket frames.
-mod waf_stream;
-
 pub use waf::{PENDING_ACCESS_SWEEP_TTL, sweep_stale_access};
 
 use pingap_plugin::get_plugin_factory;

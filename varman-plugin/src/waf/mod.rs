@@ -24,13 +24,19 @@
 //! Verdicts map onto the proxy pipeline: `Pass`/`Monitor` continue, `Block`
 //! returns 403, and `Challenge` delegates to the challenge subsystem.
 
+mod ato;
+mod custom;
+mod processor;
+mod shadow;
+mod stream;
+
 use crate::challenge::{
     ChallengeKind, VERIFY_ENDPOINT, basic_auth_page, block_page,
     build_challenge_response, paused_page, rate_limit_page,
     resolve_cookie_secret,
 };
-use crate::waf_ato::{FailedAuthTracker, is_state_changing};
-use crate::waf_stream::{StreamFinding, StreamInspector, TailWindow};
+use crate::waf::ato::{FailedAuthTracker, is_state_changing};
+use crate::waf::stream::{StreamFinding, StreamInspector, TailWindow};
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
@@ -298,7 +304,7 @@ struct SiteContext {
     path_target_exclusions: Vec<CachePathTargetExclusion>,
     /// Compiled per-site custom layers (SecLang virtual patches + OpenAPI
     /// validation); `None` when neither is configured.
-    custom: Option<Arc<crate::waf_custom::CustomLayers>>,
+    custom: Option<Arc<crate::waf::custom::CustomLayers>>,
 }
 
 impl SiteContext {
@@ -306,7 +312,7 @@ impl SiteContext {
         let waf_cfg = site_rules.waf_config.as_ref();
         let (custom, custom_errors) = waf_cfg
             .map(|cfg| {
-                crate::waf_custom::CustomLayers::build(
+                crate::waf::custom::CustomLayers::build(
                     &cfg.virtual_patches,
                     &cfg.openapi_spec,
                     &cfg.api_operations,
@@ -1224,7 +1230,7 @@ impl WafPlugin {
     /// disabled WAF ([`EngineChoice::Disabled`]), observation mode, a
     /// non-Block site mode and a non-Varman engine all keep the stream in
     /// monitor-only mode. The engine goes through
-    /// [`crate::waf_shadow::resolve_mode`], so the aliases (`enforce`,
+    /// [`crate::waf::shadow::resolve_mode`], so the aliases (`enforce`,
     /// `observe`, `base`) and the invalid-value fallback match the request
     /// path exactly.
     fn stream_policy(&self, host: &str, path: &str) -> StreamPolicy {
@@ -1244,8 +1250,8 @@ impl WafPlugin {
         let enforce = !matches!(resolved.choice, EngineChoice::Disabled)
             && context.mode == Some(WafMode::Block)
             && !context.observation_mode
-            && crate::waf_shadow::resolve_mode(Some(&context.engine_mode))
-                == crate::waf_shadow::EngineMode::Varman;
+            && crate::waf::shadow::resolve_mode(Some(&context.engine_mode))
+                == crate::waf::shadow::EngineMode::Varman;
         StreamPolicy {
             enforce,
             monitored: context.monitor_categories.clone(),
