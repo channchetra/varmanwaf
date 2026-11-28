@@ -313,8 +313,8 @@ pub(super) async fn start_data_plane(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let swept = pingap_plugin::sweep_stale_access(
-                pingap_plugin::PENDING_ACCESS_SWEEP_TTL,
+            let swept = varman_plugin::sweep_stale_access(
+                varman_plugin::PENDING_ACCESS_SWEEP_TTL,
             );
             if swept > 0 {
                 info!(

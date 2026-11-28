@@ -136,6 +136,7 @@ graph TD
     root --> sentry
     root --> upstream
     root --> util
+    root --> varman-plugin
     root --> webhook
 
 
@@ -145,6 +146,14 @@ graph TD
     upstream --> health
     upstream --> util
 
+
+    varman-plugin --> agent
+    varman-plugin --> challenge
+    varman-plugin --> config
+    varman-plugin --> core
+    varman-plugin --> plugin
+    varman-plugin --> util
+    varman-plugin --> waf
 
 
     webhook --> core

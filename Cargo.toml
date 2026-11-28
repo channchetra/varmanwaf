@@ -73,6 +73,7 @@ pingap-util = { workspace = true }
 pingap-webhook = { workspace = true }
 varman-control = { path = "varman-control" }
 varman-agent = { path = "varman-agent" }
+varman-plugin = { path = "varman-plugin" }
 varman-pprof = { workspace = true }
 anyhow = { workspace = true }
 pingora = { workspace = true }
@@ -261,6 +262,7 @@ members = [
     "pingap-util",
     "pingap-webhook",
     "varman-control",
+    "varman-plugin",
     "varman-protocol",
     "varman-pprof",
     "varman-waf",
@@ -362,6 +364,7 @@ pingap-upstream = { version = "1.5.0", path = "pingap-upstream", default-feature
 pingap-util = { version = "1.5.0", path = "pingap-util" }
 pingap-webhook = { version = "1.5.0", path = "pingap-webhook" }
 varman-pprof = { version = "0.1.0", path = "varman-pprof" }
+varman-plugin = { version = "1.5.0", path = "varman-plugin" }
 # Released crates.io versions; all three must stay on the same version so cargo
 # resolves one copy of pingora-core.
 # The TLS backend (`openssl` or `rustls`) is chosen by the top-level

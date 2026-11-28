@@ -341,6 +341,7 @@ pub fn parse_plugins(
 pub fn register_builtin_plugins() {
     #[cfg(feature = "imageoptim")]
     pingap_imageoptim::register();
+    varman_plugin::register();
 }
 
 /// Initializes or updates plugins based on configuration.

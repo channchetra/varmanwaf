@@ -67,7 +67,8 @@ from every member's `Cargo.toml` by `src/bin/generate-mermaid.rs`):
 
 - **Varman platform** — the root `varman` binary, `varman-control` (control
   plane, REST/gRPC, console), `varman-agent` (edge client), `varman-waf`
-  (pipeline engine), `varman-protocol`, `varman-challenge`, `varman-pprof`.
+  (pipeline engine), `varman-plugin` (WAF/stream/processor/shadow/custom
+  plugins), `varman-protocol`, `varman-challenge`, `varman-pprof`.
 - **Pingap foundation** — `pingap-core`, `pingap-config`, `pingap-proxy`,
   `pingap-plugin`, `pingap-upstream`, `pingap-discovery`, `pingap-health`,
   `pingap-location`, `pingap-cache`, `pingap-certificate`, `pingap-acme`,
@@ -77,7 +78,7 @@ from every member's `Cargo.toml` by `src/bin/generate-mermaid.rs`):
 - `pingap-core` — `HttpResponse`, `Ctx`, plugin traits, clock helpers (`now_sec`/`now_ms`), `BackgroundTaskService`. Every other crate depends on it.
 - `pingap-config` — `PingapConfig` model plus storage backends (`file_storage.rs`, `etcd_storage.rs`) chosen at runtime by URL prefix (`file://`, `etcd://`). Supports TOML, HCL (`hcl.rs`), and KDL (`kdl.rs`) input formats.
 - `pingap-proxy` — implements pingora's `ProxyHttp`. The request lifecycle in `pingap-proxy/src/server.rs` calls (in order) `early_request_filter` -> `request_filter` -> `proxy_upstream_filter` -> `upstream_request_filter` -> `upstream_response_filter` -> `logging`. Each step matches the `PluginStep` enum in `pingap-core/src/plugin.rs` (`EarlyRequest`, `Request`, `ProxyUpstream`, `UpstreamResponse`, `Response`); a plugin runs at most one step per request.
-- `pingap-plugin` — built-in plugins. Add new ones by implementing the `Plugin` trait from `pingap-core` and registering them via the plugin factory.
+- `pingap-plugin` — generic Pingap plugins and the plugin factory. Add a generic plugin by implementing the `Plugin` trait from `pingap-core` and registering it via the plugin factory; Varman-specific plugins live in `varman-plugin`.
 - `pingap-upstream` — pingora `Backends` + load-balancing wiring; gets its backend set from `pingap-discovery` (static / DNS / Docker labels / transparent) and `pingap-health` for active checks.
 - `src/main.rs` — argument parsing, config bootstrap, daemonization, server assembly. `src/varman/` is the all-in-one platform mode, `src/cli.rs` the Varman CLI, `src/maintenance.rs` the PostgreSQL maintenance commands (`varman user|mode|security|config`), and `src/quick_start.rs` the starter config. `src/process/` and `src/plugin/` handle hot reload and the data-plane admin plugin.
 - `--admin` is the **data-plane admin JSON/profiling API** (`PINGAP_ADMIN_*`) and serves no console; `--admin-addr` / `VARMAN_ADMIN_ADDR` is the **control-plane console + REST listener** (`varman server`, default `0.0.0.0:9080`). They are different features.

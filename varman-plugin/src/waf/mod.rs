@@ -24,12 +24,6 @@
 //! Verdicts map onto the proxy pipeline: `Pass`/`Monitor` continue, `Block`
 //! returns 403, and `Challenge` delegates to the challenge subsystem.
 
-use super::{Error, get_hash_key, parse_params};
-use crate::challenge::{
-    ChallengeKind, VERIFY_ENDPOINT, basic_auth_page, block_page,
-    build_challenge_response, paused_page, rate_limit_page,
-    resolve_cookie_secret,
-};
 use crate::waf_ato::{FailedAuthTracker, is_state_changing};
 use crate::waf_stream::{StreamFinding, StreamInspector, TailWindow};
 use async_trait::async_trait;
@@ -42,6 +36,12 @@ use pingap_core::{
     RequestPluginResult, ResponseBodyPluginResult, ResponsePluginResult,
     constant_time_eq, ensure_client_ip, get_host, new_internal_error,
 };
+use pingap_plugin::{
+    ChallengeKind, VERIFY_ENDPOINT, basic_auth_page, block_page,
+    build_challenge_response, paused_page, rate_limit_page,
+    resolve_cookie_secret,
+};
+use pingap_plugin::{Error, get_hash_key, parse_params};
 use pingap_util::{IpRules, base64_decode};
 use pingora::http::{ResponseHeader, Version};
 use pingora::proxy::Session;
@@ -51,7 +51,6 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tor_geoip::GeoipDb;
 use tracing::{debug, warn};
 use varman_agent::cache::PathTargetExclusion as CachePathTargetExclusion;
 use varman_agent::cache::{
@@ -422,7 +421,7 @@ pub(crate) use state::*;
 pub use state::{PENDING_ACCESS_SWEEP_TTL, sweep_stale_access};
 
 /// Web Application Firewall plugin.
-struct WafPlugin {
+pub(crate) struct WafPlugin {
     plugin_step: PluginStep,
     /// Locally configured engine; shared and hot-reloadable.
     engine: Arc<RwLock<WafEngine>>,
@@ -463,7 +462,7 @@ impl WafPlugin {
         debug!(params = params.to_string(), "new waf plugin");
         // Load the embedded GeoIP database here rather than on the first
         // request: the lookup is on the request path and its parse is not.
-        LazyLock::force(&GEO_DB);
+        pingap_plugin::geo::warm_geoip();
         Self::try_from(params)
     }
 
@@ -836,7 +835,7 @@ impl TryFrom<&PluginConf> for WafPlugin {
             params.ato_block_secs as u64,
         ));
 
-        let plugin_step = match super::get_step_conf_in(
+        let plugin_step = match pingap_plugin::get_step_conf_in(
             value,
             "waf",
             PluginStep::EarlyRequest,
@@ -1442,8 +1441,6 @@ impl WafPlugin {
         blocking
     }
 }
-
-register_plugin!("waf", WafPlugin);
 
 #[cfg(test)]
 pub(crate) mod tests;

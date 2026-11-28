@@ -14,13 +14,13 @@
 | Legacy engine (`varman-waf/src/{engine,normalize,rules,score}`) | Imported baseline; signature + expression rules + anomaly scoring | **Yes** (always; in `varman` mode its verdict is the escalation floor) |
 | Canonical model (`varman-waf/src/canonical`) | Canonicalizer landed (Phase 3): bounded decode layers, path collapse, query/cookie/header policy + bypass tests | **Yes** when the pipeline runs (`shadow` compares, `varman` enforces) |
 | Pipeline (`varman-waf/src/pipeline`) | Landed (Phases 2-6): detector contract, findings, monotonic actions, bounded context, streaming body evidence, shadow comparison | **Yes** in `varman` mode (escalated with the legacy verdict); compared in `shadow` |
-| Shadow wiring + engine switch (`pingap-plugin/src/waf_shadow.rs`) | Landed: `VARMAN_WAF_ENGINE=legacy|shadow|varman` plus per-site `waf_settings.engine_mode` (`inherit|legacy|shadow|varman`); shadow compares pipeline vs legacy per request and records counters; `varman` enforces the pipeline verdict escalated with the legacy verdict | **Yes** (`varman` mode) |
+| Shadow wiring + engine switch (`varman-plugin/src/waf_shadow.rs`) | Landed: `VARMAN_WAF_ENGINE=legacy|shadow|varman` plus per-site `waf_settings.engine_mode` (`inherit|legacy|shadow|varman`); shadow compares pipeline vs legacy per request and records counters; `varman` enforces the pipeline verdict escalated with the legacy verdict | **Yes** (`varman` mode) |
 | Lane 1 fast detectors | Landed: protocol checks, Aho-Corasick signature scanner, raw-path traversal evidence; corpora in `varman-waf/tests/corpus` | **Yes** in `varman` mode (compared in `shadow`) |
 | Streaming body engine | Landed (Phase 5): bounded head window + reject policy, tail inspection and slow-upload deadline; body evidence reaches the pipeline detectors | **Yes** when the pipeline runs |
 | Lane 2 semantic detectors | Landed (Phase 5/8): SQL structural/AST, HTML/XSS, shell/command, SSRF, NoSQL, SSTI, XXE, deserialization, prototype-pollution, LDAP/XPath, GraphQL, JWT, DLP, JSON body-shape, threat-intelligence, WebSocket-handshake; covered by the corpora | **Yes** in `varman` mode (compared in `shadow`) |
-| SecLang / OWASP CRS (Lane 3) | Native SecLang core landed (Phase 7) and runs as per-site virtual patches (`pingap-plugin/src/waf_custom.rs`); the pipeline does not run Lane 3 yet. Conformance in `docs/compatibility.md` | **Yes** through the separate SecLang path, not the pipeline lane |
+| SecLang / OWASP CRS (Lane 3) | Native SecLang core landed (Phase 7) and runs as per-site virtual patches (`varman-plugin/src/waf_custom.rs`); the pipeline does not run Lane 3 yet. Conformance in `docs/compatibility.md` | **Yes** through the separate SecLang path, not the pipeline lane |
 
-The pipeline is wired into the proxy through `pingap-plugin/src/waf_shadow.rs`.
+The pipeline is wired into the proxy through `varman-plugin/src/waf_shadow.rs`.
 The default mode is still the legacy engine; `VARMAN_WAF_ENGINE=shadow` compares
 both engines per request, and `VARMAN_WAF_ENGINE=varman` enforces the pipeline
 verdict **escalated with** the legacy verdict (the stronger action wins), so
@@ -147,7 +147,7 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   read-only plugin hooks in both directions (`Plugin::handle_request_body` for
   client-to-server frames, `Plugin::handle_upgraded_body` for server-to-client
   frames; the response-body hooks stay skipped so rewriting plugins cannot
-  corrupt the tunnel, #114). `pingap-plugin/src/waf_stream.rs` decodes RFC 6455
+  corrupt the tunnel, #114). `varman-plugin/src/waf_stream.rs` decodes RFC 6455
   frames streaming, assembles fragmented messages under hard caps, handles
   control frames and fails the connection on malformed frames; complete
   message payloads are scanned with the injection detectors. Findings abort the
@@ -160,7 +160,7 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   never weaken), contributions are bounded (16 findings, 40/finding, 60 per
   processor) and a timed-out or failed call resolves through an explicit
   `FailurePolicy` (`fail_open` / `monitor_only` / `fail_closed`) — never
-  silently. The transport (`pingap-plugin/src/waf_processor.rs`) speaks
+  silently. The transport (`varman-plugin/src/waf_processor.rs`) speaks
   newline-delimited JSON over a Unix domain socket or TCP with a per-call
   timeout and a 64 KiB response cap; `examples/processor/mock_processor.py`
   is a runnable reference implementation and `docker compose --profile
@@ -169,7 +169,7 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   `version`, `max_findings`); the WAF namespaces findings with the declared
   name (when it is a safe token), clamps its caps to the declared limits,
   and logs the identity once per change.
-- **Per-site custom layers (`pingap-plugin/src/waf_custom.rs`)** (Phase 8) —
+- **Per-site custom layers (`varman-plugin/src/waf_custom.rs`)** (Phase 8) —
   compiled once per site context from the dashboard's WAF settings and
   evaluated per request (escalate-only):
   * **SecLang virtual patches** — a rule source in the OWASP CRS dialect
@@ -203,7 +203,7 @@ Pass < Log < Monitor < Challenge < Block    (monotonic escalation)
   10 s), so a trickling upload is refused with 408. **Tail inspection
   (v0.21.1):** the chunks the early read pass did not consume flow through the
   read-only `handle_request_body` hook and are scanned with a 256-byte sliding
-  window (`pingap-plugin/src/waf_stream.rs`), so a payload split across chunk
+  window (`varman-plugin/src/waf_stream.rs`), so a payload split across chunk
   boundaries is still seen; a confirmed payload aborts the request and records
   an event (`tail_inspection = false` disables the scan). A tail payload is
   stopped as its chunks arrive - the upstream has already received the header

@@ -1,5 +1,10 @@
 use super::*;
-use crate::test_support::lock_agent;
+use pingap_plugin::text::contains_ignore_case;
+static AGENT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn lock_agent() -> tokio::sync::MutexGuard<'static, ()> {
+    AGENT_LOCK.lock().await
+}
 use pingap_core::PluginStep;
 use pingap_util::base64_encode;
 use pingora::proxy::Session;
@@ -1775,7 +1780,7 @@ async fn test_exclusion_package_suppresses_under_its_prefix() {
 /// the denial carries the display country on the emitted security event.
 #[tokio::test]
 async fn test_geo_rule_blocks_listed_country() {
-    LazyLock::force(&GEO_DB);
+    pingap_plugin::geo::warm_geoip();
     let country = lookup_country_addr("8.8.8.8".parse().unwrap())
         .expect("embedded db resolves 8.8.8.8 for display");
 
@@ -1834,7 +1839,7 @@ async fn test_geo_rule_blocks_listed_country() {
 /// enforcing: the request continues and the event carries `monitor`.
 #[tokio::test]
 async fn test_geo_rule_monitor_action_records_without_blocking() {
-    LazyLock::force(&GEO_DB);
+    pingap_plugin::geo::warm_geoip();
     let country = lookup_country_addr("8.8.8.8".parse().unwrap())
         .expect("embedded db resolves 8.8.8.8 for display");
 

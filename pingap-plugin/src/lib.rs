@@ -289,7 +289,7 @@ macro_rules! register_plugin {
 
 mod accept_encoding;
 mod basic_auth;
-mod bot_dns;
+pub mod bot_dns;
 mod cache;
 mod challenge;
 mod combined_auth;
@@ -299,6 +299,7 @@ mod csrf;
 mod directory;
 mod error_page;
 mod forward_auth;
+pub mod geo;
 #[cfg(feature = "geo")]
 mod geo_restriction;
 mod ip_restriction;
@@ -307,33 +308,25 @@ mod key_auth;
 mod limit;
 mod mock;
 mod ping;
+mod plugin;
 mod redirect;
 mod referer_restriction;
 mod request_id;
 mod response_headers;
 mod rewrite;
 mod sub_filter;
+pub mod text;
 mod traffic_splitting;
 mod ua_restriction;
-mod waf;
-/// Failed-authentication streak tracker (Phase 8 ATO defense).
-pub mod waf_ato;
-/// Per-site custom layers: SecLang virtual patches + OpenAPI validation.
-pub mod waf_custom;
-/// External-processor transport (Phase 9); see the module docs.
-pub mod waf_processor;
-/// Shadow execution of the Varman pipeline beside the legacy engine (Phase 2
-/// wiring); see the module docs. Selected with `VARMAN_WAF_ENGINE=shadow|varman`.
-pub mod waf_shadow;
-/// Stream inspection: body tails and WebSocket frames (Phase 8).
-pub mod waf_stream;
-
-mod plugin;
 
 pub use plugin::get_plugin_factory;
-// The data plane drives the WAF plugin's access-log sweep timer from its
-// own runtime, so these two items are re-exported.
-pub use waf::{PENDING_ACCESS_SWEEP_TTL, sweep_stale_access};
+// The WAF plugin (now in `varman-plugin`) uses these challenge helpers; they
+// remain here because the challenge subsystem itself is still a Pingap plugin.
+pub use challenge::{
+    ChallengeKind, VERIFY_ENDPOINT, basic_auth_page, block_page,
+    build_challenge_response, paused_page, rate_limit_page,
+    resolve_cookie_secret,
+};
 
 #[cfg(test)]
 pub(crate) mod test_support {
@@ -352,6 +345,44 @@ pub(crate) mod test_support {
     /// Acquires the process-wide agent test lock.
     pub(crate) async fn lock_agent() -> tokio::sync::MutexGuard<'static, ()> {
         AGENT_LOCK.lock().await
+    }
+
+    /// Installs a never-connecting agent for the duration of one test,
+    /// holding the agent lock so sibling tests stay off the process global.
+    pub(crate) async fn install_test_agent() -> (
+        tokio::sync::MutexGuard<'static, ()>,
+        std::sync::Arc<varman_agent::VarmanAgent>,
+        tempfile::TempDir,
+    ) {
+        use std::sync::Arc;
+        use varman_agent::cache::RuleCache;
+        use varman_agent::client::ControlPlaneClient;
+        use varman_agent::config::AgentConfig;
+        use varman_agent::heartbeat::MetricsCollector;
+
+        let lock = lock_agent().await;
+        let dir = tempfile::tempdir().expect("test temp dir");
+        let config = AgentConfig {
+            cache_dir: dir.path().to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let rule_cache =
+            RuleCache::new(dir.path().to_path_buf(), "test-agent".to_string())
+                .expect("test rule cache");
+        let metrics = Arc::new(MetricsCollector::new());
+        let client = Arc::new(ControlPlaneClient::new(
+            config.clone(),
+            Arc::clone(&rule_cache),
+            Arc::clone(&metrics),
+        ));
+        let agent = Arc::new(varman_agent::VarmanAgent {
+            config,
+            client,
+            rule_cache,
+            metrics,
+        });
+        varman_agent::VarmanAgent::set_agent_instance(Some(Arc::clone(&agent)));
+        (lock, agent, dir)
     }
 
     /// Builds an H1 session preloaded with a single request.

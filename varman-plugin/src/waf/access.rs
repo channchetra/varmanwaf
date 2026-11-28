@@ -7,28 +7,7 @@ use super::*;
 /// Embedded GeoIP database backing country/ASN facts: it feeds geo
 /// restrictions, the `ip.src.country` rule variable and the country reported
 /// with access logs.
-pub(crate) static GEO_DB: LazyLock<Arc<GeoipDb>> =
-    LazyLock::new(GeoipDb::new_embedded);
-
-/// Country code (ISO 3166-1 alpha-2) of `ip`, when the database knows it.
-pub(crate) fn lookup_country(ip: &str) -> Option<String> {
-    ip.parse().ok().and_then(lookup_country_addr)
-}
-
-/// Same as [`lookup_country`] for an already parsed address, so the request
-/// hot path parses the client ip once for every consumer.
-pub(crate) fn lookup_country_addr(addr: IpAddr) -> Option<String> {
-    GEO_DB
-        .lookup_country_code(addr)
-        .map(|code| code.as_ref().to_string())
-}
-
-/// Resolves the ASN with the embedded database (display/rate-limit counting
-/// only; the embedded data carries no ASN entries, so this is `None` today
-/// and ASN counting falls back to a single bucket).
-pub(crate) fn lookup_asn_addr(addr: IpAddr) -> Option<u32> {
-    GEO_DB.lookup_asn(addr)
-}
+pub(crate) use pingap_plugin::geo::{lookup_asn_addr, lookup_country_addr};
 
 /// What an IP access rule does when the client IP matches it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

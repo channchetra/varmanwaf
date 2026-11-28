@@ -1,0 +1,45 @@
+[package]
+name = "varman-plugin"
+version.workspace = true
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/channchetra/varmanwaf"
+description = "VarmanWAF-specific plugins (WAF, stream, processor, shadow, custom layers)"
+
+
+[lib]
+name = "varman_plugin"
+path = "src/lib.rs"
+
+[dependencies]
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+dashmap = { workspace = true }
+http = { workspace = true }
+ipnet = { workspace = true }
+pingap-config = { workspace = true }
+pingap-core = { workspace = true }
+pingap-plugin = { path = "../pingap-plugin" }
+pingap-util = { workspace = true }
+pingora = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util"] }
+toml = { workspace = true }
+tor-geoip = { workspace = true }
+tracing = { workspace = true }
+varman-agent = { path = "../varman-agent" }
+varman-challenge = { path = "../varman-challenge" }
+varman-waf = { path = "../varman-waf" }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
+varman-protocol = { path = "../varman-protocol" }
+varman-agent = { path = "../varman-agent", features = ["test-util"] }
+
+[lints.clippy]
+unwrap_used = "deny"

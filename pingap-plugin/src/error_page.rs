@@ -838,7 +838,7 @@ template = '{"error":"rate_limit_exceeded","request_id":"{{ request_id }}"}'
 
     mod agent_mode {
         use super::*;
-        use crate::waf::tests::install_test_agent;
+        use crate::test_support::install_test_agent;
         use pretty_assertions::assert_eq;
         use varman_protocol::control_plane as proto;
 

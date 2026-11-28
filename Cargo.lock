@@ -8686,6 +8686,7 @@ dependencies = [
  "uuid",
  "varman-agent",
  "varman-control",
+ "varman-plugin",
  "varman-pprof",
  "vergen",
  "vergen-git2",
@@ -8783,6 +8784,37 @@ dependencies = [
  "varman-protocol",
  "varman-waf",
  "x509-parser 0.18.1",
+]
+
+[[package]]
+name = "varman-plugin"
+version = "1.5.0"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "dashmap 6.2.1",
+ "http",
+ "ipnet",
+ "pingap-config",
+ "pingap-core",
+ "pingap-plugin",
+ "pingap-util",
+ "pingora",
+ "pretty_assertions",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "toml",
+ "tor-geoip",
+ "tracing",
+ "varman-agent",
+ "varman-challenge",
+ "varman-protocol",
+ "varman-waf",
 ]
 
 [[package]]

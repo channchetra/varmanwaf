@@ -8,7 +8,7 @@
 //! * **Varman pipeline** (`pipeline`, `canonical`) — the multi-lane engine:
 //!   canonical request model, structured findings, monotonic action
 //!   escalation, bounded detection context and shadow comparison. Wired into
-//!   the proxy through `pingap-plugin/src/waf_shadow.rs`: `VARMAN_WAF_ENGINE=
+//!   the proxy through `varman-plugin/src/waf_shadow.rs`: `VARMAN_WAF_ENGINE=
 //!   varman` enforces it, `shadow` compares, and the process default is
 //!   `legacy` (docker-compose sets `shadow`). See `docs/security-engine.md`.
 //!
