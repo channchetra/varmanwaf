@@ -651,6 +651,59 @@ mod tests {
         assert_eq!(false, path.exists());
     }
 
+    #[tokio::test]
+    async fn test_ready_wait_notices_a_daemon_that_died() {
+        let path = sock_path("daemon");
+        let listener = ReadyListener::bind(&path).unwrap();
+        // The spawned process exits successfully, as `-d` does after forking.
+        let child = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+        let new_pid = child.id();
+        // A pid that is certainly gone: start a process and reap it.
+        let mut gone =
+            Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+        let gone_pid = gone.id();
+        gone.wait().unwrap();
+        let pid_file = sock_path("daemon.pid");
+        std::fs::write(&pid_file, gone_pid.to_string()).unwrap();
+
+        let err = wait_for_ready(
+            listener,
+            child,
+            new_pid,
+            Duration::from_secs(5),
+            pid_file.to_str().unwrap(),
+        )
+        .await
+        .expect_err("a dead daemon must fail the wait");
+        let _ = std::fs::remove_file(&pid_file);
+
+        assert_eq!(
+            true,
+            err.to_string()
+                .contains(&format!("new daemon({gone_pid}) exited")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_daemon_pid_from_ignores_this_process() {
+        let pid_file = sock_path("own.pid");
+        std::fs::write(&pid_file, std::process::id().to_string()).unwrap();
+        assert_eq!(None, daemon_pid_from(pid_file.to_str().unwrap()));
+        std::fs::write(&pid_file, "424242").unwrap();
+        assert_eq!(Some(424242), daemon_pid_from(pid_file.to_str().unwrap()));
+        let _ = std::fs::remove_file(&pid_file);
+        assert_eq!(None, daemon_pid_from("/nonexistent/pingap-test.pid"));
+    }
+
+    #[tokio::test]
+    async fn notify_ready_fails_without_a_listener() {
+        let err = notify_ready(&sock_path("absent"))
+            .await
+            .expect_err("no listener must be an error");
+        assert_eq!(io::ErrorKind::NotFound, err.kind(), "{err}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn parse_ready_pid_requires_a_real_pid() {
