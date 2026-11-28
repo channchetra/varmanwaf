@@ -13,10 +13,20 @@
 - **Phase 2 complete**: challenge, cache, rewrite and error_page moved;
   `pingap-plugin` has **no** `varman-*` dependencies and the module graph no
   longer shows the foundation -> platform edges. Commit `a28f548`.
-- **Phase 3 partial**: `AssembledPlane` now captures all five providers and
-  `app_context` uses them; `try_init_plugins` returns `ProviderUpdate`.
-  Commit `6705a42`. The five `LazyLock` registries are still the source those
-  providers wrap, so full injection remains.
+- **Phase 3 complete**: each provider is constructible (`Provider::new`) with
+  instance init/update methods; `ProviderSet` owns the five concrete
+  providers; `assemble`, `app_context`, `apply_config`, the observer/
+  auto-restart services, the agent reload loop and the legacy admin
+  diagnostics all use the set. Commits `6705a42`, `161b7df`. Compatibility
+  free functions remain for tests/legacy with `allow(dead_code)`.
+- **Tests**: a disposable-PostgreSQL harness covers add-admin,
+  reset-password and the allowlist switch; provider tests share a process
+  lock; the unconsumed plugin fixture is gone. Commits `d90ac11`, plus the
+  test-isolation commit. 127 unit + 5 boot-smoke tests pass.
+- **Score**: strict **84.9**; init coupling **86**, cross-module **82**,
+  abstraction **82**, test strategy **75**. The remaining test gaps are
+  restart orchestration, webhook exit flush/batching, upstream health-check
+  reload, and the broader handler-module matrix.
 - Branch `refactor/varman-plugin`, pushed to origin; not merged to `main`.
 - 148 `varman-plugin` tests + 69 `pingap-plugin` tests; full suite, clippy,
   fmt, machete green.
@@ -97,6 +107,16 @@ pub struct ProviderSet {
 4. Add a check that every non-GET route's handler contains `require_write`,
    `require_password_changed`, `load_site_write`, or is on the documented
    exemption list.
+
+## Release timing
+
+Production is on **1.5.0**. A 1.6.0 restart must not happen before the
+2026-12-01 renewal is confirmed and the 2026-12-04 ACME window passes; the
+2026-12-01 renewal is the fifth issued certificate and must succeed. The
+1.5.0 restart proved the management-certificate seed prevents a duplicate
+order, but the remaining window is too close for another production restart.
+Merge/tag/build 1.6.0 only after the renewal check, or explicitly accept the
+order-risk after verifying the certificate baseline.
 
 ## Acceptance
 
